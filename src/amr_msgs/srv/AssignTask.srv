@@ -1,0 +1,6 @@
+# 중앙 집중식 작업 할당 (명세 9장)
+Task task
+---
+bool success
+string robot_id
+string message

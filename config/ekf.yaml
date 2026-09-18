@@ -1,0 +1,68 @@
+# EKF 센서 퓨전 설정 (명세 3장 "위치 추정")
+#
+# 융합 입력: Wheel Odometry + IMU + AMCL
+# 목표 정확도: 정지 3cm / 직선 5cm / 회전 8cm 이내
+#
+# 공분산 설정 근거는 docs/algorithms/ekf.md 에 문서화한다 (명세 요구).
+# 아래 값은 config/sensors.yaml 의 노이즈 파라미터에서 출발한 초기값이며,
+# 실측 후 튜닝해야 한다.
+
+ekf_filter_node:
+  ros__parameters:
+    frequency: 50.0
+    sensor_timeout: 0.1
+    two_d_mode: true              # 2D 평면 주행이므로 z/roll/pitch 고정
+    publish_tf: true
+    publish_acceleration: false
+
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_link
+    world_frame: odom             # odom->base_link 를 EKF 가 발행
+
+    # --- 입력 1: 휠 오도메트리 ---
+    # 속도만 신뢰한다. 위치는 슬립으로 드리프트하므로 융합하지 않는다.
+    odom0: /wheel_odom
+    odom0_config: [false, false, false,    # x, y, z
+                   false, false, false,    # roll, pitch, yaw
+                   true,  true,  false,    # vx, vy, vz
+                   false, false, true,     # vroll, vpitch, vyaw
+                   false, false, false]    # ax, ay, az
+    odom0_differential: false
+    odom0_relative: false
+    odom0_queue_size: 10
+
+    # --- 입력 2: IMU ---
+    # yaw 와 각속도를 신뢰. 가속도는 노이즈가 커 선택적으로 사용.
+    imu0: /imu/data
+    imu0_config: [false, false, false,
+                  false, false, true,      # yaw
+                  false, false, false,
+                  false, false, true,      # vyaw
+                  true,  true,  false]     # ax, ay
+    imu0_differential: false
+    imu0_relative: false
+    imu0_queue_size: 20
+    imu0_remove_gravitational_acceleration: true
+
+    # --- 입력 3: AMCL (map 기준 절대 위치) ---
+    # 드리프트 보정용. 업데이트 주기가 느리므로 공분산을 크게 잡는다.
+    pose0: /amcl_pose
+    pose0_config: [true,  true,  false,    # x, y
+                   false, false, true,     # yaw
+                   false, false, false,
+                   false, false, false,
+                   false, false, false]
+    pose0_differential: false
+    pose0_relative: false
+    pose0_queue_size: 5
+
+    # --- 프로세스 노이즈 공분산 ---
+    # 대각 성분만 사용. 값이 클수록 예측을 덜 신뢰하고 관측을 더 신뢰한다.
+    process_noise_covariance: [0.05, 0.05, 0.06, 0.03, 0.03, 0.06,
+                               0.025, 0.025, 0.04, 0.01, 0.01, 0.02,
+                               0.01, 0.01, 0.015]
+
+    initial_estimate_covariance: [1e-9, 1e-9, 1e-9, 1e-9, 1e-9, 1e-9,
+                                  1e-9, 1e-9, 1e-9, 1e-9, 1e-9, 1e-9,
+                                  1e-9, 1e-9, 1e-9]

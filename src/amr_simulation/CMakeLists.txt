@@ -1,0 +1,28 @@
+cmake_minimum_required(VERSION 3.8)
+project(amr_simulation)
+
+if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
+
+find_package(ament_cmake REQUIRED)
+
+# 이 패키지는 launch/config/urdf 등 리소스만 제공한다 (파이썬 모듈 없음).
+
+# --- 리소스 디렉토리 설치 ---
+install(DIRECTORY
+  launch
+  config
+  worlds
+  models
+  DESTINATION share/${PROJECT_NAME}
+)
+
+# --- 테스트 ---
+if(BUILD_TESTING)
+  find_package(ament_lint_auto REQUIRED)
+  ament_lint_auto_find_test_dependencies()
+
+endif()
+
+ament_package()

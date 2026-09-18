@@ -1,0 +1,56 @@
+# ROS2 colcon
+build/
+install/
+log/
+.colcon/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.venv/
+
+# 커버리지/테스트 산출물
+coverage/
+*.gcov
+*.gcda
+*.gcno
+lcov.info
+
+# 런타임 로그 (디렉토리 구조는 .gitkeep 으로 유지)
+logs/*
+!logs/.gitkeep
+
+# 생성된 맵 (성과물 맵은 별도 커밋)
+maps/*.pgm
+maps/*.yaml
+!maps/.gitkeep
+
+# rosbag
+*.mcap
+*.db3
+rosbag2_*/
+
+# YOLO 가중치 (대용량 — 스크립트로 내려받는다)
+*.pt
+*.onnx
+*.engine
+src/amr_perception/models/*
+!src/amr_perception/models/.gitkeep
+
+# Gazebo
+.gazebo/
+.ignition/
+
+# 에디터/OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# 환경변수
+.env

@@ -1,0 +1,45 @@
+# AMR 로봇 물리/동역학 파라미터 (명세 4장 1절 "로봇 모델링")
+# 이 값들은 URDF(xacro), 컨트롤러, 플래너가 공통으로 참조한다.
+# 파라미터 변경 시 재빌드가 필요 없도록 YAML 로 외부화한다 (명세 9장 평가 항목).
+
+/**:
+  ros__parameters:
+
+    robot:
+      # 실제 물류 AMR 규격 참고: 600mm x 400mm x 300mm
+      footprint_length: 0.60      # [m]
+      footprint_width: 0.40       # [m]
+      height: 0.30                # [m]
+      base_mass: 45.0             # [kg] 공차 중량
+
+      # 차동 구동 파라미터 — 순기구학 계산의 기준값
+      wheel_radius: 0.0825        # [m]
+      wheel_separation: 0.36      # [m] 좌우 바퀴 중심 간 거리
+
+    # 동역학 제한 (명세: 최대속도 2.0, 최대가속도 1.0, 최대회전 1.5)
+    limits:
+      max_linear_velocity: 2.0        # [m/s]
+      min_linear_velocity: -0.5       # [m/s] 후진
+      max_linear_acceleration: 1.0    # [m/s^2]
+      max_angular_velocity: 1.5       # [rad/s]
+      max_angular_acceleration: 2.0   # [rad/s^2]
+      max_linear_jerk: 2.0            # [m/s^3] 적재물 안정성 (명세 5장)
+
+    # 적재 용량별 질량 — 동역학에 반영 (명세 8장 물품 표)
+    payload:
+      small:
+        mass: 2.0                 # [kg]
+        load_time: 5.0            # [s]
+      medium:
+        mass: 10.0
+        load_time: 10.0
+      large:
+        mass: 25.0
+        load_time: 15.0
+
+    # 안전 (명세 7장)
+    safety:
+      emergency_stop_distance: 0.30   # [m] 이내 접근 시 즉시 정지
+      warning_zone_distance: 1.00     # [m] Warning Zone
+      critical_zone_distance: 0.50    # [m] Critical Zone
+      sensor_timeout: 0.5             # [s] 초과 시 센서 고장으로 판단

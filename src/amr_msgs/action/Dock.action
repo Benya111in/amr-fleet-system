@@ -1,0 +1,13 @@
+# ArUco 마커 기반 정밀 도킹 (명세 8장: 위치 2cm, 각도 1도 이내)
+string dock_id
+geometry_msgs/PoseStamped approach_pose
+uint8 max_retries
+---
+bool success
+float32 final_position_error        # [m]
+float32 final_angle_error           # [rad]
+uint8 attempts_used
+---
+string current_phase
+float32 distance_remaining
+uint8 attempt

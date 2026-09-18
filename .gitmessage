@@ -1,0 +1,32 @@
+# <type>(<scope>): <subject>
+#
+# <body>
+#
+# <footer>
+#
+# ---- Conventional Commits (명세 4장 요구) ----
+# type:
+#   feat     새로운 기능
+#   fix      버그 수정
+#   docs     문서만 변경
+#   style    코드 의미에 영향 없는 변경 (포맷, 세미콜론 등)
+#   refactor 기능 변화 없는 구조 개선
+#   perf     성능 개선
+#   test     테스트 추가/수정
+#   build    빌드 시스템, 의존성 변경
+#   ci       CI 설정 변경
+#   chore    그 외 잡무
+#
+# scope 예시:
+#   description, simulation, localization, navigation,
+#   perception, behavior, fleet, dashboard, msgs, docker
+#
+# 예:
+#   feat(navigation): A* 글로벌 플래너 직접 구현
+#   fix(localization): EKF 공분산 초기화 오류 수정
+#   docs(algorithms): DWA 비용 함수 튜닝 근거 문서화
+#
+# 규칙:
+#   - subject 는 명령형, 마침표 없이, 50자 이내
+#   - body 는 무엇을/왜 (어떻게는 코드가 설명한다)
+#   - breaking change 는 footer 에 BREAKING CHANGE: 로 명시

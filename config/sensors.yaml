@@ -1,0 +1,61 @@
+# 센서 사양 및 노이즈 모델 (명세 4장 1절 "센서 시스템 구성")
+# 명세 7장 제약: 센서 노이즈 모델을 반드시 적용해야 한다.
+# extrinsic 은 URDF TF 트리와 반드시 일치시킬 것.
+
+/**:
+  ros__parameters:
+
+    lidar:
+      topic: /scan
+      frame_id: lidar_link
+      samples: 720                # 360도 / 0.5도 해상도
+      angle_min: -3.14159         # [rad]
+      angle_max: 3.14159
+      range_min: 0.10             # [m]
+      range_max: 25.0             # [m]
+      update_rate: 10.0           # [Hz] 이상
+      noise_stddev: 0.03          # [m] 가우시안 노이즈 σ (명세 지정값)
+      extrinsic: {x: 0.15, y: 0.0, z: 0.20, roll: 0.0, pitch: 0.0, yaw: 0.0}
+
+    depth_camera:
+      topic: /camera/depth/image_raw
+      points_topic: /camera/depth/points
+      frame_id: camera_depth_optical_frame
+      width: 640
+      height: 480
+      hfov: 1.518436              # [rad] = 87도
+      range_min: 0.20             # [m]
+      range_max: 10.0             # [m]
+      update_rate: 15.0           # [Hz] 이상
+      # 깊이 노이즈는 거리 제곱에 비례하는 모델을 쓴다: σ(d) = base + k * d^2
+      noise_base: 0.005           # [m]
+      noise_quadratic_coeff: 0.002
+      extrinsic: {x: 0.18, y: 0.0, z: 0.25, roll: 0.0, pitch: 0.0, yaw: 0.0}
+
+    rgb_camera:
+      topic: /camera/image_raw
+      info_topic: /camera/camera_info
+      frame_id: camera_optical_frame
+      width: 640
+      height: 480
+      hfov: 1.518436              # [rad]
+      update_rate: 30.0           # [Hz]
+      extrinsic: {x: 0.18, y: 0.0, z: 0.25, roll: 0.0, pitch: 0.0, yaw: 0.0}
+
+    imu:
+      topic: /imu/data
+      frame_id: imu_link
+      update_rate: 100.0          # [Hz] 이상
+      # 바이어스 + 가우시안 노이즈 모델 (명세 요구)
+      accel_noise_stddev: 0.017   # [m/s^2]
+      accel_bias_stddev: 0.001
+      gyro_noise_stddev: 0.0002   # [rad/s]
+      gyro_bias_stddev: 0.0000075
+      extrinsic: {x: 0.0, y: 0.0, z: 0.10, roll: 0.0, pitch: 0.0, yaw: 0.0}
+
+    wheel_encoder:
+      topic: /wheel_odom
+      ticks_per_revolution: 4096  # 명세: 틱 분해능 4096 이상
+      # 슬립 노이즈 — 오도메트리 누적 오차의 주 원인 (명세 2장 분석 대상)
+      slip_noise_stddev: 0.01
+      update_rate: 50.0           # [Hz]
