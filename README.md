@@ -31,22 +31,74 @@ sudo ./scripts/setup_host.sh
 ## 2. 빠른 시작
 
 ```bash
-# 1) 이미지 빌드 (최초 1회, 수십 분 소요)
-docker compose build dev
+# 0) 저장소 클론 (SSH 키가 있으면 git@github.com:Benya111in/amr-fleet-system.git)
+git clone https://github.com/Benya111in/amr-fleet-system.git
+cd amr-fleet-system
 
-# 2) 개발 컨테이너 기동 및 접속
-docker compose up -d dev
-docker compose exec dev bash
+# 1) YOLOv8 가중치 내려받기 (대용량이라 git 에 없음 — 최초 1회.
+#    호스트에 wget 이 없으면 3) 이후 컨테이너 안에서 실행해도 된다. src/ 가 공유되므로 결과는 같다)
+./scripts/download_models.sh
 
-# 3) 컨테이너 안에서 워크스페이스 빌드
-./scripts/build.sh          # == colcon build --symlink-install
+# 2) 사람별 환경변수 — 서버를 여러 명이 같이 쓰므로 프로젝트 이름/ROS 도메인/Gazebo 파티션을
+#    사람마다 다르게 준다 (.env 는 git 에 올라가지 않는다)
+cp .env.example .env && vi .env
 
-# 4) 테스트 + 커버리지
+# 3) 이미지 빌드 (최초 1회, 수십 분 소요)
+docker compose build
+
+# 4) 기동: builder 가 colcon build 를 수행하고 dev 컨테이너가 뜬다
+docker compose up -d                  # 빌드 진행 상황: docker compose logs -f builder
+docker compose exec dev bash          # 셸 접속 (ROS 와 install/ 오버레이는 자동 소싱)
+./scripts/verify_env.sh               # 환경 검증 (36개 항목, 전부 통과해야 한다)
+
+# 5) 소스 수정 후 재빌드 (컨테이너 안) — 또는 호스트에서 docker compose up builder
+./scripts/build.sh              # colcon build --symlink-install + 경고 플래그(-Wall -Wextra -Wpedantic)
+WERROR=1 ./scripts/build.sh     # -Werror 추가: 경고를 에러로 승격 (명세 7장 "경고 0" 검증용)
+
+# 6) 테스트 + 커버리지 (컨테이너 안)
 ./scripts/test.sh
+
+# 7) 전체 시스템 기동 (런치 파일이 갖춰진 뒤): builder 성공 후 simulation → localization →
+#    navigation → fleet → dashboard 순으로 뜬다 (perception 은 simulation 뒤)
+docker compose --profile run up -d
 ```
 
 `src/` 는 호스트와 컨테이너가 공유(bind mount)하므로, 호스트 에디터로 수정한 코드가
-컨테이너에 즉시 반영된다. 재빌드는 `colcon build` 만 다시 돌리면 된다.
+컨테이너에 즉시 반영된다. colcon 산출물(build/ install/ log/)은 이름 있는 볼륨
+(`<프로젝트>_ros2_ws_build` 등)에 있어 dev 와 run 프로필 서비스가 한 워크스페이스를 공유하고,
+컨테이너를 재생성해도 빌드가 사라지지 않는다. 빌드까지 지우려면 `docker compose down -v`.
+
+`docker/Dockerfile` 이 바뀐 커밋을 pull 했다면 이미지를 다시 만들고 컨테이너를 재생성한다
+(기존 컨테이너는 옛 이미지로 계속 돈다). 볼륨의 빌드는 유지되므로 builder 가 증분 빌드만 한다.
+
+```bash
+docker compose build && docker compose up -d
+```
+
+`network_mode: host` 라서 같은 `ROS_DOMAIN_ID` 를 쓰는 LAN 의 다른 호스트와 DDS 트래픽이 오간다.
+격리가 필요하면 `.env` 에 `ROS_LOCALHOST_ONLY=1` 을 준다 (컨테이너끼리는 계속 통신된다).
+
+### 테스트와 커버리지
+
+`./scripts/test.sh` 는 `colcon test` → `colcon test-result --verbose` → `colcon coveragepy-result`
+순으로 돌고, 테스트가 하나라도 실패하면 0 이 아닌 코드로 끝난다.
+린터(flake8 / pep257 / xmllint / lint_cmake / cpplint / cppcheck / uncrustify)도 `colcon test` 의
+일부라서 스타일 위반은 테스트 실패로 잡힌다. 파일별 저작권 헤더 검사(ament_copyright)만 생략한다
+(라이선스는 각 `package.xml` 에 선언).
+
+- 요약 줄(예: `Summary: 72 tests, 0 errors, 0 failures, 0 skipped`)에서 failures/errors 가 0 이어야 한다.
+  실패한 테스트는 그 위에 `- <패키지>.<린터/테스트> ...` 와 실패 메시지로 나열된다.
+- 커버리지는 패키지마다 따로 측정된다 (`package.xml` 에 `<test_depend>python3-pytest-cov</test_depend>`
+  가 있는 패키지). 터미널에 `Starting >>> <패키지>` 아래 그 패키지의 `coverage report` 가 모듈(파일)
+  단위로 나오고, 마지막에 전체 합산 표가 나온다. `test/` 아래 테스트 파일은 집계에서 빼므로
+  `Cover` 열이 곧 모듈 커버리지다. 명세 4.10 목표: 주요 모듈 70% 이상.
+  `No .coverage files found for package '...'` 경고는 그 패키지에 측정된 파이썬 테스트가 아직
+  없다는 뜻이다 (리소스 전용 패키지 `amr_msgs`/`amr_description`/`amr_simulation`/`amr_bringup` 은 정상).
+- HTML: `logs/coverage/htmlcov/index.html` (전체 합산).
+  패키지별 HTML 은 `build/<패키지>/pytest_cov/<패키지>_pytest/coverage.html/`.
+- `xmllint` 는 `package.xml` 스키마를 download.ros.org 에서 받아 검증하므로 네트워크가 없으면
+  xmllint 만 실패한다.
+- 특정 패키지만: `./scripts/test.sh --packages-select amr_fleet` (인자는 `colcon test` 로 전달)
 
 ### 헤드리스 환경 주의
 
@@ -54,9 +106,12 @@ docker compose exec dev bash
 시뮬레이션 **연산과 센서 렌더링은 GPU EGL 로 headless 동작**하므로 개발에는 지장이 없다.
 화면 확인이 필요하면 다음 중 하나를 쓴다.
 
-- rosbag2 로 기록 후 Foxglove Studio 로 재생 (명세 9장 모니터링 요구사항과 겹침)
+- Foxglove Studio 를 실시간으로 연결: 컨테이너에서 `ros2 launch foxglove_bridge foxglove_bridge_launch.xml`
+  (기본 포트 8765, 이미지에 `ros-humble-foxglove-bridge` 포함) → 노트북의 Foxglove 에서
+  `ws://<서버>:8765` 접속. 토픽/TF/마커/카메라를 RViz2 없이 본다 (명세 9장 모니터링 요구사항과 겹침)
+- rosbag2 로 기록 후 Foxglove Studio 로 재생
 - 웹 대시보드(`amr_dashboard`)로 상태 확인
-- 호스트에 `x11vnc` / `Xvfb` 를 올려 가상 디스플레이 연결
+- 호스트에 `x11vnc` / `Xvfb` 를 올려 가상 디스플레이 연결 (RViz2/Groot 화면이 꼭 필요할 때)
 
 ---
 
@@ -100,14 +155,20 @@ docker compose exec dev bash
 ## 4. 브랜치 전략
 
 명세 4장에 따라 Git Flow(Main/Develop/Feature)와 Conventional Commits 를 사용한다.
+원격은 GitHub [`Benya111in/amr-fleet-system`](https://github.com/Benya111in/amr-fleet-system) 이고,
+`main`/`develop` 에는 ruleset 이 걸려 있어 직접 push·force-push·삭제가 막혀 있다.
+
+| 브랜치 | 역할 | 들어오는 길 |
+| --- | --- | --- |
+| `main` | 릴리스 | `develop` → `main` PR, 승인 2명 |
+| `develop` | 통합 | `feature/*` → `develop` PR, 승인 1명 |
+| `feature/*` | 기능 단위 작업 | 직접 커밋 |
 
 ```bash
-./scripts/setup_gitflow.sh      # develop 브랜치 + 커밋 템플릿 등록
+./scripts/setup_gitflow.sh              # 로컬 develop 브랜치 + 커밋 템플릿(.gitmessage) 등록
+git checkout develop && git pull
+git checkout -b feature/<이름>          # 작업 → push → develop 대상 PR
 ```
-
-- `main` — 릴리스만 병합, 직접 커밋 금지
-- `develop` — 통합 브랜치
-- `feature/*` — 기능 단위 작업
 
 커밋 형식: `feat(navigation): A* 글로벌 플래너 직접 구현`
 
@@ -115,13 +176,14 @@ docker compose exec dev bash
 
 ## 5. 구현 현황
 
-환경 세팅만 완료된 상태이며, 아래는 전부 미착수다.
+환경 세팅만 완료된 상태이며, 기능은 전부 미착수다.
 
 ### 인프라
 - [x] Docker + compose 환경
 - [x] GPU 패스스루 (nvidia-container-toolkit)
 - [x] ROS2 Humble + Gazebo Fortress 이미지
-- [x] 패키지 스켈레톤, Git Flow
+- [x] 패키지 스켈레톤
+- [x] GitHub 원격 + Git Flow 브랜치 보호(ruleset), 빌드/테스트/커버리지 스크립트
 
 ### 기능 (명세 4장)
 - [ ] 1. 시뮬레이션 환경 및 로봇 모델링 (60x40m 월드, URDF, 센서 노이즈)
