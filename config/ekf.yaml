@@ -26,7 +26,7 @@
 #     아래 값은 단일 로봇 기본값이다.
 #   - 토픽은 상대 이름(wheel_odom, imu/data, amcl_pose)이라 네임스페이스 아래로 해석된다.
 #     퍼블리셔(오도메트리 노드, Gazebo IMU 플러그인, AMCL)도 같은 네임스페이스에서 상대 이름으로
-#     발행해야 한다 (config/sensors.yaml 의 topic 값도 같은 상대 이름 규약을 따른다).
+#     발행해야 한다. 퍼블리셔 설정(config/sensors.yaml 의 topic 값)도 상대 이름으로 맞춘다.
 #   - use_sim_time 은 런치에서 넘긴다 (Gazebo /clock).
 #
 # 공분산 설정 근거 (명세 4.3 "각 입력의 공분산 행렬 근거 문서화")
@@ -62,8 +62,9 @@
     reset_on_time_jump: true      # Gazebo 리셋 등으로 시각이 뒤로 가면 필터를 초기화 (sim time)
 
     # 프레임: docs/architecture/README.md TF 트리와 일치시킬 것.
-    # base_link_frame 은 URDF 루트 링크와 같아야 한다. 이 프로젝트의 루트는 base_footprint 이고
-    # base_footprint → base_link 는 robot_state_publisher 가 발행하므로, EKF 는 odom → base_footprint 를 낸다.
+    # base_link_frame 은 URDF 루트 링크와 같아야 한다. 설계(docs/architecture/README.md)상 URDF 루트는
+    # base_footprint 로 작성하고 base_footprint → base_link 는 robot_state_publisher 가 발행한다.
+    # 따라서 EKF 는 odom → base_footprint 를 낸다 (URDF 를 다르게 만들면 이 값을 같이 바꾼다).
     map_frame: map
     odom_frame: odom
     base_link_frame: base_footprint

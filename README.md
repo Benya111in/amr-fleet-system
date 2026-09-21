@@ -36,19 +36,20 @@ git clone https://github.com/Benya111in/amr-fleet-system.git
 cd amr-fleet-system
 
 # 1) YOLOv8 가중치 내려받기 (대용량이라 git 에 없음 — 최초 1회.
-#    호스트에 wget 이 없으면 3) 이후 컨테이너 안에서 실행해도 된다. src/ 가 공유되므로 결과는 같다)
+#    호스트에 wget 이 없으면 3) 이미지 빌드 뒤 `docker compose run --rm dev ./scripts/download_models.sh` 로
+#    컨테이너 안에서 실행해도 된다. src/ 가 공유되므로 결과는 같다)
 ./scripts/download_models.sh
 
 # 2) 사람별 환경변수 — 서버를 여러 명이 같이 쓰므로 프로젝트 이름/ROS 도메인/Gazebo 파티션을
 #    사람마다 다르게 준다 (.env 는 git 에 올라가지 않는다)
-cp .env.example .env && vi .env
+cp .env.example .env && vi .env      # docker compose config 로 값 검증 가능
 
 # 3) 이미지 빌드 (최초 1회, 수십 분 소요)
 docker compose build
 
 # 4) 기동: builder 가 colcon build 를 수행하고 dev 컨테이너가 뜬다
-docker compose up -d                  # 빌드 진행 상황: docker compose logs -f builder
-docker compose exec dev bash          # 셸 접속 (ROS 와 install/ 오버레이는 자동 소싱)
+docker compose up -d && docker compose wait builder   # builder 종료(exit 0)까지 대기. 진행 상황: docker compose logs -f builder
+docker compose exec dev bash          # 셸 접속 (ROS 와 install/ 오버레이 자동 소싱 — builder 종료 전에 연 셸은 다시 연다)
 ./scripts/verify_env.sh               # 환경 검증 (36개 항목, 전부 통과해야 한다)
 
 # 5) 소스 수정 후 재빌드 (컨테이너 안) — 또는 호스트에서 docker compose up builder
@@ -98,7 +99,9 @@ docker compose build && docker compose up -d
   패키지별 HTML 은 `build/<패키지>/pytest_cov/<패키지>_pytest/coverage.html/`.
 - `xmllint` 는 `package.xml` 스키마를 download.ros.org 에서 받아 검증하므로 네트워크가 없으면
   xmllint 만 실패한다.
-- 특정 패키지만: `./scripts/test.sh --packages-select amr_fleet` (인자는 `colcon test` 로 전달)
+- 특정 패키지만: `./scripts/test.sh --packages-select amr_fleet` (인자는 `colcon test` 로 전달).
+  단, 요약/커버리지는 `build/` 에 남은 전체 패키지 결과를 집계하므로 다른 패키지의 이전 실패가 남아 있으면
+  종료 코드가 0 이 아닐 수 있다 — 전체를 한 번 다시 돌리면 정리된다.
 
 ### 헤드리스 환경 주의
 
@@ -108,7 +111,7 @@ docker compose build && docker compose up -d
 
 - Foxglove Studio 를 실시간으로 연결: 컨테이너에서 `ros2 launch foxglove_bridge foxglove_bridge_launch.xml`
   (기본 포트 8765, 이미지에 `ros-humble-foxglove-bridge` 포함) → 노트북의 Foxglove 에서
-  `ws://<서버>:8765` 접속. 토픽/TF/마커/카메라를 RViz2 없이 본다 (명세 9장 모니터링 요구사항과 겹침)
+  `ws://<서버>:8765` 접속. 토픽/TF/마커/카메라를 RViz2 없이 본다 (명세 4.9 모니터링 요구사항과 겹침)
 - rosbag2 로 기록 후 Foxglove Studio 로 재생
 - 웹 대시보드(`amr_dashboard`)로 상태 확인
 - 호스트에 `x11vnc` / `Xvfb` 를 올려 가상 디스플레이 연결 (RViz2/Groot 화면이 꼭 필요할 때)

@@ -67,7 +67,7 @@ check "behaviortree_cpp" ros2 pkg prefix behaviortree_cpp
 check "nav2_behavior_tree" ros2 pkg prefix nav2_behavior_tree
 
 echo
-echo "=== 모니터링 (명세 9장) ==="
+echo "=== 모니터링 (명세 4.9) ==="
 check "foxglove_bridge" ros2 pkg prefix foxglove_bridge
 
 echo

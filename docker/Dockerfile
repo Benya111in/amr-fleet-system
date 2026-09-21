@@ -30,7 +30,7 @@ RUN curl -sSL https://packages.osrfoundation.org/gazebo.gpg \
     && rm -rf /var/lib/apt/lists/*
 
 # --- ROS2 스택: Nav2, SLAM, 로컬라이제이션, TF, 시각화 ----------------------
-# foxglove-bridge: 명세 9장 모니터링 — Foxglove Studio 를 실시간(WebSocket)으로 연결한다.
+# foxglove-bridge: 명세 4.9 모니터링 — Foxglove Studio 를 실시간(WebSocket)으로 연결한다.
 # (rosbag 재생만으로는 라이브 모니터링이 안 된다.)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-humble-navigation2 \
@@ -56,7 +56,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-humble-foxglove-bridge \
     && rm -rf /var/lib/apt/lists/*
 
-# --- BehaviorTree.CPP + Groot2 연동 (명세 8장) ------------------------------
+# --- BehaviorTree.CPP + Groot2 연동 (명세 4.8) ------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-humble-behaviortree-cpp \
         ros-humble-behaviortree-cpp-v3 \
@@ -64,7 +64,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libzmq3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# --- 테스트/커버리지 도구 (명세 10장: 커버리지 70% 이상) --------------------
+# --- 테스트/커버리지 도구 (명세 4.10: 커버리지 70% 이상) --------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-humble-ament-cmake-gtest \
         ros-humble-ament-lint-auto \
@@ -113,7 +113,7 @@ RUN pip3 install --no-cache-dir --no-deps --ignore-installed transforms3d==0.4.2
         pyyaml==5.4.1 jsonschema==4.26.0 \
     && pip3 install --no-cache-dir --no-deps --force-reinstall \
         opencv-contrib-python-headless==4.11.0.86
-# 마지막 줄 = 도킹용 ArUco (명세 8장). contrib 모듈(aruco) + headless(rviz/rqt 의 시스템 Qt 와
+# 마지막 줄 = 도킹용 ArUco (명세 4.8). contrib 모듈(aruco) + headless(rviz/rqt 의 시스템 Qt 와
 # 번들 Qt 충돌 방지). opencv-python 과 같은 cv2/ 디렉토리에 풀리므로 반드시 마지막에
 # --force-reinstall 로 설치해 contrib-headless 의 cv2.abi3.so 가 결정적으로 이기게 한다.
 # --no-deps: 위에서 고정한 numpy 등을 건드리지 않는다.
@@ -140,7 +140,8 @@ RUN printf '%s\n' \
         '' \
         '# ROS2 + 워크스페이스 오버레이 (amr-fleet-system)' \
         'source /opt/ros/${ROS_DISTRO}/setup.bash' \
-        '[ -f ${ROS_WS}/install/setup.bash ] && source ${ROS_WS}/install/setup.bash' \
+        'if [ -f ${ROS_WS}/install/setup.bash ]; then source ${ROS_WS}/install/setup.bash;' \
+        'else echo "[amr] ${ROS_WS}/install 이 아직 없다 — builder 가 끝난 뒤 새 셸을 열거나 source install/setup.bash"; fi' \
         >> /etc/bash.bashrc
 
 # --- GPU 렌더링 (headless EGL) ----------------------------------------------

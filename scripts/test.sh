@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 단위 테스트 + 커버리지 측정 (명세 10장: 주요 모듈 커버리지 70% 이상)
+# 단위 테스트 + 커버리지 측정 (명세 4.10: 주요 모듈 커버리지 70% 이상)
 #
 #   ./scripts/test.sh                               전체 패키지
 #   ./scripts/test.sh --packages-select amr_fleet   일부만 (인자는 colcon test 로 그대로 전달)

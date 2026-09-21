@@ -74,7 +74,7 @@ services:
     tty: true
     command: bash
 
-  # 워크스페이스 일회성 빌드 (scripts/build.sh == colcon build --symlink-install)
+  # 워크스페이스 일회성 빌드 (scripts/build.sh: colcon build --symlink-install + Release + 경고 플래그, WERROR=1 로 -Werror)
   # 프로필을 주지 않아 `docker compose up` 만으로도 실행되고(명세 4.1), run 프로필 서비스는
   # 아래 depends_on 조건으로 이 서비스가 정상 종료(exit 0)한 뒤에만 기동한다.
   # 산출물은 ros2_ws_* 볼륨에 남으므로 재실행은 증분 빌드다.
