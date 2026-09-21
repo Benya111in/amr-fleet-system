@@ -1,0 +1,66 @@
+<?xml version="1.0" ?>
+<!--
+  파렛트 랙 1베이. 모델 원점 = 바닥 중심, x 축 = 2.0 m 길이 방향, y 축 = 1.0 m 깊이 방향.
+  - 충돌체는 단일 박스(2.0 x 1.0 x 2.5): 로봇이 랙 안으로 들어가지 못하게 한다.
+  - 시각체: 하단 적재 블록(0.50 m, 바닥 단 파렛트+적재물) + 기둥 4개 + 선반 2단.
+    gpu_lidar/깊이 카메라는 충돌체가 아니라 시각체를 본다. 2D LiDAR 스캔 평면은 지면 +0.38 m
+    (config/robot_params.yaml base_link_height 0.18 + config/sensors.yaml lidar z 0.20) 라서, 하단 블록이 0.38 m 를
+    넘어 발자국 전체를 덮어야 랙 외곽선이 온전히 관측된다
+    (기둥만 보이면 costmap 이 기둥 사이를 통로로 오인해 충돌체에 막히는 문제가 생긴다).
+-->
+<sdf version="1.8">
+  <model name="rack">
+    <static>true</static>
+    <link name="link">
+      <collision name="collision">
+        <pose>0 0 1.25 0 0 0</pose>
+        <geometry><box><size>2.0 1.0 2.5</size></box></geometry>
+      </collision>
+
+      <!-- 하단 적재 블록 (바닥 단 파렛트+적재물, 상면 z = 0.50: 월드 생성기의 DECK_H 와 같아야 한다) -->
+      <visual name="deck">
+        <pose>0 0 0.25 0 0 0</pose>
+        <geometry><box><size>2.0 1.0 0.50</size></box></geometry>
+        <material>
+          <ambient>0.35 0.38 0.42 1</ambient>
+          <diffuse>0.35 0.38 0.42 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+      </visual>
+
+      <!-- 기둥 4개 (주황 도장 강재) -->
+      <visual name="post_0">
+        <pose>-0.96 -0.46 1.25 0 0 0</pose>
+        <geometry><box><size>0.08 0.08 2.5</size></box></geometry>
+        <material><ambient>0.85 0.40 0.05 1</ambient><diffuse>0.85 0.40 0.05 1</diffuse></material>
+      </visual>
+      <visual name="post_1">
+        <pose>0.96 -0.46 1.25 0 0 0</pose>
+        <geometry><box><size>0.08 0.08 2.5</size></box></geometry>
+        <material><ambient>0.85 0.40 0.05 1</ambient><diffuse>0.85 0.40 0.05 1</diffuse></material>
+      </visual>
+      <visual name="post_2">
+        <pose>0.96 0.46 1.25 0 0 0</pose>
+        <geometry><box><size>0.08 0.08 2.5</size></box></geometry>
+        <material><ambient>0.85 0.40 0.05 1</ambient><diffuse>0.85 0.40 0.05 1</diffuse></material>
+      </visual>
+      <visual name="post_3">
+        <pose>-0.96 0.46 1.25 0 0 0</pose>
+        <geometry><box><size>0.08 0.08 2.5</size></box></geometry>
+        <material><ambient>0.85 0.40 0.05 1</ambient><diffuse>0.85 0.40 0.05 1</diffuse></material>
+      </visual>
+
+      <!-- 선반 2단 (z = 1.25, 2.05) -->
+      <visual name="shelf_1">
+        <pose>0 0 1.25 0 0 0</pose>
+        <geometry><box><size>2.0 1.0 0.05</size></box></geometry>
+        <material><ambient>0.25 0.30 0.55 1</ambient><diffuse>0.25 0.30 0.55 1</diffuse></material>
+      </visual>
+      <visual name="shelf_2">
+        <pose>0 0 2.05 0 0 0</pose>
+        <geometry><box><size>2.0 1.0 0.05</size></box></geometry>
+        <material><ambient>0.25 0.30 0.55 1</ambient><diffuse>0.25 0.30 0.55 1</diffuse></material>
+      </visual>
+    </link>
+  </model>
+</sdf>

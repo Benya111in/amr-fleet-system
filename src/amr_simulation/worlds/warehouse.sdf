@@ -1,0 +1,1794 @@
+<?xml version="1.0" ?>
+<!--
+  물류센터 월드 60 x 40 m — gen_warehouse_world.py 가 생성 (seed 42). 직접 수정하지 말고 생성기를 고칠 것.
+  레이아웃/좌표계/동적 장애물 설명은 생성기 docstring 참고. 기동은 launch/warehouse.launch.py.
+
+  월드 플러그인
+    Physics          : 1 ms 고정 스텝, RTF 1.0.
+                       (gz-sim Fortress 는 <physics type> 과 무관하게 ign-physics DART 를 쓴다)
+    UserCommands     : ros_gz_sim create(스폰)/set_pose 서비스
+    SceneBroadcaster : pose/info, scene/info (GUI, ign model 도구)
+    Sensors(ogre2)   : gpu_lidar / 카메라 / depth 렌더링
+                       헤드리스는 ign gazebo -s 에 headless-rendering 옵션 (EGL)
+                       (XML 주석 안에는 이중 하이픈을 쓸 수 없어 옵션 이름을 풀어 적음)
+    Imu              : IMU 센서는 월드 레벨 Imu 시스템이 있어야 데이터를 낸다
+                       (Fortress: imu/magnetometer/air_pressure 는 월드 시스템)
+    Contact          : 접촉 센서(범퍼/E-Stop 시험용) — 선택
+-->
+<sdf version="1.8">
+  <world name="warehouse">
+    <physics name="1ms" type="ode">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>1000</real_time_update_rate>
+    </physics>
+    <plugin filename="ignition-gazebo-physics-system" name="ignition::gazebo::systems::Physics"/>
+    <plugin filename="ignition-gazebo-user-commands-system" name="ignition::gazebo::systems::UserCommands"/>
+    <plugin filename="ignition-gazebo-scene-broadcaster-system" name="ignition::gazebo::systems::SceneBroadcaster"/>
+    <plugin filename="ignition-gazebo-sensors-system" name="ignition::gazebo::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="ignition-gazebo-imu-system" name="ignition::gazebo::systems::Imu"/>
+    <plugin filename="ignition-gazebo-contact-system" name="ignition::gazebo::systems::Contact"/>
+
+    <scene>
+      <ambient>0.35 0.35 0.35 1</ambient>
+      <background>0.6 0.65 0.7 1</background>
+      <shadows>true</shadows>
+    </scene>
+
+    <!-- ===== 조명 ===== -->
+    <!-- 방향광(sun): 천창/개구부 채광 대용, 그림자 켬.
+         highbay_*: 통로 축 위 z=7 m LED 하이베이(실제 7~10 m 천장, 약 300 lx) 12개, 그림자 끔.
+         통로마다 밝기가 달라 카메라/마커 검출이 균일 조명보다 현실적인 조건을 겪는다.
+         visualize=false: Fortress 는 광원 표시 기호(녹색 십자/사각형)를 카메라 센서 영상에도 그린다
+         (실측) → 로봇 카메라에 인공물이 찍히지 않게 끈다. -->
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <visualize>false</visualize>
+      <pose>0 0 12 0 0 0</pose>
+      <diffuse>0.7 0.7 0.7 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.3 0.2 -0.9</direction>
+    </light>
+    <light type="point" name="highbay_0">
+      <cast_shadows>false</cast_shadows>
+      <visualize>false</visualize>
+      <pose>-18.0000 15.0000 7.0000 0.0000 0.0000 0.0000</pose>
+      <diffuse>0.8 0.8 0.75 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation>
+        <range>25</range><constant>0.3</constant><linear>0.02</linear><quadratic>0.004</quadratic>
+      </attenuation>
+    </light>
+    <light type="point" name="highbay_1">
+      <cast_shadows>false</cast_shadows>
+      <visualize>false</visualize>
+      <pose>18.0000 15.0000 7.0000 0.0000 0.0000 0.0000</pose>
+      <diffuse>0.8 0.8 0.75 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation>
+        <range>25</range><constant>0.3</constant><linear>0.02</linear><quadratic>0.004</quadratic>
+      </attenuation>
+    </light>
+    <light type="point" name="highbay_2">
+      <cast_shadows>false</cast_shadows>
+      <visualize>false</visualize>
+      <pose>-18.0000 6.0000 7.0000 0.0000 0.0000 0.0000</pose>
+      <diffuse>0.8 0.8 0.75 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation>
+        <range>25</range><constant>0.3</constant><linear>0.02</linear><quadratic>0.004</quadratic>
+      </attenuation>
+    </light>
+    <light type="point" name="highbay_3">
+      <cast_shadows>false</cast_shadows>
+      <visualize>false</visualize>
+      <pose>-6.0000 6.0000 7.0000 0.0000 0.0000 0.0000</pose>
+      <diffuse>0.8 0.8 0.75 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation>
+        <range>25</range><constant>0.3</constant><linear>0.02</linear><quadratic>0.004</quadratic>
+      </attenuation>
+    </light>
+    <light type="point" name="highbay_4">
+      <cast_shadows>false</cast_shadows>
+      <visualize>false</visualize>
+      <pose>6.0000 6.0000 7.0000 0.0000 0.0000 0.0000</pose>
+      <diffuse>0.8 0.8 0.75 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation>
+        <range>25</range><constant>0.3</constant><linear>0.02</linear><quadratic>0.004</quadratic>
+      </attenuation>
+    </light>
+    <light type="point" name="highbay_5">
+      <cast_shadows>false</cast_shadows>
+      <visualize>false</visualize>
+      <pose>18.0000 6.0000 7.0000 0.0000 0.0000 0.0000</pose>
+      <diffuse>0.8 0.8 0.75 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation>
+        <range>25</range><constant>0.3</constant><linear>0.02</linear><quadratic>0.004</quadratic>
+      </attenuation>
+    </light>
+    <light type="point" name="highbay_6">
+      <cast_shadows>false</cast_shadows>
+      <visualize>false</visualize>
+      <pose>-18.0000 -6.0000 7.0000 0.0000 0.0000 0.0000</pose>
+      <diffuse>0.8 0.8 0.75 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation>
+        <range>25</range><constant>0.3</constant><linear>0.02</linear><quadratic>0.004</quadratic>
+      </attenuation>
+    </light>
+    <light type="point" name="highbay_7">
+      <cast_shadows>false</cast_shadows>
+      <visualize>false</visualize>
+      <pose>-6.0000 -6.0000 7.0000 0.0000 0.0000 0.0000</pose>
+      <diffuse>0.8 0.8 0.75 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation>
+        <range>25</range><constant>0.3</constant><linear>0.02</linear><quadratic>0.004</quadratic>
+      </attenuation>
+    </light>
+    <light type="point" name="highbay_8">
+      <cast_shadows>false</cast_shadows>
+      <visualize>false</visualize>
+      <pose>6.0000 -6.0000 7.0000 0.0000 0.0000 0.0000</pose>
+      <diffuse>0.8 0.8 0.75 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation>
+        <range>25</range><constant>0.3</constant><linear>0.02</linear><quadratic>0.004</quadratic>
+      </attenuation>
+    </light>
+    <light type="point" name="highbay_9">
+      <cast_shadows>false</cast_shadows>
+      <visualize>false</visualize>
+      <pose>18.0000 -6.0000 7.0000 0.0000 0.0000 0.0000</pose>
+      <diffuse>0.8 0.8 0.75 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation>
+        <range>25</range><constant>0.3</constant><linear>0.02</linear><quadratic>0.004</quadratic>
+      </attenuation>
+    </light>
+    <light type="point" name="highbay_10">
+      <cast_shadows>false</cast_shadows>
+      <visualize>false</visualize>
+      <pose>-18.0000 -15.0000 7.0000 0.0000 0.0000 0.0000</pose>
+      <diffuse>0.8 0.8 0.75 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation>
+        <range>25</range><constant>0.3</constant><linear>0.02</linear><quadratic>0.004</quadratic>
+      </attenuation>
+    </light>
+    <light type="point" name="highbay_11">
+      <cast_shadows>false</cast_shadows>
+      <visualize>false</visualize>
+      <pose>18.0000 -15.0000 7.0000 0.0000 0.0000 0.0000</pose>
+      <diffuse>0.8 0.8 0.75 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation>
+        <range>25</range><constant>0.3</constant><linear>0.02</linear><quadratic>0.004</quadratic>
+      </attenuation>
+    </light>
+
+    <!-- ===== 바닥 / 외벽 ===== -->
+    <!-- 바닥 60 x 40 m. μ=0.8:
+         건조 콘크리트-고무(우레탄) 바퀴 0.6~0.85 범위의 중간값 (Engineering ToolBox) -->
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry><plane><normal>0 0 1</normal><size>60 40</size></plane></geometry>
+          <surface><friction><ode>
+            <mu>0.8</mu><mu2>0.8</mu2>
+          </ode></friction></surface>
+        </collision>
+        <visual name="visual">
+          <geometry><plane><normal>0 0 1</normal><size>60 40</size></plane></geometry>
+          <material>
+            <ambient>0.55 0.55 0.53 1</ambient><diffuse>0.55 0.55 0.53 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 외벽 (두께 0.2 m, 높이 4.0 m),
+         안쪽 면 x=±29.8, y=±19.8 -->
+    <model name="warehouse_walls">
+      <static>true</static>
+      <link name="link">
+        <collision name="wall_north_collision">
+          <pose>0.0000 19.9000 2.0000 0.0000 0.0000 0.0000</pose>
+          <geometry><box><size>60.0 0.2 4.0</size></box></geometry>
+        </collision>
+        <visual name="wall_north">
+          <pose>0.0000 19.9000 2.0000 0.0000 0.0000 0.0000</pose>
+          <geometry><box><size>60.0 0.2 4.0</size></box></geometry>
+          <material>
+            <ambient>0.75 0.75 0.72 1</ambient><diffuse>0.75 0.75 0.72 1</diffuse>
+          </material>
+        </visual>
+        <collision name="wall_south_collision">
+          <pose>0.0000 -19.9000 2.0000 0.0000 0.0000 0.0000</pose>
+          <geometry><box><size>60.0 0.2 4.0</size></box></geometry>
+        </collision>
+        <visual name="wall_south">
+          <pose>0.0000 -19.9000 2.0000 0.0000 0.0000 0.0000</pose>
+          <geometry><box><size>60.0 0.2 4.0</size></box></geometry>
+          <material>
+            <ambient>0.75 0.75 0.72 1</ambient><diffuse>0.75 0.75 0.72 1</diffuse>
+          </material>
+        </visual>
+        <collision name="wall_east_collision">
+          <pose>29.9000 0.0000 2.0000 0.0000 0.0000 0.0000</pose>
+          <geometry><box><size>0.2 40.0 4.0</size></box></geometry>
+        </collision>
+        <visual name="wall_east">
+          <pose>29.9000 0.0000 2.0000 0.0000 0.0000 0.0000</pose>
+          <geometry><box><size>0.2 40.0 4.0</size></box></geometry>
+          <material>
+            <ambient>0.75 0.75 0.72 1</ambient><diffuse>0.75 0.75 0.72 1</diffuse>
+          </material>
+        </visual>
+        <collision name="wall_west_collision">
+          <pose>-29.9000 0.0000 2.0000 0.0000 0.0000 0.0000</pose>
+          <geometry><box><size>0.2 40.0 4.0</size></box></geometry>
+        </collision>
+        <visual name="wall_west">
+          <pose>-29.9000 0.0000 2.0000 0.0000 0.0000 0.0000</pose>
+          <geometry><box><size>0.2 40.0 4.0</size></box></geometry>
+          <material>
+            <ambient>0.75 0.75 0.72 1</ambient><diffuse>0.75 0.75 0.72 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ===== 기둥 8개 ===== -->
+    <include>
+      <uri>model://pillar</uri>
+      <name>pillar_1</name>
+      <pose>-10.0000 12.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://pillar</uri>
+      <name>pillar_2</name>
+      <pose>10.0000 12.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://pillar</uri>
+      <name>pillar_3</name>
+      <pose>-10.0000 -12.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://pillar</uri>
+      <name>pillar_4</name>
+      <pose>10.0000 -12.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://pillar</uri>
+      <name>pillar_5</name>
+      <pose>-25.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://pillar</uri>
+      <name>pillar_6</name>
+      <pose>25.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://pillar</uri>
+      <name>pillar_7</name>
+      <pose>-25.0000 -6.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://pillar</uri>
+      <name>pillar_8</name>
+      <pose>25.0000 -6.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+
+    <!-- ===== 랙: A/B/C 열 7베이씩 (21) + 좁은 통로 4베이 (rack_narrow_*) =====
+         좁은 통로: 중심 (0.0, -10.0), y 방향 4 m,
+         순폭 0.6 m = 로봇 폭 0.40 + 0.20 (명세 4.4).
+         북쪽 입구 y=-8.0, 남쪽 출구 y=-12.0.
+         worker_crossing 이 입구 앞 y=-7 을 1.0 m/s 로 횡단한다. -->
+    <include>
+      <uri>model://rack</uri>
+      <name>rack_A1</name>
+      <pose>-18.0000 9.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://rack</uri>
+      <name>rack_A2</name>
+      <pose>-12.0000 9.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://rack</uri>
+      <name>rack_A3</name>
+      <pose>-6.0000 9.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://rack</uri>
+      <name>rack_A4</name>
+      <pose>0.0000 9.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://rack</uri>
+      <name>rack_A5</name>
+      <pose>6.0000 9.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://rack</uri>
+      <name>rack_A6</name>
+      <pose>12.0000 9.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://rack</uri>
+      <name>rack_A7</name>
+      <pose>18.0000 9.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://rack</uri>
+      <name>rack_B1</name>
+      <pose>-18.0000 3.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://rack</uri>
+      <name>rack_B2</name>
+      <pose>-12.0000 3.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://rack</uri>
+      <name>rack_B3</name>
+      <pose>-6.0000 3.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://rack</uri>
+      <name>rack_B4</name>
+      <pose>0.0000 3.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://rack</uri>
+      <name>rack_B5</name>
+      <pose>6.0000 3.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://rack</uri>
+      <name>rack_B6</name>
+      <pose>12.0000 3.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://rack</uri>
+      <name>rack_B7</name>
+      <pose>18.0000 3.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://rack</uri>
+      <name>rack_C1</name>
+      <pose>-18.0000 -3.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://rack</uri>
+      <name>rack_C2</name>
+      <pose>-12.0000 -3.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://rack</uri>
+      <name>rack_C3</name>
+      <pose>-6.0000 -3.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://rack</uri>
+      <name>rack_C4</name>
+      <pose>0.0000 -3.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://rack</uri>
+      <name>rack_C5</name>
+      <pose>6.0000 -3.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://rack</uri>
+      <name>rack_C6</name>
+      <pose>12.0000 -3.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://rack</uri>
+      <name>rack_C7</name>
+      <pose>18.0000 -3.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://rack</uri>
+      <name>rack_narrow_W1</name>
+      <pose>-0.8000 -11.0000 0.0000 0.0000 0.0000 1.5708</pose>
+    </include>
+    <include>
+      <uri>model://rack</uri>
+      <name>rack_narrow_W2</name>
+      <pose>-0.8000 -9.0000 0.0000 0.0000 0.0000 1.5708</pose>
+    </include>
+    <include>
+      <uri>model://rack</uri>
+      <name>rack_narrow_E1</name>
+      <pose>0.8000 -11.0000 0.0000 0.0000 0.0000 1.5708</pose>
+    </include>
+    <include>
+      <uri>model://rack</uri>
+      <name>rack_narrow_E2</name>
+      <pose>0.8000 -9.0000 0.0000 0.0000 0.0000 1.5708</pose>
+    </include>
+
+    <!-- ===== 랙 위 화물 (정적) ===== -->
+    <include>
+      <uri>model://box_large</uri>
+      <name>rack_A1_box_large_0</name>
+      <pose>-18.4861 9.0000 0.5000 0.0000 0.0000 -0.1425</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_medium</uri>
+      <name>rack_A1_box_medium_1</name>
+      <pose>-17.5225 9.0000 0.5000 0.0000 0.0000 -0.0830</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_A1_box_small_2</name>
+      <pose>-18.4764 9.0000 1.2750 0.0000 0.0000 0.0530</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_A1_box_small_3</name>
+      <pose>-17.4608 9.0000 1.2750 0.0000 0.0000 -0.1239</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_large</uri>
+      <name>rack_A2_box_large_0</name>
+      <pose>-12.5078 9.0000 0.5000 0.0000 0.0000 -0.1411</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_medium</uri>
+      <name>rack_A2_box_medium_1</name>
+      <pose>-11.5281 9.0000 0.5000 0.0000 0.0000 0.0016</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_A2_box_small_2</name>
+      <pose>-12.5473 9.0000 1.2750 0.0000 0.0000 -0.0903</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_A2_box_small_3</name>
+      <pose>-11.4850 9.0000 1.2750 0.0000 0.0000 0.0135</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_large</uri>
+      <name>rack_A3_box_large_0</name>
+      <pose>-6.5280 9.0000 0.5000 0.0000 0.0000 0.0268</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_medium</uri>
+      <name>rack_A3_box_medium_1</name>
+      <pose>-5.4691 9.0000 0.5000 0.0000 0.0000 -0.1481</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_A3_box_small_2</name>
+      <pose>-6.4694 9.0000 1.2750 0.0000 0.0000 0.0594</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_A3_box_small_3</name>
+      <pose>-5.5160 9.0000 1.2750 0.0000 0.0000 -0.1034</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_large</uri>
+      <name>rack_A4_box_large_0</name>
+      <pose>-0.4543 9.0000 0.5000 0.0000 0.0000 -0.0490</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_medium</uri>
+      <name>rack_A4_box_medium_1</name>
+      <pose>0.4593 9.0000 0.5000 0.0000 0.0000 -0.1210</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_A4_box_small_2</name>
+      <pose>-0.4653 9.0000 1.2750 0.0000 0.0000 0.0311</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_A4_box_small_3</name>
+      <pose>0.5307 9.0000 1.2750 0.0000 0.0000 0.0689</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_large</uri>
+      <name>rack_A5_box_large_0</name>
+      <pose>5.5036 9.0000 0.5000 0.0000 0.0000 0.1419</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_medium</uri>
+      <name>rack_A5_box_medium_1</name>
+      <pose>6.4879 9.0000 0.5000 0.0000 0.0000 0.0156</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_A5_box_small_2</name>
+      <pose>5.5329 9.0000 1.2750 0.0000 0.0000 0.0356</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_A5_box_small_3</name>
+      <pose>6.5362 9.0000 1.2750 0.0000 0.0000 0.0232</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_large</uri>
+      <name>rack_A6_box_large_0</name>
+      <pose>11.5205 9.0000 0.5000 0.0000 0.0000 -0.1363</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_medium</uri>
+      <name>rack_A6_box_medium_1</name>
+      <pose>12.4728 9.0000 0.5000 0.0000 0.0000 -0.0632</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_A6_box_small_2</name>
+      <pose>11.4580 9.0000 1.2750 0.0000 0.0000 -0.0802</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_A6_box_small_3</name>
+      <pose>12.4601 9.0000 1.2750 0.0000 0.0000 -0.0666</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_large</uri>
+      <name>rack_A7_box_large_0</name>
+      <pose>17.5136 9.0000 0.5000 0.0000 0.0000 -0.0406</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_medium</uri>
+      <name>rack_A7_box_medium_1</name>
+      <pose>18.4870 9.0000 0.5000 0.0000 0.0000 -0.0871</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_A7_box_small_2</name>
+      <pose>17.4767 9.0000 1.2750 0.0000 0.0000 0.1310</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_A7_box_small_3</name>
+      <pose>18.5148 9.0000 1.2750 0.0000 0.0000 0.0327</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_large</uri>
+      <name>rack_B1_box_large_0</name>
+      <pose>-18.5329 3.0000 0.5000 0.0000 0.0000 0.0687</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_medium</uri>
+      <name>rack_B1_box_medium_1</name>
+      <pose>-17.5337 3.0000 0.5000 0.0000 0.0000 -0.0362</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_B1_box_small_2</name>
+      <pose>-18.4510 3.0000 1.2750 0.0000 0.0000 0.0420</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_B1_box_small_3</name>
+      <pose>-17.4943 3.0000 1.2750 0.0000 0.0000 0.0554</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_large</uri>
+      <name>rack_B2_box_large_0</name>
+      <pose>-12.4657 3.0000 0.5000 0.0000 0.0000 0.0828</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_medium</uri>
+      <name>rack_B2_box_medium_1</name>
+      <pose>-11.5271 3.0000 0.5000 0.0000 0.0000 -0.1404</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_B2_box_small_2</name>
+      <pose>-12.5185 3.0000 1.2750 0.0000 0.0000 -0.0697</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_B2_box_small_3</name>
+      <pose>-11.5289 3.0000 1.2750 0.0000 0.0000 0.1329</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_large</uri>
+      <name>rack_B3_box_large_0</name>
+      <pose>-6.4624 3.0000 0.5000 0.0000 0.0000 -0.0556</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_medium</uri>
+      <name>rack_B3_box_medium_1</name>
+      <pose>-5.4845 3.0000 0.5000 0.0000 0.0000 -0.0313</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_B3_box_small_2</name>
+      <pose>-6.4585 3.0000 1.2750 0.0000 0.0000 -0.0123</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_B3_box_small_3</name>
+      <pose>-5.5235 3.0000 1.2750 0.0000 0.0000 -0.0760</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_large</uri>
+      <name>rack_B4_box_large_0</name>
+      <pose>-0.4939 3.0000 0.5000 0.0000 0.0000 -0.0712</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_medium</uri>
+      <name>rack_B4_box_medium_1</name>
+      <pose>0.5085 3.0000 0.5000 0.0000 0.0000 0.1193</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_B4_box_small_2</name>
+      <pose>-0.5101 3.0000 1.2750 0.0000 0.0000 -0.0842</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_B4_box_small_3</name>
+      <pose>0.5498 3.0000 1.2750 0.0000 0.0000 0.0029</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_large</uri>
+      <name>rack_B5_box_large_0</name>
+      <pose>5.4591 3.0000 0.5000 0.0000 0.0000 -0.1359</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_medium</uri>
+      <name>rack_B5_box_medium_1</name>
+      <pose>6.4610 3.0000 0.5000 0.0000 0.0000 0.0382</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_B5_box_small_2</name>
+      <pose>5.5292 3.0000 1.2750 0.0000 0.0000 -0.0234</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_B5_box_small_3</name>
+      <pose>6.4564 3.0000 1.2750 0.0000 0.0000 -0.0355</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_large</uri>
+      <name>rack_B6_box_large_0</name>
+      <pose>11.5496 3.0000 0.5000 0.0000 0.0000 0.0087</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_medium</uri>
+      <name>rack_B6_box_medium_1</name>
+      <pose>12.5471 3.0000 0.5000 0.0000 0.0000 0.1082</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_B6_box_small_2</name>
+      <pose>11.4511 3.0000 1.2750 0.0000 0.0000 0.0662</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_B6_box_small_3</name>
+      <pose>12.5182 3.0000 1.2750 0.0000 0.0000 0.0111</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_large</uri>
+      <name>rack_B7_box_large_0</name>
+      <pose>17.4767 3.0000 0.5000 0.0000 0.0000 0.0423</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_medium</uri>
+      <name>rack_B7_box_medium_1</name>
+      <pose>18.4612 3.0000 0.5000 0.0000 0.0000 -0.0196</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_B7_box_small_2</name>
+      <pose>17.4954 3.0000 1.2750 0.0000 0.0000 0.1361</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_B7_box_small_3</name>
+      <pose>18.5376 3.0000 1.2750 0.0000 0.0000 -0.0710</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_large</uri>
+      <name>rack_C1_box_large_0</name>
+      <pose>-18.4999 -3.0000 0.5000 0.0000 0.0000 -0.0964</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_medium</uri>
+      <name>rack_C1_box_medium_1</name>
+      <pose>-17.4587 -3.0000 0.5000 0.0000 0.0000 0.1112</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_C1_box_small_2</name>
+      <pose>-18.5202 -3.0000 1.2750 0.0000 0.0000 0.0417</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_C1_box_small_3</name>
+      <pose>-17.4891 -3.0000 1.2750 0.0000 0.0000 -0.1041</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_large</uri>
+      <name>rack_C2_box_large_0</name>
+      <pose>-12.4737 -3.0000 0.5000 0.0000 0.0000 0.0118</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_medium</uri>
+      <name>rack_C2_box_medium_1</name>
+      <pose>-11.4721 -3.0000 0.5000 0.0000 0.0000 0.0091</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_C2_box_small_2</name>
+      <pose>-12.5499 -3.0000 1.2750 0.0000 0.0000 -0.0528</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_C2_box_small_3</name>
+      <pose>-11.5481 -3.0000 1.2750 0.0000 0.0000 0.1287</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_large</uri>
+      <name>rack_C3_box_large_0</name>
+      <pose>-6.4621 -3.0000 0.5000 0.0000 0.0000 0.0995</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_medium</uri>
+      <name>rack_C3_box_medium_1</name>
+      <pose>-5.5192 -3.0000 0.5000 0.0000 0.0000 -0.1326</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_C3_box_small_2</name>
+      <pose>-6.4622 -3.0000 1.2750 0.0000 0.0000 0.1341</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_C3_box_small_3</name>
+      <pose>-5.5414 -3.0000 1.2750 0.0000 0.0000 -0.0042</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_large</uri>
+      <name>rack_C4_box_large_0</name>
+      <pose>-0.5431 -3.0000 0.5000 0.0000 0.0000 0.0782</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_medium</uri>
+      <name>rack_C4_box_medium_1</name>
+      <pose>0.5266 -3.0000 0.5000 0.0000 0.0000 -0.1115</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_C4_box_small_2</name>
+      <pose>-0.5025 -3.0000 1.2750 0.0000 0.0000 0.0149</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_C4_box_small_3</name>
+      <pose>0.4765 -3.0000 1.2750 0.0000 0.0000 0.1117</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_large</uri>
+      <name>rack_C5_box_large_0</name>
+      <pose>5.4923 -3.0000 0.5000 0.0000 0.0000 -0.0865</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_medium</uri>
+      <name>rack_C5_box_medium_1</name>
+      <pose>6.5039 -3.0000 0.5000 0.0000 0.0000 0.0690</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_C5_box_small_2</name>
+      <pose>5.4701 -3.0000 1.2750 0.0000 0.0000 -0.0565</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_C5_box_small_3</name>
+      <pose>6.5495 -3.0000 1.2750 0.0000 0.0000 0.0450</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_large</uri>
+      <name>rack_C6_box_large_0</name>
+      <pose>11.4938 -3.0000 0.5000 0.0000 0.0000 0.0053</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_medium</uri>
+      <name>rack_C6_box_medium_1</name>
+      <pose>12.4621 -3.0000 0.5000 0.0000 0.0000 -0.0826</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_C6_box_small_2</name>
+      <pose>11.4838 -3.0000 1.2750 0.0000 0.0000 0.0265</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_C6_box_small_3</name>
+      <pose>12.4730 -3.0000 1.2750 0.0000 0.0000 -0.0839</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_large</uri>
+      <name>rack_C7_box_large_0</name>
+      <pose>17.4571 -3.0000 0.5000 0.0000 0.0000 0.0393</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_medium</uri>
+      <name>rack_C7_box_medium_1</name>
+      <pose>18.4729 -3.0000 0.5000 0.0000 0.0000 0.1216</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_C7_box_small_2</name>
+      <pose>17.5360 -3.0000 1.2750 0.0000 0.0000 -0.1287</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_C7_box_small_3</name>
+      <pose>18.4738 -3.0000 1.2750 0.0000 0.0000 0.0507</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_large</uri>
+      <name>rack_narrow_W1_box_large_0</name>
+      <pose>-0.8000 -11.5286 0.5000 0.0000 0.0000 1.4605</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_medium</uri>
+      <name>rack_narrow_W1_box_medium_1</name>
+      <pose>-0.8000 -10.4564 0.5000 0.0000 0.0000 1.5921</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_narrow_W1_box_small_2</name>
+      <pose>-0.8000 -11.5027 1.2750 0.0000 0.0000 1.6562</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_narrow_W1_box_small_3</name>
+      <pose>-0.8000 -10.4693 1.2750 0.0000 0.0000 1.4779</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_large</uri>
+      <name>rack_narrow_W2_box_large_0</name>
+      <pose>-0.8000 -9.5403 0.5000 0.0000 0.0000 1.5501</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_medium</uri>
+      <name>rack_narrow_W2_box_medium_1</name>
+      <pose>-0.8000 -8.5076 0.5000 0.0000 0.0000 1.5609</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_narrow_W2_box_small_2</name>
+      <pose>-0.8000 -9.4771 1.2750 0.0000 0.0000 1.6228</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_narrow_W2_box_small_3</name>
+      <pose>-0.8000 -8.4516 1.2750 0.0000 0.0000 1.4503</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_large</uri>
+      <name>rack_narrow_E1_box_large_0</name>
+      <pose>0.8000 -11.5097 0.5000 0.0000 0.0000 1.5226</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_medium</uri>
+      <name>rack_narrow_E1_box_medium_1</name>
+      <pose>0.8000 -10.4638 0.5000 0.0000 0.0000 1.4954</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_narrow_E1_box_small_2</name>
+      <pose>0.8000 -11.5310 1.2750 0.0000 0.0000 1.5554</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_narrow_E1_box_small_3</name>
+      <pose>0.8000 -10.5078 1.2750 0.0000 0.0000 1.5044</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_large</uri>
+      <name>rack_narrow_E2_box_large_0</name>
+      <pose>0.8000 -9.5250 0.5000 0.0000 0.0000 1.6978</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_medium</uri>
+      <name>rack_narrow_E2_box_medium_1</name>
+      <pose>0.8000 -8.5057 0.5000 0.0000 0.0000 1.6792</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_narrow_E2_box_small_2</name>
+      <pose>0.8000 -9.4950 1.2750 0.0000 0.0000 1.4360</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>model://box_small</uri>
+      <name>rack_narrow_E2_box_small_3</name>
+      <pose>0.8000 -8.4501 1.2750 0.0000 0.0000 1.6716</pose>
+      <static>true</static>
+    </include>
+
+    <!-- ===== 도크 / 충전 / 대기 구역 (마커: DICT_4X4_50, dock 0~3, charger 4~6) ===== -->
+    <include>
+      <uri>model://dock_pad_inbound</uri>
+      <name>dock_1_pad</name>
+      <pose>-27.5000 17.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <model name="dock_1_marker">
+      <static>true</static>
+      <pose>-29.7900 17.0000 0.0000 0.0000 0.0000 0.0000</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.43 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.43 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_0.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <include>
+      <uri>model://box_medium</uri>
+      <name>dock_1_box_medium</name>
+      <pose>-28.7000 18.0000 0.0000 0.0000 0.0000 0.2814</pose>
+    </include>
+    <include>
+      <uri>model://box_large</uri>
+      <name>dock_1_box_large</name>
+      <pose>-28.7000 16.0000 0.0000 0.0000 0.0000 0.2558</pose>
+    </include>
+    <include>
+      <uri>model://dock_pad_inbound</uri>
+      <name>dock_2_pad</name>
+      <pose>-27.5000 13.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <model name="dock_2_marker">
+      <static>true</static>
+      <pose>-29.7900 13.0000 0.0000 0.0000 0.0000 0.0000</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.43 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.43 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_1.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <include>
+      <uri>model://box_medium</uri>
+      <name>dock_2_box_medium</name>
+      <pose>-28.7000 14.0000 0.0000 0.0000 0.0000 0.2092</pose>
+    </include>
+    <include>
+      <uri>model://box_large</uri>
+      <name>dock_2_box_large</name>
+      <pose>-28.7000 12.0000 0.0000 0.0000 0.0000 -0.2002</pose>
+    </include>
+    <include>
+      <uri>model://dock_pad_outbound</uri>
+      <name>dock_a_pad</name>
+      <pose>27.5000 17.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <model name="dock_a_marker">
+      <static>true</static>
+      <pose>29.7900 17.0000 0.0000 0.0000 0.0000 3.1416</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.43 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.43 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_2.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <include>
+      <uri>model://box_medium</uri>
+      <name>dock_a_box_medium</name>
+      <pose>28.7000 18.0000 0.0000 0.0000 0.0000 -0.0086</pose>
+    </include>
+    <include>
+      <uri>model://box_large</uri>
+      <name>dock_a_box_large</name>
+      <pose>28.7000 16.0000 0.0000 0.0000 0.0000 -0.1718</pose>
+    </include>
+    <include>
+      <uri>model://dock_pad_outbound</uri>
+      <name>dock_b_pad</name>
+      <pose>27.5000 13.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <model name="dock_b_marker">
+      <static>true</static>
+      <pose>29.7900 13.0000 0.0000 0.0000 0.0000 3.1416</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.43 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.43 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_3.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <include>
+      <uri>model://box_medium</uri>
+      <name>dock_b_box_medium</name>
+      <pose>28.7000 14.0000 0.0000 0.0000 0.0000 -0.0594</pose>
+    </include>
+    <include>
+      <uri>model://box_large</uri>
+      <name>dock_b_box_large</name>
+      <pose>28.7000 12.0000 0.0000 0.0000 0.0000 -0.2648</pose>
+    </include>
+    <include>
+      <uri>model://charging_pad</uri>
+      <name>charging_zone_pad</name>
+      <pose>-22.0000 -16.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://charging_station</uri>
+      <name>charging_station_c1</name>
+      <pose>-26.0000 -18.4000 0.0000 0.0000 0.0000 1.5708</pose>
+    </include>
+    <model name="charging_station_c1_marker">
+      <static>true</static>
+      <pose>-26.0000 -18.1400 0.0000 0.0000 0.0000 1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.43 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.43 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_4.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <include>
+      <uri>model://charging_station</uri>
+      <name>charging_station_c2</name>
+      <pose>-22.0000 -18.4000 0.0000 0.0000 0.0000 1.5708</pose>
+    </include>
+    <model name="charging_station_c2_marker">
+      <static>true</static>
+      <pose>-22.0000 -18.1400 0.0000 0.0000 0.0000 1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.43 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.43 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_5.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <include>
+      <uri>model://charging_station</uri>
+      <name>charging_station_c3</name>
+      <pose>-18.0000 -18.4000 0.0000 0.0000 0.0000 1.5708</pose>
+    </include>
+    <model name="charging_station_c3_marker">
+      <static>true</static>
+      <pose>-18.0000 -18.1400 0.0000 0.0000 0.0000 1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.43 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.43 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_6.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <include>
+      <uri>model://waiting_zone</uri>
+      <name>waiting_zone_pad</name>
+      <pose>22.0000 -16.0000 0.0000 0.0000 0.0000 0.0000</pose>
+    </include>
+
+    <!-- ===== 동적 장애물 (스크립트 actor 5 + 물리 모델 지게차 1) ===== -->
+    <!-- worker_straight_slow: 0.5 m/s, 직선 왕복, A-B 통로, 루프 129.0 s, 웨이포인트 67개 -->
+    <actor name="worker_straight_slow">
+      <pose>0 0 0 0 0 0</pose>
+      <skin><filename>model://worker/meshes/worker.dae</filename><scale>1.0</scale></skin>
+      <animation name="walk"><filename>model://worker/meshes/worker.dae</filename></animation>
+      <script>
+        <loop>true</loop>
+        <delay_start>0.0</delay_start>
+        <auto_start>true</auto_start>
+        <trajectory id="0" type="walk" tension="0">
+          <waypoint><time>0.000</time><pose>-16.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>2.000</time><pose>-15.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>4.000</time><pose>-14.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>6.000</time><pose>-13.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>8.000</time><pose>-12.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>10.000</time><pose>-11.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>12.000</time><pose>-10.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>14.000</time><pose>-9.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>16.000</time><pose>-8.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>18.000</time><pose>-7.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>20.000</time><pose>-6.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>22.000</time><pose>-5.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>24.000</time><pose>-4.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>26.000</time><pose>-3.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>28.000</time><pose>-2.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>30.000</time><pose>-1.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>32.000</time><pose>0.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>34.000</time><pose>1.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>36.000</time><pose>2.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>38.000</time><pose>3.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>40.000</time><pose>4.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>42.000</time><pose>5.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>44.000</time><pose>6.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>46.000</time><pose>7.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>48.000</time><pose>8.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>50.000</time><pose>9.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>52.000</time><pose>10.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>54.000</time><pose>11.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>56.000</time><pose>12.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>58.000</time><pose>13.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>60.000</time><pose>14.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>62.000</time><pose>15.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>64.000</time><pose>16.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>64.500</time><pose>16.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>66.500</time><pose>15.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>68.500</time><pose>14.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>70.500</time><pose>13.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>72.500</time><pose>12.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>74.500</time><pose>11.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>76.500</time><pose>10.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>78.500</time><pose>9.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>80.500</time><pose>8.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>82.500</time><pose>7.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>84.500</time><pose>6.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>86.500</time><pose>5.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>88.500</time><pose>4.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>90.500</time><pose>3.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>92.500</time><pose>2.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>94.500</time><pose>1.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>96.500</time><pose>0.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>98.500</time><pose>-1.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>100.500</time><pose>-2.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>102.500</time><pose>-3.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>104.500</time><pose>-4.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>106.500</time><pose>-5.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>108.500</time><pose>-6.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>110.500</time><pose>-7.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>112.500</time><pose>-8.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>114.500</time><pose>-9.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>116.500</time><pose>-10.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>118.500</time><pose>-11.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>120.500</time><pose>-12.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>122.500</time><pose>-13.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>124.500</time><pose>-14.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>126.500</time><pose>-15.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>128.500</time><pose>-16.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>129.000</time><pose>-16.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+        </trajectory>
+      </script>
+    </actor>
+    <!-- worker_straight_fast: 1.2 m/s, 직선 왕복, 동측 통로, 루프 34.3 s, 웨이포인트 43개 -->
+    <actor name="worker_straight_fast">
+      <pose>0 0 0 0 0 0</pose>
+      <skin><filename>model://worker/meshes/worker.dae</filename><scale>1.0</scale></skin>
+      <animation name="walk"><filename>model://worker/meshes/worker.dae</filename></animation>
+      <script>
+        <loop>true</loop>
+        <delay_start>0.0</delay_start>
+        <auto_start>true</auto_start>
+        <trajectory id="0" type="walk" tension="0">
+          <waypoint><time>0.000</time><pose>22.0000 -10.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>0.833</time><pose>22.0000 -9.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>1.667</time><pose>22.0000 -8.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>2.500</time><pose>22.0000 -7.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>3.333</time><pose>22.0000 -6.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>4.167</time><pose>22.0000 -5.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>5.000</time><pose>22.0000 -4.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>5.833</time><pose>22.0000 -3.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>6.667</time><pose>22.0000 -2.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>7.500</time><pose>22.0000 -1.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>8.333</time><pose>22.0000 0.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>9.167</time><pose>22.0000 1.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>10.000</time><pose>22.0000 2.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>10.833</time><pose>22.0000 3.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>11.667</time><pose>22.0000 4.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>12.500</time><pose>22.0000 5.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>13.333</time><pose>22.0000 6.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>14.167</time><pose>22.0000 7.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>15.000</time><pose>22.0000 8.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>15.833</time><pose>22.0000 9.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>16.667</time><pose>22.0000 10.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>17.167</time><pose>22.0000 10.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>18.000</time><pose>22.0000 9.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>18.833</time><pose>22.0000 8.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>19.667</time><pose>22.0000 7.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>20.500</time><pose>22.0000 6.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>21.333</time><pose>22.0000 5.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>22.167</time><pose>22.0000 4.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>23.000</time><pose>22.0000 3.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>23.833</time><pose>22.0000 2.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>24.667</time><pose>22.0000 1.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>25.500</time><pose>22.0000 0.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>26.333</time><pose>22.0000 -1.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>27.167</time><pose>22.0000 -2.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>28.000</time><pose>22.0000 -3.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>28.833</time><pose>22.0000 -4.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>29.667</time><pose>22.0000 -5.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>30.500</time><pose>22.0000 -6.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>31.333</time><pose>22.0000 -7.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>32.167</time><pose>22.0000 -8.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>33.000</time><pose>22.0000 -9.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>33.833</time><pose>22.0000 -10.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>34.333</time><pose>22.0000 -10.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+        </trajectory>
+      </script>
+    </actor>
+    <!-- worker_curve: 0.8 m/s, 곡선(원) 순환, 서측 공터, 루프 27.5 s, 웨이포인트 37개 -->
+    <actor name="worker_curve">
+      <pose>0 0 0 0 0 0</pose>
+      <skin><filename>model://worker/meshes/worker.dae</filename><scale>1.0</scale></skin>
+      <animation name="walk"><filename>model://worker/meshes/worker.dae</filename></animation>
+      <script>
+        <loop>true</loop>
+        <delay_start>0.0</delay_start>
+        <auto_start>true</auto_start>
+        <trajectory id="0" type="walk" tension="0">
+          <waypoint><time>0.000</time><pose>-20.5000 0.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>0.764</time><pose>-20.5532 0.6078 0.0000 0.0000 0.0000 1.7453</pose></waypoint>
+          <waypoint><time>1.527</time><pose>-20.7111 1.1971 0.0000 0.0000 0.0000 1.9199</pose></waypoint>
+          <waypoint><time>2.291</time><pose>-20.9689 1.7500 0.0000 0.0000 0.0000 2.0944</pose></waypoint>
+          <waypoint><time>3.054</time><pose>-21.3188 2.2498 0.0000 0.0000 0.0000 2.2689</pose></waypoint>
+          <waypoint><time>3.818</time><pose>-21.7502 2.6812 0.0000 0.0000 0.0000 2.4435</pose></waypoint>
+          <waypoint><time>4.581</time><pose>-22.2500 3.0311 0.0000 0.0000 0.0000 2.6180</pose></waypoint>
+          <waypoint><time>5.345</time><pose>-22.8029 3.2889 0.0000 0.0000 0.0000 2.7925</pose></waypoint>
+          <waypoint><time>6.109</time><pose>-23.3922 3.4468 0.0000 0.0000 0.0000 2.9671</pose></waypoint>
+          <waypoint><time>6.872</time><pose>-24.0000 3.5000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>7.636</time><pose>-24.6078 3.4468 0.0000 0.0000 0.0000 3.3161</pose></waypoint>
+          <waypoint><time>8.399</time><pose>-25.1971 3.2889 0.0000 0.0000 0.0000 3.4907</pose></waypoint>
+          <waypoint><time>9.163</time><pose>-25.7500 3.0311 0.0000 0.0000 0.0000 3.6652</pose></waypoint>
+          <waypoint><time>9.927</time><pose>-26.2498 2.6812 0.0000 0.0000 0.0000 3.8397</pose></waypoint>
+          <waypoint><time>10.690</time><pose>-26.6812 2.2498 0.0000 0.0000 0.0000 4.0143</pose></waypoint>
+          <waypoint><time>11.454</time><pose>-27.0311 1.7500 0.0000 0.0000 0.0000 4.1888</pose></waypoint>
+          <waypoint><time>12.217</time><pose>-27.2889 1.1971 0.0000 0.0000 0.0000 4.3633</pose></waypoint>
+          <waypoint><time>12.981</time><pose>-27.4468 0.6078 0.0000 0.0000 0.0000 4.5379</pose></waypoint>
+          <waypoint><time>13.744</time><pose>-27.5000 0.0000 0.0000 0.0000 0.0000 4.7124</pose></waypoint>
+          <waypoint><time>14.508</time><pose>-27.4468 -0.6078 0.0000 0.0000 0.0000 4.8869</pose></waypoint>
+          <waypoint><time>15.272</time><pose>-27.2889 -1.1971 0.0000 0.0000 0.0000 5.0615</pose></waypoint>
+          <waypoint><time>16.035</time><pose>-27.0311 -1.7500 0.0000 0.0000 0.0000 5.2360</pose></waypoint>
+          <waypoint><time>16.799</time><pose>-26.6812 -2.2498 0.0000 0.0000 0.0000 5.4105</pose></waypoint>
+          <waypoint><time>17.562</time><pose>-26.2498 -2.6812 0.0000 0.0000 0.0000 5.5851</pose></waypoint>
+          <waypoint><time>18.326</time><pose>-25.7500 -3.0311 0.0000 0.0000 0.0000 5.7596</pose></waypoint>
+          <waypoint><time>19.090</time><pose>-25.1971 -3.2889 0.0000 0.0000 0.0000 5.9341</pose></waypoint>
+          <waypoint><time>19.853</time><pose>-24.6078 -3.4468 0.0000 0.0000 0.0000 6.1087</pose></waypoint>
+          <waypoint><time>20.617</time><pose>-24.0000 -3.5000 0.0000 0.0000 0.0000 6.2832</pose></waypoint>
+          <waypoint><time>21.380</time><pose>-23.3922 -3.4468 0.0000 0.0000 0.0000 6.4577</pose></waypoint>
+          <waypoint><time>22.144</time><pose>-22.8029 -3.2889 0.0000 0.0000 0.0000 6.6323</pose></waypoint>
+          <waypoint><time>22.907</time><pose>-22.2500 -3.0311 0.0000 0.0000 0.0000 6.8068</pose></waypoint>
+          <waypoint><time>23.671</time><pose>-21.7502 -2.6812 0.0000 0.0000 0.0000 6.9813</pose></waypoint>
+          <waypoint><time>24.435</time><pose>-21.3188 -2.2498 0.0000 0.0000 0.0000 7.1558</pose></waypoint>
+          <waypoint><time>25.198</time><pose>-20.9689 -1.7500 0.0000 0.0000 0.0000 7.3304</pose></waypoint>
+          <waypoint><time>25.962</time><pose>-20.7111 -1.1971 0.0000 0.0000 0.0000 7.5049</pose></waypoint>
+          <waypoint><time>26.725</time><pose>-20.5532 -0.6078 0.0000 0.0000 0.0000 7.6794</pose></waypoint>
+          <waypoint><time>27.489</time><pose>-20.5000 -0.0000 0.0000 0.0000 0.0000 7.8540</pose></waypoint>
+        </trajectory>
+      </script>
+    </actor>
+    <!-- worker_random: 0.6 m/s, 무작위 보행 (seed 42, gen_warehouse_world.py random_walk_nodes), 루프 392.0 s, 웨이포인트 253개 -->
+    <actor name="worker_random">
+      <pose>0 0 0 0 0 0</pose>
+      <skin><filename>model://worker/meshes/worker.dae</filename><scale>1.0</scale></skin>
+      <animation name="walk"><filename>model://worker/meshes/worker.dae</filename></animation>
+      <script>
+        <loop>true</loop>
+        <delay_start>0.0</delay_start>
+        <auto_start>true</auto_start>
+        <trajectory id="0" type="walk" tension="0">
+          <waypoint><time>0.000</time><pose>-9.0000 -6.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>1.667</time><pose>-9.0000 -5.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>3.333</time><pose>-9.0000 -4.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>5.000</time><pose>-9.0000 -3.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>6.667</time><pose>-9.0000 -2.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>8.333</time><pose>-9.0000 -1.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>10.000</time><pose>-9.0000 0.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>10.500</time><pose>-9.0000 0.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>12.167</time><pose>-10.0000 0.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>13.833</time><pose>-11.0000 0.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>15.500</time><pose>-12.0000 0.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>17.167</time><pose>-13.0000 0.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>18.833</time><pose>-14.0000 0.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>20.500</time><pose>-15.0000 0.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>21.000</time><pose>-15.0000 0.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>22.667</time><pose>-15.0000 1.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>24.333</time><pose>-15.0000 2.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>26.000</time><pose>-15.0000 3.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>27.667</time><pose>-15.0000 4.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>29.333</time><pose>-15.0000 5.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>31.000</time><pose>-15.0000 6.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>31.500</time><pose>-15.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>33.167</time><pose>-14.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>34.833</time><pose>-13.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>36.500</time><pose>-12.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>38.167</time><pose>-11.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>39.833</time><pose>-10.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>41.500</time><pose>-9.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>43.167</time><pose>-8.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>44.833</time><pose>-7.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>46.500</time><pose>-6.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>48.167</time><pose>-5.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>49.833</time><pose>-4.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>51.500</time><pose>-3.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>53.167</time><pose>-2.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>54.833</time><pose>-1.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>56.500</time><pose>0.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>58.167</time><pose>1.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>59.833</time><pose>2.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>61.500</time><pose>3.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>63.167</time><pose>4.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>64.833</time><pose>5.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>66.500</time><pose>6.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>68.167</time><pose>7.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>69.833</time><pose>8.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>71.500</time><pose>9.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>73.167</time><pose>10.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>74.833</time><pose>11.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>76.500</time><pose>12.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>78.167</time><pose>13.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>79.833</time><pose>14.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>81.500</time><pose>15.0000 6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>82.000</time><pose>15.0000 6.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>83.667</time><pose>15.0000 5.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>85.333</time><pose>15.0000 4.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>87.000</time><pose>15.0000 3.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>88.667</time><pose>15.0000 2.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>90.333</time><pose>15.0000 1.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>92.000</time><pose>15.0000 0.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>93.667</time><pose>15.0000 -1.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>95.333</time><pose>15.0000 -2.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>97.000</time><pose>15.0000 -3.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>98.667</time><pose>15.0000 -4.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>100.333</time><pose>15.0000 -5.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>102.000</time><pose>15.0000 -6.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>102.500</time><pose>15.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>104.167</time><pose>14.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>105.833</time><pose>13.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>107.500</time><pose>12.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>109.167</time><pose>11.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>110.833</time><pose>10.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>112.500</time><pose>9.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>114.167</time><pose>8.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>115.833</time><pose>7.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>117.500</time><pose>6.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>119.167</time><pose>5.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>120.833</time><pose>4.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>122.500</time><pose>3.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>124.167</time><pose>2.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>125.833</time><pose>1.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>127.500</time><pose>0.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>129.167</time><pose>-1.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>130.833</time><pose>-2.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>132.500</time><pose>-3.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>134.167</time><pose>-4.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>135.833</time><pose>-5.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>137.500</time><pose>-6.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>139.167</time><pose>-7.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>140.833</time><pose>-8.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>142.500</time><pose>-9.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>144.167</time><pose>-10.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>145.833</time><pose>-11.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>147.500</time><pose>-12.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>149.167</time><pose>-13.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>150.833</time><pose>-14.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>152.500</time><pose>-15.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>153.000</time><pose>-15.0000 -6.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>154.667</time><pose>-15.0000 -5.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>156.333</time><pose>-15.0000 -4.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>158.000</time><pose>-15.0000 -3.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>159.667</time><pose>-15.0000 -2.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>161.333</time><pose>-15.0000 -1.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>163.000</time><pose>-15.0000 0.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>163.500</time><pose>-15.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>165.167</time><pose>-14.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>166.833</time><pose>-13.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>168.500</time><pose>-12.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>170.167</time><pose>-11.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>171.833</time><pose>-10.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>173.500</time><pose>-9.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>174.000</time><pose>-9.0000 0.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>175.667</time><pose>-9.0000 -1.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>177.333</time><pose>-9.0000 -2.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>179.000</time><pose>-9.0000 -3.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>180.667</time><pose>-9.0000 -4.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>182.333</time><pose>-9.0000 -5.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>184.000</time><pose>-9.0000 -6.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>184.500</time><pose>-9.0000 -6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>186.167</time><pose>-8.0000 -6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>187.833</time><pose>-7.0000 -6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>189.500</time><pose>-6.0000 -6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>191.167</time><pose>-5.0000 -6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>192.833</time><pose>-4.0000 -6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>194.500</time><pose>-3.0000 -6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>196.167</time><pose>-2.0000 -6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>197.833</time><pose>-1.0000 -6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>199.500</time><pose>0.0000 -6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>201.167</time><pose>1.0000 -6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>202.833</time><pose>2.0000 -6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>204.500</time><pose>3.0000 -6.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>205.000</time><pose>3.0000 -6.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>206.667</time><pose>3.0000 -5.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>208.333</time><pose>3.0000 -4.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>210.000</time><pose>3.0000 -3.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>211.667</time><pose>3.0000 -2.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>213.333</time><pose>3.0000 -1.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>215.000</time><pose>3.0000 0.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>216.667</time><pose>3.0000 1.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>218.333</time><pose>3.0000 2.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>220.000</time><pose>3.0000 3.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>221.667</time><pose>3.0000 4.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>223.333</time><pose>3.0000 5.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>225.000</time><pose>3.0000 6.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>225.500</time><pose>3.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>227.167</time><pose>2.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>228.833</time><pose>1.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>230.500</time><pose>0.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>232.167</time><pose>-1.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>233.833</time><pose>-2.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>235.500</time><pose>-3.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>237.167</time><pose>-4.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>238.833</time><pose>-5.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>240.500</time><pose>-6.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>242.167</time><pose>-7.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>243.833</time><pose>-8.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>245.500</time><pose>-9.0000 6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>246.000</time><pose>-9.0000 6.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>247.667</time><pose>-9.0000 5.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>249.333</time><pose>-9.0000 4.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>251.000</time><pose>-9.0000 3.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>252.667</time><pose>-9.0000 2.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>254.333</time><pose>-9.0000 1.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>256.000</time><pose>-9.0000 0.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>256.500</time><pose>-9.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>258.167</time><pose>-8.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>259.833</time><pose>-7.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>261.500</time><pose>-6.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>263.167</time><pose>-5.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>264.833</time><pose>-4.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>266.500</time><pose>-3.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>267.000</time><pose>-3.0000 0.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>268.667</time><pose>-3.0000 -1.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>270.333</time><pose>-3.0000 -2.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>272.000</time><pose>-3.0000 -3.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>273.667</time><pose>-3.0000 -4.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>275.333</time><pose>-3.0000 -5.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>277.000</time><pose>-3.0000 -6.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>277.500</time><pose>-3.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>279.167</time><pose>-4.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>280.833</time><pose>-5.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>282.500</time><pose>-6.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>284.167</time><pose>-7.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>285.833</time><pose>-8.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>287.500</time><pose>-9.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>289.167</time><pose>-10.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>290.833</time><pose>-11.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>292.500</time><pose>-12.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>294.167</time><pose>-13.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>295.833</time><pose>-14.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>297.500</time><pose>-15.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>298.000</time><pose>-15.0000 -6.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>299.667</time><pose>-15.0000 -5.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>301.333</time><pose>-15.0000 -4.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>303.000</time><pose>-15.0000 -3.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>304.667</time><pose>-15.0000 -2.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>306.333</time><pose>-15.0000 -1.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>308.000</time><pose>-15.0000 0.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>308.500</time><pose>-15.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>310.167</time><pose>-14.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>311.833</time><pose>-13.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>313.500</time><pose>-12.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>315.167</time><pose>-11.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>316.833</time><pose>-10.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>318.500</time><pose>-9.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>320.167</time><pose>-8.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>321.833</time><pose>-7.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>323.500</time><pose>-6.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>325.167</time><pose>-5.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>326.833</time><pose>-4.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>328.500</time><pose>-3.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>329.000</time><pose>-3.0000 0.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>330.667</time><pose>-3.0000 -1.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>332.333</time><pose>-3.0000 -2.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>334.000</time><pose>-3.0000 -3.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>335.667</time><pose>-3.0000 -4.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>337.333</time><pose>-3.0000 -5.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>339.000</time><pose>-3.0000 -6.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>339.500</time><pose>-3.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>341.167</time><pose>-4.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>342.833</time><pose>-5.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>344.500</time><pose>-6.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>346.167</time><pose>-7.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>347.833</time><pose>-8.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>349.500</time><pose>-9.0000 -6.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>350.000</time><pose>-9.0000 -6.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>351.667</time><pose>-9.0000 -5.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>353.333</time><pose>-9.0000 -4.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>355.000</time><pose>-9.0000 -3.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>356.667</time><pose>-9.0000 -2.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>358.333</time><pose>-9.0000 -1.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>360.000</time><pose>-9.0000 0.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+          <waypoint><time>360.500</time><pose>-9.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>362.167</time><pose>-8.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>363.833</time><pose>-7.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>365.500</time><pose>-6.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>367.167</time><pose>-5.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>368.833</time><pose>-4.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>370.500</time><pose>-3.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>371.000</time><pose>-3.0000 0.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>372.667</time><pose>-4.0000 0.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>374.333</time><pose>-5.0000 0.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>376.000</time><pose>-6.0000 0.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>377.667</time><pose>-7.0000 0.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>379.333</time><pose>-8.0000 0.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>381.000</time><pose>-9.0000 0.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>381.500</time><pose>-9.0000 0.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>383.167</time><pose>-9.0000 -1.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>384.833</time><pose>-9.0000 -2.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>386.500</time><pose>-9.0000 -3.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>388.167</time><pose>-9.0000 -4.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>389.833</time><pose>-9.0000 -5.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>391.500</time><pose>-9.0000 -6.0000 0.0000 0.0000 0.0000 -1.5708</pose></waypoint>
+          <waypoint><time>392.000</time><pose>-9.0000 -6.0000 0.0000 0.0000 0.0000 1.5708</pose></waypoint>
+        </trajectory>
+      </script>
+    </actor>
+    <!-- worker_crossing: 1.0 m/s, 좁은 통로 입구 횡단 (명세 4.7: 1.0 m/s 동적 장애물), 루프 25.0 s, 웨이포인트 27개 -->
+    <actor name="worker_crossing">
+      <pose>0 0 0 0 0 0</pose>
+      <skin><filename>model://worker/meshes/worker.dae</filename><scale>1.0</scale></skin>
+      <animation name="walk"><filename>model://worker/meshes/worker.dae</filename></animation>
+      <script>
+        <loop>true</loop>
+        <delay_start>0.0</delay_start>
+        <auto_start>true</auto_start>
+        <trajectory id="0" type="walk" tension="0">
+          <waypoint><time>0.000</time><pose>-6.0000 -7.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>1.000</time><pose>-5.0000 -7.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>2.000</time><pose>-4.0000 -7.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>3.000</time><pose>-3.0000 -7.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>4.000</time><pose>-2.0000 -7.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>5.000</time><pose>-1.0000 -7.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>6.000</time><pose>0.0000 -7.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>7.000</time><pose>1.0000 -7.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>8.000</time><pose>2.0000 -7.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>9.000</time><pose>3.0000 -7.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>10.000</time><pose>4.0000 -7.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>11.000</time><pose>5.0000 -7.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>12.000</time><pose>6.0000 -7.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+          <waypoint><time>12.500</time><pose>6.0000 -7.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>13.500</time><pose>5.0000 -7.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>14.500</time><pose>4.0000 -7.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>15.500</time><pose>3.0000 -7.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>16.500</time><pose>2.0000 -7.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>17.500</time><pose>1.0000 -7.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>18.500</time><pose>0.0000 -7.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>19.500</time><pose>-1.0000 -7.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>20.500</time><pose>-2.0000 -7.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>21.500</time><pose>-3.0000 -7.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>22.500</time><pose>-4.0000 -7.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>23.500</time><pose>-5.0000 -7.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>24.500</time><pose>-6.0000 -7.0000 0.0000 0.0000 0.0000 3.1416</pose></waypoint>
+          <waypoint><time>25.000</time><pose>-6.0000 -7.0000 0.0000 0.0000 0.0000 0.0000</pose></waypoint>
+        </trajectory>
+      </script>
+    </actor>
+    <!-- forklift_main: 1.5 m/s, 메인 통로(y=15) x -20..20 직선 왕복, 물리 모델(충돌 있음) -->
+    <include>
+      <uri>model://forklift</uri>
+      <name>forklift_main</name>
+      <pose>-20.0000 15.0000 0.0000 0.0000 0.0000 0.0000</pose>
+      <plugin filename="ignition-gazebo-velocity-control-system" name="ignition::gazebo::systems::VelocityControl">
+        <initial_linear>1.5 0 0</initial_linear>
+      </plugin>
+      <plugin filename="ignition-gazebo-pose-publisher-system" name="ignition::gazebo::systems::PosePublisher">
+        <!-- Fortress PosePublisher 는 모델 자신의 포즈를
+             publish_nested_model_pose && publish_model_pose 일 때만 낸다 (하위 호환 코드).
+             중첩 모델은 없으므로 둘 다 true. 링크/시각/충돌 포즈는 끈다 -->
+        <publish_model_pose>true</publish_model_pose>
+        <publish_nested_model_pose>true</publish_nested_model_pose>
+        <publish_link_pose>false</publish_link_pose>
+        <publish_collision_pose>false</publish_collision_pose>
+        <publish_visual_pose>false</publish_visual_pose>
+        <publish_sensor_pose>false</publish_sensor_pose>
+        <use_pose_vector_msg>false</use_pose_vector_msg>
+        <static_publisher>false</static_publisher>
+        <update_frequency>50</update_frequency>
+      </plugin>
+      <plugin filename="ignition-gazebo-triggered-publisher-system" name="ignition::gazebo::systems::TriggeredPublisher">
+        <input type="ignition.msgs.Pose" topic="/model/forklift_main/pose">
+          <match field="position.x" tol="0.25">20.25</match>
+        </input>
+        <output type="ignition.msgs.Twist" topic="/model/forklift_main/cmd_vel">linear: {x: -1.5}</output>
+      </plugin>
+      <plugin filename="ignition-gazebo-triggered-publisher-system" name="ignition::gazebo::systems::TriggeredPublisher">
+        <input type="ignition.msgs.Pose" topic="/model/forklift_main/pose">
+          <match field="position.x" tol="0.25">-20.25</match>
+        </input>
+        <output type="ignition.msgs.Twist" topic="/model/forklift_main/cmd_vel">linear: {x: 1.5}</output>
+      </plugin>
+    </include>
+  </world>
+</sdf>

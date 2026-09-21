@@ -1,0 +1,44 @@
+<?xml version="1.0" ?>
+<!--
+  충전 스테이션. 모델 원점 = 본체 바닥 중심, +x 가 로봇 진입 방향(패드 쪽).
+  본체(녹색)는 충돌체를 가지고, 바닥 패드(노랑)는 도색 표시라 충돌체가 없다.
+-->
+<sdf version="1.8">
+  <model name="charging_station">
+    <static>true</static>
+    <link name="link">
+      <collision name="body_collision">
+        <pose>0 0 0.45 0 0 0</pose>
+        <geometry><box><size>0.5 0.4 0.9</size></box></geometry>
+      </collision>
+      <visual name="body">
+        <pose>0 0 0.45 0 0 0</pose>
+        <geometry><box><size>0.5 0.4 0.9</size></box></geometry>
+        <material>
+          <ambient>0.10 0.55 0.25 1</ambient>
+          <diffuse>0.10 0.55 0.25 1</diffuse>
+          <specular>0.2 0.2 0.2 1</specular>
+        </material>
+      </visual>
+      <!-- 충전 접점 표시등 -->
+      <visual name="indicator">
+        <pose>0.26 0 0.70 0 0 0</pose>
+        <geometry><box><size>0.02 0.10 0.05</size></box></geometry>
+        <material>
+          <ambient>0.2 1.0 0.2 1</ambient>
+          <diffuse>0.2 1.0 0.2 1</diffuse>
+          <emissive>0.1 0.6 0.1 1</emissive>
+        </material>
+      </visual>
+      <!-- 로봇 정차 패드 (도색, 충돌 없음) -->
+      <visual name="pad">
+        <pose>0.85 0 0.003 0 0 0</pose>
+        <geometry><box><size>1.0 1.0 0.006</size></box></geometry>
+        <material>
+          <ambient>0.95 0.80 0.10 1</ambient>
+          <diffuse>0.95 0.80 0.10 1</diffuse>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>

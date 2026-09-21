@@ -1,0 +1,43 @@
+<?xml version="1.0" ?>
+<!--
+  도킹용 ArUco 마커 판. 모델 원점 = 판 하단 중심(바닥), 마커 면의 법선 = +x (로봇이 +x 쪽에서 바라본다).
+  - 판 0.30 x 0.30 m, 두께 0.02 m, 중심 높이 z = 0.43 m = AMR 카메라 광학 중심의 지면 높이
+    (config/robot_params.yaml base_link_height 0.18 + config/sensors.yaml camera_link.extrinsic.z 0.25).
+    마커 흑백 영역은 한 변 0.18 m (6 셀 x 0.03 m) — 도킹 노드의 마커 크기 파라미터로 쓴다.
+  - 텍스처: materials/textures/aruco_4x4_50_<id>.png — gen_aruco_textures.py 가 cv2.aruco(DICT_4X4_50) 로 생성,
+    6 셀 마커(120 px) + 흰 여백 40 px = 200 x 200 px, 파일당 약 0.3 KB.
+  - 월드에서는 이 파일을 include 하지 않고 같은 구조의 모델을 id 별 텍스처로 인라인 생성한다 (gen_warehouse_world.py).
+-->
+<sdf version="1.8">
+  <model name="dock_marker">
+    <static>true</static>
+    <link name="link">
+      <collision name="plate_collision">
+        <pose>0 0 0.43 0 0 0</pose>
+        <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+      </collision>
+      <visual name="plate">
+        <pose>0 0 0.43 0 0 0</pose>
+        <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        <material>
+          <ambient>1 1 1 1</ambient>
+          <diffuse>1 1 1 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+          <pbr>
+            <metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_0.png</albedo_map>
+              <metalness>0.0</metalness>
+              <roughness>0.9</roughness>
+            </metal>
+          </pbr>
+        </material>
+      </visual>
+      <!-- 벽/스테이션 부착용 받침 기둥 -->
+      <visual name="post">
+        <pose>-0.02 0 0.14 0 0 0</pose>
+        <geometry><box><size>0.02 0.06 0.28</size></box></geometry>
+        <material><ambient>0.2 0.2 0.2 1</ambient><diffuse>0.2 0.2 0.2 1</diffuse></material>
+      </visual>
+    </link>
+  </model>
+</sdf>

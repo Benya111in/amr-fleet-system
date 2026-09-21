@@ -1,0 +1,31 @@
+<?xml version="1.0" ?>
+<!-- 구조 기둥. 모델 원점 = 바닥 중심. -->
+<sdf version="1.8">
+  <model name="pillar">
+    <static>true</static>
+    <link name="link">
+      <collision name="collision">
+        <pose>0 0 2.0 0 0 0</pose>
+        <geometry><box><size>0.5 0.5 4.0</size></box></geometry>
+      </collision>
+      <visual name="visual">
+        <pose>0 0 2.0 0 0 0</pose>
+        <geometry><box><size>0.5 0.5 4.0</size></box></geometry>
+        <material>
+          <ambient>0.55 0.55 0.52 1</ambient>
+          <diffuse>0.55 0.55 0.52 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <!-- 하단 안전 도색 띠 (노랑/검정 대신 단색 노랑) -->
+      <visual name="safety_band">
+        <pose>0 0 0.5 0 0 0</pose>
+        <geometry><box><size>0.52 0.52 1.0</size></box></geometry>
+        <material>
+          <ambient>0.95 0.80 0.10 1</ambient>
+          <diffuse>0.95 0.80 0.10 1</diffuse>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>

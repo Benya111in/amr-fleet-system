@@ -1,0 +1,27 @@
+<?xml version="1.0" ?>
+<!--
+  작업자 actor 예시 (제자리). 실제 순찰 경로는 worlds/warehouse.sdf 의 actor 들이 가진다.
+  Gazebo Fortress actor 는 스켈레톤이 있는 스킨 메시가 필수라(링크만 있는 actor 는 렌더링되지 않고 SceneBroadcaster 가 크래시),
+  gen_worker_dae.py 로 만든 13 KB 텍스트 COLLADA(단일 관절 + 정지 애니메이션)를 스킨으로 쓴다.
+  걷기 애니메이션 메시(walk.dae, 수 MB)는 이미지/Fuel 캐시에 없고 대용량이라 쓰지 않는다 → 몸통이 미끄러지듯 이동한다.
+-->
+<sdf version="1.8">
+  <actor name="worker">
+    <pose>0 0 0 0 0 0</pose>
+    <skin>
+      <filename>model://worker/meshes/worker.dae</filename>
+      <scale>1.0</scale>
+    </skin>
+    <animation name="walk">
+      <filename>model://worker/meshes/worker.dae</filename>
+    </animation>
+    <script>
+      <loop>true</loop>
+      <auto_start>true</auto_start>
+      <trajectory id="0" type="walk" tension="1">
+        <waypoint><time>0</time><pose>0 0 0 0 0 0</pose></waypoint>
+        <waypoint><time>10</time><pose>0 0 0 0 0 0</pose></waypoint>
+      </trajectory>
+    </script>
+  </actor>
+</sdf>

@@ -1,0 +1,25 @@
+<?xml version="1.0" ?>
+<!-- 출고 도크 바닥 표시. 모델 원점 = 패드 중심, x = 4 m, y = 3 m. 충돌체 없음(도색). -->
+<sdf version="1.8">
+  <model name="dock_pad_outbound">
+    <static>true</static>
+    <link name="link">
+      <visual name="pad">
+        <pose>0 0 0.003 0 0 0</pose>
+        <geometry><box><size>4.0 3.0 0.006</size></box></geometry>
+        <material>
+          <ambient>0.90 0.45 0.10 1</ambient>
+          <diffuse>0.90 0.45 0.10 1</diffuse>
+        </material>
+      </visual>
+      <visual name="border">
+        <pose>0 0 0.002 0 0 0</pose>
+        <geometry><box><size>4.3 3.3 0.004</size></box></geometry>
+        <material>
+          <ambient>0.95 0.95 0.95 1</ambient>
+          <diffuse>0.95 0.95 0.95 1</diffuse>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>
