@@ -9,8 +9,7 @@ if [ -f "${ROS_WS}/install/setup.bash" ]; then
     source "${ROS_WS}/install/setup.bash"
 fi
 
-# Gazebo Fortress 리소스 경로에 프로젝트 모델/월드 등록
-export IGN_GAZEBO_RESOURCE_PATH="${ROS_WS}/src/amr_simulation/worlds:${ROS_WS}/src/amr_simulation/models:${IGN_GAZEBO_RESOURCE_PATH}"
-export GZ_SIM_RESOURCE_PATH="${IGN_GAZEBO_RESOURCE_PATH}"
+# Gazebo 리소스 경로(IGN_GAZEBO_RESOURCE_PATH)는 Dockerfile ENV 에 있다 —
+# `docker compose exec dev bash` 처럼 엔트리포인트를 거치지 않는 셸에서도 보여야 하므로.
 
 exec "$@"
