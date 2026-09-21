@@ -1,0 +1,133 @@
+# CI: 커밋 메시지 검사 + colcon 빌드/테스트 (명세 4.1 conventional commits, 7장 colcon build 무경고)
+#
+# - commit-lint : PR 범위(base..head)의 모든 커밋 첫 줄을 scripts/check_commit_msg.sh 로 검사
+# - build-test  : 공식 ros:humble 이미지에서 rosdep → colcon build(-Werror) → colcon test
+#                 (프로젝트 GPU 이미지는 12GB 라 GitHub 러너(디스크 ~14GB)에서 쓸 수 없다)
+# 룰셋의 필수 상태 검사 이름은 job name 과 같다: "commit-lint", "build-test"
+name: CI
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+
+# 같은 PR/브랜치에 새 push 가 오면 이전 실행은 취소
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  ROS_DISTRO: humble
+
+jobs:
+  commit-lint:
+    name: commit-lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # base..head 범위를 보려면 전체 히스토리가 필요
+
+      - name: 검사 범위 결정
+        id: range
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_HEAD: ${{ github.sha }}
+        run: |
+          if [ "$EVENT_NAME" = pull_request ]; then
+            base=$PR_BASE; head=$PR_HEAD
+          else
+            base=$PUSH_BEFORE; head=$PUSH_HEAD
+          fi
+          # 새 브랜치(before = 0000…)이거나 base 를 찾을 수 없으면 head 커밋 하나만 검사
+          if git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            range="${base}..${head}"
+          else
+            range="${head}^!"
+          fi
+          echo "range=$range" | tee -a "$GITHUB_OUTPUT"
+
+      - name: 커밋 메시지 검사 (Conventional Commits)
+        env:
+          RANGE: ${{ steps.range.outputs.range }}
+        run: |
+          git log --format=%s "$RANGE" > subjects.txt
+          echo "검사 대상 커밋: $(wc -l < subjects.txt)개 ($RANGE)"
+          fail=0
+          while IFS= read -r subject; do
+            if printf '%s\n' "$subject" | bash scripts/check_commit_msg.sh; then
+              echo "  ok   $subject"
+            else
+              echo "::error::커밋 메시지 형식 위반: $subject"
+              fail=1
+            fi
+          done < subjects.txt
+          exit "$fail"
+
+  build-test:
+    name: build-test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container:
+      image: ros:humble-ros-base-jammy   # == ros:humble (Ubuntu 22.04, rosdep/colcon/ament_lint 포함)
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 의존성 설치 (rosdep)
+        # ros_gz_* 는 시뮬레이션 런타임 전용(Gazebo/Qt/OGRE ~300 deb)이라 헤드리스 CI 에서 제외.
+        # 나머지 선언 의존성(nav2, cv_bridge, robot_localization …)은 향후 C++ 빌드와
+        # 파이썬 테스트의 msg/srv import 에 필요하므로 그대로 설치한다 (측정: 약 400MB 다운로드).
+        run: |
+          apt-get update -qq
+          rosdep update --rosdistro "$ROS_DISTRO"
+          rosdep install --from-paths src --ignore-src -y --rosdistro "$ROS_DISTRO" \
+            --skip-keys "ros_gz_sim ros_gz_bridge"
+
+      - name: colcon build (경고 = 에러)
+        run: |
+          # shellcheck source=/dev/null
+          source "/opt/ros/$ROS_DISTRO/setup.bash"
+          colcon build \
+            --event-handlers console_direct+ \
+            --cmake-args \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_CXX_FLAGS="-Wall -Wextra -Wpedantic -Werror"
+
+      - name: colcon test
+        run: |
+          # shellcheck source=/dev/null
+          source "/opt/ros/$ROS_DISTRO/setup.bash"
+          # shellcheck source=/dev/null
+          source install/setup.bash
+          colcon test --event-handlers console_direct+
+
+      - name: 테스트 결과 요약 (실패가 하나라도 있으면 job 실패)
+        if: always()
+        run: |
+          # shellcheck source=/dev/null
+          source "/opt/ros/$ROS_DISTRO/setup.bash"
+          colcon test-result --verbose
+
+      - name: 테스트 결과 업로드
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ github.run_id }}
+          path: |
+            build/*/test_results/**
+            log/latest_test/**
+          if-no-files-found: warn
+          retention-days: 14
