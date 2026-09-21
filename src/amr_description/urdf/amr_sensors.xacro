@@ -1,0 +1,89 @@
+<?xml version="1.0"?>
+<!--
+  센서 링크/프레임 (명세 4장 1절 센서 시스템, 4장 2절 TF). 위치·이름은 config/sensors.yaml 의
+  extrinsic / frame_id 를 그대로 읽으므로 문서·설정과 어긋날 수 없다.
+
+  base_link
+   ├─ lidar_link                    lidar.extrinsic               (본체 규약, rpy 0)
+   ├─ camera_link                   camera_link.extrinsic         (RGB/Depth 공용 본체 링크)
+   │   ├─ camera_optical_frame           rgb_camera.frame_id,   rpy = camera_link.optical_rpy (-π/2, 0, -π/2)
+   │   └─ camera_depth_optical_frame     depth_camera.frame_id, 같은 회전 (RGB-Depth 베이스라인 0 근사)
+   └─ imu_link                      imu.extrinsic
+
+  optical 프레임은 REP-103 광학 규약(z 전방, x 우측, y 하방)이며 이미지/camera_info 의 header.frame_id 가 된다.
+  시각 형상은 식별용 소형 박스/실린더이고 충돌체·관성은 없다 (sdformat 이 base_footprint 로 병합).
+  센서 정의(gz 플러그인)는 amr_gazebo.xacro 에 있다.
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:macro name="extrinsic_origin" params="ext">
+    <origin xyz="${ext['x']} ${ext['y']} ${ext['z']}" rpy="${ext['roll']} ${ext['pitch']} ${ext['yaw']}"/>
+  </xacro:macro>
+
+  <xacro:macro name="amr_sensors" params="prefix">
+
+    <!-- 2D LiDAR -->
+    <joint name="${prefix}lidar_joint" type="fixed">
+      <parent link="${prefix}base_link"/>
+      <child link="${prefix}${lidar['frame_id']}"/>
+      <xacro:extrinsic_origin ext="${lidar['extrinsic']}"/>
+    </joint>
+    <link name="${prefix}${lidar['frame_id']}">
+      <visual>
+        <geometry>
+          <cylinder radius="0.035" length="0.04"/>
+        </geometry>
+        <material name="amr_sensor"/>
+      </visual>
+    </link>
+
+    <!-- RGB + Depth 카메라 모듈 본체 프레임 -->
+    <joint name="${prefix}camera_joint" type="fixed">
+      <parent link="${prefix}base_link"/>
+      <child link="${prefix}${cam['frame_id']}"/>
+      <xacro:extrinsic_origin ext="${cam['extrinsic']}"/>
+    </joint>
+    <link name="${prefix}${cam['frame_id']}">
+      <visual>
+        <geometry>
+          <box size="0.025 0.09 0.025"/>
+        </geometry>
+        <material name="amr_sensor"/>
+      </visual>
+    </link>
+
+    <!-- optical 프레임: rgb/depth 블록의 link_frame_id(= camera_link) 의 고정 자식 -->
+    <joint name="${prefix}camera_optical_joint" type="fixed">
+      <parent link="${prefix}${rgb['link_frame_id']}"/>
+      <child link="${prefix}${rgb['frame_id']}"/>
+      <origin xyz="0 0 0"
+              rpy="${cam['optical_rpy'][0]} ${cam['optical_rpy'][1]} ${cam['optical_rpy'][2]}"/>
+    </joint>
+    <link name="${prefix}${rgb['frame_id']}"/>
+
+    <joint name="${prefix}camera_depth_optical_joint" type="fixed">
+      <parent link="${prefix}${depth['link_frame_id']}"/>
+      <child link="${prefix}${depth['frame_id']}"/>
+      <origin xyz="0 0 0"
+              rpy="${cam['optical_rpy'][0]} ${cam['optical_rpy'][1]} ${cam['optical_rpy'][2]}"/>
+    </joint>
+    <link name="${prefix}${depth['frame_id']}"/>
+
+    <!-- IMU -->
+    <joint name="${prefix}imu_joint" type="fixed">
+      <parent link="${prefix}base_link"/>
+      <child link="${prefix}${imu['frame_id']}"/>
+      <xacro:extrinsic_origin ext="${imu['extrinsic']}"/>
+    </joint>
+    <link name="${prefix}${imu['frame_id']}">
+      <visual>
+        <geometry>
+          <box size="0.02 0.02 0.008"/>
+        </geometry>
+        <material name="amr_sensor"/>
+      </visual>
+    </link>
+
+  </xacro:macro>
+
+</robot>

@@ -14,6 +14,13 @@
   <depend>robot_state_publisher</depend>
   <depend>joint_state_publisher</depend>
 
+  <!-- spawn.launch.py / description.launch.py 실행 의존성 -->
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ros_gz_sim</exec_depend>
+  <exec_depend>ros_gz_bridge</exec_depend>
+  <exec_depend>ros_gz_image</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
 

@@ -1,0 +1,110 @@
+<?xml version="1.0"?>
+<!--
+  차동 구동 AMR 최상위 xacro (명세 4장 1절 "로봇 모델링"/"센서 시스템 구성", 4장 2절 TF)
+
+  모든 치수/질량/관성/동역학 제한/센서 사양/토픽·프레임 이름은 최상위 config/*.yaml 에서 읽는다
+  (xacro.load_yaml). 여기에 숫자를 중복 기재하지 않는다 — YAML 을 고치면 재빌드 없이 재런치만으로
+  반영된다 (런치 시점에 xacro 가 다시 평가됨).
+
+  xacro 인자
+    robot_name   Gazebo 모델 이름 + gz 토픽 접두어 (/<robot_name>/...)            기본 amr_01
+    prefix       모든 link/joint/frame 이름과 <ignition_frame_id> 의 접두어      기본 ""
+                 (다중 로봇: "amr_02/" — docs/architecture/multi_robot.md §2)
+    config_dir   robot_params.yaml / sensors.yaml 이 있는 디렉토리
+                 기본 "" → $ROS_WS/config (ROS_WS 미설정 시 /ros2_ws/config)
+    payload_mass cargo_link 질량 [kg] (스폰 시점 적재 질량 반영)                  기본 0.0
+
+  모듈
+    amr_inertial.xacro   관성 텐서 매크로 (YAML 대각 성분 / 박스 해석식)
+    amr_materials.xacro  RViz/Gazebo 재질
+    amr_base.xacro       base_footprint, base_link, 구동 바퀴, 캐스터, cargo_link
+    amr_sensors.xacro    lidar_link, camera_link(+optical 프레임 2개), imu_link
+    amr_gazebo.xacro     Gazebo Fortress 시스템 플러그인 + 센서 정의
+
+  단독 실행 예
+    xacro amr.urdf.xacro config_dir:=/ros2_ws/config robot_name:=amr_02 prefix:=amr_02/ | check_urdf /dev/stdin
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="amr">
+
+  <xacro:arg name="robot_name" default="amr_01"/>
+  <xacro:arg name="prefix" default=""/>
+  <xacro:arg name="config_dir" default=""/>
+  <xacro:arg name="payload_mass" default="0.0"/>
+
+  <xacro:property name="robot_name" value="$(arg robot_name)"/>
+  <xacro:property name="prefix" value="$(arg prefix)"/>
+  <xacro:property name="payload_mass_arg" value="$(arg payload_mass)"/>
+  <xacro:property name="payload_mass" value="${float(payload_mass_arg)}"/>
+
+  <!-- config_dir 미지정 시 컨테이너 규약($ROS_WS/config)으로 폴백 -->
+  <xacro:property name="config_dir_arg" value="$(arg config_dir)"/>
+  <xacro:property name="ros_ws" value="$(optenv ROS_WS /ros2_ws)"/>
+  <xacro:property name="config_dir"
+                  value="${config_dir_arg if config_dir_arg != '' else ros_ws + '/config'}"/>
+
+  <!-- ===== 단일 진실 공급원: config/robot_params.yaml, config/sensors.yaml ===== -->
+  <xacro:property name="robot_yaml"  value="${xacro.load_yaml(config_dir + '/robot_params.yaml')}"/>
+  <xacro:property name="sensor_yaml" value="${xacro.load_yaml(config_dir + '/sensors.yaml')}"/>
+  <xacro:property name="robot"   value="${robot_yaml['/**']['ros__parameters']['robot']}"/>
+  <xacro:property name="limits"  value="${robot_yaml['/**']['ros__parameters']['limits']}"/>
+  <xacro:property name="sensors" value="${sensor_yaml['/**']['ros__parameters']}"/>
+  <xacro:property name="lidar"   value="${sensors['lidar']}"/>
+  <xacro:property name="cam"     value="${sensors['camera_link']}"/>   <!-- RGB/Depth 공용 본체 링크 -->
+  <xacro:property name="depth"   value="${sensors['depth_camera']}"/>
+  <xacro:property name="rgb"     value="${sensors['rgb_camera']}"/>
+  <xacro:property name="imu"     value="${sensors['imu']}"/>
+  <xacro:property name="encoder" value="${sensors['wheel_encoder']}"/>
+
+  <!-- ===== robot_params.yaml robot.* 별칭 ===== -->
+  <xacro:property name="body_length"      value="${robot['footprint_length']}"/>
+  <xacro:property name="body_width"       value="${robot['footprint_width']}"/>
+  <xacro:property name="body_height"      value="${robot['height']}"/>
+  <xacro:property name="body_mass"        value="${robot['base_mass']}"/>          <!-- 차체만 (바퀴·캐스터 제외) -->
+  <xacro:property name="base_link_height" value="${robot['base_link_height']}"/>   <!-- base_footprint → base_link z -->
+  <xacro:property name="wheel_radius"     value="${robot['wheel_radius']}"/>
+  <xacro:property name="wheel_separation" value="${robot['wheel_separation']}"/>
+  <xacro:property name="wheel_width"      value="${robot['wheel_width']}"/>
+  <xacro:property name="wheel_mass"       value="${robot['wheel_mass']}"/>
+  <xacro:property name="wheel_mu"         value="${robot['wheel_friction_coeff']}"/>
+  <xacro:property name="caster_radius"    value="${robot['caster_radius']}"/>
+  <xacro:property name="caster_mass"      value="${robot['caster_mass']}"/>
+  <xacro:property name="caster_x"         value="${robot['caster_x_offset']}"/>
+  <xacro:property name="caster_mu"        value="${robot['caster_friction_coeff']}"/>
+  <xacro:property name="base_inertia"     value="${robot['base_inertia']}"/>       <!-- [ixx, iyy, izz] -->
+  <xacro:property name="wheel_inertia"    value="${robot['wheel_inertia']}"/>      <!-- [ixx, iyy(축), izz] -->
+  <xacro:property name="caster_inertia"   value="${robot['caster_inertia']}"/>     <!-- 구: ixx = iyy = izz -->
+
+  <!-- ===== 파생 기하 (YAML 규약: base_link = 차체 박스 중심, 지면 위 base_link_height) ===== -->
+  <!-- 바퀴/캐스터 조인트 z: 바닥이 정확히 지면(base_footprint z=0)에 닿도록 반지름 - base_link_height -->
+  <xacro:property name="wheel_z"       value="${wheel_radius - base_link_height}"/>
+  <xacro:property name="caster_z"      value="${caster_radius - base_link_height}"/>
+  <!--
+    구동륜 충돌 원판 두께 [m] (시뮬레이션 전용 값, YAML 에 없음). 시각 형상은 wheel_width(0.035) 원통 그대로.
+    충돌까지 넓은 원통이면 물리 엔진이 원통 양쪽 모서리에 접점을 만들고, 제자리 회전 때 어느 모서리가 구르느냐에
+    따라 실효 바퀴 간격이 wheel_separation ± wheel_width 로 바뀐다 (실측: 1.5 rad/s 상당 바퀴 속도 ±3.273 rad/s
+    에 차체 1.367 rad/s(바깥 모서리, 0.395 m) 또는 1.662 rad/s(안쪽 모서리, 0.325 m)). 얇은 원판이면 오차 한계가
+    ±(두께/2)/(간격/2) = ±0.6 % (실측 1.492 rad/s). 직진은 두 경우 모두 영향 없음.
+    구(sphere) 충돌은 접점은 정확하지만 차체 밖으로 6 cm 튀어나와 쓰지 않는다.
+  -->
+  <xacro:property name="wheel_contact_width" value="0.002"/>
+  <xacro:property name="body_top_z"    value="${body_height / 2.0}"/>
+  <!--
+    적재물 표시 박스: 차체 상면 위, 풋프린트의 2/3 크기. 높이는 차체 상면 ~ LiDAR 스캔 평면 간격의 절반으로
+    제한한다 (현재 0.05 / 2 = 0.025 m). 더 높으면 360도 LiDAR 가 자기 적재물을 장애물로 보고(스캔 평면이
+    지면 +0.38 m, 차체 상면 +0.33 m) 카메라 모듈도 가린다 → 안전 노드가 풋프린트 안 장애물로 오판한다.
+  -->
+  <xacro:property name="cargo_length"  value="${body_length * 2.0 / 3.0}"/>
+  <xacro:property name="cargo_width"   value="${body_width * 2.0 / 3.0}"/>
+  <xacro:property name="cargo_height"  value="${(lidar['extrinsic']['z'] - body_top_z) / 2.0}"/>
+
+  <xacro:include filename="$(find amr_description)/urdf/amr_inertial.xacro"/>
+  <xacro:include filename="$(find amr_description)/urdf/amr_materials.xacro"/>
+  <xacro:include filename="$(find amr_description)/urdf/amr_base.xacro"/>
+  <xacro:include filename="$(find amr_description)/urdf/amr_sensors.xacro"/>
+  <xacro:include filename="$(find amr_description)/urdf/amr_gazebo.xacro"/>
+
+  <xacro:amr_base prefix="${prefix}"/>
+  <xacro:amr_sensors prefix="${prefix}"/>
+  <xacro:amr_gazebo prefix="${prefix}" robot_name="${robot_name}"/>
+
+</robot>

@@ -82,7 +82,8 @@
       update_rate: 30.0           # [Hz]
 
     imu:
-      topic: imu/data
+      topic: imu/data_raw         # 센서(Gazebo 브리지) 원시 출력. imu_filter_node 가 LPF + 바이어스 보정 후
+                                  # imu/data 로 발행하고, EKF(config/ekf.yaml imu0)는 imu/data 만 본다 (REP-145)
       frame_id: imu_link          # 본체 규약, rpy 0 (base_link 와 축 정렬)
       update_rate: 100.0          # [Hz] 이상
       # 노이즈 모델 = 가우시안 백색 노이즈 + 바이어스. 네이티브: <imu><angular_velocity|linear_acceleration><x|y|z><noise>

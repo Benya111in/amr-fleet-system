@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<!-- 재질 정의. URDF <material> 은 RViz 용이며 sdformat 이 Gazebo 재질(ambient/diffuse)로 변환한다 -->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <material name="amr_body">
+    <color rgba="0.20 0.32 0.55 1.0"/>
+  </material>
+  <material name="amr_wheel">
+    <color rgba="0.10 0.10 0.10 1.0"/>
+  </material>
+  <material name="amr_caster">
+    <color rgba="0.45 0.45 0.45 1.0"/>
+  </material>
+  <material name="amr_sensor">
+    <color rgba="0.85 0.35 0.10 1.0"/>
+  </material>
+  <material name="amr_cargo">
+    <color rgba="0.72 0.55 0.30 1.0"/>
+  </material>
+
+</robot>

@@ -115,7 +115,7 @@ jobs:
           apt-get update -qq
           rosdep update --rosdistro "$ROS_DISTRO"
           rosdep install --from-paths src --ignore-src -y --rosdistro "$ROS_DISTRO" \
-            --skip-keys "ros_gz_sim ros_gz_bridge"
+            --skip-keys "ros_gz_sim ros_gz_bridge ros_gz_image"
 
       - name: colcon build (경고 = 에러)
         run: |

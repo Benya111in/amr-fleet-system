@@ -1,0 +1,272 @@
+<?xml version="1.0"?>
+<!--
+  Gazebo Fortress (ign-gazebo 6.18) 전용 정의: 시스템 플러그인 + 센서. ROS 측 URDF 의미에는 영향 없음.
+
+  gz 토픽 규약: 모두 /<robot_name>/<ROS 상대 토픽> (예 /amr_01/scan). ROS 상대 토픽 이름은
+  config/sensors.yaml 의 topic 키에서 읽는다. spawn.launch.py 의 브리지가 네임스페이스 /<robot_name> 에서
+  같은 상대 이름으로 ROS 에 넘기므로 ROS 토픽 = /<robot_name>/<상대 이름> 이 된다.
+  gz-sensors 는 camera_info 토픽을 이미지 <topic> 의 디렉터리 + "/camera_info" 로 스스로 만든다
+  (Fortress 는 별도 지정 불가) → sensors.yaml 의 info_topic 은 그 규칙과 같아야 한다.
+
+  월드(amr_simulation/worlds/*.sdf) 필수 시스템 — 없으면 아래 센서/스폰이 동작하지 않는다:
+    ignition-gazebo-physics-system
+    ignition-gazebo-user-commands-system      (ros_gz_sim create 스폰 서비스)
+    ignition-gazebo-sensors-system            <render_engine>ogre2</render_engine>  (gpu_lidar, camera, depth_camera)
+    ignition-gazebo-imu-system                (imu)
+    ignition-gazebo-scene-broadcaster-system  (GUI/장면 조회, 선택)
+
+  휠 엔코더: Fortress 에는 엔코더 센서/슬립 모델이 없다. JointStatePublisher 가 내보내는 joint_states 의
+  position(rad, 연속 누적)·velocity 에 대해 팀의 엔코더/오도메트리 노드(명세 2장 "순기구학·오도메트리")가
+    ticks_k = floor(position_k / (2π) · wheel_encoder.ticks_per_revolution)       (4096 틱 양자화)
+    Δs_k    = (ticks_k − ticks_{k−1}) · 2π r / ticks_per_revolution · (1 + N(0, wheel_encoder.slip_noise_stddev))
+  로 양자화와 슬립 노이즈를 소프트웨어에서 넣고 wheel_encoder.update_rate(50 Hz)로 서브샘플링한다
+  (joint_states 자체는 물리 스텝마다, 1 ms 스텝이면 1 kHz 로 나온다 — Fortress JointStatePublisher 는 주기 옵션이 없다).
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- 지면 진실 오도메트리 발행 주기: 비교 대상인 휠 오도메트리(wheel_encoder.update_rate)와 같은 주기로 맞춘다 -->
+  <xacro:property name="ground_truth_rate" value="${encoder['update_rate']}"/>
+  <!-- 지면 진실의 기준 프레임. OdometryPublisher 는 스폰 위치와 무관한 월드 절대 자세를 내므로(실측) 접두어 없는
+       공용 프레임으로 둔다 — 모든 로봇의 GT 가 한 좌표계에 있어야 평가·로봇 간 거리 계산이 된다. TF 는 브리지하지 않는다 -->
+  <xacro:property name="ground_truth_frame" value="world"/>
+  <!-- RGB 렌더링 클립 (측거 사양이 아니라 렌더 범위; YAML 에 clip_near/clip_far 가 있으면 그 값 우선) -->
+  <xacro:property name="rgb_clip_near" value="${rgb.get('clip_near', 0.05)}"/>
+  <xacro:property name="rgb_clip_far"  value="${rgb.get('clip_far', 100.0)}"/>
+
+  <!-- 가우시안 + 바이어스 노이즈 블록 (IMU 축별). sensors.yaml imu.* 를 x/y/z 세 축에 동일하게 적용 -->
+  <xacro:macro name="imu_noise" params="stddev bias_mean bias_stddev dyn_stddev dyn_tau">
+    <noise type="gaussian">
+      <mean>0.0</mean>
+      <stddev>${stddev}</stddev>
+      <bias_mean>${bias_mean}</bias_mean>
+      <bias_stddev>${bias_stddev}</bias_stddev>
+      <dynamic_bias_stddev>${dyn_stddev}</dynamic_bias_stddev>
+      <dynamic_bias_correlation_time>${dyn_tau}</dynamic_bias_correlation_time>
+    </noise>
+  </xacro:macro>
+  <xacro:macro name="gyro_noise">
+    <xacro:imu_noise stddev="${imu['gyro_noise_stddev']}" bias_mean="${imu['gyro_bias_mean']}"
+                     bias_stddev="${imu['gyro_bias_stddev']}" dyn_stddev="${imu['gyro_dynamic_bias_stddev']}"
+                     dyn_tau="${imu['gyro_dynamic_bias_correlation_time']}"/>
+  </xacro:macro>
+  <xacro:macro name="accel_noise">
+    <xacro:imu_noise stddev="${imu['accel_noise_stddev']}" bias_mean="${imu['accel_bias_mean']}"
+                     bias_stddev="${imu['accel_bias_stddev']}" dyn_stddev="${imu['accel_dynamic_bias_stddev']}"
+                     dyn_tau="${imu['accel_dynamic_bias_correlation_time']}"/>
+  </xacro:macro>
+
+  <xacro:macro name="amr_gazebo" params="prefix robot_name">
+
+    <!-- ===== 접촉 마찰 (robot_params.yaml robot.*_friction_coeff). 캐스터는 낮은 mu 로 미끄러지는 구 근사 ===== -->
+    <gazebo reference="${prefix}left_wheel_link">
+      <mu1>${wheel_mu}</mu1>
+      <mu2>${wheel_mu}</mu2>
+    </gazebo>
+    <gazebo reference="${prefix}right_wheel_link">
+      <mu1>${wheel_mu}</mu1>
+      <mu2>${wheel_mu}</mu2>
+    </gazebo>
+    <gazebo reference="${prefix}front_caster_link">
+      <mu1>${caster_mu}</mu1>
+      <mu2>${caster_mu}</mu2>
+    </gazebo>
+    <gazebo reference="${prefix}rear_caster_link">
+      <mu1>${caster_mu}</mu1>
+      <mu2>${caster_mu}</mu2>
+    </gazebo>
+
+    <gazebo>
+      <!--
+        차동 구동 (모터 드라이버 모델). 속도/가속도 제한은 robot_params.yaml limits 그대로 (Fortress DiffDrive 의
+        min/max_linear|angular_velocity|acceleration). odom 은 /<robot_name>/odom_gz 로만 내보내며(비교용),
+        이 플러그인의 tf(tf_topic)는 절대 ROS 로 브리지하지 않는다 — odom→base_footprint TF 는 EKF 가 발행한다.
+
+        저크 제한(max_linear_jerk)은 여기 넣지 않는다 (결정). Fortress DiffDrive 의 SpeedLimiter 는 목표를
+        내다보지 않고 저크만 자르기 때문에 목표 속도 근처에서 감속을 늦게 시작해 ±a²/(2j) 로 계속 진동한다
+        (a = 1.0, j = 2.0 → ±0.25 m/s, 주기 ≈ 2 s). 실측(지면 진실): 0.5 m/s 지령에 0.257 ~ 0.745 m/s 로 계속
+        진동, 0 지령에서도 |v| 최대 0.245 m/s 로 앞뒤로 흔들려 멈추지 않음. 저크 제한을 빼면 0.500 m/s 정확히
+        유지, 정지 잔속 0. 저크 제한 S-curve 는 명세 5장 구현 대상인 amr_navigation velocity_profiler_node
+        (cmd_vel_nav → cmd_vel_smoothed)가 담당한다.
+        재현하려면 아래에 <max_linear_jerk>/<min_linear_jerk> 를 limits.max_linear_jerk 로 다시 넣으면 된다.
+      -->
+      <plugin filename="ignition-gazebo-diff-drive-system" name="ignition::gazebo::systems::DiffDrive">
+        <left_joint>${prefix}left_wheel_joint</left_joint>
+        <right_joint>${prefix}right_wheel_joint</right_joint>
+        <wheel_separation>${wheel_separation}</wheel_separation>
+        <wheel_radius>${wheel_radius}</wheel_radius>
+        <topic>/${robot_name}/cmd_vel</topic>
+        <odom_topic>/${robot_name}/odom_gz</odom_topic>
+        <tf_topic>/${robot_name}/odom_gz/tf_unused</tf_topic>
+        <frame_id>${prefix}odom</frame_id>
+        <child_frame_id>${prefix}base_footprint</child_frame_id>
+        <odom_publish_frequency>${encoder['update_rate']}</odom_publish_frequency>
+        <max_linear_velocity>${limits['max_linear_velocity']}</max_linear_velocity>
+        <min_linear_velocity>${limits['min_linear_velocity']}</min_linear_velocity>
+        <max_angular_velocity>${limits['max_angular_velocity']}</max_angular_velocity>
+        <min_angular_velocity>${-limits['max_angular_velocity']}</min_angular_velocity>
+        <max_linear_acceleration>${limits['max_linear_acceleration']}</max_linear_acceleration>
+        <min_linear_acceleration>${-limits['max_linear_acceleration']}</min_linear_acceleration>
+        <max_angular_acceleration>${limits['max_angular_acceleration']}</max_angular_acceleration>
+        <min_angular_acceleration>${-limits['max_angular_acceleration']}</min_angular_acceleration>
+      </plugin>
+
+      <!-- 바퀴 관절 상태 → /<robot_name>/joint_states (robot_state_publisher 바퀴 TF + 팀 엔코더 노드 입력) -->
+      <plugin filename="ignition-gazebo-joint-state-publisher-system" name="ignition::gazebo::systems::JointStatePublisher">
+        <topic>/${robot_name}/joint_states</topic>
+        <joint_name>${prefix}left_wheel_joint</joint_name>
+        <joint_name>${prefix}right_wheel_joint</joint_name>
+      </plugin>
+
+      <!-- 지면 진실(ground truth) 오도메트리 — 위치 추정 평가 전용 (header.frame_id = world, child = base_footprint) -->
+      <plugin filename="ignition-gazebo-odometry-publisher-system" name="ignition::gazebo::systems::OdometryPublisher">
+        <odom_frame>${ground_truth_frame}</odom_frame>
+        <robot_base_frame>${prefix}base_footprint</robot_base_frame>
+        <odom_topic>/${robot_name}/ground_truth/odom</odom_topic>
+        <tf_topic>/${robot_name}/ground_truth/tf_unused</tf_topic>
+        <odom_publish_frequency>${ground_truth_rate}</odom_publish_frequency>
+        <dimensions>3</dimensions>
+      </plugin>
+    </gazebo>
+
+    <!-- ===== 2D LiDAR (gpu_lidar) ===== -->
+    <!-- angle_max 는 YAML 값을 그대로 쓴다: samples 개 빔이 [angle_min, angle_max] 를 등분한다
+         (증분 = (max-min)/(samples-1)). 0.5° 정확 증분은 YAML 쪽에서 angle_max = π - 2π/720 로 맞춘다 -->
+    <gazebo reference="${prefix}${lidar['frame_id']}">
+      <sensor name="${prefix}lidar" type="gpu_lidar">
+        <pose>0 0 0 0 0 0</pose>
+        <topic>/${robot_name}/${lidar['topic']}</topic>
+        <update_rate>${lidar['update_rate']}</update_rate>
+        <always_on>true</always_on>
+        <visualize>false</visualize>
+        <ignition_frame_id>${prefix}${lidar['frame_id']}</ignition_frame_id>
+        <lidar>
+          <scan>
+            <horizontal>
+              <samples>${lidar['samples']}</samples>
+              <resolution>1</resolution>
+              <min_angle>${lidar['angle_min']}</min_angle>
+              <max_angle>${lidar['angle_max']}</max_angle>
+            </horizontal>
+          </scan>
+          <range>
+            <min>${lidar['range_min']}</min>
+            <max>${lidar['range_max']}</max>
+          </range>
+          <!-- SDF 1.9: lidar/camera 의 noise 는 <type> 자식 요소 (IMU 의 noise 만 type 속성) -->
+          <noise>
+            <type>gaussian</type>
+            <mean>0.0</mean>
+            <stddev>${lidar['noise_stddev']}</stddev>
+          </noise>
+        </lidar>
+      </sensor>
+    </gazebo>
+
+    <!-- ===== 카메라 (RGB + Depth, 같은 camera_link 에 센서 2개) ===== -->
+    <!--
+      ignition_frame_id 는 optical 프레임 → 이미지/camera_info header 가 REP-103 광학 규약과 일치.
+      Fortress 함정(실측): depth_camera 의 점군(<topic>/points)은 header.frame_id 가 optical 인데 좌표는 센서
+      본체 규약(x 전방, y 좌, z 상)으로 채워진다 — 전방 5 m 벽이 점군에서 x≈4.8 로 나온다. 그대로 TF 변환하면
+      90° 돌아간다. 점군은 깊이 이미지 + camera_info 로 프로젝트가 직접 만들고(명세 2장), 시뮬레이터 점군을
+      쓰려면 소비 측에서 frame_id 를 camera_link 로 바꿔 읽는다 (sensors.yaml depth_camera 주석 참조).
+    -->
+    <gazebo reference="${prefix}${cam['frame_id']}">
+      <sensor name="${prefix}rgb_camera" type="camera">
+        <pose>0 0 0 0 0 0</pose>
+        <topic>/${robot_name}/${rgb['topic']}</topic>
+        <update_rate>${rgb['update_rate']}</update_rate>
+        <always_on>true</always_on>
+        <visualize>false</visualize>
+        <ignition_frame_id>${prefix}${rgb['frame_id']}</ignition_frame_id>
+        <camera name="${prefix}rgb_camera">
+          <horizontal_fov>${rgb['hfov']}</horizontal_fov>
+          <image>
+            <width>${rgb['width']}</width>
+            <height>${rgb['height']}</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip>
+            <near>${rgb_clip_near}</near>
+            <far>${rgb_clip_far}</far>
+          </clip>
+          <xacro:if value="${'noise_stddev' in rgb}">
+            <noise>
+              <type>gaussian</type>
+              <mean>0.0</mean>
+              <stddev>${rgb['noise_stddev']}</stddev>
+            </noise>
+          </xacro:if>
+        </camera>
+      </sensor>
+
+      <!-- 깊이 노이즈: Fortress 는 거리 무관 가우시안만 지원 → noise_base 만 센서에 적용하고,
+           거리 제곱 항(noise_quadratic_coeff)은 amr_perception 깊이 전처리 노드가 더한다 (sensors.yaml 결정) -->
+      <sensor name="${prefix}depth_camera" type="depth_camera">
+        <pose>0 0 0 0 0 0</pose>
+        <topic>/${robot_name}/${depth['topic']}</topic>
+        <update_rate>${depth['update_rate']}</update_rate>
+        <always_on>true</always_on>
+        <visualize>false</visualize>
+        <ignition_frame_id>${prefix}${depth['frame_id']}</ignition_frame_id>
+        <camera name="${prefix}depth_camera">
+          <horizontal_fov>${depth['hfov']}</horizontal_fov>
+          <image>
+            <width>${depth['width']}</width>
+            <height>${depth['height']}</height>
+            <format>R_FLOAT32</format>
+          </image>
+          <clip>
+            <near>${depth['range_min']}</near>
+            <far>${depth['range_max']}</far>
+          </clip>
+          <depth_camera>
+            <clip>
+              <near>${depth['range_min']}</near>
+              <far>${depth['range_max']}</far>
+            </clip>
+          </depth_camera>
+          <noise>
+            <type>gaussian</type>
+            <mean>0.0</mean>
+            <stddev>${depth['noise_base']}</stddev>
+          </noise>
+        </camera>
+      </sensor>
+    </gazebo>
+
+    <!-- ===== IMU ===== -->
+    <!--
+      enable_orientation=true 로 둔다(결정): Fortress IMU 의 orientation 은 노이즈/드리프트 없는 지면 진실이며,
+      기준은 월드가 아니라 센서의 "스폰 시점 자세"다 (yaw=1.57 로 스폰한 로봇도 초기 yaw 0 으로 나온다 — 실측).
+      false 로 끄면 브리지가 w=0 인 무효 쿼터니언을 내보내 소비 노드가 깨질 수 있어 켜 둔다.
+      따라서 EKF(config/ekf.yaml) 는 imu 의 roll/pitch/yaw 를 융합하면 안 되고 angular_velocity /
+      linear_acceleration 만 써야 한다. 노이즈+바이어스 모델은 그 두 값에만 적용된다.
+      참고: SDF 월드 기본 중력은 9.8 m/s² (9.80665 아님) — 정지 시 accel z 평균 ≈ 9.8 + bias.
+    -->
+    <gazebo reference="${prefix}${imu['frame_id']}">
+      <sensor name="${prefix}imu" type="imu">
+        <pose>0 0 0 0 0 0</pose>
+        <topic>/${robot_name}/${imu['topic']}</topic>
+        <update_rate>${imu['update_rate']}</update_rate>
+        <always_on>true</always_on>
+        <visualize>false</visualize>
+        <ignition_frame_id>${prefix}${imu['frame_id']}</ignition_frame_id>
+        <imu>
+          <enable_orientation>true</enable_orientation>
+          <angular_velocity>
+            <x><xacro:gyro_noise/></x>
+            <y><xacro:gyro_noise/></y>
+            <z><xacro:gyro_noise/></z>
+          </angular_velocity>
+          <linear_acceleration>
+            <x><xacro:accel_noise/></x>
+            <y><xacro:accel_noise/></y>
+            <z><xacro:accel_noise/></z>
+          </linear_acceleration>
+        </imu>
+      </sensor>
+    </gazebo>
+
+  </xacro:macro>
+
+</robot>

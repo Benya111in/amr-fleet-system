@@ -1,0 +1,151 @@
+<?xml version="1.0"?>
+<!--
+  차체/구동계 (명세 4장 1절: 600x400x300 mm 차체, 차동 구동, 적재 질량 반영)
+
+  base_footprint  지면 투영 가상 프레임 (URDF 루트, 형상/관성 없음). odom → base_footprint 는 EKF 가 발행
+  base_link       차체 박스의 기하 중심 (지면 위 robot.base_link_height). 센서 extrinsic 의 기준점
+  *_wheel_link    구동 바퀴 (continuous, y 축). 조인트 원점 (0, ±separation/2, wheel_radius - base_link_height)
+  *_caster_link   앞/뒤 구형 캐스터 (fixed). 조인트 원점 (±caster_x_offset, 0, caster_radius - base_link_height)
+  cargo_link      적재함 (fixed, 차체 상면). 질량 = payload_mass 인자
+
+  모든 치수/질량/관성은 amr.urdf.xacro 가 config/robot_params.yaml 에서 읽어 둔 프로퍼티를 쓴다.
+  바퀴 상단(지면 +0.165)이 차체 바닥(+0.03) 안으로 들어오지만 같은 모델 링크끼리는 충돌하지 않는다
+  (SDF model <self_collide> 기본 false, urdf→sdf 변환도 링크별 selfCollide 를 켜지 않는다).
+  base_link·캐스터·센서·적재함은 모두 fixed 조인트라 sdformat 이 URDF 루트 링크 base_footprint 로
+  병합(lumping)한다 — Gazebo 모델에는 base_footprint(차체 전체) + 바퀴 2개만 존재하고(모델 원점 = 지면 투영),
+  ROS TF 에는 URDF 대로 모든 프레임이 있다. 적재함 박스 높이는 LiDAR 스캔 평면 아래로 제한한다 (amr.urdf.xacro).
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:macro name="wheel" params="prefix side reflect">
+    <joint name="${prefix}${side}_wheel_joint" type="continuous">
+      <parent link="${prefix}base_link"/>
+      <child link="${prefix}${side}_wheel_link"/>
+      <origin xyz="0 ${reflect * wheel_separation / 2.0} ${wheel_z}" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+    </joint>
+    <link name="${prefix}${side}_wheel_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="${pi / 2.0} 0 0"/>
+        <geometry>
+          <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+        </geometry>
+        <material name="amr_wheel"/>
+      </visual>
+      <!-- 충돌은 얇은 원판 (wheel_contact_width, amr.urdf.xacro 주석) — 접지점을 바퀴 중심면에 고정 -->
+      <collision>
+        <origin xyz="0 0 0" rpy="${pi / 2.0} 0 0"/>
+        <geometry>
+          <cylinder radius="${wheel_radius}" length="${wheel_contact_width}"/>
+        </geometry>
+      </collision>
+      <!-- wheel_inertia 는 링크 프레임(회전축 = y) 기준 [ixx, iyy, izz] → origin 회전 없이 그대로 -->
+      <xacro:inertial_diag mass="${wheel_mass}"
+                           ixx="${wheel_inertia[0]}" iyy="${wheel_inertia[1]}" izz="${wheel_inertia[2]}">
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+      </xacro:inertial_diag>
+    </link>
+  </xacro:macro>
+
+  <xacro:macro name="caster" params="prefix position reflect">
+    <joint name="${prefix}${position}_caster_joint" type="fixed">
+      <parent link="${prefix}base_link"/>
+      <child link="${prefix}${position}_caster_link"/>
+      <origin xyz="${reflect * caster_x} 0 ${caster_z}" rpy="0 0 0"/>
+    </joint>
+    <link name="${prefix}${position}_caster_link">
+      <visual>
+        <geometry>
+          <sphere radius="${caster_radius}"/>
+        </geometry>
+        <material name="amr_caster"/>
+      </visual>
+      <collision>
+        <geometry>
+          <sphere radius="${caster_radius}"/>
+        </geometry>
+      </collision>
+      <xacro:inertial_diag mass="${caster_mass}"
+                           ixx="${caster_inertia}" iyy="${caster_inertia}" izz="${caster_inertia}">
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+      </xacro:inertial_diag>
+    </link>
+  </xacro:macro>
+
+  <xacro:macro name="amr_base" params="prefix">
+
+    <link name="${prefix}base_footprint"/>
+
+    <joint name="${prefix}base_footprint_joint" type="fixed">
+      <parent link="${prefix}base_footprint"/>
+      <child link="${prefix}base_link"/>
+      <origin xyz="0 0 ${base_link_height}" rpy="0 0 0"/>
+    </joint>
+
+    <!-- 차체: 박스 중심 = base_link 원점. 질량 base_mass 는 차체만 (총 공차 = base + 바퀴 2 + 캐스터 2) -->
+    <link name="${prefix}base_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <box size="${body_length} ${body_width} ${body_height}"/>
+        </geometry>
+        <material name="amr_body"/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <box size="${body_length} ${body_width} ${body_height}"/>
+        </geometry>
+      </collision>
+      <xacro:inertial_diag mass="${body_mass}"
+                           ixx="${base_inertia[0]}" iyy="${base_inertia[1]}" izz="${base_inertia[2]}">
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+      </xacro:inertial_diag>
+    </link>
+
+    <xacro:wheel prefix="${prefix}" side="left" reflect="1"/>
+    <xacro:wheel prefix="${prefix}" side="right" reflect="-1"/>
+    <xacro:caster prefix="${prefix}" position="front" reflect="1"/>
+    <xacro:caster prefix="${prefix}" position="rear" reflect="-1"/>
+
+    <!--
+      적재함. payload_mass 는 스폰 시점에 xacro 인자로 반영된다 (small/medium/large 값은
+      robot_params.yaml payload.<type>.mass). fixed 조인트라 sdformat 이 URDF 루트 링크(base_footprint)에
+      질량·관성을 합산하므로 Gazebo 동역학(가속 응답, 관성)에 그대로 들어간다 (실측: payload 25 kg →
+      lumped 70.6 kg). payload_mass = 0 이면 형상 없는 빈 링크만 남는다.
+      주행 중 적재/하역에 따른 질량 변경은 향후 과제: 물품을 별도 모델(amr_simulation/models/*)로 스폰하고
+      모델에 ignition-gazebo-detachable-joint-system 을 넣어 attach/detach 하면 Gazebo 가 질량을 동적으로 합산한다.
+        <parent_link>(prefix)base_footprint</parent_link>  (병합된 실제 링크. cargo_link 는 Gazebo 에 없다)
+        <child_model>box_small</child_model> <child_link>link</child_link>
+        <attach_topic>/<robot_name>/cargo/attach</attach_topic> <detach_topic>/<robot_name>/cargo/detach</detach_topic>
+      (Fortress 6.18 의 DetachableJoint 는 attach_topic/detach_topic 을 모두 지원 — 라이브러리 문자열로 확인, 미실행)
+    -->
+    <joint name="${prefix}cargo_joint" type="fixed">
+      <parent link="${prefix}base_link"/>
+      <child link="${prefix}cargo_link"/>
+      <origin xyz="0 0 ${body_top_z}" rpy="0 0 0"/>
+    </joint>
+    <link name="${prefix}cargo_link">
+      <xacro:if value="${payload_mass > 0.0}">
+        <visual>
+          <origin xyz="0 0 ${cargo_height / 2.0}" rpy="0 0 0"/>
+          <geometry>
+            <box size="${cargo_length} ${cargo_width} ${cargo_height}"/>
+          </geometry>
+          <material name="amr_cargo"/>
+        </visual>
+        <collision>
+          <origin xyz="0 0 ${cargo_height / 2.0}" rpy="0 0 0"/>
+          <geometry>
+            <box size="${cargo_length} ${cargo_width} ${cargo_height}"/>
+          </geometry>
+        </collision>
+      </xacro:if>
+      <xacro:inertial_box mass="${payload_mass}" x="${cargo_length}" y="${cargo_width}" z="${cargo_height}">
+        <origin xyz="0 0 ${cargo_height / 2.0}" rpy="0 0 0"/>
+      </xacro:inertial_box>
+    </link>
+
+  </xacro:macro>
+
+</robot>
