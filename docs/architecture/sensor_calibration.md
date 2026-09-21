@@ -11,7 +11,7 @@
 - `config/sensors.yaml` 의 `<센서>.extrinsic: {x, y, z, roll, pitch, yaw}` 가 **유일한 원본**이다.
   값은 `base_link` 기준 센서 **본체 링크**(body convention, REP-103: x 전방 / y 좌 / z 상)의 자세다.
 
-| 링크 | extrinsic (m, rad) | 메시지 `frame_id` |
+| 링크 | extrinsic (m, rad) | 메시지 `frame_id` (다중 로봇은 앞에 `<prefix>`) |
 | --- | --- | --- |
 | `lidar_link` | (0.15, 0, 0.20, 0, 0, 0) | `lidar_link` |
 | `camera_link` | (0.18, 0, 0.25, 0, 0, 0) | RGB `camera_optical_frame`, Depth `camera_depth_optical_frame` |
@@ -25,32 +25,34 @@
 
 ### 1.2 일치 검증 (extrinsic 을 바꿀 때마다)
 
-```bash
-ros2 run tf2_tools view_frames -o logs/frames            # logs/frames.pdf, logs/frames.gv
-ros2 run tf2_ros tf2_echo base_link lidar_link            # Translation [0.150, 0.000, 0.200], RPY [0, 0, 0]
-ros2 run tf2_ros tf2_echo base_link camera_link           # [0.180, 0.000, 0.250]
-ros2 run tf2_ros tf2_echo camera_link camera_optical_frame  # [0, 0, 0], Quaternion [-0.500, 0.500, -0.500, 0.500]
-ros2 run tf2_ros tf2_echo base_link imu_link              # [0.000, 0.000, 0.100]
-ros2 topic echo /scan --once | grep frame_id              # lidar_link — 메시지 frame_id 도 TF 와 같아야 한다
-ros2 topic echo /camera/camera_info --once | grep frame_id  # camera_optical_frame
-```
+이 문서의 명령은 로봇 네임스페이스 `<ns>` 와 프레임 접두어 `<prefix>` 를 다음 기준으로 쓴다 ([multi_robot.md](multi_robot.md) §1~2).
+`<ns>` = `/amr_01` (`system.launch.py robot_name` 기본값 — 단일 로봇에서도 토픽은 `/amr_01/...` 아래에 뜬다).
+`<prefix>` = `amr_01/` 는 `multi_robot.launch.py` 가 주입하고, 단일 로봇 `system.launch.py` 는 접두어 없이(`base_link`, `lidar_link`) 띄운다 — 그때는 아래 프레임 이름에서 `amr_01/` 을 뺀다.
 
-위 토픽 이름은 단일 로봇 기준이다. 다중 로봇에서는 `/amr_01/scan` 처럼 네임스페이스 아래로 바뀐다 ([multi_robot.md](multi_robot.md) §3).
+```bash
+ros2 run tf2_tools view_frames -o logs/frames                             # logs/frames.pdf, logs/frames.gv
+ros2 run tf2_ros tf2_echo amr_01/base_link amr_01/lidar_link              # Translation [0.150, 0.000, 0.200], RPY [0, 0, 0]
+ros2 run tf2_ros tf2_echo amr_01/base_link amr_01/camera_link             # [0.180, 0.000, 0.250]
+ros2 run tf2_ros tf2_echo amr_01/camera_link amr_01/camera_optical_frame  # [0, 0, 0], Quaternion [-0.500, 0.500, -0.500, 0.500]
+ros2 run tf2_ros tf2_echo amr_01/base_link amr_01/imu_link                # [0.000, 0.000, 0.100]
+ros2 topic echo /amr_01/scan --once | grep frame_id                       # amr_01/lidar_link — 메시지 frame_id 도 TF 와 같아야 한다
+ros2 topic echo /amr_01/camera/camera_info --once | grep frame_id         # amr_01/camera_optical_frame
+```
 
 세 값(URDF, `sensors.yaml`, `tf2_echo` 출력) 중 하나라도 다르면 캘리브레이션 결과는 무효다. 아래 절차는 이 검증을 통과한 뒤 시작한다.
 
 ## 2. 센서별 절차
 
 공통 준비
-- 로봇 정지: `ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist "{}"`.
-- 시뮬레이션 GT: Gazebo `OdometryPublisher` 시스템이 발행하는 `ground_truth` 토픽(`nav_msgs/Odometry`, `frame_id: world`, 월드 원점 기준 — 이미지의 Gazebo 6.18 로 확인). 벽/선반 위치는 월드 SDF(`src/amr_simulation/worlds/`)의 값을 쓴다.
+- 로봇 정지: `ros2 topic pub --once /amr_01/cmd_vel geometry_msgs/msg/Twist "{}"`. 캘리브레이션 중에는 Nav2·`safety_node` 를 띄우지 않고 `cmd_vel` 을 CLI 로 직접 준다 (평상시 유일한 발행자는 `safety_node`).
+- 시뮬레이션 GT: Gazebo `OdometryPublisher` 시스템이 발행하는 `ground_truth/odom` 토픽(`/amr_01/ground_truth/odom`, `nav_msgs/Odometry`, `frame_id: world`, 월드 원점 기준 — 이미지의 Gazebo 6.18 로 확인; 이름은 [components.md](components.md) §5.1). 벽/선반 위치는 월드 SDF(`src/amr_simulation/worlds/`)의 값을 쓴다.
 - 실제 로봇 GT: 줄자·레이저 거리계(벽 거리), 바닥 마킹(직진/회전), 가능하면 모션캡처. 절차와 로그 포맷은 동일하다.
 - 기록: `ros2 bag record -o logs/calibration/<항목> <토픽...>`, 분석 스크립트는 `scripts/` 에 둔다 (명세 10장 로그 규칙과 동일).
 
 ### 2.1 LiDAR ↔ base 외부 파라미터 검사 (벽 / 코너)
 
-1. 평평한 벽 앞 약 2 m 에 로봇을 세운다. 벽 평면 위치는 월드 SDF 에서, 로봇 자세는 `ground_truth` 에서 읽는다.
-2. 60 스캔 기록: `ros2 bag record -o logs/calibration/lidar_wall /scan /ground_truth`.
+1. 평평한 벽 앞 약 2 m 에 로봇을 세운다. 벽 평면 위치는 월드 SDF 에서, 로봇 자세는 `ground_truth/odom` 에서 읽는다.
+2. 60 스캔 기록: `ros2 bag record -o logs/calibration/lidar_wall /amr_01/scan /amr_01/ground_truth/odom`.
 3. 스캔마다 |각도| ≤ 30° 이고 range 가 유한한 빔을 `lidar_link` 평면 점 (x = r cos θ, y = r sin θ) 으로 바꾼다.
 4. 총최소제곱 직선 적합(PCA: 공분산 최소 고유벡터 = 법선 n, 중심 c). 측정 거리 d_meas = |c · n|, 벽 법선 방향 ψ_meas = atan2(n_y, n_x).
 5. 기대값: GT 로봇 자세 ⊕ extrinsic(0.15, 0, 0.20) 로 LiDAR 원점을 월드로 옮겨 벽 평면까지 거리 d_exp, GT yaw 로 ψ_exp 를 계산.
@@ -63,7 +65,7 @@ ros2 topic echo /camera/camera_info --once | grep frame_id  # camera_optical_fra
 
 ### 2.2 카메라 내부 파라미터 (intrinsics)
 
-시뮬레이션: Gazebo 가 `/camera/camera_info` 로 K 를 발행한다. `config/sensors.yaml` 의 640×480, hfov 1.518436 rad(87°) 에서 기대값은
+시뮬레이션: Gazebo 가 `/amr_01/camera/camera_info` 로 K 를 발행한다. `config/sensors.yaml` 의 640×480, hfov 1.518436 rad(87°) 에서 기대값은
 
 ```
 fx = fy = (W/2) / tan(hfov/2) = 320 / tan(0.7592) = 337.2 px,  cx = 320, cy = 240, D = 0
@@ -82,10 +84,12 @@ K 를 하드코딩하지 말고 **반드시 `camera_info` 를 구독**해서 읽
 
 시뮬레이션에서는 두 카메라의 extrinsic(0.18, 0, 0.25) 과 해상도·FOV 가 같으므로 픽셀 (u, v) 가 1:1 대응한다.
 
-1. `ros2 run tf2_ros tf2_echo camera_optical_frame camera_depth_optical_frame` → 항등 변환이어야 한다.
+1. `ros2 run tf2_ros tf2_echo amr_01/camera_optical_frame amr_01/camera_depth_optical_frame` → 항등 변환이어야 한다.
 2. 카메라 정면, GT 거리 d 인 위치에 박스(명세 8장 물품)를 둔다. RGB 에서 박스 중심 픽셀 (u, v)(YOLO bbox 중심 또는 수동)를 잡고
-   `/camera/depth/image_raw` 의 같은 (u, v) 깊이를 읽는다.
-3. 기대 깊이 = d − 0.18(카메라 x 오프셋) − 박스 반두께. 허용 오차 = 깊이 노이즈 σ(d) = 0.005 + 0.002·d² (`sensors.yaml`, d = 2 m 이면 0.013 m).
+   `/amr_01/camera/depth/image_raw` 의 같은 (u, v) 깊이를 읽는다.
+3. 기대 깊이 = d − 0.18(카메라 x 오프셋) − 박스 반두께. 허용 오차 = 읽는 토픽의 노이즈 σ: 브리지 직후의 `camera/depth/image_raw` 에는 시뮬레이터 네이티브 항
+   `noise_base` 0.005 m 만 들어 있으므로 0.005 m; 전처리 후 점군(`camera/depth/points_filtered`)이면 합성 σ(d) = sqrt(0.005² + (0.002·d²)²)
+   (`sensors.yaml depth_camera`; d = 2 m 이면 sqrt(0.005² + 0.008²) ≈ 0.0094 m). 자세한 구분은 2.6.
 4. 박스 좌우 에지 열(column) 이 RGB 와 Depth 에서 2 px 이내로 일치해야 한다.
 
 실제 로봇: RGB-D 센서의 정렬 스트림(예: align_depth)을 쓰거나, 체커보드로 `cv2.stereoCalibrate`(IR/Depth ↔ RGB) 해서 R, t 를 얻어
@@ -100,13 +104,16 @@ K 를 하드코딩하지 말고 **반드시 `camera_info` 를 구독**해서 읽
 Gazebo 는 SDF `<noise>` 의 `bias_mean`/`bias_stddev` 로 **실행마다 상수 바이어스를 새로 뽑는다**(부호도 무작위). 따라서 바이어스는
 파일에 고정하지 말고 **기동 시마다** 추정한다. (`dynamic_bias_stddev` 를 켜면 랜덤워크가 추가되므로 주기적 재추정이 필요하다.)
 
-절차: 수평 바닥에서 정지 상태로 T 초 기록(`/imu/data_raw`), 평균을 낸다.
+절차: 수평 바닥에서 정지 상태로 T 초 기록(`/amr_01/imu/data_raw`), 평균을 낸다.
 
 ```
-b_a = mean(a) − g_ref,   g_ref = (0, 0, +9.81)   # Gazebo IMU 는 정지 시 z ≈ +9.8 을 보고한다 (실측 9.825)
+b_a = mean(a) − g_ref,   g_ref = (0, 0, +g)   # g = 월드 SDF <gravity> 의 크기. Gazebo 기본 "0 0 -9.8" → 9.8,
+                                             #   실제 로봇은 현지 값(≈ 9.81). Gazebo IMU 는 정지 시 z ≈ +g 를 보고한다
 b_g = mean(ω)
 표준오차  SE = σ / √N,  N = f · T
 ```
+
+z 축 b_az 는 g_ref 오차가 그대로 실리므로(0.01 m/s² 만 틀려도 60 s SE 의 45배) 참고값이다. `two_d_mode` EKF 는 가속도 x, y 만 융합하므로 판정도 x, y 만 한다.
 
 | 센서 | 노이즈 σ | T = 10 s (N = 1000) | T = 60 s (N = 6000) | 바이어스 크기 (모델) |
 | --- | --- | --- | --- | --- |
@@ -123,21 +130,22 @@ b_g = mean(ω)
 
 - 로그: `[timestamp, ax, ay, az, gx, gy, gz]` 원본 + 요약 1행 `[T, N, bax, bay, baz, bgx, bgy, bgz, se_a, se_g]` → `logs/calibration/imu_bias.csv`
 
-### 2.5 휠 오도메트리 캘리브레이션 (UMBmark 계열)
+### 2.5 휠 반지름·축간 거리 캘리브레이션 (직진·제자리 회전)
 
 공칭값: `config/robot_params.yaml` 의 `wheel_radius` r = 0.0825 m, `wheel_separation` b = 0.36 m. 인코더 4096 tick/rev, 슬립 노이즈 σ 0.01
 (`sensors.yaml` `wheel_encoder`). 오도메트리 노드(`src/amr_localization`, 순기구학 직접 구현)가 `joint_states` 로부터 `wheel_odom` 을 발행한다.
-차동 구동 순기구학에서 이동 거리는 r 에, 회전각은 r/b 에 비례하므로 두 실험으로 분리해서 보정한다.
+차동 구동 순기구학에서 이동 거리는 r 에, 회전각은 r/b 에 비례하므로 두 실험으로 분리해서 보정한다
+(고전적 2-파라미터 보정. 정사각형 경로를 CW/CCW 로 도는 방식이 아니며, (a)3 의 E_d 관계식만 Borenstein & Feng 에서 가져왔다).
 
 (a) 직진 5 m — 반지름 스케일
-1. 0.3 m/s 로 전진, `wheel_odom` 누적 거리가 정확히 5.000 m 가 되면 정지. GT 거리 L_gt = 시작·종료 `ground_truth` 위치의 유클리드 거리.
+1. 0.3 m/s 로 전진, `wheel_odom` 누적 거리가 정확히 5.000 m 가 되면 정지. GT 거리 L_gt = 시작·종료 `ground_truth/odom` 위치의 유클리드 거리.
 2. k_r = L_gt / L_odo, r ← k_r · r. 전진 5회 + 후진 5회 평균.
 3. 종료 시 GT 횡방향 편차 y 가 있으면 좌우 바퀴 지름 비 E_d 가 원인이다 (Borenstein & Feng, 1996):
    `R = L² / (2y)`, `E_d = D_R / D_L = (R + b/2) / (R − b/2)`, `r_L = 2r / (E_d + 1)`, `r_R = 2·E_d·r / (E_d + 1)`.
    오도메트리 노드가 좌우 반지름을 따로 받을 때만 적용한다.
 
 (b) 제자리 5회전 — 축간 거리
-1. ω = 0.5 rad/s 로 회전, `wheel_odom` yaw 누적(unwrap)이 10π 가 되면 정지. GT Δθ_gt 는 `ground_truth` yaw 누적(unwrap).
+1. ω = 0.5 rad/s 로 회전, `wheel_odom` yaw 누적(unwrap)이 10π 가 되면 정지. GT Δθ_gt 는 `ground_truth/odom` yaw 누적(unwrap).
 2. `Δθ = r (Δφ_R − Δφ_L) / b` 이므로 (a) 에서 r 을 먼저 고친 뒤 `k_b = θ_odo / θ_gt`, b ← k_b · b. CW/CCW 각 3회 평균.
 
 - 판정(보정 후 재실험): 직진 5 m 오차 ≤ 0.05 m(1 %), 5회전 오차 ≤ 2°(0.035 rad).
@@ -151,9 +159,14 @@ b_g = mean(ω)
 - LiDAR: 2.1 과 같은 벽 설정, 60 스캔 이상. 스캔마다 직선 적합 잔차의 표준편차 = σ_meas. 설정값 `lidar.noise_stddev: 0.03` 대비 ±10 %(0.027~0.033) 이면 합격.
   감사 측정 0.0299 m, 독립 SDF 사전 확인 0.0285 m(60 스캔 × 약 120 빔). 잔차 > 4σ 인 빔 수가 0 에 가까운지도 본다(아웃라이어 모델 없음).
 - IMU: 2.4 의 정지 기록에서 std(a) ≈ 0.017, std(ω) ≈ 0.0002 (±10 %).
-- Depth: 고정 픽셀의 100 프레임 표준편차가 σ(d) = 0.005 + 0.002·d² 와 ±20 % 이내.
-- SDF 주의: LiDAR 노이즈는 `<noise><type>gaussian</type>...</noise>`(자식 요소), IMU/카메라는 `<noise type="gaussian">`(속성)이다.
-  섞어 쓰면 Gazebo 가 "XML Attribute[type] in element[noise] not defined" 경고를 내며 노이즈가 적용되지 않을 수 있다 (사전 확인에서 관찰).
+- Depth: 두 단계로 나눠 본다 — 어느 토픽을 샘플하느냐에 따라 기대 σ 가 다르다.
+  ① 브리지 직후 `camera/depth/image_raw` 의 고정 픽셀 100 프레임 표준편차 ≈ `noise_base` 0.005 m ± 20 %, **거리와 무관**해야 한다
+  (시뮬레이터는 네이티브 가우시안만 적용). ② 전처리 노드 `pointcloud_filter_node`(voxel 다운샘플을 `leaf_size: 0` 으로 끔) 출력
+  `camera/depth/points_filtered` 에서 같은 픽셀의 점 깊이 표준편차가 합성 σ(d) = sqrt(0.005² + (0.002·d²)²) ± 20 %
+  (d = 1 m → 0.0054, 2 m → 0.0094, 3 m → 0.0187 m).
+- SDF 주의: LiDAR 와 카메라(RGB·depth)는 `<noise><type>gaussian</type>...</noise>`(자식 요소), IMU 만 `<noise type="gaussian">`(속성)이다
+  (sdformat 1.9: `lidar.sdf`/`camera.sdf` vs `imu.sdf`). 섞어 쓰면 Gazebo 가 "XML Attribute[type] in element[noise] not defined" 경고를 내며
+  노이즈가 적용되지 않을 수 있다 (사전 확인에서 관찰).
 
 ## 3. 결과 표 템플릿
 
@@ -165,13 +178,13 @@ b_g = mean(ω)
 | LiDAR extrinsic Δd / Δψ | (0.15, 0, 0.20) | 사전 확인 Δd = +0.0005 m | 0.01 m / 0.5° | | `lidar_extrinsic.csv` | |
 | LiDAR 노이즈 σ | 0.030 m | 0.0299 (감사) / 0.0285 (사전) | ±10 % | | `lidar_wall/` | |
 | 카메라 fx, fy, cx, cy | 337.2, 337.2, 320, 240 | 337.21, 337.21, 320, 240 (사전) | 1 px / RMS 0.3 px(실기) | | `camera_intrinsics.csv` | |
-| Depth ↔ RGB 정렬 | 항등 변환, Δ ≤ σ(d) | | 2 px, σ(d) | | `depth_rgb_align.csv` | |
-| IMU 가속도 바이어스 (x, y, z) | 모델 |b| ≈ 0.10 (σ 0.001) | | SE 2.2e-4 (60 s) | | `imu_bias.csv` | |
+| Depth ↔ RGB 정렬 | 항등 변환, Δ ≤ σ | | 2 px, 0.005 m(`image_raw`) / σ(d)(점군) | | `depth_rgb_align.csv` | |
+| IMU 가속도 바이어스 (x, y; z 는 참고) | 모델 |b| ≈ 0.10 (σ 0.001) | | SE 2.2e-4 (60 s) | | `imu_bias.csv` | |
 | IMU 자이로 바이어스 (x, y, z) | 모델 |b| ≈ 0.01 (σ 7.5e-6) | | SE 2.6e-6 (60 s) | | `imu_bias.csv` | |
 | IMU 노이즈 σ_a / σ_g | 0.017 / 0.0002 | | ±10 % | | `imu_bias.csv` | |
 | 휠 반지름 스케일 k_r | 1.000 (r = 0.0825) | | 직진 5 m ≤ 0.05 m | | `odom_straight_*.csv` | |
 | 축간 거리 스케일 k_b | 1.000 (b = 0.36) | | 5회전 ≤ 2° | | `odom_rotate_*.csv` | |
-| Depth 노이즈 σ(d) | 0.005 + 0.002·d² | | ±20 % | | `depth_noise.csv` | |
+| Depth 노이즈 σ | `image_raw`: 0.005 / 점군: sqrt(0.005² + (0.002·d²)²) | | ±20 % | | `depth_noise.csv` | |
 
 로그 포맷 요약 (명세 10장 표준 + 본 문서 정의)
 
@@ -189,9 +202,9 @@ Depth 정렬      : [timestamp, u, v, depth_meas, depth_exp, delta]
 - [ ] `sensors.yaml` extrinsic 을 실측(도면 + 2.1 벽 검사)으로 갱신하고 1.2 검증을 다시 통과했다.
 - [ ] 카메라 `camera_info` 가 체커보드 결과로 채워졌다 (2.2). Depth 정렬 확인(2.3).
 - [ ] IMU 바이어스를 파일 값으로 고정할지, 기동 시 자동 추정할지 결정했다 (2.4).
-- [ ] 휠 r, b 를 UMBmark 결과로 갱신했다 (2.5). 노이즈 파라미터는 실측 σ 로 갱신해 EKF 공분산(`docs/algorithms/ekf.md`)에 반영했다.
+- [ ] 휠 r, b 를 2.5 의 직진·회전 실험 결과로 갱신했다. 노이즈 파라미터는 실측 σ 로 갱신해 EKF 공분산(`docs/algorithms/ekf.md`)에 반영했다.
 
 ## 5. 미확정 항목
 
 - 시뮬레이션 사전 확인은 저장소 URDF 가 아직 없어 독립 SDF 로 수행했다. 저장소 xacro 가 생기면 같은 절차로 재측정해 3장 표를 채운다.
-- `imu/data_raw` → `imu/data` 토픽 분리, 바이어스 파라미터 이름, `ground_truth` 토픽 이름은 이 문서의 제안이며 구현 시 확정한다.
+- 토픽 이름(`imu/data_raw` → `imu/data`, `ground_truth/odom`)은 [components.md](components.md) §5 의 인터페이스 명세를 따른다. IMU 필터의 파라미터 이름(`accel_bias`, `gyro_bias`, `bias_estimation_time`)과 전처리 노드의 `leaf_size: 0` 옵션은 구현 시 확정한다.

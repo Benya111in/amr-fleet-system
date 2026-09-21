@@ -6,8 +6,8 @@
 > 다중 로봇 네임스페이스 설계는 [multi_robot.md](multi_robot.md) 참고.
 
 이 문서는 명세가 요구하는 "API 문서 (각 노드의 토픽/서비스/액션 인터페이스)" 의 골격을 겸한다.
-표의 모든 인터페이스 타입은 `amr-fleet-system:latest` 이미지 안에서 `ros2 interface show` 로 존재를 확인한 것이다
-(`amr_msgs` 는 스크래치 워크스페이스에 빌드하여 확인).
+표의 모든 인터페이스 타입은 `docker/Dockerfile` 로 빌드한 이미지 안에서 `ros2 interface show` 로 존재를 확인한 것이다
+(`amr_msgs` 는 스크래치 워크스페이스에 빌드하여 확인). 라이브러리 버전은 Dockerfile 의 고정(pin) 값을 인용한다.
 
 ---
 
@@ -17,7 +17,7 @@
 | --- | --- |
 | 패키지 단일 책임 | 명세 7장 제약. 기능별 패키지 10개, 의존은 아래 다이어그램대로만 허용 |
 | 상대 토픽 이름 | 로봇별 토픽은 전부 **상대 이름**. 런치가 `/<robot_id>/` 네임스페이스와 TF prefix 를 주입한다 (`config/ekf.yaml` 의 상대 이름 규칙과 동일) |
-| 전역 토픽은 최소화 | `/map`, `/tf`, `/tf_static`, `/clock`, `/fleet/*` 만 전역. 그 외는 모두 로봇 네임스페이스 아래 |
+| 전역 토픽은 최소화 | `/map`(+ `/map_server/*` 서비스), `/tf`, `/tf_static`, `/clock`, `/fleet/*` 만 전역. 그 외는 모두 로봇 네임스페이스 아래 |
 | 이중 EKF | `ekf_filter_node_odom` → `odom→base_footprint`, `odometry/filtered` / `ekf_filter_node_map` → `map→odom`, `odometry/filtered_map`. AMCL 은 `tf_broadcast: false` |
 | Nav2 기반 + 직접 구현 | A*/DWA/Pure Pursuit 는 `nav2_core` pluginlib 플러그인으로 구현해 Nav2 서버에 로드 (명세 7장). 속도 프로파일/PID 와 안전 게이트는 자체 노드로 Nav2 `velocity_smoother`/`collision_monitor` 를 대체 |
 | 설정 외부화 | 튜닝값은 전부 `config/*.yaml` 과 패키지별 `config/` 에 두고 재빌드 없이 변경 (명세 9장 평가 항목) |
@@ -122,13 +122,14 @@ flowchart TB
 | `imu_filter_node` | C++ | own | `imu/data_raw` → 저역 통과 + 바이어스 보정 → `imu/data` 100 Hz | 100 Hz |
 | `scan_filter_node` | C++ | own | `scan` → 거리/각도 필터 + 아웃라이어 제거 → `scan_filtered` 10 Hz | 720 pt × 10 Hz × 5대 |
 | `slam_toolbox` (`async_slam_toolbox_node`) | C++ | ext | 매핑 모드 전용. `scan_filtered` → `/map`, `map→odom` TF. 저장은 `map_saver_cli` | — |
-| `map_server` | C++ | LC/ext | `maps/*.yaml` → `/map` (transient_local) | — |
+| `map_server` | C++ | LC/ext | **루트(`/`)에 1개만** 기동, `maps/*.yaml` → `/map` (transient_local). 로봇별 AMCL·전역 costmap·추적기가 절대 이름 `/map` 을 구독 ([multi_robot.md](multi_robot.md) §4) | — |
 | `amcl` | C++ | LC/ext | `scan_filtered` + `/map` → `amcl_pose`. `tf_broadcast: false` (map→odom 은 EKF 가 발행) | — |
 | `ekf_filter_node_odom` | C++ | ext | `wheel_odom` + `imu/data` → `odometry/filtered`, TF `odom→base_footprint` | — |
 | `ekf_filter_node_map` | C++ | ext | `wheel_odom` + `imu/data` + `amcl_pose` → `odometry/filtered_map`, TF `map→odom` | — |
 | `kidnap_monitor_node` | Python | own | `amcl_pose` 공분산 급증/점프 감지 → `reinitialize_global_localization` + `spin` 요청, `localization/lost` 발행 | 저주기 감시 로직 |
+| `lifecycle_manager_localization` | C++ | ext | 로봇별 `amcl` configure/activate. 루트 `map_server` 는 `multi_robot.launch.py`(단일 로봇은 `system.launch.py`)가 별도 `lifecycle_manager_map` 으로 활성화 | — |
 
-매핑 모드(`mode:=slam`)에서는 `slam_toolbox` 만, 주행 모드(`mode:=localization`)에서는 `map_server`+`amcl`+`ekf_filter_node_map` 을 기동한다. 두 모드는 `map→odom` 발행자가 겹치므로 동시에 켜지 않는다.
+매핑 모드(`mode:=slam`)에서는 `slam_toolbox` 만, 주행 모드(`mode:=localization`)에서는 로봇별 `amcl`+`ekf_filter_node_map` 을 기동하고, 루트 `map_server` 는 로봇 수와 무관하게 1개만 띄운다(이미 떠 있으면 재사용). 두 모드는 `map→odom` 발행자가 겹치므로 동시에 켜지 않는다.
 
 ### 3.3 amr_navigation
 
@@ -149,13 +150,13 @@ flowchart TB
 
 | 노드 | 언어 | 형태 | 역할 | 언어 근거 |
 | --- | --- | --- | --- | --- |
-| `pointcloud_filter_node` | C++ | own | `camera/depth/points` → 거리 컷 + voxel 다운샘플 → `camera/depth/points_filtered` (지역 costmap voxel layer 입력) | 640×480 @15 Hz |
-| `yolo_node` | Python | own | `camera/image_raw` → YOLOv8 (ultralytics 8.4, torch cu128 확인) → `perception/detections_2d`. 목표 GPU 30 FPS | ultralytics/torch 가 Python |
+| `pointcloud_filter_node` | C++ | own | `camera/depth/image_raw` + `camera/depth/camera_info` → 깊이 d 에 **거리 제곱 노이즈 N(0, k·d²) 가산**(`sensors.yaml depth_camera.noise_quadratic_coeff`, 명세 7장 노이즈 모델) → 역투영 점군 생성(시뮬레이터 점군은 좌표 규약 문제로 쓰지 않음 — `sensors.yaml` 주석) → 거리 컷 + voxel 다운샘플 → `camera/depth/points_filtered` (지역 costmap voxel layer 입력) | 640×480 @15 Hz |
+| `yolo_node` | Python | own | `camera/image_raw` → YOLOv8 (ultralytics 8.4.155, torch 2.11 cu128 — Dockerfile 고정) → `perception/detections_2d`. 목표 GPU 30 FPS | ultralytics/torch 가 Python |
 | `object_localizer_node` | Python | own | 2D bbox 중심 + depth → **Pinhole 역투영** → TF 로 map frame 변환 → `perception/detected_objects` | numpy 소규모 연산 |
 | `detection_marker_node` | Python | own | `perception/detected_objects` → RViz `MarkerArray` (CUBE + TEXT "Class/Conf/Dist") | 시각화 전용 |
-| `aruco_detector_node` | Python | own | `camera/image_raw` → `cv2.aruco` (cv2 5.0 확인) → 도킹 마커 자세 `perception/dock_marker_pose` (base_link 기준) | OpenCV Python |
+| `aruco_detector_node` | Python | own | `camera/image_raw` → `cv2.aruco` (opencv-contrib-python-headless 4.11.0.86 — Dockerfile 고정) → 도킹 마커 자세 `perception/dock_marker_pose` (base_link 기준) | OpenCV Python |
 | `obstacle_tracker_node` | C++ | own | `scan_filtered` − `/map` 배경 → 클러스터링 → 데이터 연관 → **칼만 필터** → 속도/방향/신뢰도/동적 여부 → 경로(`plan`)·자기 속도 기반 **TTC** → `perception/tracked_obstacles` 10 Hz | 안전 체인(스캔→TTC→정지) 지연 최소화 |
-| `safety_node` | C++ | own | `cmd_vel_smoothed` 게이트 → `cmd_vel`. Warning 1.0 m / Critical 0.5 m / 정지 0.3 m 존, TTC 감속, E-stop 래치, 센서 타임아웃 0.5 s 시 저속/정지 | 안전 필수, 50 Hz |
+| `safety_node` | C++ | own | `cmd_vel_smoothed` 게이트 → `cmd_vel`. 거리 존 Warning 1.0 m(≤ 0.5 m/s) / Critical 0.5 m(≤ 0.2 m/s) / 정지 0.3 m, TTC 기반 연속 감속 v ≤ a·(TTC − t_react) ([sequences.md](sequences.md) §2), E-stop 래치, 센서 타임아웃(`robot_params.yaml safety.sensor_timeouts`, 토픽별 ≈3 주기: LiDAR 0.3 / depth 0.2 / RGB 0.1 / IMU 0.05 / 엔코더 0.06 s) — LiDAR·휠 엔코더 고장은 **정지**, IMU·카메라 고장은 `degraded_mode_max_speed` **0.2 m/s 저속** | 안전 필수, 50 Hz |
 
 ### 3.5 amr_behavior
 
@@ -179,7 +180,7 @@ BT 노드 목록 (≥15, 명세 8장): Control `Sequence` `Fallback` `ReactiveSe
 
 | 노드 | 언어 | 형태 | 역할 | 언어 근거 |
 | --- | --- | --- | --- | --- |
-| `dashboard_node` | Python | own | Flask(3.1 확인) + SSE 웹 대시보드 `:8080`. 로봇 위치/상태/배터리/작업, KPI, 알림(긴급 정지/작업 실패/교착). 작업 투입, E-stop 버튼 | 웹 스택 |
+| `dashboard_node` | Python | own | Flask 3.1.3 + SSE 웹 대시보드 `:8080`. 로봇 위치/상태/배터리/작업, KPI, 알림(긴급 정지/작업 실패/교착). 작업 투입, E-stop 버튼 | 웹 스택 |
 
 ---
 
@@ -203,7 +204,7 @@ flowchart LR
     wodom["wheel_odometry_node"]
     imuf["imu_filter_node"]
     scanf["scan_filter_node"]
-    mapsrv["map_server"]
+    mapsrv["map_server<br/>(루트 /, 1개)"]
     amcl["amcl"]
     ekfo["ekf_filter_node_odom"]
     ekfm["ekf_filter_node_map"]
@@ -245,8 +246,8 @@ flowchart LR
   bridge -->|"imu/data_raw"| imuf
   bridge -->|"scan"| scanf
   bridge -->|"camera/image_raw<br/>camera/camera_info"| yolo & aruco
-  bridge -->|"camera/depth/image_raw"| objloc
-  bridge -->|"camera/depth/points"| pcf
+  bridge -->|"camera/depth/image_raw"| objloc & pcf
+  bridge -->|"camera/depth/camera_info"| pcf
   bridge -->|"battery_state"| adapter
   wodom -->|"wheel_odom"| ekfo & ekfm
   imuf -->|"imu/data"| ekfo & ekfm
@@ -335,8 +336,9 @@ QoS 약어: `sensor` = best-effort depth 5, `reliable` = reliable volatile depth
 | Pub | `imu/data_raw` | `sensor_msgs/msg/Imu` | 100 Hz, sensor | 바이어스+가우시안 노이즈 (SDF). 필터 후 `imu/data` |
 | Pub | `camera/image_raw` | `sensor_msgs/msg/Image` | 30 Hz, sensor | 640×480 RGB |
 | Pub | `camera/camera_info` | `sensor_msgs/msg/CameraInfo` | 30 Hz, sensor | Pinhole 내부 파라미터 |
-| Pub | `camera/depth/image_raw` | `sensor_msgs/msg/Image` | 15 Hz, sensor | 32FC1, σ(d)=base+k·d² |
-| Pub | `camera/depth/points` | `sensor_msgs/msg/PointCloud2` | 15 Hz, sensor | |
+| Pub | `camera/depth/image_raw` | `sensor_msgs/msg/Image` | 15 Hz, sensor | 32FC1. 시뮬레이터는 `noise_base` σ 0.005 m 만 적용(SDF 네이티브). 거리 제곱 항 k·d² (k = 0.002 m⁻¹) 은 `pointcloud_filter_node` 가 가산 → 합성 σ(d) = sqrt(0.005² + (0.002·d²)²) (`sensors.yaml depth_camera`) |
+| Pub | `camera/depth/camera_info` | `sensor_msgs/msg/CameraInfo` | 15 Hz, sensor | `sensors.yaml depth_camera.info_topic`. 점군 역투영 + `safety_node` 생존 감시 |
+| Pub | `camera/depth/points` | `sensor_msgs/msg/PointCloud2` | 15 Hz, sensor | **기본 브리지 안 함**(디버그 시만). 좌표가 optical 이 아닌 본체 규약으로 나와 그대로 쓸 수 없다 (`sensors.yaml` 주석) |
 | Pub | `joint_states` | `sensor_msgs/msg/JointState` | 50 Hz, reliable | 바퀴 조인트 위치/속도 (인코더 원천) |
 | Pub | `battery_state` | `sensor_msgs/msg/BatteryState` | 1 Hz, reliable | LinearBatteryPlugin |
 | Pub | `ground_truth/odom` | `nav_msgs/msg/Odometry` | 50 Hz, reliable | OdometryPublisher, 노이즈 없음. **평가 전용** (RMSE/CTE/도킹 오차) |
@@ -363,11 +365,11 @@ QoS 약어: `sensor` = best-effort depth 5, `reliable` = reliable volatile depth
 | Sub | `joint_states` | `sensor_msgs/msg/JointState` | 50 Hz | |
 | Pub | `wheel_odom` | `nav_msgs/msg/Odometry` | 50 Hz, reliable | frame `<r>/odom`, child `<r>/base_footprint`. 공분산은 슬립 모델에서 산출. TF 는 발행하지 않음(EKF 가 담당) |
 
-`imu_filter_node`: Sub `imu/data_raw` → Pub `imu/data` (`sensor_msgs/msg/Imu`, 100 Hz). 파라미터 `lpf_cutoff_hz`, `bias_calib_samples`.
+`imu_filter_node`: Sub `imu/data_raw` → Pub `imu/data` (`sensor_msgs/msg/Imu`, 100 Hz). 파라미터 `lpf_cutoff_hz`, `bias_estimation_time`(기동 시 정지 평균, 기본 60 s), `accel_bias`/`gyro_bias`(double[3], 실기에서는 파일 값으로 덮어쓰기) — 절차는 [sensor_calibration.md](sensor_calibration.md) §2.4.
 
 `scan_filter_node`: Sub `scan` → Pub `scan_filtered` (`sensor_msgs/msg/LaserScan`, 10 Hz). 파라미터 `range_min/max`, `angle_mask`, `outlier_window`, `outlier_thresh`.
 
-`map_server` (ext): Pub `/map` (`nav_msgs/msg/OccupancyGrid`, latched), SrvS `map_server/map` (`nav_msgs/srv/GetMap`), `map_server/load_map` (`nav2_msgs/srv/LoadMap`).
+`map_server` (ext, **루트에 1개**): Pub `/map` (`nav_msgs/msg/OccupancyGrid`, latched), SrvS `/map_server/map` (`nav_msgs/srv/GetMap`), `/map_server/load_map` (`nav2_msgs/srv/LoadMap`) — 모두 절대 이름. 로봇별 `amcl`·`planner_server`(static layer)·`obstacle_tracker_node` 와 중앙 `traffic_manager_node`·`dashboard_node` 가 `/map` 을 구독한다.
 
 `slam_toolbox` (매핑 모드, ext): Sub `scan_filtered`; Pub `/map`, `pose` (`geometry_msgs/msg/PoseWithCovarianceStamped`); SrvS `slam_toolbox/save_map` (`slam_toolbox/srv/SaveMap`), `slam_toolbox/serialize_map` (`slam_toolbox/srv/SerializePoseGraph`); TF `map→<r>/odom`.
 
@@ -437,8 +439,8 @@ Nav2 서버 (ext, 액션·토픽 이름은 Nav2 Humble 기본값)
 
 | 노드 | 방향 | 이름 | 타입 | 주기 / QoS | 비고 |
 | --- | --- | --- | --- | --- | --- |
-| `pointcloud_filter_node` | Sub | `camera/depth/points` | `sensor_msgs/msg/PointCloud2` | 15 Hz | |
-| | Pub | `camera/depth/points_filtered` | `sensor_msgs/msg/PointCloud2` | 15 Hz, sensor | voxel `leaf_size` 0.05 m, `max_range` 5 m |
+| `pointcloud_filter_node` | Sub | `camera/depth/image_raw`, `camera/depth/camera_info` | `sensor_msgs/msg/Image`, `sensor_msgs/msg/CameraInfo` | 15 Hz | message_filters 시간 동기 |
+| | Pub | `camera/depth/points_filtered` | `sensor_msgs/msg/PointCloud2` | 15 Hz, sensor | frame `<r>/camera_depth_optical_frame`. 깊이에 N(0, k·d²) 가산(`sensors.yaml depth_camera.noise_quadratic_coeff`) → 역투영 → `max_range` 5 m 컷 → voxel `leaf_size` 0.05 m (`0` 이면 다운샘플 없음 — 노이즈 검증용) |
 | `yolo_node` | Sub | `camera/image_raw` | `sensor_msgs/msg/Image` | 30 Hz | |
 | | Pub | `perception/detections_2d` | `vision_msgs/msg/Detection2DArray` | ≤30 Hz | class ≥3 (box/person/sign), `conf_thresh` |
 | `object_localizer_node` | Sub | `perception/detections_2d`, `camera/depth/image_raw`, `camera/camera_info` | | | message_filters 시간 동기 |
@@ -453,9 +455,10 @@ Nav2 서버 (ext, 액션·토픽 이름은 Nav2 Humble 기본값)
 | | Pub | `perception/tracked_obstacles` | `amr_msgs/msg/TrackedObstacleArray` | 10 Hz, reliable | frame `map`. `time_to_collision` = inf 이면 비충돌 |
 | | Pub | `perception/tracked_markers` | `visualization_msgs/msg/MarkerArray` | 10 Hz | 속도 화살표 + track_id |
 | `safety_node` | Sub | `cmd_vel_smoothed` | `geometry_msgs/msg/Twist` | | |
-| | Sub | `scan_filtered` | `sensor_msgs/msg/LaserScan` | 10 Hz | 존 판정(footprint 기준 최근접 거리), 타임아웃 감시 |
-| | Sub | `perception/tracked_obstacles` | `amr_msgs/msg/TrackedObstacleArray` | | TTC 임계 감속 |
-| | Sub | `imu/data`, `wheel_odom` | | | 센서 고장(타임아웃 0.5 s) 감지 |
+| | Sub | `scan_filtered` | `sensor_msgs/msg/LaserScan` | 10 Hz | 존 판정(footprint 기준 최근접 거리). 타임아웃 `sensor_timeouts.lidar` 0.3 s → **정지** |
+| | Sub | `perception/tracked_obstacles` | `amr_msgs/msg/TrackedObstacleArray` | | TTC ≤ τ_crit 이면 v ≤ a·(TTC − t_react) 연속 제한 ([sequences.md](sequences.md) §2) |
+| | Sub | `imu/data`, `wheel_odom` | | 100 / 50 Hz | 타임아웃 `sensor_timeouts.imu` 0.05 s → `degraded_mode_max_speed` 0.2 m/s 저속, `sensor_timeouts.wheel_encoder` 0.06 s → **정지** |
+| | Sub | `camera/camera_info`, `camera/depth/camera_info` | `sensor_msgs/msg/CameraInfo` | 30 / 15 Hz | 카메라 생존 감시(이미지와 같은 주기의 경량 메시지). 타임아웃 `sensor_timeouts.rgb_camera` 0.1 s / `sensor_timeouts.depth_camera` 0.2 s → 0.2 m/s 저속 |
 | | Sub | `estop`, `/fleet/estop` | `std_msgs/msg/Bool` | latched | 대시보드 E-stop 버튼 (로봇별 / 전체) |
 | | Pub | `cmd_vel` | `geometry_msgs/msg/Twist` | 50 Hz | 유일한 `cmd_vel` 발행자 |
 | | Pub | `safety/estop_active` | `std_msgs/msg/Bool` | latched | 0.3 m 침범 / E-stop / 센서 고장 |
@@ -526,7 +529,7 @@ Nav2 서버 (ext, 액션·토픽 이름은 Nav2 Humble 기본값)
 | 방향 | 이름 | 타입 | 비고 |
 | --- | --- | --- | --- |
 | Sub | `odometry/filtered_map`, `battery_state`, `task_status`, `executor/phase`, `safety/estop_active`, `safety/zone` | | |
-| Pub | `robot_state` | `amr_msgs/msg/RobotState` | 2 Hz. `status` 매핑: estop→ESTOP, phase→MOVING/DOCKING/LOADING/CHARGING, lost/error→ERROR, 그 외 IDLE. `comm_latency_ms` 지연 큐 |
+| Pub | `robot_state` | `amr_msgs/msg/RobotState` | 2 Hz. `status` 매핑: estop→ESTOP, phase→MOVING/DOCKING/LOADING/CHARGING, lost/error→ERROR, 그 외 IDLE. 송신 지연 큐: `comm_latency_ms: [0, 100]` 균등 분포에서 메시지마다 추출 ([multi_robot.md](multi_robot.md) §6) |
 
 ### 5.7 amr_dashboard
 
@@ -540,7 +543,7 @@ Nav2 서버 (ext, 액션·토픽 이름은 Nav2 Humble 기본값)
 | Sub | `/map` | `nav_msgs/msg/OccupancyGrid` | 배경 지도 |
 | Pub | `/fleet/task_request` | `std_msgs/msg/String` | 작업 투입 폼 (JSON) |
 | Pub | `/amr_XX/estop`, `/fleet/estop` | `std_msgs/msg/Bool` | latched. E-stop 버튼 |
-| HTTP | `:8080` | SSE `/events`, REST `/api/tasks` | Flask 3.1 (이미지 확인). 웹소켓 라이브러리 미설치라 SSE 사용 |
+| HTTP | `:8080` | SSE `/events`, REST `/api/tasks` | Flask 3.1.3 (Dockerfile 고정). Flask-SocketIO 5.6.1 도 이미지에 있으나 **SSE 를 택했다**: SocketIO 의 eventlet 워커는 monkey-patch 로 `rclpy` 스핀 스레드를 막고, SSE 는 브라우저 `EventSource` 만으로 되어 클라이언트 라이브러리가 필요 없다 (단방향 푸시 + REST 로 충분) |
 
 ---
 
@@ -549,7 +552,7 @@ Nav2 서버 (ext, 액션·토픽 이름은 Nav2 Humble 기본값)
 | 파일 | 소비 노드 |
 | --- | --- |
 | `config/robot_params.yaml` | xacro (footprint/wheel), `wheel_odometry_node`, `velocity_profiler_node`, DWA/PurePursuit 플러그인, `safety_node`(safety.*), `payload_manager_node`(payload.*) |
-| `config/sensors.yaml` | xacro (extrinsic, 노이즈 SDF), `scan_filter_node`, `imu_filter_node`, `wheel_odometry_node`(ticks, slip), `object_localizer_node` |
+| `config/sensors.yaml` | xacro (extrinsic, 노이즈 SDF), `scan_filter_node`, `imu_filter_node`, `wheel_odometry_node`(ticks, slip), `pointcloud_filter_node`(depth 노이즈 k·d²), `object_localizer_node` |
 | `config/ekf.yaml` | `ekf_filter_node_odom`, `ekf_filter_node_map` |
 | `src/amr_navigation/config/nav2_params.yaml` | Nav2 서버 전부, A*/DWA/PurePursuit 플러그인 파라미터 |
 | `src/amr_localization/config/{amcl,slam_toolbox}.yaml` | `amcl`, `slam_toolbox` |
@@ -565,7 +568,7 @@ Nav2 서버 (ext, 액션·토픽 이름은 Nav2 Humble 기본값)
 ros2 node list                       # 3절 노드가 /amr_01 아래에 모두 있는지
 ros2 topic list -t | grep amr_01     # 5절 토픽/타입 일치
 ros2 action list -t                  # navigate_to_pose, compute_path_to_pose, follow_path, dock ...
-ros2 run rqt_graph rqt_graph         # 4절 그래프와 비교 (headless 서버에서는 rosbag2 + Foxglove)
+ros2 run rqt_graph rqt_graph         # 4절 그래프와 비교. headless 서버: foxglove_bridge(이미지 포함, ws://:8765)로 Foxglove Studio 실시간 연결, 또는 rosbag2 기록 후 재생
 ros2 run tf2_tools view_frames       # 4.2절 TF 발행자 확인
 ros2 topic hz /amr_01/cmd_vel        # 50 Hz, 발행자 1개 (ros2 topic info -v)
 ```

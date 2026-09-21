@@ -10,8 +10,8 @@
 | 네임스페이스 | 역할 | 비고 |
 | --- | --- | --- |
 | `/amr_01` … `/amr_05` | 로봇 1대의 전체 온보드 스택 (bridge, 오도메트리, EKF, AMCL, Nav2, 인지, BT) | 두 자리 0 패딩, 정렬 가능, `amr_99` 까지 확장 |
-| `/fleet` | 중앙 Fleet Manager, 할당·교착 관리, 지연 릴레이 | 1개 |
-| `/` (루트) | Gazebo 서버, `/clock` 브리지, `map_server`, 대시보드 | 로봇 수와 무관한 공용 인프라 |
+| `/fleet` | 중앙 `fleet_manager_node`(할당·KPI) · `traffic_manager_node`(교통·교착) | 각 1개 ([components.md](components.md) §3.6) |
+| `/` (루트) | Gazebo 서버, `/clock` 브리지, `map_server`(1개), `dashboard_node` | 로봇 수와 무관한 공용 인프라 |
 
 - 로봇 식별자 문자열은 네임스페이스와 같다: `amr_msgs/RobotState.robot_id`, `amr_msgs/Task.robot_id`, `amr_msgs/srv/AssignTask` 응답 `robot_id` 모두 `"amr_01"`.
 - `src/amr_bringup/launch/system.launch.py` 의 `robot_name` 인자가 곧 네임스페이스다. `multi_robot.launch.py` 는 N 대에 대해 `robot_name`, 스폰 좌표를 바꿔가며 같은 하위 런치를 포함한다.
@@ -75,7 +75,7 @@ graph TD
 | --- | --- | --- | --- |
 | `scan` | `sensor_msgs/LaserScan` | bridge → 필터, AMCL, costmap, 동적 장애물 추적 | gz `<topic>/amr_01/scan</topic>` |
 | `camera/image_raw`, `camera/camera_info` | `sensor_msgs/Image`, `CameraInfo` | bridge → YOLO | `camera_info` 는 gz 가 `<topic>` 의 디렉터리 + `/camera_info` 로 자동 생성 (확인) |
-| `camera/depth/image_raw`, `camera/depth/points` | `Image`, `PointCloud2` | bridge → 2D→3D 변환 | `points` 는 필요할 때만 브리지 |
+| `camera/depth/image_raw`, `camera/depth/camera_info` | `Image`, `CameraInfo` | bridge → `object_localizer_node`(2D→3D), `pointcloud_filter_node`(점군 생성) | 시뮬레이터 점군 `camera/depth/points` 는 디버그 시만 브리지 |
 | `imu/data_raw` | `sensor_msgs/Imu` | bridge → IMU 필터 | 바이어스 보정 전 |
 | `imu/data` | `sensor_msgs/Imu` | IMU 필터 → `ekf_filter_node_odom` | `ekf.yaml` `imu0` |
 | `joint_states` | `sensor_msgs/JointState` | bridge(gz JointStatePublisher) → 오도메트리, robot_state_publisher | |
@@ -83,11 +83,13 @@ graph TD
 | `odometry/filtered` | `nav_msgs/Odometry` | `ekf_filter_node_odom` → Nav2 (`odom_topic`), 상태 보고 | robot_localization 기본 출력 이름 |
 | `odometry/filtered_map` | `nav_msgs/Odometry` | `ekf_filter_node_map` → 평가, 대시보드 | 런치에서 리맵 (두 EKF 출력 충돌 방지) |
 | `amcl_pose` | `PoseWithCovarianceStamped` | AMCL → `ekf_filter_node_map` | `ekf.yaml` `pose0` |
-| `cmd_vel` | `geometry_msgs/Twist` | Nav2 velocity_smoother / 안전 노드 → bridge | gz DiffDrive `<topic>/amr_01/cmd_vel</topic>` |
-| `ground_truth` | `nav_msgs/Odometry` | bridge(gz OdometryPublisher, `frame_id: world`) → 평가 전용 | 시뮬레이션에만 존재 (확인: 월드 원점 기준) |
-| `robot_state` | `amr_msgs/RobotState` | 상태 노드 → `/fleet` 지연 릴레이 | 1~2 Hz |
-| `task` | `amr_msgs/Task` | `/fleet` 지연 릴레이 → BT | |
-| `detected_objects`, `tracked_obstacles` | `amr_msgs/DetectedObjectArray`, `TrackedObstacleArray` | 인지/추적 → BT, 회피, 대시보드 | |
+| `cmd_vel` | `geometry_msgs/Twist` | `safety_node`(**유일한 발행자**) → bridge. 앞단은 `cmd_vel_nav` → `velocity_profiler_node` → `cmd_vel_smoothed` ([components.md](components.md) §4.1) | gz DiffDrive `<topic>/amr_01/cmd_vel</topic>` |
+| `ground_truth/odom` | `nav_msgs/Odometry` | bridge(gz OdometryPublisher, `frame_id: world`) → 평가 전용 | 시뮬레이션에만 존재 (확인: 월드 원점 기준) |
+| `robot_state` | `amr_msgs/RobotState` | `fleet_adapter_node` → `fleet_manager_node`, `traffic_manager_node` | 2 Hz, 송신 측 지연 큐 (6장) |
+| `assign_task` (서비스) | `amr_msgs/srv/AssignTask` | `fleet_manager_node` → `task_executor_node` | 호출 전 지연 큐 (6장). IDLE 이 아니면 거절 |
+| `task_status` | `amr_msgs/Task` | `task_executor_node` → `fleet_adapter_node`, `fleet_manager_node` | 상태 전이마다 |
+| `traffic/hold`, `traffic/yield_pose`, `keepout_mask` | `Bool`, `PoseStamped`, `OccupancyGrid` | `traffic_manager_node` → BT, `planner_server`(KeepoutFilter) | 교통·교착 해소 ([sequences.md](sequences.md) §3) |
+| `perception/detected_objects`, `perception/tracked_obstacles` | `amr_msgs/DetectedObjectArray`, `TrackedObstacleArray` | 인지/추적 → BT, DWA·`safety_node`, RViz 마커 | 이름은 [components.md](components.md) §5.4 기준 |
 | `navigate_to_pose` (액션) | `nav2_msgs/action/NavigateToPose` | BT → bt_navigator | 로봇 내부에서만 |
 | `dock` (액션) | `amr_msgs/action/Dock` | BT → 도킹 서버 | |
 
@@ -98,16 +100,20 @@ graph TD
 | `/map` | `nav_msgs/OccupancyGrid` (transient_local) | `map_server` 1개 → 모든 AMCL, global costmap |
 | `/tf`, `/tf_static` | `tf2_msgs/TFMessage` | 2장 |
 | `/clock` | `rosgraph_msgs/Clock` | bridge 1개 → 전 노드 (`use_sim_time: true`) |
-| `/fleet/status` | `amr_msgs/FleetStatus` | Fleet Manager → 대시보드 (1 Hz) |
-| `/fleet/tasks` | `amr_msgs/Task` | Fleet Manager → 대시보드 (상태 이벤트) |
-| `/fleet/assign_task` | `amr_msgs/srv/AssignTask` | 작업 투입 클라이언트 → Fleet Manager |
-| `/fleet/robots/amr_01/state`, `/fleet/robots/amr_01/task` | `RobotState`, `Task` | 지연 릴레이의 fleet 쪽 끝 (6장) |
+| `/fleet/status` | `amr_msgs/FleetStatus` | `fleet_manager_node` → 대시보드 (1 Hz) |
+| `/fleet/task_events` | `amr_msgs/Task` | `fleet_manager_node` → 대시보드 (상태 전이 이벤트) |
+| `/fleet/task_request` | `std_msgs/String` (JSON) | 대시보드 → `fleet_manager_node` |
+| `/fleet/assign_task` | `amr_msgs/srv/AssignTask` | 프로그램 클라이언트 → `fleet_manager_node` |
+| `/fleet/alerts`, `/fleet/traffic_events` | `diagnostic_msgs/DiagnosticArray` | fleet/traffic → 대시보드 / fleet |
+| `/fleet/estop` | `std_msgs/Bool` (latched) | 대시보드 → 모든 `safety_node` |
+
+전체 목록과 타입은 [components.md](components.md) §5 가 기준이다.
 
 ## 4. Nav2 네임스페이스별 기동
 
-- 로봇마다 Nav2 스택 한 벌: `controller_server`, `planner_server`, `smoother_server`, `behavior_server`, `bt_navigator`, `velocity_smoother`, `waypoint_follower`, local/global costmap, `amcl`, `lifecycle_manager_*`. 직접 구현한 A\*/DWA 는 `nav2_core` 플러그인으로 `planner_server`/`controller_server` 안에서 돈다.
+- 로봇마다 Nav2 스택 한 벌: `planner_server`(전역 costmap 포함), `controller_server`(지역 costmap 포함), `behavior_server`, `bt_navigator`, `lifecycle_manager_navigation` + `amcl`, `lifecycle_manager_localization`. Nav2 의 속도 평활(`velocity_smoother`)·충돌 감시·경로 평활·경유점 서버는 쓰지 않는다 — 속도 프로파일은 자체 `velocity_profiler_node`, `cmd_vel` 의 유일한 발행자는 `safety_node` 다 ([components.md](components.md) §3.3~3.4, §4.1). 직접 구현한 A\*/DWA 는 `nav2_core` 플러그인으로 `planner_server`/`controller_server` 안에서 돈다.
 - `use_composition: true` 로 로봇당 1 프로세스(컴포넌트 컨테이너)에 모은다. 5대면 프로세스 수와 컨텍스트 스위칭이 크게 준다.
-- `map_server` 는 루트에 **하나**만 띄우고 `/map` 을 발행한다. 로봇 쪽은 AMCL `map_topic: /map`, static layer `map_topic: /map`, `map_subscribe_transient_local: true` 로 절대 이름을 구독한다.
+- `map_server` 는 루트에 **하나**만 띄우고 `/map` 을 발행한다 (서비스도 절대 이름 `/map_server/map`, `/map_server/load_map`; [components.md](components.md) §3.2/§5.2 와 동일). 로봇 쪽은 AMCL `map_topic: /map`, static layer `map_topic: /map`, `map_subscribe_transient_local: true` 로 절대 이름을 구독한다.
 - 파라미터 템플릿 `src/amr_navigation/config/nav2_params.yaml` 에서 바꿔야 하는 기본값: `robot_base_frame: <prefix>base_footprint`, local costmap `global_frame: <prefix>odom`, global costmap `global_frame: map`, AMCL `odom_frame_id: <prefix>odom`, `base_frame_id: <prefix>base_footprint`, `global_frame_id: map`, `tf_broadcast: false`, 스캔 토픽은 상대 `scan`(기본값 `/scan` 은 절대 이름이라 5대가 한 토픽을 보게 된다), `odom_topic: odometry/filtered`. `<prefix>` 는 런치가 `ReplaceString` 으로 `amr_01/` 로 치환하고, `RewrittenYaml(root_key=namespace)` 로 네임스페이스 키를 씌운다.
 - AMCL 초기 자세는 스폰 좌표(5장 표)를 런치가 `initial_pose.{x,y,yaw}` 로 넣는다.
 - **주의**: `nav2_bringup` 의 런치(`bringup_launch.py`, `navigation_launch.py`, `localization_launch.py`)는 `('/tf','tf')`, `('/tf_static','tf_static')` 리맵을 걸어 네임스페이스별 TF 트리를 만든다 (확인). 우리는 공유 `/tf` 설계이므로 그 런치를 포함하지 않고 `src/amr_navigation/launch/navigation.launch.py` 가 Nav2 노드를 리맵 없이 직접 띄운다.
@@ -118,11 +124,11 @@ graph TD
 - 로봇 xacro 는 `prefix:=amr_01/`, `ns:=/amr_01` 두 인자를 받아 SDF 플러그인·센서에 다음을 넣는다.
   - 센서 `<topic>`: `/amr_01/scan`, `/amr_01/camera/image_raw`(→ `camera_info` 자동), `/amr_01/camera/depth/image_raw`, `/amr_01/imu/data_raw`
   - DiffDrive `<topic>/amr_01/cmd_vel</topic>`, `<frame_id>amr_01/odom</frame_id>`, `<child_frame_id>amr_01/base_footprint</child_frame_id>` (확인; 오도메트리/TF 출력은 디버그용, 브리지하지 않음)
-  - JointStatePublisher `<topic>/amr_01/joint_states</topic>`, OdometryPublisher `<odom_frame>world</odom_frame>`, `<robot_base_frame>amr_01/base_footprint</robot_base_frame>`, `<odom_topic>/amr_01/ground_truth</odom_topic>` (확인)
+  - JointStatePublisher `<topic>/amr_01/joint_states</topic>`, OdometryPublisher `<odom_frame>world</odom_frame>`, `<robot_base_frame>amr_01/base_footprint</robot_base_frame>`, `<odom_topic>/amr_01/ground_truth/odom</odom_topic>` (확인)
   - `<topic>` 을 생략하면 gz 기본 이름은 `/world/warehouse/model/amr_01/link/base_link/sensor/imu/imu` 처럼 모델 이름이 들어가 충돌은 없지만(확인) 길다. **gz 토픽 이름을 ROS 절대 이름과 같게** 지으면 브리지에 리맵이 필요 없다.
 - 스폰: `ros2 run ros_gz_sim create -world warehouse -name amr_01 -topic /amr_01/robot_description -x X -y Y -Y YAW` (옵션 확인). 기본값 `-allow_renaming false` 에서는 이름이 겹쳐도 자동 개명되지 않으므로(옵션 설명 기준) 이름 중복이 바로 드러난다.
 - 브리지: 로봇당 `parameter_bridge` 1개. 인자 나열(`/amr_01/scan@sensor_msgs/msg/LaserScan[ignition.msgs.LaserScan …`) 또는 `config_file` YAML(0.244.26 에서 지원 확인)을 쓰고, 이름을 바꿔야 할 때만 `--ros-args -r __ns:=/amr_01 -r <gz>:=<ros>` 를 쓴다 (확인). `/clock` 브리지는 루트에 1개.
-- `IGN_PARTITION`: gz-transport 디스커버리 범위. 서버·모든 브리지·`ign topic` CLI 가 같은 값을 가져야 하며, 다른 파티션에서는 토픽이 전혀 보이지 않는다 (확인: 0개). `docker-compose.yml` 은 `network_mode: host` 라 기본값(호스트명:사용자)이 컨테이너 간에 같지만, CI/병렬 테스트 격리를 위해 compose 환경변수로 `IGN_PARTITION=amr_sim` 을 명시하는 것을 권장한다 (compose 파일 수정은 후속 작업).
+- `IGN_PARTITION`: gz-transport 디스커버리 범위. 서버·모든 브리지·`ign topic` CLI 가 같은 값을 가져야 하며, 다른 파티션에서는 토픽이 전혀 보이지 않는다 (확인: 0개). `docker-compose.yml` 은 `.env` 의 `IGN_PARTITION`(`.env.example`: `IGN_PARTITION=amr_<이름>`, 사람마다 다르게)을 모든 서비스에 주입하므로 한 사람의 서버·브리지·CLI 컨테이너는 같은 파티션을 쓰고, 같은 호스트의 다른 사용자와는 격리된다. 호스트에서 직접 `ign topic` 을 쓸 때는 같은 값을 export 한다.
 - 스폰 좌표 (충전 구역, 월드 확정 후 갱신):
 
 | 로봇 | x | y | yaw |
@@ -133,14 +139,18 @@ graph TD
 
 | 방식 | 장점 | 단점 |
 | --- | --- | --- |
-| A. `fleet_link` 지연 릴레이 노드 (`amr_fleet`) | 토픽·방향별 지연/지터/드롭을 파라미터로 제어, 단위 테스트 가능, 루트 권한 불필요, 실기 배포 시 그냥 끄면 됨 | 릴레이를 거치는 토픽만 지연됨 (의도한 범위) |
+| A. fleet ↔ 로봇 경계 노드의 **송신 지연 큐** (`fleet_adapter_node`, `fleet_manager_node` — `amr_fleet`) | 지연 분포·드롭을 파라미터로 제어, 단위 테스트 가능, 루트 권한 불필요, 실기 배포 시 `simulate_latency: false` | 큐를 거치는 메시지만 지연됨 (의도한 범위) |
 | B. `tc netem` | 커널 수준, 모든 트래픽 | 이미지에 `tc`/`iptables` 없음(확인); `network_mode: host` 라 호스트 전체 네트워크에 영향; 같은 호스트의 Fast DDS 는 기본 공유메모리 전송이라 지연이 걸리지 않음(Fast DDS 문서 기준); 테스트 자동화 어려움 |
 
-**A 를 채택한다.** 로봇 온보드 스택(센서→EKF→Nav2)은 실제로도 한 컴퓨터 안에서 돌므로 지연 대상이 아니고, 네트워크를 타는 것은 fleet ↔ 로봇 메시지뿐이다.
+**A 를 채택한다.** 로봇 온보드 스택(센서→EKF→Nav2)은 실제로도 한 컴퓨터 안에서 돌므로 지연 대상이 아니고, 네트워크를 타는 것은 fleet ↔ 로봇 메시지뿐이다. 별도 릴레이 노드를 두지 않고 경계 노드 안에 큐를 넣는 이유: 토픽 이름이 늘지 않고([components.md](components.md) §5.6 이 그대로 API), 서비스 호출(`assign_task`)도 같은 방식으로 지연시킬 수 있다.
 
-- 노드: `/fleet/fleet_link_amr_01` … 5개(또는 1개 노드에 로봇 5개 설정). 파라미터 `delay_ms: 100`, `jitter_ms: 20`, `drop_rate: 0.0`, `simulate_latency: true`.
-- 경로: `/amr_01/robot_state` → 릴레이 → `/fleet/robots/amr_01/state`, `/fleet/robots/amr_01/task` → 릴레이 → `/amr_01/task`. 구현은 수신 메시지를 (해제 시각, 메시지) 큐에 넣고 5 ms 타이머로 꺼내 재발행한다. 시각은 `/clock`(sim time) 기준.
-- 측정: fleet 이 `header.stamp` 를 찍고 로봇이 수신 시각과의 차를 명세 포맷 `[cmd_time, response_time, latency_ms]` 로 `logs/` 에 남긴다. 평균 ≈ `delay_ms`, 최대 ≤ 100 + 지터. 명세의 응답 시간 200 ms KPI 는 이 지연을 포함한 값으로 보고한다.
+- 지연 대상 (fleet ↔ 로봇 경계를 넘는 메시지):
+  - 로봇 → fleet: `fleet_adapter_node` 가 `robot_state` 를 발행하기 전에 큐에 넣는다.
+  - fleet → 로봇: `fleet_manager_node` 가 `/amr_XX/assign_task` 를 호출하기 전에 큐에 넣는다 (응답은 지연하지 않음 — 왕복을 편도 1회로 근사).
+  - `traffic_manager_node` 의 `traffic/*`·`keepout_mask` 는 지연하지 않는다. 교착 판정 `t_stall` 5 s 가 지연보다 훨씬 커서 KPI 에 영향이 없다 ([sequences.md](sequences.md) §3).
+- 파라미터 (`src/amr_fleet/config/fleet.yaml`): `simulate_latency: true`, `comm_latency_ms: [0, 100]` (메시지마다 균등 분포에서 추출, 평균 50 ms), `drop_rate: 0.0`, `seed`. 명세 최대 100 ms 를 넘지 않는다.
+- 구현: (해제 시각, 메시지) 큐 + 5 ms 타이머로 꺼내 발행/호출. 시각은 `/clock`(sim time) 기준.
+- 측정: fleet 이 `header.stamp` 를 찍고 로봇이 수신 시각과의 차를 명세 포맷 `[cmd_time, response_time, latency_ms]` 로 `logs/` 에 남긴다. 평균 ≈ 50 ms, 최대 ≤ 100 ms. 명세의 응답 시간 200 ms KPI 는 이 지연을 포함한 값이며, 예산 배분은 [sequences.md](sequences.md) §1 참조.
 
 ## 7. 연산 예산 (CPU ≤ 80 %)
 
@@ -149,8 +159,8 @@ graph TD
 | 항목 | 예산 (코어) | 근거 / 조정 수단 |
 | --- | --- | --- |
 | Gazebo 서버 (물리 1 kHz + 렌더링 센서 15개) | 6 | GPU 렌더링이지만 센서 업데이트는 서버 스레드. 센서 주기는 명세 최소값(10/15/30/100 Hz)으로 고정 |
-| 로봇 1대: Nav2(컴포지션) 1.2, AMCL 0.3, EKF×2 0.3, 브리지 0.4, 오도메트리·IMU 필터·추적 0.5, YOLO 전/후처리 0.6 | 3.3 × 5 = 16.5 | YOLO 추론은 GPU, 로봇당 ≤ 10 FPS 로 프레임 드롭; `points` 토픽은 브리지 안 함 |
-| Fleet Manager + 지연 릴레이 + 대시보드 | 1.0 | |
+| 로봇 1대: Nav2(컴포지션) 1.2, AMCL 0.3, EKF×2 0.3, 브리지 0.4, 오도메트리·IMU 필터·추적·프로파일러·안전 0.5, YOLO 전/후처리 0.6 | 3.3 × 5 = 16.5 | YOLO 추론은 GPU, 로봇당 ≤ 10 FPS 로 프레임 드롭; `points` 토픽은 브리지 안 함 |
+| `fleet_manager_node` + `traffic_manager_node` + `fleet_adapter_node` ×5 + `dashboard_node` | 1.0 | |
 | 합계 | ≈ 23.5 (73 %) | 초과 시: costmap `update_frequency` 5 Hz/`publish_frequency` 2 Hz, `taskset` 으로 Gazebo 코어 고정(이미지에 있음) |
 
 - 측정법: 5대가 작업 중인 정상 상태에서 60 s 이상 `/proc/stat` 을 샘플링하는 스크립트(`scripts/`, `mpstat` 은 이미지에 없음)로 전체 `%usr + %sys` 평균을 구하고, `docker stats --no-stream` 으로 컨테이너별 값을 함께 적는다. 로그 `[timestamp, cpu_total_pct, cpu_gazebo_pct, cpu_nav_pct]`.
