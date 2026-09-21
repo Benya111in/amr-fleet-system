@@ -189,8 +189,8 @@ sequenceDiagram
   NAV->>CT: follow_path
   Note over CT,SF: 복귀 ≤ 5 s, 이탈 ≤ 1 m, 30회 시나리오 충돌 0건
 
-  opt 센서 고장 — scan / imu/data / wheel_odom 수신 간격 > sensor_timeout (0.5 s)
-    SF->>GZ: cmd_vel 저속 (0.3 m/s) 또는 정지
+  opt 센서 고장 — 토픽별 수신 간격 > safety.sensor_timeouts (LiDAR 0.3 s, 휠 엔코더 0.06 s, IMU 0.05 s, 카메라 0.1~0.2 s)
+    SF->>GZ: cmd_vel 정지 (LiDAR/휠 엔코더 고장) 또는 저속 degraded_mode_max_speed 0.2 m/s (IMU/카메라 고장)
     SF-->>AD: safety/estop_active=true (센서 타임아웃) → /fleet/alerts
   end
 ```
@@ -213,7 +213,7 @@ sequenceDiagram
 | 긴급 정지 거리 | **0.3 m** 이내 접근 시 즉시 정지 | 명세 4장 7절. `safety_node` 50 Hz → 지연 ≤ 20 ms |
 | 회피 후 복귀 | **5 s 이내**, 경로 이탈 **1 m 이내** | 명세 4장 7절. CTE 로그 `[timestamp, planned_x/y, actual_x/y, cte]` |
 | 회피 테스트 | 30회 충돌 0건 | Gazebo 접촉 이벤트 카운트 |
-| 센서 타임아웃 | 0.5 s | `robot_params.yaml safety.sensor_timeout` |
+| 센서 타임아웃 | 센서별 ≈3 주기 (LiDAR 0.3 s, IMU 0.05 s …) | `robot_params.yaml safety.sensor_timeouts` |
 
 ---
 

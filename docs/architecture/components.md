@@ -575,6 +575,5 @@ ros2 topic hz /amr_01/cmd_vel        # 50 Hz, 발행자 1개 (ros2 topic info -v
 ## 8. 미결 사항
 
 - TEB 비교(명세 4장 4절): 이미지에 `teb_local_planner` 없음. 별도 설치하거나 `nav2_mppi_controller`/`nav2_dwb_controller` 로 비교 대상을 바꿀지 결정 필요
-- `config/sensors.yaml` 의 토픽 키가 절대 이름(`/scan` 등)이다. 네임스페이스 설계에 맞춰 상대 이름으로 바꾸거나, 런치에서 무시하고 리맵으로만 다룰지 결정 필요
-- `imu/data_raw`(브리지) → `imu/data`(필터) 규칙은 REP-145 를 따른 것. `sensors.yaml imu.topic: /imu/data` 는 필터 출력을 가리키는 것으로 해석했다
+- `imu/data_raw`(브리지) → `imu/data`(필터) 규칙은 REP-145 를 따른 것. `sensors.yaml imu.topic: imu/data` 는 필터 출력을 가리키는 것으로 해석했다
 - 휠 인코더 노이즈(양자화·슬립)는 Gazebo 에 플러그인이 없어 `wheel_odometry_node` 입력단에서 모델링한다. 시뮬레이션 패키지로 옮길지 검토

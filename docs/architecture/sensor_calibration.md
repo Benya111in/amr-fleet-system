@@ -35,6 +35,8 @@ ros2 topic echo /scan --once | grep frame_id              # lidar_link — 메�
 ros2 topic echo /camera/camera_info --once | grep frame_id  # camera_optical_frame
 ```
 
+위 토픽 이름은 단일 로봇 기준이다. 다중 로봇에서는 `/amr_01/scan` 처럼 네임스페이스 아래로 바뀐다 ([multi_robot.md](multi_robot.md) §3).
+
 세 값(URDF, `sensors.yaml`, `tf2_echo` 출력) 중 하나라도 다르면 캘리브레이션 결과는 무효다. 아래 절차는 이 검증을 통과한 뒤 시작한다.
 
 ## 2. 센서별 절차
@@ -93,7 +95,8 @@ K 를 하드코딩하지 말고 **반드시 `camera_info` 를 구독**해서 읽
 
 ### 2.4 IMU 바이어스 추정
 
-`config/sensors.yaml` 모델: 가속도 σ_a = 0.017 m/s², 바이어스 σ = 0.001; 자이로 σ_g = 0.0002 rad/s, 바이어스 σ = 7.5e-6; 100 Hz.
+`config/sensors.yaml` 모델(100 Hz): 가속도 백색 노이즈 σ_a = 0.017 m/s², 바이어스 |b_a| ~ N(0.10, 0.001) m/s²;
+자이로 σ_g = 0.0002 rad/s, 바이어스 |b_g| ~ N(0.01, 7.5e-6) rad/s (`*_bias_mean` / `*_bias_stddev`; 동적 바이어스는 0 으로 둔다).
 Gazebo 는 SDF `<noise>` 의 `bias_mean`/`bias_stddev` 로 **실행마다 상수 바이어스를 새로 뽑는다**(부호도 무작위). 따라서 바이어스는
 파일에 고정하지 말고 **기동 시마다** 추정한다. (`dynamic_bias_stddev` 를 켜면 랜덤워크가 추가되므로 주기적 재추정이 필요하다.)
 
@@ -105,16 +108,18 @@ b_g = mean(ω)
 표준오차  SE = σ / √N,  N = f · T
 ```
 
-| 센서 | σ | T = 60 s (N = 6000) | T = 300 s (N = 30000) | 바이어스 σ (모델) |
+| 센서 | 노이즈 σ | T = 10 s (N = 1000) | T = 60 s (N = 6000) | 바이어스 크기 (모델) |
 | --- | --- | --- | --- | --- |
-| 가속도 | 0.017 m/s² | 0.017/√6000 ≈ 2.2e-4 | 9.8e-5 | 1.0e-3 → 60 s 면 ≈ 4.5σ 로 분해 |
-| 자이로 | 0.0002 rad/s | 0.0002/√6000 ≈ 2.6e-6 | 1.2e-6 | 7.5e-6 → 60 s 는 ≈ 3σ, **300 s 권장** |
+| 가속도 | 0.017 m/s² | 0.017/√1000 ≈ 5.4e-4 | 2.2e-4 | 0.10 → 10 s 만으로 바이어스의 0.5 % 정밀도 |
+| 자이로 | 0.0002 rad/s | 0.0002/√1000 ≈ 6.3e-6 | 2.6e-6 | 0.01 → 10 s 만으로 0.06 % 정밀도. 잔차 6e-6 rad/s ≈ 1.2°/h 로 무시 가능 |
+
+즉 기동 시 10~60 s 정지 평균이면 충분하다. 실제 로봇(온도 드리프트)에서는 주기적 재추정을 권장한다.
 
 적용: `src/amr_localization` 의 IMU 필터 노드(명세 4장 2절 "저역 통과 필터 및 바이어스 보정")가 `imu/data_raw` 를 받아
 `a' = LPF(a − b_a)`, `ω' = LPF(ω − b_g)` 를 `imu/data` 로 발행하고, EKF(`config/ekf.yaml` 의 `imu0: imu/data`)는 보정된 값만 본다.
 바이어스는 노드 파라미터(`accel_bias`, `gyro_bias`, double[3])로 두고, 기동 시 `bias_estimation_time`(기본 60 s) 동안 정지 상태로 자동 추정하되
-실제 로봇에서는 파일 값으로 덮어쓸 수 있게 한다. 2D 주행에서 실질적으로 중요한 것은 자이로 z(yaw 드리프트: 7.5e-6 rad/s ≈ 1.5°/h) 와
-가속도 x, y(EKF 가 ax, ay 를 융합하므로 0.001 m/s² 바이어스도 누적된다)다.
+실제 로봇에서는 파일 값으로 덮어쓸 수 있게 한다. 2D 주행에서 실질적으로 중요한 것은 자이로 z(보정 전 yaw 드리프트: 0.01 rad/s ≈ 34°/min —
+보정하지 않으면 EKF 회전 추정이 즉시 무너진다) 와 가속도 x, y(EKF 가 ax, ay 를 융합하므로 0.10 m/s² 바이어스가 속도로 누적된다)다.
 
 - 로그: `[timestamp, ax, ay, az, gx, gy, gz]` 원본 + 요약 1행 `[T, N, bax, bay, baz, bgx, bgy, bgz, se_a, se_g]` → `logs/calibration/imu_bias.csv`
 
@@ -161,8 +166,8 @@ b_g = mean(ω)
 | LiDAR 노이즈 σ | 0.030 m | 0.0299 (감사) / 0.0285 (사전) | ±10 % | | `lidar_wall/` | |
 | 카메라 fx, fy, cx, cy | 337.2, 337.2, 320, 240 | 337.21, 337.21, 320, 240 (사전) | 1 px / RMS 0.3 px(실기) | | `camera_intrinsics.csv` | |
 | Depth ↔ RGB 정렬 | 항등 변환, Δ ≤ σ(d) | | 2 px, σ(d) | | `depth_rgb_align.csv` | |
-| IMU 가속도 바이어스 (x, y, z) | 모델 σ 0.001 | | SE 2.2e-4 (60 s) | | `imu_bias.csv` | |
-| IMU 자이로 바이어스 (x, y, z) | 모델 σ 7.5e-6 | | SE 1.2e-6 (300 s) | | `imu_bias.csv` | |
+| IMU 가속도 바이어스 (x, y, z) | 모델 |b| ≈ 0.10 (σ 0.001) | | SE 2.2e-4 (60 s) | | `imu_bias.csv` | |
+| IMU 자이로 바이어스 (x, y, z) | 모델 |b| ≈ 0.01 (σ 7.5e-6) | | SE 2.6e-6 (60 s) | | `imu_bias.csv` | |
 | IMU 노이즈 σ_a / σ_g | 0.017 / 0.0002 | | ±10 % | | `imu_bias.csv` | |
 | 휠 반지름 스케일 k_r | 1.000 (r = 0.0825) | | 직진 5 m ≤ 0.05 m | | `odom_straight_*.csv` | |
 | 축간 거리 스케일 k_b | 1.000 (b = 0.36) | | 5회전 ≤ 2° | | `odom_rotate_*.csv` | |
