@@ -1,10 +1,21 @@
 # 지능형 물류 AMR 시스템 - 개발/실행 환경
 #
-#   docker compose build          이미지 빌드
-#   docker compose up -d dev      개발 컨테이너 기동
-#   docker compose exec dev bash  셸 접속
+#   docker compose build                  이미지 빌드
+#   docker compose up -d                  builder(colcon build) 실행 + 개발 컨테이너 기동
+#   docker compose exec dev bash          셸 접속
+#   docker compose --profile run up -d    빌드 후 시뮬레이션~대시보드 전체 기동
 #
 # 서비스는 동일 이미지를 공유하며 network_mode: host 로 ROS2 DDS 디스커버리를 사용한다.
+#
+# 서버 하나를 여러 명이 쓴다: 컨테이너 이름은 고정하지 않고 compose 프로젝트 이름(<프로젝트>-dev-1)을
+# 따르게 하고, 프로젝트 이름·ROS_DOMAIN_ID·IGN_PARTITION 은 .env 로 사람마다 다르게 준다
+# (.env.example 참고). 접속은 컨테이너 이름이 아니라 서비스 이름으로: docker compose exec dev bash
+#
+# 이미지에는 /ros2_ws/src 만 있고 colcon 산출물(build/ install/ log/)은 없다. 각 서비스는
+# 이미지에서 새로 뜨는 컨테이너이므로 산출물을 컨테이너 레이어에 두면 run 프로필 서비스가
+# amr_* 패키지를 찾지 못하고, dev 를 재생성할 때마다 빌드가 사라진다. 그래서 산출물은
+# 이름 있는 볼륨(ros2_ws_*)에 두어 모든 서비스가 한 워크스페이스를 공유한다.
+# 빌드까지 지우려면 `docker compose down -v`.
 
 x-amr-common: &amr-common
   image: amr-fleet-system:latest
@@ -15,6 +26,12 @@ x-amr-common: &amr-common
     - DISPLAY=${DISPLAY:-}
     - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
     - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+    # network_mode: host 이므로 같은 ROS_DOMAIN_ID 를 쓰는 LAN 의 모든 호스트와 DDS 트래픽이
+    # 오간다 (privileged + host 네트워크 + 도메인 0). 외부와 격리하려면 ROS_LOCALHOST_ONLY=1
+    # — 컨테이너들은 호스트 네트워크를 공유하므로 서로는 계속 통신된다. IGN_PARTITION 은
+    # 같은 이유로 Gazebo transport 토픽을 다른 호스트/프로세스와 분리한다.
+    - ROS_LOCALHOST_ONLY=${ROS_LOCALHOST_ONLY:-0}
+    - IGN_PARTITION=${IGN_PARTITION:-amr}
     - NVIDIA_VISIBLE_DEVICES=all
     - NVIDIA_DRIVER_CAPABILITIES=all
     # headless GPU 렌더링 (호스트에 DISPLAY 없이 Gazebo 센서 렌더링)
@@ -28,6 +45,10 @@ x-amr-common: &amr-common
     - ./logs:/ros2_ws/logs
     - ./docs:/ros2_ws/docs
     - ./tests:/ros2_ws/tests
+    # colcon 산출물 — dev 와 run 프로필 서비스가 공유하는 이름 있는 볼륨
+    - ros2_ws_build:/ros2_ws/build
+    - ros2_ws_install:/ros2_ws/install
+    - ros2_ws_log:/ros2_ws/log
   network_mode: host
   ipc: host
   privileged: true
@@ -39,64 +60,94 @@ x-amr-common: &amr-common
             count: all
             capabilities: [gpu, compute, utility, graphics]
 
+volumes:
+  ros2_ws_build:
+  ros2_ws_install:
+  ros2_ws_log:
+
 services:
   # 개발용 상시 컨테이너 — 빌드/디버깅/수동 실행
+  # builder 에 의존시키지 않는다: 빌드가 실패해도 이 컨테이너에서 원인을 잡아야 하므로.
   dev:
     <<: *amr-common
-    container_name: amr_dev
     stdin_open: true
     tty: true
     command: bash
 
+  # 워크스페이스 일회성 빌드 (scripts/build.sh == colcon build --symlink-install)
+  # 프로필을 주지 않아 `docker compose up` 만으로도 실행되고(명세 4.1), run 프로필 서비스는
+  # 아래 depends_on 조건으로 이 서비스가 정상 종료(exit 0)한 뒤에만 기동한다.
+  # 산출물은 ros2_ws_* 볼륨에 남으므로 재실행은 증분 빌드다.
+  builder:
+    <<: *amr-common
+    command: bash ./scripts/build.sh
+
   # Gazebo Fortress 시뮬레이션 (물류센터 60m x 40m)
   simulation:
     <<: *amr-common
-    container_name: amr_simulation
     profiles: ["run"]
+    depends_on:
+      builder:
+        condition: service_completed_successfully
     command: >
       bash -c "ros2 launch amr_simulation warehouse.launch.py"
 
   # SLAM / 위치 추정 (slam_toolbox + EKF 센서 퓨전)
   localization:
     <<: *amr-common
-    container_name: amr_localization
     profiles: ["run"]
-    depends_on: [simulation]
+    depends_on:
+      builder:
+        condition: service_completed_successfully
+      simulation:
+        condition: service_started
     command: >
       bash -c "ros2 launch amr_localization localization.launch.py"
 
   # Nav2 + 직접 구현 A*/DWA 플래너
   navigation:
     <<: *amr-common
-    container_name: amr_navigation
     profiles: ["run"]
-    depends_on: [localization]
+    depends_on:
+      builder:
+        condition: service_completed_successfully
+      localization:
+        condition: service_started
     command: >
       bash -c "ros2 launch amr_navigation navigation.launch.py"
 
   # YOLOv8 객체 인식 + 2D→3D 좌표 변환 (GPU)
   perception:
     <<: *amr-common
-    container_name: amr_perception
     profiles: ["run"]
-    depends_on: [simulation]
+    depends_on:
+      builder:
+        condition: service_completed_successfully
+      simulation:
+        condition: service_started
     command: >
       bash -c "ros2 launch amr_perception perception.launch.py"
 
   # Fleet Management (5대 이상 AMR 할당/교착 해소)
   fleet:
     <<: *amr-common
-    container_name: amr_fleet
     profiles: ["run"]
-    depends_on: [navigation]
+    depends_on:
+      builder:
+        condition: service_completed_successfully
+      navigation:
+        condition: service_started
     command: >
       bash -c "ros2 launch amr_fleet fleet_manager.launch.py"
 
   # 웹 모니터링 대시보드
   dashboard:
     <<: *amr-common
-    container_name: amr_dashboard
     profiles: ["run"]
-    depends_on: [fleet]
+    depends_on:
+      builder:
+        condition: service_completed_successfully
+      fleet:
+        condition: service_started
     command: >
       bash -c "ros2 launch amr_dashboard dashboard.launch.py"
