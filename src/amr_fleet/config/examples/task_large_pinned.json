@@ -1,0 +1,8 @@
+{
+  "task_id": "bulk-0007",
+  "priority": 30,
+  "pickup": {"x": 45.0, "y": 12.0, "yaw": -1.5708},
+  "dropoff": {"x": 55.0, "y": 36.0, "yaw": 0.0},
+  "item_type": "large",
+  "robot_id": "amr_05"
+}

@@ -1,0 +1,52 @@
+# amr_fleet 파라미터 (명세 4.8 작업 관리, 4.9 Fleet Management)
+# launch/fleet_manager.launch.py 의 인자(robot_ids 와, 비어 있지 않은 allocation_strategy · comm_latency_ms ·
+# simulate_latency · auto_complete_after_s · serve_assign_task · log_dir)만 이 파일 값을 덮어쓴다.
+
+/fleet/fleet_manager_node:
+  ros__parameters:
+    robot_ids: ""                    # 쉼표 구분 "amr_01,amr_02". 비우면 discover_robots 로만 등록
+    discover_robots: true            # /<id>/robot_state 토픽이 보이면 자동 등록
+    allocation_strategy: nearest     # nearest | load_balance | hungarian (allocation.py 레지스트리)
+    allocation_batch_size: 0         # 한 라운드에 전략에 넘길 대기 작업 수. 0 = 가용 로봇 수
+    nominal_speed: 1.0               # [m/s] 이동 시간 = 거리 / nominal_speed (limits.max 2.0 의 절반, 가감속·회피 여유)
+    # 통신 지연 시뮬레이션 (multi_robot.md §6): assign_task 호출 전 송신 지연 큐
+    simulate_latency: true           # false = 지연·유실 없음 (실기 배포)
+    comm_latency_ms: [0.0, 100.0]    # 호출마다 U(lo, hi) ms, 평균 50 ms (명세 4.9 최대 100 ms)
+    drop_rate: 0.0                   # 호출 유실 확률 → assign_timeout_s 뒤 다음 후보로 재할당
+    seed: 0                          # 0 = 무작위, 그 외 재현용 시드
+    log_dir: ""                      # "" = $ROS_WS/logs → tasks_YYYYmmdd.csv, allocation_YYYYmmdd.csv
+    log_time_format: iso             # iso | epoch (use_sim_time 이면 epoch 권장)
+    allocation_period_s: 0.5         # 주기 할당 라운드 (로봇이 비면 여기서 잡힌다)
+    allocation_batch_window_s: 0.2   # JSON 작업 도착 후 이만큼 모아 한 라운드로 할당 (0 = 도착마다 즉시).
+                                     # /fleet/assign_task 서비스는 응답에 robot_id 를 주려고 즉시 할당한다
+    status_period_s: 1.0             # /fleet/status 1 Hz
+    discovery_period_s: 2.0
+    robot_state_timeout_s: 5.0       # robot_state 가 이보다 오래되면 할당 후보에서 제외
+    assign_timeout_s: 3.0            # 로봇 assign_task 응답 대기 상한
+    reject_backoff_s: 1.0            # 거절/실패한 로봇에 다시 시도하기까지 대기
+    max_task_retries: 0              # FAILED → PENDING 재시도 횟수 (0 = 재할당 없음)
+    task_timeout_s: 0.0              # 진행 중 작업 상한 [s] (0 = 없음). 초과 시 FAILED(timeout)
+    throughput_window_s: 1800.0      # 처리량 슬라이딩 창 (30 분; 10 분 창은 30 건/h 에서 ~5 건이라 변동이 큼)
+    utilization_mode: assigned       # robot_utilization 의 busy 정의: assigned = 진행 중 작업 보유 시간
+                                     # (작업 로그 duration 과 같은 구간) | moving = MOVING/DOCKING/LOADING
+    task_schema_path: ""             # "" = share/amr_fleet/config/task_schema.json
+    robot_params_path: ""            # "" = $ROS_WS/config/robot_params.yaml (payload 질량 표)
+    scheduler:
+      band_width: 32                 # 우선순위 밴드 폭 (0~255 → 8 밴드), 밴드 안에서 EDF
+      deadline_weight: 1.0           # 밴드 내 slack 가중치 (1, 0 = 순수 EDF)
+      fifo_weight: 0.0               # 밴드 내 도착순 가중치
+      age_boost_rate: 0.5            # [priority/s] 대기 시간에 따른 우선순위 가산 (기아 방지)
+      age_boost_max: 64.0            # 가산 상한 (= 2 밴드)
+
+/**/fleet_adapter_node:
+  ros__parameters:
+    robot_id: ""                     # "" = 네임스페이스에서 유도
+    publish_rate_hz: 2.0             # robot_state 발행 주기
+    simulate_latency: true           # robot_state 송신 지연 큐 (multi_robot.md §6)
+    comm_latency_ms: [0.0, 100.0]    # 메시지마다 U(lo, hi) ms
+    drop_rate: 0.0                   # robot_state 유실 확률
+    seed: 0                          # 0 = 무작위. 0 이 아니면 robot_id 별로 다른 시퀀스
+    auto_complete_after_s: 0.0       # > 0 이면 실행기 없이 N s 뒤 완료를 흉내 (테스트 전용)
+    serve_assign_task: true          # task_executor_node 가 assign_task 를 제공하면 false
+    initial_battery: 100.0           # battery_state 미수신 시 보고값 [%]
+    log_dir: ""                      # "" = $ROS_WS/logs → comm_latency_<robot>_YYYYmmdd.csv

@@ -1,0 +1,7 @@
+{
+  "priority": 100,
+  "deadline": "2026-09-22T18:30:00+09:00",
+  "pickup": {"x": 30.0, "y": 20.0},
+  "dropoff": {"x": 6.0, "y": 34.0, "yaw": 3.1416},
+  "item_type": "medium"
+}
