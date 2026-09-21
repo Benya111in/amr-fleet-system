@@ -16,12 +16,19 @@
 # amr_* 패키지를 찾지 못하고, dev 를 재생성할 때마다 빌드가 사라진다. 그래서 산출물은
 # 이름 있는 볼륨(ros2_ws_*)에 두어 모든 서비스가 한 워크스페이스를 공유한다.
 # 빌드까지 지우려면 `docker compose down -v`.
+#
+# 마이그레이션 — 이 변경(container_name: amr_dev 제거 + ros2_ws_* 볼륨) 이전부터 쓰던 프로젝트에서는
+# 최초 `docker compose up -d` 가 서비스 설정 변경을 감지해 옛 컨테이너 amr_dev 를 멈추고 지운 뒤
+# <프로젝트>-dev-1 을 새로 만들고, 비어 있는 새 볼륨을 build/ install/ log/ 에 마운트한다.
+# 옛 컨테이너 안에만 있던 것(컨테이너 레이어의 빌드 산출물, 홈 디렉토리 설정 등)은 사라지므로
+# 먼저 `docker cp amr_dev:<컨테이너 경로> <호스트 경로>` 로 꺼내 둔다 (bind mount 인 src/ config/
+# maps/ logs/ 는 호스트에 그대로). 이후 builder 가 새 볼륨에 한 번 전체 빌드를 한다.
+# COMPOSE_PROJECT_NAME 을 새로 줬다면 옛 프로젝트는 건드리지 않고 남으므로 따로 지운다:
+# docker compose -p <옛 프로젝트> down   (README §2 참고)
 
 x-amr-common: &amr-common
+  # build: 는 앵커가 아니라 dev 서비스에만 둔다 — 여기 두면 서비스 수만큼 빌드가 호출된다.
   image: amr-fleet-system:latest
-  build:
-    context: .
-    dockerfile: docker/Dockerfile
   environment: &amr-env
     - DISPLAY=${DISPLAY:-}
     - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
@@ -70,6 +77,10 @@ services:
   # builder 에 의존시키지 않는다: 빌드가 실패해도 이 컨테이너에서 원인을 잡아야 하므로.
   dev:
     <<: *amr-common
+    # 이미지 빌드는 여기서만 — 모든 서비스가 같은 이미지를 쓰므로 `docker compose build` 가 한 번만 빌드한다.
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
     stdin_open: true
     tty: true
     command: bash

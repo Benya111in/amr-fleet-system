@@ -40,12 +40,24 @@ pytest_smoke() {
     return "${rc}"
 }
 
+# ROS_DOMAIN_ID 가 0~101 정수인지 (미설정이면 ROS 기본값 0 으로 본다).
+# .env 를 잘못 편집해도(자리표시자 그대로 등) compose 는 그 값을 그대로 넘기고, ros2 CLI/rmw 는
+# 정수가 아닌 도메인에서 죽는다 — 여기서 먼저 잡는다.
+domain_id_ok() {
+    local v="${ROS_DOMAIN_ID:-0}"
+    [[ "${v}" =~ ^[0-9]+$ ]] && [ "${v}" -le 101 ]
+}
+
 source /opt/ros/"${ROS_DISTRO:-humble}"/setup.bash
 
 echo "=== ROS2 코어 ==="
 check "ROS2 CLI (${ROS_DISTRO})" ros2 --help
 check "rclpy import" python3 -c "import rclpy"
 check "colcon" colcon --help
+
+echo
+echo "=== 컨테이너 환경변수 (.env → compose environment) ==="
+check "ROS_DOMAIN_ID 는 0~101 정수 (현재: ${ROS_DOMAIN_ID:-미설정=0})" domain_id_ok
 
 echo
 echo "=== 시뮬레이터 ==="

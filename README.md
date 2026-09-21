@@ -41,16 +41,24 @@ cd amr-fleet-system
 ./scripts/download_models.sh
 
 # 2) 사람별 환경변수 — 서버를 여러 명이 같이 쓰므로 프로젝트 이름/ROS 도메인/Gazebo 파티션을
-#    사람마다 다르게 준다 (.env 는 git 에 올라가지 않는다)
+#    사람마다 다르게 준다 (.env 는 git 에 올라가지 않는다). 예시값(amr_hong / 42)은 그대로도
+#    동작하지만 두 사람이 같은 값을 쓰면 서로의 컨테이너·볼륨을 재생성하고 토픽이 섞인다 — 꼭 바꾼다
 cp .env.example .env && vi .env      # docker compose config 로 값 검증 가능
 
-# 3) 이미지 빌드 (최초 1회, 수십 분 소요)
+# 3) 이미지 빌드 (최초 1회, 수십 분 소요) — build: 는 dev 서비스에만 있어 한 번만 빌드되고
+#    나머지 서비스는 그 이미지(amr-fleet-system:latest)를 그대로 쓴다
 docker compose build
 
 # 4) 기동: builder 가 colcon build 를 수행하고 dev 컨테이너가 뜬다
 docker compose up -d && docker compose wait builder   # builder 종료(exit 0)까지 대기. 진행 상황: docker compose logs -f builder
-docker compose exec dev bash          # 셸 접속 (ROS 와 install/ 오버레이 자동 소싱 — builder 종료 전에 연 셸은 다시 연다)
-./scripts/verify_env.sh               # 환경 검증 (36개 항목, 전부 통과해야 한다)
+docker compose exec dev bash          # 셸 접속 — 대화형 bash 만 ROS 와 install/ 오버레이를 자동 소싱한다
+                                      # (/etc/bash.bashrc 경유. builder 종료 전에 연 셸은 다시 연다)
+./scripts/verify_env.sh               # 환경 검증 (37개 항목, 전부 통과해야 한다)
+
+#    셸을 열지 않고 명령 하나만 돌릴 때: exec 는 엔트리포인트를 거치지 않으므로
+#    `exec dev bash -c '...'` / `exec dev ros2 ...` 에는 ROS 환경이 없다. 아래 둘 중 하나를 쓴다
+docker compose exec dev bash -ic 'ros2 topic list'   # -i: 대화형 bash 로 강제 → bashrc 가 소싱
+docker compose run --rm dev ros2 topic list          # 새 컨테이너 — 엔트리포인트가 소싱
 
 # 5) 소스 수정 후 재빌드 (컨테이너 안) — 또는 호스트에서 docker compose up builder
 ./scripts/build.sh              # colcon build --symlink-install + 경고 플래그(-Wall -Wextra -Wpedantic)
@@ -76,6 +84,16 @@ docker compose --profile run up -d
 docker compose build && docker compose up -d
 ```
 
+**마이그레이션 — 컨테이너 이름이 `amr_dev` 로 고정되어 있던 시절부터 쓰던 프로젝트라면** 이 변경
+(`container_name` 제거 + `ros2_ws_*` 볼륨) 뒤의 최초 `docker compose up -d` 가 서비스 설정 변경을 감지해
+옛 컨테이너 `amr_dev` 를 멈추고 지운 뒤 `<프로젝트>-dev-1` 을 새로 만들고, 비어 있는 새 볼륨을
+`build/ install/ log/` 에 마운트한다. 옛 컨테이너 안에만 있던 것(컨테이너 레이어의 빌드 산출물,
+홈 디렉토리 설정, 임시 파일 등)은 사라지므로 **먼저 꺼내 둔다**:
+`docker cp amr_dev:<컨테이너 안 경로> <호스트 경로>`. bind mount 인 `src/ config/ maps/ logs/` 는
+호스트에 그대로 있다. 이후 builder 가 새 볼륨에 한 번 전체 빌드를 한다. `.env` 로 `COMPOSE_PROJECT_NAME`
+을 새로 줬다면 옛 프로젝트의 컨테이너는 건드리지 않고 남으므로 따로 지운다:
+`docker compose -p <옛 프로젝트 이름> down`.
+
 `network_mode: host` 라서 같은 `ROS_DOMAIN_ID` 를 쓰는 LAN 의 다른 호스트와 DDS 트래픽이 오간다.
 격리가 필요하면 `.env` 에 `ROS_LOCALHOST_ONLY=1` 을 준다 (컨테이너끼리는 계속 통신된다).
 
@@ -100,8 +118,9 @@ docker compose build && docker compose up -d
 - `xmllint` 는 `package.xml` 스키마를 download.ros.org 에서 받아 검증하므로 네트워크가 없으면
   xmllint 만 실패한다.
 - 특정 패키지만: `./scripts/test.sh --packages-select amr_fleet` (인자는 `colcon test` 로 전달).
-  단, 요약/커버리지는 `build/` 에 남은 전체 패키지 결과를 집계하므로 다른 패키지의 이전 실패가 남아 있으면
-  종료 코드가 0 이 아닐 수 있다 — 전체를 한 번 다시 돌리면 정리된다.
+  이전 실행의 결과 파일은 실행 시작 시 지우므로(`colcon test-result --delete-yes`) 요약과 종료 코드는
+  이번에 돌린 패키지만 반영한다. 커버리지 합산은 `build/` 에 남은 `.coverage` 를 모두 읽으므로
+  다른 패키지의 지난 측정값이 함께 나올 수 있다.
 
 ### 헤드리스 환경 주의
 

@@ -85,6 +85,14 @@ RUN pip3 install --no-cache-dir --upgrade pip wheel \
     && pip3 install --no-cache-dir \
         torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cu128
 
+# --- pip 제약 파일 (docker/constraints.txt) ----------------------------------
+# 아래 pip 층의 고정 버전을 제약 파일로도 두고 PIP_CONSTRAINT 로 가리킨다. 이 Dockerfile 의 pip 설치는
+# 물론 컨테이너 안의 ad-hoc `pip install ...` 도 이 버전을 벗어나지 못한다 — 예: `pip install -U ultralytics`
+# 가 opencv-python 을 다시 깔아 contrib 의 cv2.aruco 를 지우거나 numpy 2 가 들어오는 요청을 pip 이 거부한다.
+# torch 층 뒤에 두어 제약 파일이 바뀌어도 torch 층 캐시는 유지된다 (pip 층부터 다시 빌드).
+COPY docker/constraints.txt /etc/amr/constraints.txt
+ENV PIP_CONSTRAINT=/etc/amr/constraints.txt
+
 # --- Python 과학/테스트/웹 스택 (전부 버전 고정 — 재현 가능한 이미지) ---------
 # * numpy 1.x 필수: cv_bridge(boost.python), apt matplotlib 등 ROS 측 C 확장이 numpy 1.x
 #   ABI 로 빌드되어 있어 numpy 2 에서는 import/변환이 깨진다 (_ARRAY_API not found).
@@ -117,6 +125,9 @@ RUN pip3 install --no-cache-dir --no-deps --ignore-installed transforms3d==0.4.2
 # 번들 Qt 충돌 방지). opencv-python 과 같은 cv2/ 디렉토리에 풀리므로 반드시 마지막에
 # --force-reinstall 로 설치해 contrib-headless 의 cv2.abi3.so 가 결정적으로 이기게 한다.
 # --no-deps: 위에서 고정한 numpy 등을 건드리지 않는다.
+# 주의: 두 배포판이 같은 cv2/ 를 소유한다. 이후 어떤 이유로든 opencv-python 이 다시 설치되면
+# (--force-reinstall 등 — 제약 파일은 버전 이탈만 막고 같은 버전 재설치는 못 막는다) 마지막 줄의
+# contrib-headless 설치를 다시 실행해야 aruco 가 돌아온다. `pip uninstall opencv-python` 은 공유 파일을 지운다.
 
 # --- 비루트 사용자 ----------------------------------------------------------
 RUN groupadd -g ${GID} ${USERNAME} 2>/dev/null || true \
@@ -129,20 +140,12 @@ ENV ROS_WS=/ros2_ws
 RUN mkdir -p ${ROS_WS}/src && chown -R ${UID}:${GID} ${ROS_WS}
 WORKDIR ${ROS_WS}
 
-# Gazebo Fortress 리소스 경로 — 프로젝트 월드/모델. ENV 라서 엔트리포인트를 거치지 않는
-# `docker compose exec dev bash` 셸에서도 적용된다. (런치 파일은 install/share 경로를 덧붙인다)
+# Gazebo Fortress 리소스 경로 기본값 — 프로젝트 월드/모델. ENV 라서 엔트리포인트를 거치지 않는
+# 비대화형 exec(docker compose exec dev ros2 ...)에서도 보인다. 런타임에 -e / compose environment / .env 로
+# 다른 값을 주면 이 기본값이 통째로 대체되므로, /etc/amr/ros_env.sh(아래)가 프로젝트 경로를 다시 앞에
+# 붙이고 GZ_SIM_RESOURCE_PATH 를 같은 값으로 맞춘다. (런치 파일은 install/share 경로를 덧붙인다)
 ENV IGN_GAZEBO_RESOURCE_PATH=${ROS_WS}/src/amr_simulation/worlds:${ROS_WS}/src/amr_simulation/models
 ENV GZ_SIM_RESOURCE_PATH=${IGN_GAZEBO_RESOURCE_PATH}
-
-# 대화형 셸(docker compose exec dev bash)은 엔트리포인트를 타지 않으므로 여기서 ROS 를 소싱한다.
-# /etc/bash.bashrc 는 모든 사용자의 대화형 bash 가 읽는다. install/ 은 빌드 후에만 존재한다.
-RUN printf '%s\n' \
-        '' \
-        '# ROS2 + 워크스페이스 오버레이 (amr-fleet-system)' \
-        'source /opt/ros/${ROS_DISTRO}/setup.bash' \
-        'if [ -f ${ROS_WS}/install/setup.bash ]; then source ${ROS_WS}/install/setup.bash;' \
-        'else echo "[amr] ${ROS_WS}/install 이 아직 없다 — builder 가 끝난 뒤 새 셸을 열거나 source install/setup.bash"; fi' \
-        >> /etc/bash.bashrc
 
 # --- GPU 렌더링 (headless EGL) ----------------------------------------------
 # nvidia-container-toolkit 은 libEGL_nvidia.so 는 주입하지만 이를 가리키는
@@ -165,9 +168,22 @@ ENV QT_X11_NO_MITSHM=1
 ENV __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json
 ENV MESA_LOADER_DRIVER_OVERRIDE=""
 
-# --- 엔트리포인트 -----------------------------------------------------------
+# --- 엔트리포인트 / 셸 환경 --------------------------------------------------
+# ros_env.sh: ROS 소싱 + install/ 오버레이 + Gazebo 리소스 경로 앞붙이기(멱등). 엔트리포인트와
+# 대화형 bash 가 같은 파일을 소싱하므로 두 경로의 환경이 갈라지지 않는다.
+COPY docker/ros_env.sh /etc/amr/ros_env.sh
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# 대화형 셸(docker compose exec dev bash)은 엔트리포인트를 타지 않으므로 /etc/bash.bashrc 에서 소싱한다.
+# /etc/bash.bashrc 는 모든 사용자의 *대화형* bash 만 읽는다 (bash -c / exec dev ros2 ... 는 해당 없음 —
+# 그런 경우는 `bash -ic` 나 `docker compose run`). install/ 은 빌드 후에만 존재한다.
+RUN printf '%s\n' \
+        '' \
+        '# ROS2 + 워크스페이스 오버레이 + Gazebo 리소스 경로 (amr-fleet-system) — 엔트리포인트와 같은 파일' \
+        'source /etc/amr/ros_env.sh' \
+        '[ -f ${ROS_WS}/install/setup.bash ] || echo "[amr] ${ROS_WS}/install 이 아직 없다 — builder 가 끝난 뒤 새 셸을 열거나 source install/setup.bash"' \
+        >> /etc/bash.bashrc
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["bash"]

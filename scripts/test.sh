@@ -24,6 +24,11 @@ set -u
 
 TEST_FAILED=0
 
+# 이전 실행의 결과 파일(build/*/test_results 등)을 먼저 지운다 — colcon test-result 에는 패키지 선택
+# 옵션이 없어 build/ 전체를 읽으므로, 지우지 않으면 --packages-select 로 돌린 이번 실행의 요약과
+# 종료 코드에 다른 패키지의 지난 실패가 섞인다. (.coverage 는 지우지 않는다)
+colcon test-result --delete-yes >/dev/null 2>&1 || true
+
 echo "=== colcon test ==="
 colcon test \
     --event-handlers console_direct+ \
