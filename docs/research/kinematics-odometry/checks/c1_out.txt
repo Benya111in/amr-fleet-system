@@ -1,0 +1,32 @@
+delta = 1.2655e-04 m, sigma_q^2 = delta^2/12 = 1.335e-09, delta^2/6 = 2.669e-09
+psi_nom = r/b = 0.2292
+wheel rate @2 m/s = 24.24 rad/s -> 15804 tick/s, 4 h = 2.276e+08 ticks
+
+[2.1] dtheta_max = 0.03, relative bound dth^2/24 = 3.750e-05; per-step @2 m/s = 1.500e-06 m; 7.2 km worst case = 0.270 m; 0.5 % mean-radius scale over 7.2 km = 36 m
+[2.1] max(|e_step| / (ds*dth^2/24)) over grid = 1.000000 (<= 1 required)
+
+[2.2] Var(q)/(d^2/12) = 1.000; Var(e)/(d^2/6) = 1.004; Cov(e_k,e_k+1)/(-d^2/12) = 0.997
+[2.2] second-difference quantisation var / sigma_q^2 = 5.977 (6 expected)
+[2.2] spurious whitened random walk 1 h @50 Hz: n*d^2/6 = 4.805e-04 m^2, sigma = 2.19 cm
+[2.2] heading quantisation bound: end-only delta/b = 3.52e-04 rad; start+end 2*delta/b = 7.03e-04 rad
+[2.2] quantisation per-step 20 ms: sigma_vx = d/(sqrt12 T) = 1.83e-03 m/s, sigma_w = d/(sqrt3 b T) = 1.01e-02 rad/s, per wheel d/(sqrt6 T) = 2.58e-03
+[2.2] quantisation window 0.1 s: sigma_vx = d/(sqrt12 T) = 3.65e-04 m/s, sigma_w = d/(sqrt3 b T) = 2.03e-03 rad/s, per wheel d/(sqrt6 T) = 5.17e-04
+[2.2] slip (multiplicative) per-wheel velocity sigma: per-step 3.00e-03, 0.1 s window 1.34e-03 m/s; k_eff = ss^2 v dt = 6.0e-07 m
+[2.2] slip (multiplicative) per-wheel velocity sigma: per-step 1.00e-02, 0.1 s window 4.47e-03 m/s; k_eff = ss^2 v dt = 2.0e-06 m
+[2.2] slip (multiplicative) per-wheel velocity sigma: per-step 2.00e-02, 0.1 s window 8.94e-03 m/s; k_eff = ss^2 v dt = 4.0e-06 m
+
+[2.3] L[m]  MC Var(th)  aug Var(th)  white Var(th) | MC Var(y)  aug Var(y)  white Var(y)
+         5  5.307e-04  5.401e-04  1.559e-04 | 3.642e-03  3.697e-03  1.299e-03
+        10  1.823e-03  1.852e-03  3.117e-04 | 4.804e-02  4.887e-02  1.039e-02
+        20  6.699e-03  6.790e-03  6.235e-04 | 6.859e-01  6.996e-01  8.313e-02
+
+[2.4] v=1.0: k_eff=2.0e-06 m, L=20.0: sigma_th=0.0248 rad, sigma_x=4.5 mm, sigma_y=0.287 m
+
+[2.4] v=2.0: k_eff=4.0e-06 m, L=20.0: sigma_th=0.0351 rad, sigma_x=6.3 mm, sigma_y=0.406 m
+[2.4] rotation 10 rev @1.5 rad/s: wheel speed 0.270 m/s, k_eff=5.40e-07, sigma_th=0.0097 rad
+[2.4] MC @1 m/s 20 m: sigma_th 0.0248 (cf 0.0248), sigma_x 5.7 mm (cf 4.5), sigma_y 0.282 (cf 0.287)
+[2.2] systematic eps=0.005: heading after 20 m = 0.2778 rad, lateral = 2.778 m
+[2.2] systematic eps=0.001: heading after 20 m = 0.0556 rad, lateral = 0.556 m
+[2.3] published per-step twist v=0.3: sigma_vx=2.80e-03 m/s (Var 7.84e-06), sigma_w=1.555e-02 rad/s (Var 2.42e-04)
+[2.3] published per-step twist v=1.0: sigma_vx=7.30e-03 m/s (Var 5.33e-05), sigma_w=4.057e-02 rad/s (Var 1.65e-03)
+[2.3] published per-step twist v=2.0: sigma_vx=1.43e-02 m/s (Var 2.03e-04), sigma_w=7.922e-02 rad/s (Var 6.28e-03)

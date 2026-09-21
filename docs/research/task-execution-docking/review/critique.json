@@ -1,0 +1,116 @@
+{
+ "slug": "task-execution-docking",
+ "math_errors": [
+  {
+   "location": "§3.2 table (lines 172-177, column σ_X) and §3.4 R_c (line 206); repeated in §3.6 line 234 ('σ_y ≈ 1 mm') and TL;DR/§3.2 line 179 ('위치는 단일 프레임으로도 mm 급')",
+   "error": "σ_X = Zσ_c/(2f) is the lateral uncertainty of the MARKER IN THE CAMERA FRAME. The EKF state is base_link in the DOCK frame, obtained through T_D^B = T_D^M (T_C^M)^{-1} (T_B^C)^{-1}. Inverting the marker pose rotates the lever arm (Z + 0.18 m) by the yaw error, so σ_{y_r} ≈ (Z+0.18)·σ_θ, and the y_r/ψ errors are strongly correlated (corr ≈ -0.7). Linearized CRLB with the brief's own f, s, σ_c: σ_{y_r} = 138 mm (Z=1.32), 62 mm (1.0), 16.4 mm (0.62), 2.8 mm (0.32) versus the brief's 0.4/0.3/0.2/0.1 mm; Monte-Carlo with LM-refined PnP at Z=0.62 gives 15.7 mm. The block-diagonal R_c therefore overstates lateral information by a factor 30-350; the κ∈[1,2] NEES scaling cannot absorb this and E2 would fail by construction.",
+   "correction": "Propagate the full 6-DoF PnP covariance through the transform chain: R_c = J Σ_PnP Jᵀ with Σ_PnP = σ_c²(JᵀJ)^{-1} from the corner-projection Jacobian (or reparametrize the camera measurement as (X_cam, Z_cam, θ) with a nonlinear h(x) and H = ∂h/∂x). Keep the y_r–ψ cross term; then the LiDAR yaw update legitimately tightens y_r as well. Re-state expected fused σ_y at pre-dock as ≈ (0.8 m)·σ_ψ,fused ≈ 3 mm (still within τ_y = 15 mm) rather than 1 mm."
+  },
+  {
+   "location": "§3.4 lines 201-207 vs §3.6 lines 225-230 and Table 3.3 line 195",
+   "error": "Frame/sign inconsistency. With x_D defined as the OUTWARD normal and the robot in front of the face (x_r = +0.50 m) heading into the dock, the base heading in D is ψ = π, not 0. The LiDAR model h_L = x_r + l_x cosψ only yields the 0.35 m used in Table 3.3 if ψ = π (0.5 − 0.15); with the ψ→0 convention used by the gate (|e_ψ| ≤ 0.6°) and the 'rotate until ψ→0' retry, h_L gives 0.65 m. As written, EKF, gate and retry table use two different conventions.",
+   "correction": "Define x_D as the INWARD normal (docking direction) so the docked pose is (x_r = −0.50, y_r = 0, ψ = 0), and write h_L = −(x_r + l_x cosψ) with H_L = [−1, 0, l_x sinψ; 0, 0, 1]; or keep the outward normal and define e_ψ = wrap(ψ − π) everywhere. Also state that Rot(ψ) in R_c maps camera axes (optical z = heading) to D."
+  },
+  {
+   "location": "§3.6 gate, line 223",
+   "error": "The gate Pr(|e_y|≤τ_y)·Pr(|e_ψ|≤τ_ψ) assumes e_y and e_ψ independent. With the correct measurement model they are strongly correlated (ρ ≈ −0.7 single-frame, still non-zero after fusion), so the product is not the joint probability and can over- or under-estimate it.",
+   "correction": "Evaluate the joint probability of the rectangle [−τ_y,τ_y]×[−τ_ψ,τ_ψ] under N(μ, P_t) with the 2×2 marginal of (y_r, ψ) (bivariate normal CDF or 10^4-sample Monte Carlo, microseconds), or use the conservative Bonferroni bound 1 − P(|e_y|>τ_y) − P(|e_ψ|>τ_ψ)."
+  },
+  {
+   "location": "§4.3 line 268 ('σ→0, p_j 동일, w_late→∞ 이면 EDF 와 동일한 순서') and §6.4 line 338 (unit-test property)",
+   "error": "False. (i) Ordering by slack λ_ij = d_j − Ĉ_ij is Least-Slack-First, which equals EDF only when all Ĉ_ij − t are identical (equal travel+service time); with per-task travel times it is a different order. (ii) As σ→0 the urgency u_j = max_i(1+p_j/255)·Pr(C_ij>d_j) becomes a 0/1 indicator, so the top-(m+L) selection has no ordering among on-time tasks (all ties) and among late tasks. (iii) The assignment cost with w_late→∞ minimizes total tardiness under Hungarian, which is also not EDF. The unit test as specified would fail or test a vacuous case.",
+   "correction": "Either claim reduction to LSF/LST (least-slack) — provable: with σ→0 and equal priorities the ranking by λ_ij is exactly LST — or add the assumption of identical Ĉ_ij for the EDF statement. Replace the saturating urgency by a continuous one, e.g. u_j = (1+p_j/255)·max_i E[(C_ij − d_j)^+]/σ_ij or by −λ_ij directly, so ranking survives σ→0."
+  },
+  {
+   "location": "§3.1 line 157 and §3.3 line 187 (heights) vs config/sensors.yaml",
+   "error": "Height references are mixed. sensors.yaml states the LiDAR scan plane is at ground +0.38 m (lidar z = 0.20 m is relative to base_link, so base_link ≈ 0.18 m above the floor) and the camera is at ground +0.43 m. The brief's 'dock face 0.8 × 0.4 m', 'marker centre 0.25 m (= camera z)' and 'plate height 0.4 m ≥ LiDAR height' are only consistent if all are base_link-relative, but a 0.4 m-tall plate standing on the floor would be cut by the scan plane 2 cm below its top edge, and a marker centred at 0.43 m above the floor cannot be on it. At Z = 0.32 m a marker centre 0.18 m below the optical axis sits at 29° + 13° half-height = 42° > VFOV/2 = 35.4°, i.e. partly out of view when docked.",
+   "correction": "Specify plate bottom/top and marker centre heights above the floor explicitly (e.g. plate spanning 0.20-0.65 m, marker centre at 0.43 m) and re-check the LiDAR-plane intersection margin (≥ 0.1 m) and the VFOV at Z = 0.32 m."
+  },
+  {
+   "location": "§3.2 '대안 A' line 183 and §8 item 3",
+   "error": "Two-marker board (0.12 m markers, 0.5 m baseline) is not fully visible at the docked distance: half visible width at Z = 0.32 m is 0.304 m, the outer marker edge is at 0.25 + 0.06 = 0.31 m; with any lateral offset one marker is clipped, so the 3.7× yaw gain only exists at Z ≳ 0.35 m and the alternative loses the terminal-phase measurement it is meant to improve.",
+   "correction": "Reduce the baseline to ≤ 0.40 m (outer edge 0.26 m) or state that the two-marker yaw is used only for Z > 0.4 m and the single marker for the terminal phase."
+  },
+  {
+   "location": "§2.3 node count line 59 / list lines 120-123",
+   "error": "15 Action + 7 Condition + 2 Control + 1 Decorator = 25 custom node types, not 27; the comment on line 115 lists 5 further subtrees on top of the 4 shown (9), while §6.1 and the text say 8.",
+   "correction": "Reconcile the counts (state the built-in nodes counted, if any) so the ≥15-node claim is auditable."
+  },
+  {
+   "location": "§5 E2, line 279 ('3-DoF 95 % 구간 [2.4, 3.7]')",
+   "error": "The interval for the mean NEES depends on the sample count N: [2.36, 3.72] for N = 50, [2.52, 3.53] for N = 90 (one sample per docking), [2.85, 3.15] for N = 1000. The brief does not state N or whether NEES is per docking (final pose) or per time step (thousands of autocorrelated samples).",
+   "correction": "Specify N and the sampling unit; use χ²_{3N}(0.025)/N, χ²_{3N}(0.975)/N; if per-step, thin to independent samples or report the per-docking terminal NEES."
+  },
+  {
+   "location": "§3.2 depth formula line 163 and §6.4 line 333 (±30 % tolerance)",
+   "error": "σ_Z = Zσ_c/ℓ implicitly sets σ_ℓ = σ_c, but the LM/IPPE estimate of the side length uses 4 edges, so the CRLB gives σ_Z ≈ 0.7× the closed form (1.07 mm vs 1.5 mm at Z = 0.62). The Monte-Carlo unit test with a ±30 % tolerance would sit exactly on the boundary for σ_Z.",
+   "correction": "Derive all three sigmas from σ_c²(JᵀJ)^{-1} (one 8×6 Jacobian, closed-form at the frontal pose) or widen the test tolerance and state the σ_ℓ assumption."
+  },
+  {
+   "location": "§3.5 line 217 and §3.7 line 240",
+   "error": "Docking a_max = 0.5 m/s² (§3.5) vs the payload formula a_max(m) = a_nom·m_base/(m_base+m_load) evaluated with a_nom = 1.0 m/s² (0.64 m/s² for 25 kg on 45 kg). The 45 kg base mass appears nowhere in the spec or repo (amr_description/urdf is empty).",
+   "correction": "State which a_nom the docking controller uses (the 0.5 m/s² deceleration cap) and cite the source of m_base; apply the mass scaling to the docking cap as well."
+  }
+ ],
+ "proposal_verdicts": [
+  {
+   "proposal": "CCD: Chance-Constrained Docking (pose-covariance-aware docking controller)",
+   "verdict": "flawed",
+   "reasoning": "The architecture (Nav2 staging → 3-state relative-pose EKF fusing adaptive-R ArUco + LiDAR line-fit + odometry → Park–Kuipers law → probabilistic go/no-go before the terminal segment → diagnosed retries) is reasonable and feasible in Gazebo within the 5-week plan, and the yaw analysis (σ_θ = 2Zσ_c/(sℓ), Z⁴ variance scaling) is correct (CRLB: 5.26°/3.02°/1.16°/0.31° exactly as tabulated). But the core covariance model is wrong where it matters: the dock-frame lateral coordinate that the gate tests is dominated by the yaw lever arm ((Z+0.18)·σ_θ = 16 mm at pre-dock, 62 mm at 1 m), not by the 0.2 mm quoted, and R_c omits the y–ψ correlation; the EKF frame/sign convention is inconsistent between §3.4 and §3.6; the gate multiplies marginals that are not independent. As written, the design would fail its own E2 NEES test and the '3σ = 3 mm lateral' expected gain is unsupported. The fused design can still meet 2 cm/1° (fused σ_ψ ≈ 0.2° ⇒ σ_y ≈ 3 mm at pre-dock), so the fix is a re-derivation, not a redesign. Novelty positioning 'new_combination' is honest, but (a) the name collides with the established chance-constrained rendezvous/docking MPC literature for spacecraft (arXiv 1910.08048, 2501.10437, 2608.04114), (b) opennav_docking already retries via staging and low-pass filters the dock pose (filter_coef), and Dai & Lee 2025 already fuse LiDAR heading with tag detection, so the incremental contribution is the closed-form-covariance gate plus retry diagnosis only. Retry accounting (information-poor and heading-bias retries 'not counted', 3×3 nested attempts in the BT) risks violating the spec's 'max 3 failures then report'.",
+   "evidence": "Linearized CRLB + Monte-Carlo (scratchpad/cov_check.py, f = 337.2 px, σ_c = 0.2 px, s = 0.15 m): σ_yaw 5.26/3.02/1.16/0.31° (matches brief); σ_{y_r,dock} 138/62/16.4/2.8 mm vs brief 0.4/0.3/0.2/0.1 mm; corr(X,yaw) = −0.71; MC at Z = 0.62: σ_{y_r} = 15.7 mm. opennav_docking humble README: 'N retries may be made by driving back to the dock's staging pose', filter_coef 0.1, k_phi 3.0/k_delta 2.0/beta 0.4/lambda 2.0. Nav2 smooth_control_law.cpp verified: κ and v = min(v_max/(1+β|κ|^λ), v_max r/r_slow, sqrt(2 r a_dec)) then clamp to [v_min, v_max] — the brief omits the v_min clamp. Adámek 2023 (PMC10300747) RMSE 1.28/1.61 cm with adaptive variance; Hinderer 2509.17345 'Kalman filter with adaptive measurement noise variances'; Dai & Lee Electronics 14(14):2769 'LiDAR group-symmetry mechanism estimates heading deviation ... hybrid PID'."
+  },
+  {
+   "proposal": "WLSF-ETA: priority-weighted least-slack scheduling with online travel-time feedback",
+   "verdict": "overclaimed",
+   "reasoning": "The mechanics are sound and cheap (Gaussian expected-tardiness loss σ(zΦ(z)+φ(z)) is the standard normal loss function; EWMA zone speeds; rectangular Hungarian on ≤5×7; swap hysteresis), the 'engineering_adaptation' label is honest, and E6/E7 are the right experiments. But the stated properties are overclaimed: the 'reduces exactly to EDF' unit-test property is false (it reduces to least-slack/LST, and only to EDF under equal completion times), the urgency u_j degenerates to a 0/1 indicator as σ→0 so the candidate selection has no ordering in exactly the limit used for the test, and the policy is a direct instance of classical slack-based dispatching (LST/MOD rules in AGV/FMS scheduling) plus a newsvendor loss — the brief should say so rather than present WLSF as a named contribution. Interface ownership with amr_fleet's Hungarian allocator is unresolved, and deadlines are ISO-8601 wall-clock in the JSON while Task.msg carries builtin_interfaces/Time (sim time) — unresolved despite being listed as a risk.",
+   "evidence": "Brief line 268 claim vs slack definition line 250: λ_ij = d_j − Ĉ_ij with Ĉ_ij containing task-dependent τ(x_i→P_j)+τ(P_j→Q_j), so ordering by λ ≠ ordering by d_j. Line 266: u_j uses Pr(C_ij>d_j) = 1−Φ(λ/σ) → step function as σ→0. Mendoza 2604.11954 abstract confirms EDD and Hungarian baselines (as the brief says). Rossano 2509.22469 v3 comment 'accepted to IROS 2026' confirmed. Prior slack-based AGV dispatching: e.g. 'Slack-aware scheduling of AGVs in JIT matrix manufacturing' (Computers & OR 2025, S0305054825003697) and standard LST/MOD dispatching rules."
+  },
+  {
+   "proposal": "Two-marker board alternative A (2 × 0.12 m, 0.5 m baseline) for 3.7× better single-frame yaw",
+   "verdict": "flawed",
+   "reasoning": "The yaw-from-depth-difference formula is right (0.80° at 1 m), but at the docked distance the board does not fit in the 87° HFOV: half visible width 0.304 m < outer marker edge 0.31 m, so the improvement disappears exactly in the terminal phase where 1° matters, and any lateral offset clips one marker. Usable only with baseline ≤ 0.40 m or as a far-range aid.",
+   "evidence": "0.32·tan(43.5°) = 0.304 m; 0.25 + 0.12/2 = 0.31 m (cov_check.py output 'visible? False')."
+  },
+  {
+   "proposal": "BT executive on BehaviorTree.CPP v4 with own action clients, re-implemented RecoveryNode/RoundRobin/RateController, Groot2 monitoring (baseline)",
+   "verdict": "flawed",
+   "reasoning": "The v3/v4 ABI-clash analysis and the decision to drop nav2_behavior_tree from package.xml are correct (package.xml confirmed to list both behaviortree_cpp and nav2_behavior_tree). But the tree as drawn does not implement the recoveries it claims: the root is KeepRunningUntilFailure, whose child FAILURE propagates as FAILURE (confirmed from BT.CPP source), so (i) an active E-Stop (Inverter→FAILURE→ReactiveSequence FAILURE) terminates the executive instead of 'halting all actions' (R5), and (ii) DockWithRecovery deliberately ends in AlwaysFailure after RequestReassignment, which propagates FetchAndDeliver→Fallback→ReactiveSequence→root and ends the mission loop on the first unrecoverable dock (R3). Port strings like {task.budget_ms} / {task.pickup_staging} assume struct-field access on blackboard entries, which BT.CPP 4 does not provide (a key literally named 'task.budget_ms'). Groot2 free tier caps live monitoring at 20 nodes; the expanded tree exceeds that, so 'Groot2 real-time monitoring (free tier)' is not achievable without the PRO licence the brief itself says it must avoid. Nested RetryUntilSuccessful(3) × DockToStation(max_retries=3) allows 9 physical approaches versus the spec's 'max 3 failures then report'.",
+   "evidence": "keep_running_until_failure_node.h: 'If the child returns FAILURE, return FAILURE'. behaviortree.dev/groot: free tier 'Monitor & Log Visualizer: 20 nodes', PRO 'Unlimited'. src/amr_behavior/package.xml lines: <depend>behaviortree_cpp</depend> and <depend>nav2_behavior_tree</depend>. Brief lines 64-66, 104-113."
+  }
+ ],
+ "spec_gaps": [
+  "Spec 4.8 '대기-이동-인식-작업-복귀': the FetchAndDeliver tree has no 복귀 (return-to-waiting-zone/home) step after COMPLETED; ReturnHome is only named in a comment (line 115) and never wired into MissionLoop.",
+  "Spec 4.8 '최대 3회 실패 시 에러 보고 및 대체 작업': the brief's retry accounting (information-poor and heading-bias retries uncounted, plus BT-level RetryUntilSuccessful(3) around a server with max_retries=3) permits up to 9 re-approaches and unbounded uncounted holds/rotations; a single, documented ≤3 counter is required, or an explicit argument why uncounted actions are not 'retries'.",
+  "Spec 4.10 response-time metric (log [cmd_time, response_time, latency_ms], ≥50 measurements, mean/max, 'command receipt → first robot motion'): E8 only asserts '<100 ms' from tick + action-accept; no measurement procedure or log format for this area's commands (task accept, dock start).",
+  "Spec 4.10 '통합 테스트 시나리오 최소 10개 자동화' and '연속 4시간 운용': the brief lists unit tests and experiments E1-E8 but no automated integration scenarios (launch_testing) and nothing about 4-hour soak of the BT executive/task manager (log growth, action-client leaks).",
+  "Spec 4.8 JSON Task ↔ amr_msgs/Task '1:1' is not 1:1: JSON pickup/dropoff are dock_id+marker_id while Task.msg carries pickup_pose/dropoff_pose (PoseStamped); item.load_time_s and constraints.{max_retries,budget_s} have no message field; deadline is an ISO-8601 wall-clock string while Task.msg.deadline is builtin_interfaces/Time in sim time — the mapping and clock domain must be specified.",
+  "Spec 4.8 'Behavior Tree 구조를 시각화(Groot)': with the 20-node free-tier cap, live Groot2 monitoring of the full tree is not available; the plan must either restrict monitoring to ≤20-node subtrees, use Groot2's log replay within limits, or rely on the Mermaid export and say so.",
+  "Spec 4.7 안전 (0.3 m emergency stop, E-Stop 즉시 정지) during docking is only an open question (§8.1); the brief needs a concrete docking-mode exemption design (sector mask, speed cap, who owns nav2_collision_monitor) because docking at 0.2 m bumper gap is otherwise impossible.",
+  "Spec 4.1 dock/marker geometry: the world has no dock model or marker asset yet (grep of src/amr_simulation, src/amr_description finds none; urdf/ is empty), yet §3 fixes plate 0.8×0.4 m, marker 0.15 m, heights and staging 1.5 m — these must be delivered as a docks.yaml + SDF contract with the world owner, with heights above the floor.",
+  "Spec 4.4 '예측 시간 오차 15 %' is a path-planning requirement; the brief adopts it for the scheduler (fine) but E7 does not define the measurement unit (per leg vs per task) or the sample size; MAPE over per-leg segments with short legs is dominated by docking/turn time noise.",
+  "E4 (≥97 % of 100 tasks) has essentially no statistical power: a process at exactly 97 % passes only about half the time; specify the acceptance rule (e.g. ≥97/100 with a note on the binomial interval) or run 200-300 tasks."
+ ],
+ "citation_problems": [
+  "#11 Springer chapter (line 373 / summary): listed as 'Springer LNNS 2025/26' with no authors. Crossref: Lamine, Makki, Romdhane, 'Experimental Evaluation of Position-Based Visual Servoing Using AprilTag for Mobile Robot Docking', series Mechanisms and Machine Science ('Emerging Fields in Mechanism and Machine Science'), 2026. Fix series and add authors.",
+  "#3 Oh & Kim (line 365): the quoted 6.64° vs 3.11° and 2 cm/3.07° are correct, but the same abstract reports a SolvePnP mean distance error of 58.54 cm vs 1.18 cm — a baseline that is clearly mis-calibrated; using this paper as evidence that 'single-camera yaw is the bottleneck' is weak and should be qualified.",
+  "#17 (line 381): 'Ingrand et al.' — arXiv 2502.11904 is single-authored (Felix Ingrand).",
+  "#26 Rossano et al.: cited as 'IROS 2026' in §7 but as 'Rossano et al. 2025' in §4.3 line 268; arXiv v3 comment confirms 'accepted to IROS 2026' — make consistent.",
+  "#29 CAMETA: arXiv 2503.00074 was posted 2025-02 for an IROS 2023 paper (comment confirms); the claim 'ETA MAPE 29-44 % 개선' is not in the abstract and was not verifiable from the sources the brief says it used.",
+  "#12 opennav_docking/Nav2 (line 374) and §3.5/§6.1: the brief asserts 'Humble 에는 nav2_graceful_controller 패키지가 없음(컨테이너 확인)', 'Humble 에 twist_mux 없음' and that opennav_docking needs a source build. The Humble rosdistro (navigation2 1.1.20-1) releases nav2_graceful_controller, twist_mux 4.3.0-1 and opennav_docking are all released for Humble — they are merely not installed in the image (apt-installable). The 'verified in container' wording overstates what was checked.",
+  "#1 Adámek: formula transcription is consistent with PMC (rotation variance p1 Sn^-p2 e^-φ/p3 + p4/(90-|φ|) + p5; RMSE 1.28/1.61 cm) — OK. #2 Hinderer, #8 Günzel (ArUco+EKF, 90 %), #10 Phoompho (fiducial-marker placement via conditional diffusion), #27 Mendoza (EDD + Hungarian + SCoBA baselines), #13 Park & Kuipers (ICRA 2011, pp. 4896-4902, DOI 10.1109/ICRA.2011.5980167), #15/#16/#24/#25/#28/#30 and all remaining arXiv IDs resolve to the stated titles/authors — no fabricated references found."
+ ],
+ "required_revisions": [
+  "§3.2/§3.4: replace the block-diagonal R_c with the covariance propagated through the transform chain (R_c = J σ_c²(JᵀJ)^{-1} Jᵀ including the y_r–ψ cross term), re-tabulate σ_{y_r} in the dock frame (≈138/62/16/3 mm single-frame), and rewrite the conclusion: single-frame position is mm-level only in the camera frame; dock-frame lateral accuracy is yaw-limited and is what fusion must fix.",
+  "§3.4/§3.6: fix the dock-frame convention (inward normal with ψ = 0 docked, h_L = −(x_r + l_x cosψ), H_L = [−1 0 l_x sinψ; 0 0 1], or define e_ψ = ψ − π consistently) and state how the EKF is initialised at staging (no prior for the Mahalanobis ambiguity test on the first frame).",
+  "§3.6: compute the gate as a joint bivariate-normal rectangle probability (or Bonferroni bound), recompute the expected fused σ_y (≈3 mm at pre-dock, not 1 mm), and define one retry counter that satisfies the spec's ≤3 (either count every re-approach including holds/rotations, or bound uncounted actions by a time budget and justify).",
+  "§2.3: restructure MissionLoop so failures do not kill the executive: wrap FetchAndDeliver in ForceSuccess (or use a Repeat/loop control that ignores FAILURE) and make the E-Stop branch return RUNNING (e.g. ReactiveFallback with a Halt/Wait leaf) so R5 halts children instead of terminating the tree; remove struct-field port syntax ({task.budget_ms}) and have AcceptTask explode the task into flat blackboard keys; add the 복귀 step; reconcile node/subtree counts (25 custom, 8 or 9 subtrees).",
+  "§2.1/§6: correct the Groot2 plan — free tier monitors ≤20 nodes; either monitor subtrees individually, use log replay within limits, or state that documentation relies on the Mermaid export; confirm this satisfies '시각화(Groot)' with the reviewers.",
+  "§3.5/§6.1/§6.2: correct the stack facts — nav2_graceful_controller, twist_mux 4.3.0 and opennav_docking are released Humble binaries; keep the own implementation for the '직접 구현' rationale but drop the 'not in Humble' justification and use apt packages for B0 and the mux (or justify the own mux); include the v_min clamp in the velocity law.",
+  "§3.1/§3.3: give all heights above the floor (base_link ≈ 0.18 m, LiDAR plane 0.38 m, camera 0.43 m per sensors.yaml), set the plate span and marker centre accordingly, verify the LiDAR-plane margin and VFOV at Z = 0.32 m, and fix or drop alternative A (baseline ≤ 0.40 m).",
+  "§4.3/§6.4: replace the false EDF-equivalence property with the correct LST reduction, use a non-saturating urgency (expected tardiness or slack) for candidate selection, state the clock domain of deadlines (sim time) and the JSON→Task.msg mapping (dock_id→pose lookup, extra fields), and cite classical slack-based (LST/MOD) AGV dispatching as the origin of WLSF.",
+  "§5: specify N and the sampling unit for the NEES interval; add the spec's response-time log/measurement (≥50 samples, mean/max), automated integration scenarios, and a 4-hour soak for the executive/task manager; give E4 an acceptance rule with statistical power.",
+  "§8: convert the safety-zone conflict from an open question into a proposed design (docking-mode sector mask + speed cap tied to RobotState.STATUS_DOCKING), since docking is impossible without it.",
+  "§7/§0: rename or re-position CCD relative to the spacecraft chance-constrained rendezvous/docking literature (1910.08048, 2501.10437, 2608.04114) and to opennav_docking's existing staging retry + pose filter, so the claimed increment (closed-form covariance gate + retry diagnosis) is stated precisely."
+ ],
+ "score": 5
+}

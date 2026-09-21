@@ -1,0 +1,6 @@
+M13 R=1.5 pp   : curve mean|e|=2.22 cm max=5.02 cm | straight mean=0.18 cm max=2.04 cm
+M13 R=1.5 rpp  : curve mean|e|=2.81 cm max=5.19 cm | straight mean=0.41 cm max=4.80 cm
+M13 R=1.5 ccpp : curve mean|e|=0.79 cm max=1.51 cm | straight mean=0.09 cm max=0.54 cm
+M13 R=1.0 pp   : curve mean|e|=3.19 cm max=5.79 cm | straight mean=0.42 cm max=4.33 cm
+M13 R=1.0 rpp  : curve mean|e|=4.73 cm max=8.22 cm | straight mean=0.74 cm max=7.69 cm
+M13 R=1.0 ccpp : curve mean|e|=0.76 cm max=1.65 cm | straight mean=0.19 cm max=1.24 cm

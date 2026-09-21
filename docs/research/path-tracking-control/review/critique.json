@@ -1,0 +1,145 @@
+{
+ "slug": "path-tracking-control",
+ "math_errors": [
+  {
+   "location": "§2.5, line 77 (CTE definition) vs §4.1 step 1, line 170",
+   "error": "e = ((p − P_i*) × t_i*)·ẑ is labelled '좌측 +' but the z-component of (p−P)×t is (p−P)_x t_y − (p−P)_y t_x, which is NEGATIVE for a robot to the left of the path (check: t=(1,0), p−P=(0,1) gives −1). §4.1 defines e = (p−P(s_r))·n(s_r) with the left normal, which IS left-positive. The two definitions have opposite signs, and Prop 2 / P3 (y_g ≈ −(e+Lψ)) assume left-positive.",
+   "correction": "Use e = (t_i* × (p − P_i*))·ẑ = −(p−P)_x t_y + (p−P)_y t_x, or equivalently e = (p−P)·n with n = (−t_y, t_x); state one convention and use it in §2.2, §2.5, §4.1 and the cte_logger sign unit test (9)."
+  },
+  {
+   "location": "§4.1 property (P3), line 180 ('경로 곡률과 무관', ζ = √(K/2), ω_n = √(2K) v/L)",
+   "error": "The claim of exact path-invariance is false. On a circle of curvature κ the exact first-order expansion is y_g − y_g^0 ≈ −cos φ_0 · e − L√(1 − L²κ²/4) · ψ with cos φ_0 = 1 − L²κ²/2 (verified numerically by finite differences: R=1.5, L=1.6 gives ∂y_g/∂e = −0.431, not −1; ∂y_g/∂ψ = −1.353, not −1.6). Including θ̇_p = vκ(1+κe), the error dynamics on a circle are ë + (2Kv/L)√(1−L²κ²/4) ė + [2Kv²/L² + (1−K)v²κ²] e = 0. For K=1 the stiffness is unchanged but ζ drops to √(1−L²κ²/4)/√2 = 0.598 (R=1.5, L=1.6) and 0.675 (R=1.5, L=0.9). For K≠1 the stiffness also changes. Invariance holds only to O((Lκ)²).",
+   "correction": "Replace P3 with 'approximately path-invariant for Lκ ≪ 1' and give the exact circle formula above; note that the −(e+Lψ) linearization is exact only on straight lines. Unit test (3) (4.3 ± 0.5 % overshoot at K=1) must be specified on a straight path with ψ_0 = 0 and L ≥ 1 m (for L = 0.4 m, e_0 = 0.2 m the √(L²−e²) term is already 13 % off)."
+  },
+  {
+   "location": "§2.6 lines 88–90 (pole placement) and line 96 step ④ / §6 unit test (6) line 309 ('오버슈트 < 5 %')",
+   "error": "Matching only the characteristic polynomial ignores the PI closed-loop zero at s = −K_i/K_p ≈ −ω_c/(2ζ). With ζ=1, ω_c=6 rad/s, b_v≈0 the reference step response is y(t) = 1 − e^{−ω_c t} + ω_c t e^{−ω_c t}, peak 1 + e^{−2} = 13.5 % overshoot (20.8 % for ζ = 0.707). The tuning acceptance criterion 'overshoot < 5 %' is therefore unattainable with the stated design. Additionally a 0.5 m/s step demands K_p·0.5 ≈ 22.7 N·m total torque versus the stated ≈ 6 N·m/wheel saturation, so the documented step test is saturation-dominated and cannot validate the linear pole placement at all.",
+   "correction": "Use setpoint weighting (2-DOF PI: u = K_p(b·r − y) + K_i∫(r−y), b ≈ 0.3–0.5) or a reference prefilter 1/(T_i s + 1) and re-derive the overshoot; run the identification/validation step with amplitude ≤ 0.2 m/s or a ramp, or state that the ≥ 0.5 m/s reference always comes through the S-curve (then redefine the acceptance metric)."
+  },
+  {
+   "location": "§4.2 line 203 (backward pass 'v_b(s_i) = min(v_f, v_stop(D))')",
+   "error": "v_stop(D) is the speed from which the robot can stop (to zero) within D. It does not bound the speed needed to decelerate to a NON-ZERO cap ahead (e.g., 2.0 → 1.10 m/s before an R = 1.5 m curve). As written, the backward pass only handles the terminal stop, so the profile arrives at every curve too fast, and the 100 Hz jerk filter (lag up to a_max/j_max = 0.5 s ≈ 1 m at 2 m/s) then carries the robot into the curve above the lateral-acceleration cap.",
+   "correction": "Use the general S-curve deceleration distance d(v, v_t) = (v² − v_t²)/(2a) + (v − v_t)a/(2j) for v − v_t ≥ a²/j (and the short-segment branch otherwise), and the standard recursive pass v_b(s_i) = min(v_f(s_i), d^{-1}(v_b(s_{i+1}), Δs)). Also derive the ETA from this profile, not from v_cap alone."
+  },
+  {
+   "location": "§4.1 pseudocode lines 191–193 and §4.3 lemma line 211",
+   "error": "ω_ref is computed with v_ref (the governor cap), but the DWA box window V_d clips v and ω independently (the argmin of the weighted L2 tracking term over a box is componentwise clipping), and the 100 Hz governor then scales v again without touching ω. Whenever v is clipped the executed curvature ω/v ≠ κ_cmd; e.g., accelerating from rest into an R = 1.5 m arc: v rises 0.05 m/s per 20 Hz cycle while ω rises 0.1 rad/s per cycle, so the curvature is over-commanded by > 100 % for ~0.5 s. The lemma 'argmin J = (v*, ω*)' silently assumes (v*, ω*) ∈ V_d, which is false during every acceleration phase; the 'free-corridor tracking equals CC-PP' claim fails exactly where corner-cutting occurs (curve entries).",
+   "correction": "Carry curvature κ_cmd = ω*/v* through the whole chain and set ω = v_exec·κ_cmd at each stage (DWA, governor, collision monitor), or use the DWPP cost (distance to the line ω = κv inside V_d, Ohnishi & Takahashi 2026) instead of independent (v, ω) deviation; restate the lemma with the premise (v*, ω*) ∈ V_d ∩ V_adm and add a unit test for the acceleration case."
+  },
+  {
+   "location": "§5 line 249 (응답시간 chain budget '50+10+10 ms + 물리')",
+   "error": "The jerk filter's own rise time is omitted. From rest with j_max = 2 m/s³, v(t) = j t²/2 reaches the stated 'first motion' threshold v > 0.02 m/s only after √(2·0.02/2) = 141 ms. Adding the 50 ms controller period alone gives ≈ 211 ms > the 200 ms spec (4.10), before BT tick and planner latency.",
+   "correction": "Either define first motion on GT displacement/lower threshold (0.005 m/s → 71 ms), exempt the start-up from the full jerk limit (state it explicitly, spec 4.5 ties jerk to payload stability, not to start-up), or re-budget honestly and flag the conflict with spec 4.10."
+  },
+  {
+   "location": "§2.7 lines 104–105 and §6 unit test (5) line 309 ('v_stop(D_stop(v)) = v 왕복 항등')",
+   "error": "D_stop = v²/(2a) + va/(2j) is valid only for v ≥ a²/j = 0.5 m/s; below that the S-curve has no constant-acceleration segment and D = v^{3/2}/√j (v = 0.2 m/s: 0.063 m vs 0.070 m from the closed form). The round-trip identity therefore fails for v < 0.5 m/s, which is exactly the goal-approach and Critical-zone (≤ 0.2 m/s) regime.",
+   "correction": "Make D_stop and v_stop piecewise (v_stop(D) = (D√j)^{2/3} for D < a³/(2j²)... i.e. D < 0.25 m) and restrict/extend the unit test accordingly."
+  },
+  {
+   "location": "§2.3 line 64 ('저속 과민·고속 과감쇠')",
+   "error": "From the brief's own linearization, ζ = (v/ℓ + k)/(2√(vk/ℓ)) ≥ 1 for all v (AM–GM), with ζ_min = 1 at v = kℓ (numerically: v = 0.2/0.5/1/2 m/s → ζ = 1.11/1.00/1.06/1.25 for k=1, ℓ=0.5). The virtual-wheelbase Stanley is never under-damped; 'low-speed oversensitivity' belongs to the Ackermann steering-angle form (arctan(ke/(k_s+v))) which the ω = (v/ℓ)tan δ mapping removes. The k_s term is also dropped inconsistently between the two lines.",
+   "correction": "Restate: 'over-damped at all speeds with ζ ≥ 1 and ω_n ∝ √v, so the closed-loop bandwidth (not the damping) is speed-dependent'; the argument for preferring PP is then bandwidth invariance, not damping."
+  },
+  {
+   "location": "§2.7 line 115, §4.1 line 175, §5 line 246 (횡저크)",
+   "error": "j_lat = v̇ω + vω̇ is the body-frame derivative of the lateral acceleration component. The inertial normal component of the jerk vector is 2v̇ω + vω̇ (the tangential acceleration v̇·t rotates into n at rate ω); the tangential component is v̈ − vω², not v̈. Neither definition is wrong per se, but the brief never says which one is limited, and the constraint |ω̇| ≤ (j_lat,max − |v̇ω|)/v goes negative for v̇ = 1 m/s², ω = 1.5 rad/s (1.5 − 1.5 = 0) and is undefined for v < 0.1 m/s.",
+   "correction": "State the definition (recommend body-frame, matching the IMU metric), clamp the bound at 0 and declare what happens when |v̇ω| > j_lat,max (reduce v̇ first), and give the v < 0.1 m/s fallback (bound on ω̇ = α_max)."
+  },
+  {
+   "location": "§2.7 line 117 (E-stop)",
+   "error": "The paragraph states that E-stop bypasses the jerk limit, then argues with the jerk-limited D_stop (2.5 m at 2 m/s, 0.25 m at 0.5 m/s). With the bypass and a = a_max = 1 m/s² the distances are 2.0 / 0.125 / 0.02 m (2 / 0.5 / 0.2 m/s); with torque saturation 6 N·m per wheel at 70 kg (a ≈ 2.1 m/s²) they are 0.95 / 0.06 / 0.01 m. The reference point of the 0.3 m safety distance (base_link vs the 0.3 m front overhang of the 0.6 m footprint) is also unstated.",
+   "correction": "Recompute with the braking authority E-stop actually has (torque/friction limited), state which reference point the 0.3 m applies to, and only then conclude which zone speeds are required."
+  },
+  {
+   "location": "§2.6 line 92 ('45→70 kg 고정 게인이면 대역이 35 % 떨어진다')",
+   "error": "ω_c = √(gK_i/M_v) ∝ 1/√M_v drops by 1 − √(45/70) = 20 %; it is the real part ζω_c = gK_p/(2M_v) ∝ 1/M_v that drops 36 %. The sentence names the wrong quantity (and 'ω_c = 6 rad/s = 6× the 1 Hz outer loop' on line 90 is also off: ω_n = √2/t_L = 1.77 rad/s ≈ 0.28 Hz).",
+   "correction": "State 'ζω_c drops 36 %, ω_c 20 %, ζ 20 %' and fix the outer-loop bandwidth figure; quantify the inner-loop phase lag (≈ 16° at 1.77 rad/s) on the ζ = 0.707 prediction of Prop 2."
+  },
+  {
+   "location": "§2.4 lines 69–71 (L_min derivation)",
+   "error": "σ_ψ is dropped after being written: with σ_ψ = 1° at v = 2 m/s, L = 1.6 m the term (2Kv/L)σ_ψ = 0.044 rad/s is 30 % of the 0.15 rad/s budget. σ_e = 0.03–0.05 m is the spec's error BOUND (mostly slowly varying bias), not the per-cycle noise standard deviation the amplification argument needs; contributions are summed linearly rather than RSS.",
+   "correction": "Keep both terms (RSS), solve the resulting quadratic in 1/L, and state that using the spec bound for σ_e is a conservative surrogate."
+  },
+  {
+   "location": "Author summary 'expected_gain' for CC-PP (corner-cut ≈ L²κ/8 ≈ 0.2 m at L = 1.6 m, R = 1.5 m; '>10 cm → 3–6 cm')",
+   "error": "The 0.2 m sagitta evaluates plain PP at v = 2 m/s (L = 1.6 m) on an R = 1.5 m arc, an operating point the brief's own JRG forbids: v_cap = √(0.8·1.5) = 1.10 m/s → L = 0.88 m → sagitta 0.064 m. The RPP baseline (L ≤ 0.9 m) has ≈ 0.07 m. The '>10 cm' baseline figure is unsupported.",
+   "correction": "Quote the corner-cutting estimate at the governor-limited speed and against the actual RPP lookahead, and downgrade the expected curve-CTE gain accordingly (few cm, not >5 cm)."
+  }
+ ],
+ "proposal_verdicts": [
+  {
+   "proposal": "CC-PP: Chord-Corrected Pure Pursuit (§4.1)",
+   "verdict": "overclaimed",
+   "reasoning": "The mechanism (curvature feedforward + feedback on the error part of the chord) is sound and I could not find the exact 'subtract the Frenet reference chord y_g^0' formulation in print, so 'variant_of_prior' is the right label. But (P3) exact path-invariance is false (see math errors; ζ = 0.598 not 0.707 on the brief's own R = 1.5 m, L = 1.6 m example), the linearized law is a Kanayama-type FF+FB controller with k_2 = 2K/L², k_3 = 2K/L and should be presented as such, and the expected gain is computed at an operating point the governor forbids. Two directly competing corner-cutting fixes are missing from the related work: Ahn, Shin, Kim, Park 2021 (IJAT 22(1):119–129, look-ahead point selected 'without encountering the cutting-corner problem', tested on a real car) and the goal-point-outside-the-path approach in Comput. Electron. Agric. 2022 (S0168169922000771). Feasible in weeks (O(1) per cycle).",
+   "evidence": "Numeric finite-difference check of ∂y_g/∂e and ∂y_g/∂ψ on circles (R=1.5, L∈{0.9,1.6}); Ahn et al. 2021 abstract fetched from snu.elsevierpure.com; Kanayama 1990 structure; brief §4.2 v_cap at R=1.5 m."
+  },
+  {
+   "proposal": "JRG: Jerk-bounded Regulated Governor (§4.2, §2.7)",
+   "verdict": "flawed",
+   "reasoning": "The min-set of speed caps and forward/backward passes is standard practice and the 'new combination' label is honest, but two components are already published and uncited: the closed-form jerk-limited speed profile with lateral-acceleration/jerk constraints along clothoid/arc/line paths (Villagra, Milanés, Pérez, Godoy, Robotics and Autonomous Systems 2012 — essentially the same v_cap set) and the online third-order bang-bang filter (Zanasi, Guarino Lo Bianco, Tonielli, Automatica 2000; Haschke, Weitnauer, Ritter, IROS 2008; Biagiotti & Melchiorri 2012), which also solve the ±j_max chattering the brief's 4-line filter will exhibit at the switching surface. The backward pass as written only handles the terminal stop (wrong before every non-zero cap), the closed-form D_stop is wrong below 0.5 m/s, and the ETA derived from v_cap ignores the filter lag. The jerk rise time also breaks the 200 ms response budget. All fixable within the schedule.",
+   "evidence": "Villagra et al. 2012 (S092188901100203X) and Zanasi/Haschke search results; §4.2 line 203 backward-pass formula; §2.7 lines 104–117; numeric check of D_stop branches and 141 ms rise time."
+  },
+  {
+   "proposal": "PP-nominal DWA arbitration, single cmd_vel owner (§4.3)",
+   "verdict": "flawed",
+   "reasoning": "Architecturally correct (one nav2_core plugin per FollowPath is verified) and the trivial lemma holds — but only under the unstated premise (v*, ω*) ∈ V_d. With ω* computed from v_ref and independent (v, ω) clipping by the box window and again by the 100 Hz governor, executed curvature deviates from κ_cmd during every acceleration/deceleration, i.e., precisely at curve entries. DWPP (Ohnishi & Takahashi, arXiv 2601.15006, verified: 'the point within the dynamic window closest to the line ω = κv') already identifies and solves this; the brief cites DWPP but does not adopt the curvature-preserving projection. Feasible once fixed (pass κ through the chain or use the DWPP cost).",
+   "evidence": "§4.1 pseudocode lines 191–193; §4.3 line 211; DWPP abstract fetched; window arithmetic (Δv = 0.05 m/s, Δω = 0.1 rad/s per 20 Hz cycle)."
+  },
+  {
+   "proposal": "Payload-scheduled wheel PI on torque-level Gazebo interface (§2.6, §4.3 topic chain)",
+   "verdict": "sound",
+   "reasoning": "Plant derivation, decoupling and pole-placement formulas are correct (re-derived), ApplyJointForce/JointStatePublisher/DetachableJoint exist in Fortress, and mass scheduling is standard engineering (correctly labelled). Required fixes: the PI zero gives 13.5 % (ζ=1) / 20.8 % (ζ=0.707) overshoot so the '< 5 %' acceptance criterion needs setpoint weighting; the 0.5 m/s step saturates the 6 N·m torque limit; the loop is closed on the noise-free Gazebo JointState whereas spec 4.1 mandates encoder tick quantisation (4096) and slip noise — either feed the PI from the encoder-derived velocity or justify; the '35 % bandwidth' statement names the wrong quantity.",
+   "evidence": "Closed-form step response of (2ζω_c s + ω_c²)/(s² + 2ζω_c s + ω_c²) computed with scipy; spec §4.1 sensor bullets; brief §2.6 lines 88–96."
+  },
+  {
+   "proposal": "Optional rollout-based lookahead/gain selection (§4.4)",
+   "verdict": "sound",
+   "reasoning": "Cheap (120 unicycle integrations/cycle) and correctly scoped as ablation-only; it is a 1-parameter sampling MPC and is the online counterpart of Sukhil & Behl 2021 (verified). Marginal once CC-PP's feedforward works; the brief says so. Only risk is the W4 schedule, which is already over-committed (RPP×2, DWB, MPPI, TEB source build, 7 scenarios × 20 runs × ~12 variants, payload runs, report). Recommend dropping from the plan unless W1–W3 finish early.",
+   "evidence": "§4.4 line 218; §6 schedule line 311; Sukhil & Behl arXiv 2111.08873."
+  },
+  {
+   "proposal": "Baseline propositions 1–2 and 'L = v t_L makes poles speed-invariant' (§2.2) and the noise-derived L_min gap claim (§3 갭 (a))",
+   "verdict": "already_published",
+   "reasoning": "Prop 1, Prop 2 (ζ = 1/√2, ω_n = √2 v/L) and the velocity-proportional lookahead argument are textbook (Ollero & Heredia, IROS 1995 'Stability analysis of mobile robot path tracking'; Amidi 1990; Snider 2009); the brief correctly presents them as baseline, but the gap statement that no one has derived a lookahead lower bound from localization-noise amplification is not substantiated — Ollero & Heredia analyse lookahead vs stability with delays and Nantabut 2024 (verified) propagates localization uncertainty through PP. Reword as 'we did not find a closed-form σ_e-based bound' and cite Ollero & Heredia.",
+   "evidence": "Search results for Ollero & Heredia 1995; Nantabut arXiv 2409.18585 abstract; brief line 163."
+  }
+ ],
+ "spec_gaps": [
+  "Spec 4.5 '게인 파라미터를 속도에 따라 적응적으로 조정' is not met: the brief fixes K (line 180 '게인 튜닝 = K 한 개') and argues speed-invariance. Add an explicit K(v) schedule (e.g., keep ω_n constant when L_min(v) is active: K(v) = K_0 (L(v)/(v t_L))²) or an explicit statement that the effective feedback gains 2Kv/L² and 2Kv/L are the speed schedule, and evaluate it.",
+  "Rotate-to-heading (large initial |ψ|, path starting behind the robot) and final goal-heading alignment are not designed for CC-PP/DWA; they appear only in the RPP comparison table (line 129). The PP linearization is invalid for |ψ| > ~45°, and the nominal-inclusive DWA has no heading cost, so the behaviour at task start and at docking approach is undefined.",
+  "Reverse driving (robot_params min_linear_velocity = −0.5 m/s) is never addressed: lookahead selection for v < 0, sign of κ, the (j_lat − |v̇ω|)/v bound with v < 0, and CTE logging when backing up.",
+  "Spec 4.1 wheel-encoder model (4096 ticks, slip noise): the 100 Hz PI closes on Gazebo JointStatePublisher (noise-free). Either feed the loop from the encoder-derived velocity or justify why the spec's noise model does not apply to the velocity loop.",
+  "Spec 4.10 test coverage ≥ 70 % and the 4-hour continuous-operation test are not in the evaluation plan; long-run concerns for this module (projection-window index resets on replans, integrator state on repeated E-stops, ETA drift) should be listed.",
+  "Spec 4.10 response time 200 ms: the jerk-limited start alone consumes 141 ms to the brief's 0.02 m/s threshold (see math errors), so the budget on line 249 is infeasible as stated.",
+  "Jerk metric (line 246): P99 ≤ 2 m/s³ from a spec-mandated noisy IMU differentiated at 100 Hz will be dominated by IMU noise and contact-physics ringing; the measurement bandwidth (e.g., 5 Hz low-pass before differentiation) and a noise floor must be defined, and the same jerk definition (body-frame) used for constraint and metric.",
+  "DWA admissibility vs stopping distance: config sim_time = 1.0 s (line 304) covers 2 m at 2 m/s, but the brief's own jerk-aware D_stop is 2.5 m; the risk is acknowledged in prose but the configuration contradicts it — the admissibility test must use D_stop(v), not the rollout horizon.",
+  "Local costmap size vs L_max = 1.8 m and the 2 m projection window: the brief says L_max is bounded by the local-costmap half-width (line 72) but never states the costmap size; L_max = 1.8 m requires a ≥ 4 × 4 m rolling window.",
+  "Safety-zone speeds (Warning 1.0 m ≤ 0.5 m/s, Critical 0.5 m ≤ 0.2 m/s) are quoted without stating whether distances are measured from base_link or from the footprint edge (0.3 m ahead); with the footprint edge the Critical zone is only 0.2 m ahead of the bumper."
+ ],
+ "citation_problems": [
+  "Spot-checked and found to exist with matching claims (16 items): arXiv 2601.15006, 2603.28625, 2602.18386, 2604.00439, 2602.01892, 2408.15152, 2409.18585, 2409.18097, 2407.13423, 2603.00759, 2503.10559, 2603.14940, 2609.02811, 2608.26789; PMC12982613 (Sci. Rep. 2026, DOI 10.1038/s41598-026-38695-1); PMC12567833 (Sensors 25(20):6491). The Humble RPP header (raw.githubusercontent.com/…/humble/…/regulated_pure_pursuit_controller.hpp) confirms the absence of use_fixed_curvature_lookahead_ as claimed on line 23.",
+  "Ref 16 (Mishra et al., arXiv 2608.26789): author list omits the fourth author, Naveen Arulselvan.",
+  "Ref 13 (Jäger et al., arXiv 2503.10559), table line 147: the brief says 'RL 고성능 제어기 + RPP/DWA/MPPI 고신뢰 제어기 중재'. The abstract pairs one RL controller with a high-assurance controller and lists RPP, DWA and MPPI as the traditional controllers evaluated on the testbed; it does not describe arbitration among the three. Soften the relevance text.",
+  "Ref 5 (Promkaew et al., PP-DSC), table line 139: the platform is an Ackermann front-steer vehicle (wheelbase 613.5 mm), not a '4륜 조향 AMR'; the lookahead law in the paper is 1.5 m + 3·(v − 1.0 m/s) capped at 11.5 m rather than the normalized L_min/L_max form printed; reported improvements are 74 % / 82 % / 70 % (straight / loop / figure-eight), not '68–87 %'. Using 0.05–0.08 m at 1–5 m/s on a car as evidence that the spec's 5/10 cm mean-CTE targets are 'realistic' for a 2 m/s differential-drive AMR is weak and should be presented as such.",
+  "Ref 12 (Covic & Lacevic): '1 kHz 재생성' is not in the abstract; mark as unverified or cite the section.",
+  "Missing prior art that must be added: Ahn, Shin, Kim, Park, 'Accurate Path Tracking by Adjusting Look-Ahead Point in Pure Pursuit Method', Int. J. Automotive Technology 22(1):119–129, 2021 (explicitly removes corner-cutting via look-ahead point selection); Villagra, Milanés, Pérez, Godoy, 'Smooth path and speed planning for an automated public transport vehicle', Robotics and Autonomous Systems 60(2), 2012 (closed-form jerk-limited speed profile with lateral-acceleration/jerk constraints along clothoids — the JRG v_cap set); Zanasi, Guarino Lo Bianco, Tonielli, 'Nonlinear filters for the generation of smooth trajectories', Automatica 36(3), 2000 and Haschke, Weitnauer, Ritter, 'On-line planning of time-optimal, jerk-limited trajectories', IROS 2008 (the online third-order filter); Ollero & Heredia, 'Stability analysis of mobile robot path tracking', IROS 1995 (PP lookahead/stability/delay analysis behind §2.2). Also check the Comput. Electron. Agric. 2022 goal-point paper (S0168169922000771; could not be fetched, HTTP 403).",
+  "RECALLED items (Coulter 1992, Hoffmann et al. ACC 2007, Snider 2009, Kanayama et al. ICRA 1990, Fox et al. 1997, Macfarlane & Croft T-RA 2003, Åström & Hägglund 1984, Ziegler & Nichols 1942) are correctly attributed to my knowledge; no problems found."
+ ],
+ "required_revisions": [
+  "§2.5 line 77: fix the CTE sign formula to e = (t × (p−P))·ẑ and unify with §4.1 and the logger unit test.",
+  "§4.1 (P3) line 180: replace the exact path-invariance claim with the exact circle linearization (damping factor √(1−L²κ²/4), stiffness 2Kv²/L² + (1−K)v²κ²) and label invariance as O((Lκ)²); restrict unit test (3) to straight path, ψ_0 = 0, L ≥ 1 m.",
+  "§4.1/§4.3: make the arbitration curvature-preserving — transmit κ_cmd through controller → governor → collision monitor and set ω = v_exec·κ_cmd at every stage, or adopt the DWPP cost (distance to ω = κv inside V_d); restate the lemma with (v*, ω*) ∈ V_d and add an acceleration-phase unit test.",
+  "§4.2 line 203: replace the backward pass with the general S-curve deceleration distance d(v, v_t) and the recursive formulation; derive ETA from the resulting profile passed through the same jerk filter offline; add the piecewise D_stop/v_stop for v < a²/j and fix unit test (5).",
+  "§2.6: add setpoint weighting or a prefilter to the PI, re-derive the overshoot (currently 13.5 % at ζ=1), reduce the identification step to ≤ 0.2 m/s or a ramp so it does not saturate the 6 N·m torque limit, correct the '35 % bandwidth' sentence and the '1 Hz outer loop' figure, and close the loop on encoder-derived velocity (spec 4.1) or justify.",
+  "§2.7: define lateral jerk (body-frame vs Frenet normal 2v̇ω + vω̇), clamp the ω̇ bound at 0 with the v̇-first rule when |v̇ω| > j_lat,max, give the v < 0.1 m/s fallback; replace the 4-line filter with (or benchmark against) the Zanasi 2000 / Haschke 2008 discrete-time switching law to remove ±j_max chattering, and add a jerk sign-change-rate test.",
+  "§2.7 line 117: redo the E-stop numbers with the jerk bypass and the actual braking authority (a_max = 1 → 2.0/0.125/0.02 m; torque-limited ≈ 2.1 m/s² → 0.95/0.06/0.01 m) and state the reference point for the 0.3 m distance.",
+  "§5 line 249: rebudget response time including the 141 ms jerk-limited rise to 0.02 m/s; choose and justify the first-motion threshold or a start-up jerk exemption; flag the conflict with spec 4.10 if unresolved.",
+  "§2.4: keep the σ_ψ term (RSS), state that σ_e uses the spec's error bound as a conservative surrogate; reword the '갭 (a)' claim (line 163) and cite Ollero & Heredia 1995.",
+  "§2.3 line 64: correct the Stanley damping statement (ζ ≥ 1 for all v, ω_n ∝ √v) and keep k_s consistently.",
+  "Spec 4.5 coverage: add a speed-dependent gain schedule K(v) (or an explicit argument that L(v) constitutes it) and evaluate it in the ablation; add rotate-to-heading / final heading alignment / reverse-driving handling to the controller definition.",
+  "Related work (§3, §4.5): add Ahn et al. 2021, Villagra et al. 2012, Zanasi et al. 2000 / Haschke et al. 2008, Ollero & Heredia 1995; fix ref 16 authors, soften ref 13 and ref 5 descriptions; downgrade the CC-PP expected gain to the governor-limited operating point (sagitta ≈ 0.06 m, RPP ≈ 0.07 m).",
+  "§5/§6: define the jerk-metric bandwidth and noise floor for the IMU-derived P99; set DWA admissibility on D_stop(v) not sim_time; state the local costmap size needed for L_max = 1.8 m; add the 70 % coverage target and a 4-hour run to the plan; drop §4.4 from the W4 schedule unless W1–W3 finish early, and make MPPI the primary comparison with TEB best-effort."
+ ],
+ "score": 6
+}

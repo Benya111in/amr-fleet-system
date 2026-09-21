@@ -1,0 +1,156 @@
+{
+ "slug": "state-estimation",
+ "math_errors": [
+  {
+   "location": "§2.2 observation-model table, line 67 (also §1 line 22 \"바이어스 σ 1×10⁻³ / 7.5×10⁻⁶\")",
+   "error": "Gyro R is set to σ_g² + σ_b² = (2e-4)² + (1e-3)² ≈ 1e-6 'including bias uncertainty'. (a) 1e-3 is accel_bias_stddev in config/sensors.yaml; the gyro bias there is gyro_bias_mean 0.01 rad/s (random sign, constant), gyro_bias_stddev 7.5e-6. (b) A constant bias cannot be represented as white measurement noise: with 0.01 rad/s the odom-frame heading drifts 0.10 rad in 10 s and 0.60 rad (34°) in 60 s, i.e. ~2 m lateral error after 20 m at 1 m/s, whereas the white-noise model predicts 8e-4 rad at 60 s (three orders of magnitude off). The 'heading must come from the gyro' conclusion of §2.1 is therefore unsafe without bias handling, and r_ω in §4.A carries a permanent 0.01 rad/s offset (s_k ≈ +1 at the 0.01 rad/s floor).",
+   "correction": "Read the bias terms from sensors.yaml correctly; add a gyro-bias state b_g (6-state, random-walk Q) or calibrate b_g and b_a during the ZUPT window as sensors.yaml prescribes (10 s rest gives 6e-6 rad/s residual); set R_gyro = σ_g² = 4e-8 + (post-calibration bias σ)² and document the residual drift budget."
+  },
+  {
+   "location": "§2.4 motion model, line 95 (α1 0.1, α2 0.05, α3 0.05, α4 0.05 \"실제 σ의 5–10배\")",
+   "error": "α are variance coefficients (σ_trans² = α3 δ_trans²). α3 = 0.05 gives σ_trans = √0.05 · δ_trans = 22 % of the translation, i.e. 32× the physical k_s/√2 = 0.7 %, not 5–10×. α2 = 0.05 gives σ_rot = √(0.05·0.1²) = 1.3° per 0.1 m update → 0.22 m endpoint displacement at 10 m range, ≫ σ_hit = 0.04 m, so the proposed motion noise and observation sharpness are mutually inconsistent (weights collapse every update → impoverishment).",
+   "correction": "State α in variance units; 5–10× the physical σ corresponds to α ≈ (5–10 × 0.007)² = 1.2e-3 – 5e-3. Derive α from the fused ekf_odom per-update covariance (which the EKF provides) and sweep α ∈ {1e-3, 5e-3, 2e-2, 0.2} jointly with σ_hit ∈ {0.04, 0.08, 0.2} in §6."
+  },
+  {
+   "location": "§2.4 resampling, line 111 (\"누적표+이진탐색 다항 리샘플링(O(N log N))\") and complexity line 115 / §7 line 306",
+   "error": "nav2 humble pf.c (pf_update_resample, lines 372–378) uses a linear 'Naive discrete event sampler' over the cumulative table, i.e. O(N²): for N = 5000 that is ~12.5 M comparisons per resample (≈ 10–25 ms), larger than the 0.9 M likelihood lookups the budget is based on. The 'O(N·B + N log N)', '2–4 ms' and '0.3 core for 5 robots' figures are wrong on the resampling updates.",
+   "correction": "Write the cost as O(N·B + N²) on resample steps; re-budget (~2–3× on those updates) or justify resample_interval ≥ 2 and max_particles by this cost; note that low-variance sampling is commented out in the source."
+  },
+  {
+   "location": "§2.4 σ_hit derivation, line 102 (σ_map = 0.02) vs §2.6 ADNN ≤ 0.03 target, line 140",
+   "error": "ADNN ≤ 3 cm is a mean absolute nearest-neighbour distance; for a half-normal error that implies σ_map ≈ 0.03/√(2/π) ≈ 0.038 m, not 0.02 m. With the brief's own map-quality target σ_hit ≈ √(0.03² + 0.05²/12 + 0.038²) ≈ 0.05 m.",
+   "correction": "Use σ_map consistent with the ADNN target (≈ 0.04) → σ_hit ≈ 0.05 m for tracking, and make σ_hit a swept/tuned parameter rather than a derived constant."
+  },
+  {
+   "location": "§2.4 KLD paragraph line 107 (\"5000개로 ... 1 m²당 5개\") and §4.C line 235 (reinitialize_global_localization fallback), §6 S4 target line 278",
+   "error": "Pose space is 3-D. With σ_hit = 0.04 the likelihood basin is ≈ π(0.12 m)² × ~3° → fraction 3.8e-7 of (1000 m² × 360°); 5000 uniform particles put an expected 0.002 particles in it (P ≈ 0.2 %). Even with Nav2 defaults (0.5 m, 10°) the expectation is 0.11. Augmented-MCL injection adds only a handful of particles per update, and the 1+Σp³ weight is flat outside the basin, so spinning in place does not help. The uniform-re-init fallback therefore cannot meet 'recovery ≤ 30 s, success ≥ 90 %'.",
+   "correction": "During recovery raise max_particles via the dynamic parameter (verified: amcl_node.cpp humble dynamicParametersCallback lines 1315–1320 reinit the pf on max_particles/min_particles) to ≥ 50k–100k, and/or temporarily widen σ_hit and laser_likelihood_max_dist (both dynamic) to enlarge the basin, then restore tracking values; quantify the basin/expected-hit calculation in the brief."
+  },
+  {
+   "location": "§4.C SEED state, lines 230–233 (M = 200 positions × 36 headings scored with ρ, margin > 0.15)",
+   "error": "ρ uses a 3σ_hit = 0.12 m inlier tolerance. A 10° heading grid (≤ 5° error) alone displaces endpoints by 10 m·sin 5° = 0.87 m ≫ 0.12 m, and the expected number of the 7200 hypotheses inside the 0.12 m × 3° basin is 0.003. Hence ρ_best ≈ ρ_2nd ≈ 0 and the unimodality test essentially never passes; the seed branch is dead code as specified. Also 1.3 M random lookups into a 3.8 MB field are cache-missing (~50–100 ns each), so ~10 ms is optimistic (expect 50–100 ms).",
+   "correction": "Score hypotheses with the capped mean distance m_t (CAER-like, smooth basin of radius ≈ d_max = 1 m) on a coarse grid (e.g. 1 m × 30° over free space ≈ 12k hypotheses), refine the top-k at 0.1 m × 2°, then run correlative scan matching / ICP on the best few before set_initial_pose; re-derive the compute budget."
+  },
+  {
+   "location": "§4.A slip statistic, lines 187–189 (r_a and σ_ra²)",
+   "error": "σ_ra² = 2σ_v²/Δt² + σ_acc² gives σ_ra ≈ 1.00 m/s² at 2 m/s and 0.71 m/s² at the 0.01 m/s floor — the same order as a_max = 1 m/s² (finite-differencing v at 50 Hz amplifies noise by 1/Δt = 50). The accel residual only detects slip accelerations > ~3 m/s² and adds mostly noise to s_k. The accelerometer bias (accel_bias_mean 0.10 m/s² in sensors.yaml) is also not in the residual model.",
+   "correction": "Compute the velocity residual over a window (e.g. v_enc(t) − v_enc(t−0.2 s) vs ∫a_x over 0.2 s, reducing σ by ~10×), include the calibrated accel bias, or drop r_a and rely on r_ω plus a windowed velocity residual."
+  },
+  {
+   "location": "§4.A line 189 (s_k ~ χ²₂ 'under no-slip')",
+   "error": "r_ω and r_a are not independent: with multiplicative noise ε_R, ε_L, cov(v_enc noise, ω_enc noise) = (Δs_R² − Δs_L²) k_s² / (2 b Δt²), non-zero whenever Δs_R ≠ Δs_L (any turn). The scalar sum of two normalised squares is χ²₂ only on straight segments.",
+   "correction": "Form r = [r_ω, r_a]ᵀ with Σ = J diag(k_s²Δs_R², k_s²Δs_L²) Jᵀ + diag(σ_g², σ_acc²) and use s_k = rᵀ Σ⁻¹ r."
+  },
+  {
+   "location": "§4.A IAE rule and implementation location, lines 193–197",
+   "error": "R̂_k = clip(Ĉ_ν − H P⁻_k Hᵀ, ...) requires filter innovations ν = z − H x̂⁻ and P⁻, which the wheel-odometry node does not have, and which differ between the odom and map EKF instances. The claim that writing R̂ into twist.covariance gives robot_localization and the team EKF 'identical inputs' is therefore inconsistent with the formula as written. With W = 25 the 2×2 sample covariance also has ≈ 28 % relative error per element.",
+   "correction": "Either make the adaptation residual-based (windowed covariance of the physical residuals r_ω, r_v computed in the odometry node, no P⁻ term) or move IAE inside the filter and feed the same R̂ to robot_localization through a republished odometry topic; state the window/clipping trade-off."
+  },
+  {
+   "location": "§4.A gating rule, line 192 (\"v는 IMU a_x로 전파(v ← v + a_x Δt)\") vs §2.2 table line 68 (a_x only with 7-state extension)",
+   "error": "The 5-state model has no acceleration input; injecting a_x during gated steps changes the prediction model (F, Γ, Q undefined for those steps) and contradicts the table. With the 0.10 m/s² accel bias, 2 s of gated propagation accumulates 0.2 m/s velocity error — comparable to the slip error being corrected.",
+   "correction": "Either treat a_x as a control input in every prediction (u = a_x − b_a, Q augmented with σ_acc², bias calibrated) or, on gating, simply skip the encoder update and inflate Q_vv; write the corresponding F/Γ."
+  },
+  {
+   "location": "§5 error budget, line 256 (\"σ_hit/√B_eff ≈ 0.04/√100 ≈ 0.4 cm\")",
+   "error": "√B sharpening applies to a product likelihood of independent beams. nav2's weight is 1 + Σ_k p_k³ (additive); each term is a Gaussian bump of width σ_hit/√3 ≈ 2.3 cm in pose offset, so the single-update posterior width is ≈ 2 cm, not 0.4 cm. The next row ('파티클 붕괴 후 잔여 분산 1–3 cm') is the same effect counted separately.",
+   "correction": "Replace with ≈ σ_hit/√3 ≈ 2 cm per update, narrowing only through temporal accumulation across updates; merge with the residual-variance row."
+  },
+  {
+   "location": "§2.6 IoU_τ definition, line 139",
+   "error": "|O_est ∩ dil_τ(O_gt)| / |O_est ∪ O_gt| uses a dilated GT in the numerator but an undilated union in the denominator; it is asymmetric and not a tolerant IoU (thick estimated walls are penalised, thick GT walls are not).",
+   "correction": "TP = |O_est ∩ dil_τ(O_gt)|, FP = |O_est \\ dil_τ(O_gt)|, FN = |O_gt \\ dil_τ(O_est)|, IoU_τ = TP/(TP+FP+FN), with precision = TP/|O_est|, recall = 1 − FN/|O_gt|."
+  },
+  {
+   "location": "§2.6 GT grid, line 137 (\"충돌 박스 ... LiDAR 높이(0.20 m) 단면\")",
+   "error": "gz-sim gpu_lidar renders visual geometry, not collision geometry; if rack visuals differ from simplified collision boxes the GT grid does not represent what SLAM maps, biasing ADNN/IoU. Also 0.20 m is the base_link-relative extrinsic; sensors.yaml states the scan plane is at +0.38 m above ground, which is the height the section must be cut at.",
+   "correction": "Rasterise the visual geometry (or assert visual ≡ collision for all static models) at the scan-plane ground height (0.38 m per sensors.yaml), and record which geometry was used."
+  },
+  {
+   "location": "§4.B, lines 214–216 (\"조용한 납치(텔레포트 후 대칭 통로에 재수렴)... ρ_t는 이를 잡는다\") vs risks in §4.C line 248 / summary risks",
+   "error": "A teleport into a geometrically symmetric aisle leaves the scan consistent with the map at the old pose (that is what symmetry means), so ρ_t stays ≈ ρ_0 and the CUSUM does not fire. The brief's own risk statement admits scan-only metrics cannot detect this; the main-text claim contradicts it.",
+   "correction": "Restrict the claim to teleports that change local geometry (or occur while AMCL is not updating); state that symmetric-aisle kidnaps need odometry-discontinuity, fleet or marker cues."
+  },
+  {
+   "location": "§4.B CUSUM parameters, line 212 (δ = 0.15, h = 1.0, \"동적 장애물의 일시 하락(≤0.15)은 δ에 흡수\") and S6 'false alarms 0'",
+   "error": "A person at 0.5 m subtends ~53° (15 % of beams), a forklift at 1.5 m ~19 %; two such obstacles or one at closer range give a 30 % drop; sustained for 2 s (20 scans) that accumulates g = 20 × (0.30 − 0.15) = 3 > h = 1 → false alarm. The ≤ 1/h and 'zero false alarms' targets are unsupported by the parameter choice.",
+   "correction": "Mask beams that are shorter than the expected map range by more than 3σ_hit (dynamic occluders) before computing ρ_t, calibrate (δ, h) on S6 data with an ARL analysis, and report the resulting false-alarm rate rather than asserting it."
+  },
+  {
+   "location": "§2.2 process-noise mapping, line 60 (Q_param = σ_a² Δt = 0.005)",
+   "error": "The equivalence between the DWNA model Γ Q_c Γᵀ (∝ Δt²) and robot_localization's P += Δt·Q_param (∝ Δt) holds only at Δt = 0.02 s. robot_localization predicts at every measurement arrival (IMU 100 Hz + odom 50 Hz → variable Δt), so the two filters are not equivalent across prediction intervals.",
+   "correction": "State the rate dependence and either predict the team EKF on the same event schedule or use the continuous white-noise model (Q_vv = q Δt, Q_xx = q Δt³/3, Q_xv = q Δt²/2) in both."
+  },
+  {
+   "location": "§6 line 284 (NEES 95 % band [0.83, 12.8])",
+   "error": "[0.83, 12.8] is the single-run 5-DOF band. For the reported 10-run average NEES the band is χ²₅₀/10 = [3.2, 7.1].",
+   "correction": "Report per-run NEES against [0.83, 12.8] and the 10-run average against [3.2, 7.1]."
+  },
+  {
+   "location": "§2.4 motion-model equation, lines 92–93",
+   "error": "The variance is written with δ_rot1² and δ_rot2² although the preceding sentence (and the source) uses δ_rot_noise = min(|δ|, |π−δ|) in the variance terms.",
+   "correction": "Write α1 δ_rot1,noise² + α2 δ_trans² etc., matching differential_motion_model.cpp."
+  },
+  {
+   "location": "§2.3 line 83 and §7 line 295 (odom→base_link)",
+   "error": "The repo's config/ekf.yaml and the spec's TF tree example use base_footprint as the EKF child frame (odom → base_footprint → base_link); the brief publishes odom→base_link and map→odom composed from T_odom→base_link. Mixing the two produces a doubly-parented frame or a wrong lever arm.",
+   "correction": "Use base_link_frame = base_footprint consistently (or document a deliberate change to the URDF root) in both EKF instances and the AMCL base_frame_id."
+  }
+ ],
+ "proposal_verdicts": [
+  {
+   "proposal": "IAG-EKF (Innovation-Adaptive Gated EKF with physical slip test)",
+   "verdict": "flawed",
+   "reasoning": "The concept (encoder-vs-gyro/accelerometer residual test, χ² gate, bounded innovation-adaptive R) is sound and honestly labelled variant_of_prior, but as specified it has four defects: (1) the accel residual has σ ≈ 0.7–1.0 m/s² (finite-difference amplification), so it cannot detect realistic slip; (2) the χ²₂ assumption ignores the r_ω/r_a correlation on turns; (3) the IAE formula uses filter innovations and P⁻ that the odometry node does not have, contradicting the 'identical inputs' A/B design; (4) gated-step propagation with a_x is outside the stated 5-state model and, with the un-calibrated 0.10 m/s² accel bias and 0.01 rad/s gyro bias from sensors.yaml, injects errors of the same size as the slip it removes. The expected '>50 % odom-drift reduction' is asserted, not derived. The closest priors are not cited: the encoder–gyro/accelerometer discrepancy slip detector of Reina, Ojeda & Borenstein (2006, 'Wheel slippage and sinkage detection for planetary rovers'; Ojeda et al. FLEXnav 2004), Yu et al. IROS 2023 already uses a χ² slip test, and FusionCore (arXiv 2605.25239, 2026) already combines per-sensor χ² gating with innovation-based R adaptation for IMU/wheel/… in ROS 2. All fixable within the schedule.",
+   "evidence": "σ_ra numbers: 2(0.0141)²/0.02² + 0.017² → 1.00 m/s² at 2 m/s; config/sensors.yaml gyro_bias_mean 0.01, accel_bias_mean 0.10; brief lines 187–197; arXiv 2209.15140 abstract (χ² slip test); arXiv 2605.25239 (FusionCore: 'per-sensor Mahalanobis chi-squared outlier gating ... adapts sensor noise covariance from the innovation sequence'); Reina/Ojeda/Borenstein 2006."
+  },
+  {
+   "proposal": "SMC-CUSUM kidnapped-robot detector",
+   "verdict": "overclaimed",
+   "reasoning": "Monitoring a likelihood-field/inlier scan-to-map statistic and combining it with filter-side NIS is reasonable engineering, and I found no paper applying CUSUM specifically to a scan-map inlier ratio, so 'new_combination' is defensible in the narrow sense. But the two headline claims are overclaimed: it does not catch silent kidnaps into symmetric aisles (ρ stays high at a symmetric pose — the brief's own risk note says so), and the ≤ 1 false alarm/h and 'zero false alarms in S6' targets are contradicted by a simple occlusion calculation (30 % beam drop for 2 s → g = 3 > h). The benefit of CUSUM over a debounced threshold (2–7 scans vs 3 consecutive scans) is marginal and not argued. Closest priors missing from the survey: Akai, 'Reliable Monte Carlo Localization for Mobile Robots' (J. Field Robotics 2023, arXiv 2205.04769) — reliability estimation from scan-map alignment plus quick relocalisation; Bukhori & Ismail (IJARS 2017) likelihood-field-based kidnap detection; 'Metric-based detection of robot kidnapping with an SVM classifier' (RAS 2014); Zhang, Zapata & Lépinay (Robotica 2012) self-adaptive MCL with kidnap detection.",
+   "evidence": "Brief lines 205–218 and 248; occlusion arithmetic (person at 0.5 m ≈ 53° ≈ 15 % of 360° beams); web search results for Akai JFR 2023 (onlinelibrary.wiley.com/doi/10.1002/rob.22149), Bukhori & Ismail 2017 (doi 10.1177/1729881417717469), RAS 2014 (S0921889014001626)."
+  },
+  {
+   "proposal": "Active recovery FSM with free-space hypothesis seeding",
+   "verdict": "flawed",
+   "reasoning": "The FSM structure (gate AMCL out of the map EKF, seed, spin with request_nomotion_update, verify, reset EKF) is a sensible Nav2 adaptation of CBGL/SFHS and Lenser–Veloso, and it satisfies the spec's 'rotate in place' wording. However both numerical branches fail as specified: the 200×36 seed scored with a 12 cm inlier tolerance has an expected 0.003 hypotheses in the basin (a 10° heading grid alone displaces endpoints by 0.87 m at 10 m), so the margin test never passes; and the fallback uniform re-init with 5000 particles has an expected 0.002 particles in the σ_hit = 0.04 basin of a 1000 m² × 360° space (0.11 even with Nav2 defaults), so the '2–5 s recovery, ≥ 90 % success in 30 s' target is unattainable. The fixes (score with capped mean distance/CAER on a coarse-to-fine grid with scan-matching refinement; raise max_particles and widen σ_hit during recovery through the dynamic parameters that nav2 humble already supports; use nav2's own uniformPoseGenerator over free_space_indices) are feasible in weeks, but the brief must re-derive the numbers. Note also that nav2 already samples uniformly over free space, so 'free-space seeding' per se is not an addition; the scoring is.",
+   "evidence": "Brief lines 229–241, 248; basin computation (π·0.12² m² × 3°/360° / 1000 m² = 3.8e-7 → 5000 × 3.8e-7 = 0.002); amcl_node.cpp humble lines 444–450 (uniformPoseGenerator/free_space_indices) and 1315–1320 (dynamic max_particles/min_particles with reinit_pf); arXiv 2307.14247 (CBGL evaluates orders of magnitude more hypotheses with CAER then refines by scan-to-map-scan matching)."
+  }
+ ],
+ "spec_gaps": [
+  "IMU bias correction: spec §2 requires 'IMU 데이터 필터링 및 바이어스 보정' and config/sensors.yaml injects gyro_bias_mean 0.01 rad/s / accel_bias_mean 0.10 m/s² as static offsets to be removed by rest calibration; the brief has no bias state, no calibration step, and models bias as white noise (§2.2 line 67), which makes the odom-frame heading budget wrong and the slip residuals biased.",
+  "Spec 4.3 'Loop Closure 탐지 및 그래프 최적화 과정을 이해하고 설명': §2.5 gives one descriptive paragraph but no objective function (SPA residuals, information matrices, Huber kernel), no explanation of how a loop constraint is verified/rejected, and no experiment that exercises loop closure (e.g. forced revisit with counted accepted/rejected constraints, before/after ATE).",
+  "Spec 성능 요구사항 '연속 4시간 운용 테스트': every scenario S1–S7/M1 is seconds to minutes; nothing covers long-run behaviour (ρ_0 calibrated only in the first 30 s, EKF history buffer, map staleness, AMCL particle impoverishment at repeated stops, CPU over 4 h).",
+  "Spec '통합 테스트 시나리오 최소 10개 작성·자동화': §7 lists only gtest/pytest unit tests; S1–S7/M1 are not mapped to automated launch_testing/integration tests with pass/fail assertions.",
+  "TF convention: the spec TF tree and the repo's config/ekf.yaml use odom → base_footprint (URDF root base_footprint); the brief publishes odom→base_link and composes map→odom from T_odom→base_link (§2.3, §7). Must be reconciled or the URDF change documented.",
+  "Spec §2 'Wheel Encoder 기반 오도메트리 ... 누적 오차 특성 분석, 드리프트 측정 실험': only slip-patch drift (S5) is planned; a nominal-floor drift characterisation (m/m, deg/m, straight/turn, vs payload) that the wheel_odometry_node deliverable owes is missing.",
+  "Deviation from the spec's example EKF config (imu0 fuses yaw and ax/ay; pose0 = /amcl_pose): the brief fuses gyro rate only and /amcl_pose_gated; the justification (sim IMU orientation ≈ GT) is only in §8-2 and should be stated as a documented design deviation in the covariance-rationale section, including what happens on real hardware.",
+  "Open questions 3 and 4 are answerable from sources the brief claims to have verified: nav2 humble amcl_node.cpp dynamicParametersCallback handles max_particles/min_particles (reinit_pf) and sigma_hit/laser_likelihood_max_dist; gz-sim6 UserCommands provides /world/<world>/set_pose (ignition.msgs.Pose → ignition.msgs.Boolean). Leaving them open weakens the recovery design that depends on them.",
+  "Multi-robot interaction with the detector: the five robots are mutual dynamic obstacles for ρ_t and for AMCL, and the spec's 5-robot CPU limit must include the O(N²) resampling cost; S7 only states 'CPU ≤ 80 %' without a per-node budget that includes resampling and recovery bursts."
+ ],
+ "required_revisions": [
+  "§2.2/§1: replace the gyro R derivation with the correct sensors.yaml values (gyro_noise 2e-4, gyro_bias_mean 0.01 rad/s, accel_bias_mean 0.10 m/s²); add a gyro/accel bias state or ZUPT-time calibration, and recompute the odom-frame heading and lateral drift budget with the bias included.",
+  "§2.4: rewrite the α section in variance units, derive α from the ekf_odom per-update covariance, and make α and σ_hit a joint sweep (§6); replace σ_map = 0.02 with a value consistent with the ADNN target (σ_hit ≈ 0.05) and state that σ_hit is tuned, not derived.",
+  "§2.4/§7: correct the resampling description to nav2's linear multinomial sampler (O(N²)), recompute per-update time and the 5-robot CPU budget, and justify resample_interval/max_particles by that cost.",
+  "§4.C: re-derive the seeding and fallback numerics: (a) use a capped-mean-distance (CAER-like) score on a coarse-to-fine hypothesis grid with scan-matching refinement of the top-k, with a stated expected-hit calculation; (b) during recovery raise max_particles (dynamic parameter, verified in amcl_node.cpp) and widen σ_hit/laser_likelihood_max_dist, then restore; (c) re-state recovery-time and success-rate expectations from those numbers, not from prior belief.",
+  "§4.A: (a) replace the finite-difference accel residual with a windowed velocity residual or drop it; (b) use the full 2×2 residual covariance including the ε_R/ε_L cross term; (c) make the adaptation residual-based in the odometry node or move IAE into the filter — and fix the 'identical inputs' claim accordingly; (d) define the prediction model on gated steps (a_x as control input with bias, or Q_vv inflation) and remove the contradiction with the §2.2 table.",
+  "§4.B: remove the claim that ρ_t catches symmetric-aisle silent kidnaps; add a dynamic-beam mask (beam shorter than expected map range by > 3σ_hit) before computing ρ_t; calibrate δ, h with an ARL/false-alarm analysis on S6 and report the measured rate instead of asserting ≤ 1/h; explain what CUSUM buys over a debounced threshold.",
+  "§3/§4 literature positioning: cite and position against Reina/Ojeda/Borenstein 2006 (encoder–gyro/accelerometer slip detection), Yu et al. 2023's existing χ² slip test, FusionCore arXiv 2605.25239 (χ² gating + innovation-adaptive R in ROS 2), Akai JFR 2023 'Reliable MCL' (reliability estimation + relocalisation), Bukhori & Ismail 2017 and RAS 2014 SVM kidnap detection, and Fox/Burgard/Thrun 1998 active Markov localisation; downgrade §4.A's novelty text to 'known residual test + bounded IAE, contribution is the closed-form thresholds and the Nav2 integration'.",
+  "§2.6/§5: fix the IoU_τ definition (TP/FP/FN with symmetric dilation); rasterise visual (not collision) geometry at the scan-plane ground height from sensors.yaml (0.38 m); replace the 0.4 cm 'σ_hit/√B' row with the ≈ σ_hit/√3 ≈ 2 cm single-update width and merge it with the residual-variance row.",
+  "§2.2/§6: state the rate dependence of the Q_param ↔ Γ Q_c Γᵀ mapping (or use the continuous white-noise model in both filters); report NEES against the single-run band [0.83, 12.8] and the 10-run-average band [3.2, 7.1].",
+  "§2.3/§7: adopt base_footprint as the EKF child frame (repo ekf.yaml and spec TF tree) or document the URDF-root change; set AMCL base_frame_id accordingly.",
+  "§2.5: add the SPA objective, information weighting and Huber kernel to the loop-closure explanation, and add a loop-closure verification experiment (forced revisit, constraints accepted/rejected, ATE before/after) to M1.",
+  "§6/§7: add a 4-hour continuous-operation run (drift, ρ_0 recalibration policy, memory, CPU), a nominal-floor odometry drift characterisation, and map S1–S7/M1 to ≥ 10 automated integration tests with explicit pass/fail assertions.",
+  "§8: close open questions 3 and 4 using the sources already cited (dynamic max_particles/min_particles/sigma_hit in amcl_node.cpp; /world/<w>/set_pose in gz-sim6 UserCommands) and turn them into design decisions.",
+  "§3 ref 20: state that the Electronics 2025 paper reports SLAM Toolbox at ~70 % CPU and higher configuration complexity than Cartographer (a cost, not a benefit); §2.6/§3 Filatov 2017: its metrics are proportion of occupied cells, corner count and enclosed-area count — either cite a source for the orthogonality metric or present it as the team's own definition."
+ ],
+ "citation_problems": [
+  "Ref 20 (Electronics 14(24):4822, lines 169/345): exists and the ATE 0.13 m vs 0.21 m figures are correct, but the paper attributes the ~70 % CPU, 293 MB RAM and 5.2 s startup to SLAM Toolbox as a higher computational demand and configuration complexity than Cartographer; the brief presents 'CPU 70 %' as part of the case for choosing slam_toolbox, which inverts the finding.",
+  "Filatov et al. 2017 (arXiv 1708.02354, lines 141/174/353): the paper's three metrics are proportion of occupied cells, number of corners and number of enclosed areas; it does not define a corner-orthogonality deviation metric, so 'Filatov 2017 계열' does not support the brief's metric (iii).",
+  "'소스 확인' claim at line 111 (nav2 resampling = cumulative table + binary search, O(N log N)) is contradicted by nav2 humble pf.c lines 372–378, which implement a linear 'Naive discrete event sampler' (O(N²)); this is a verification failure on a source the brief marks VERIFIED (ref 24).",
+  "Refs 24 (amcl_node.cpp) and 27 (gz-sim) are marked VERIFIED yet open questions 3 and 4 (dynamic max_particles; /world/<w>/set_pose) are answerable from exactly those sources: amcl_node.cpp humble lines 1148–1341 (dynamicParametersCallback with reinit_pf on max_particles/min_particles) and the gz-sim6 UserCommands system (/world/<name>/set_pose, ignition.msgs.Pose → ignition.msgs.Boolean).",
+  "Missing closest prior art (novelty positioning, §3 table and §4): Reina, Ojeda & Borenstein 2006 'Wheel slippage and sinkage detection for planetary rovers' (encoder vs gyro/accelerometer discrepancy — the §4.A residual test); FusionCore, arXiv 2605.25239 (2026) — χ² gating plus innovation-adaptive R in a ROS 2 fusion filter; Akai, 'Reliable Monte Carlo Localization for Mobile Robots', J. Field Robotics 2023 / arXiv 2205.04769 — scan-map reliability estimation with quick relocalisation (§4.B/§4.C); Bukhori & Ismail, IJARS 2017 and 'Metric-based detection of robot kidnapping with an SVM classifier', RAS 2014 (§4.B); Fox, Burgard & Thrun 1998 active Markov localisation (§4.C).",
+  "Spot-checked and confirmed accurate (exist and support the stated claims): arXiv 2511.01219 (SMAD/TAM/RRT, T-IM accepted, v7 May 2026), 2607.17852 (ICRA 2026, 16 distance samples, convergence guarantees), 2307.14247 (CAER, IROS 2024), 2603.26709, 2603.09783 (IAS-19), 2306.07225 (TAES submission), 2209.15140 (IROS 2023), 2412.17235, 2412.02901 (ICRA 2025, 54 %), 2501.02558 (ICICEA 2024, 2 cm), 2509.18954, 2403.13452 (ECC 2024, >90 %), 2409.07050, 2603.14940, 2503.23480 (ICRA 2025), 2409.14723, 2404.07644 (MST), 2504.19654, 2602.03198 (TempLoc), github.com/rouf-rimon/adaptive-ekf-slip-detector (RF classifier, 1+500λ inflation), Robotics 15(9):164 (published 2026-08-25; 'IMU-fused system exhibited reduced AMCL stability'), TIMC 2025 Seghiri et al. (ESR resampling in AMCL), gz-sim6 OdometryPublisher.cc (worldPose at line 334, gaussian_noise, xyz_offset), robot_localization filter_base/ekf/ros_filter (n_σ² comparison, P += Δt·Q, map→odom composition)."
+ ],
+ "score": 5
+}

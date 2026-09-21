@@ -1,0 +1,1 @@
+2026-09-22 CPU YOLOv8n benchmark (bench_cpu_small.py / bench_yolo.py cpu): NO RESULT. Host saturated by other users' jobs (loadavg 47-52 on 32 threads); container received ~0.3-0.4 core (docker stats 31-39 %); runs killed after 580 s and 400 s without a single timed configuration. CPU FPS is therefore unmeasured.

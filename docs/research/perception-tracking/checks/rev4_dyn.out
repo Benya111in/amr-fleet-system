@@ -1,0 +1,65 @@
+V. LS-slope test: window W=10 scans, T > chi2_2(0.999)=13.82 AND |v|>0.15 m/s on 2 consecutive scans
+   person@5m (0.031,0.020)  lateral: v=0.3: med 0.5s p90 0.6s (100%) | v=0.5: med 0.4s p90 0.4s (100%) | v=1.0: med 0.4s p90 0.4s (100%) | v=1.5: med 0.4s p90 0.4s (100%)
+   person@5m (0.031,0.020)  los    : v=0.3: med 0.6s p90 0.7s (100%) | v=0.5: med 0.4s p90 0.5s (100%) | v=1.0: med 0.4s p90 0.4s (100%) | v=1.5: med 0.4s p90 0.4s (100%)
+   unknown@5m (0.12,0.03)   lateral: v=0.3: med 0.6s p90 0.7s (100%) | v=0.5: med 0.4s p90 0.5s (100%) | v=1.0: med 0.4s p90 0.4s (100%) | v=1.5: med 0.4s p90 0.4s (100%)
+   unknown@5m (0.12,0.03)   los    : v=0.3: med 2.1s p90 3.5s (62%) | v=0.5: med 1.0s p90 1.6s (100%) | v=1.0: med 0.7s p90 0.8s (100%) | v=1.5: med 0.5s p90 0.6s (100%)
+   static person@5m (0.031,0.020): 0 rising edges in 6.67 track-h -> 0.00 /track-h
+   static unknown@5m (0.12,0.03): 27 rising edges in 6.67 track-h -> 4.05 /track-h
+   static, rotating bias 0.03 m @ 1.0 rad/s (apparent 0.03 m/s): false-dynamic runs 0.0% (3 s)
+   static, rotating bias 0.03 m @ 2.0 rad/s (apparent 0.06 m/s): false-dynamic runs 3.0% (3 s)
+   static, rotating bias 0.06 m @ 1.0 rad/s (apparent 0.06 m/s): false-dynamic runs 1.6% (3 s)
+   static, rotating bias 0.06 m @ 2.0 rad/s (apparent 0.12 m/s): false-dynamic runs 53.4% (3 s)
+   static, rotating bias 0.23 m @ 1.0 rad/s (apparent 0.23 m/s): false-dynamic runs 100.0% (3 s)
+   static, rotating bias 0.23 m @ 2.0 rad/s (apparent 0.46 m/s): false-dynamic runs 100.0% (3 s)
+   map-frame AMCL step 0.05 m on a static object: false-dynamic runs 1.4%  (odom frame: no step)
+   map-frame AMCL step 0.08 m on a static object: false-dynamic runs 20.4%  (odom frame: no step)
+   map-frame AMCL step 0.30 m on a static object: false-dynamic runs 100.0%  (odom frame: no step)
+   (baseline B1 KF chi2 3-consecutive test at 0.3 m/s: 0% within 3 s for q=0.26/0.5 -> see rev3_checks.py C / critique)
+FS. free-space violation evidence (beam endpoint >= 0.10 m beyond the point in >=2 of last K=5 scans):
+   static point: P(violation per scan pair)=0.0092; need 2 of 5 -> ~8.3e-04 per point
+   v=0.3: approaching 0.43 s | lateral steady-state rho_free=min(1,0.4v/W)= 0.40 (person W=0.30) ; stop->go rho>=0.5 after 0.60 s | receding: no evidence (occluded)
+   v=1.0: approaching 0.20 s | lateral steady-state rho_free=min(1,0.4v/W)= 1.00 (person W=0.30) ; stop->go rho>=0.5 after 0.25 s | receding: no evidence (occluded)
+   v=1.5: approaching 0.17 s | lateral steady-state rho_free=min(1,0.4v/W)= 1.00 (person W=0.30) ; stop->go rho>=0.5 after 0.20 s | receding: no evidence (occluded)
+D. DATMO log-odds: pi_move = sum pi0*p_move = 0.382 (logit -0.48); w=(w_map,w_free,w_vel,w_static)=(4,4,4,2)
+   mapped shelf leg                                           P(dyn)=0.017
+   un-mapped static pallet, early                             P(dyn)=0.381
+   un-mapped static pallet, 1 s observed static               P(dyn)=0.077
+   un-mapped static, noise rho_free .05                       P(dyn)=0.430
+   large box p(box)=.8                                        P(dyn)=0.101
+   standing person p=.8                                       P(dyn)=0.536
+   standing person p=.8, 1 s static                           P(dyn)=0.135
+   parked forklift p=.8, 1 s static                           P(dyn)=0.104
+   walking person 0.2 m from shelf (rho_map .6), free .8, vel P(dyn)=0.997
+   person 0.3 m/s lateral, early (free .4, no vel)            P(dyn)=0.753
+   person approaching (free 1.0), no class                    P(dyn)=0.971
+   person receding (vel only)                                 P(dyn)=0.971
+   pushed box 1 m/s, p(box)=.8, free .9, vel                  P(dyn)=0.996
+   original formula, un-mapped static, uniform class: P=0.894 (critique: 0.894)
+J. CT (Cartesian velocity) Jacobian vs central differences: max abs error 2.00e-06 (incl. v=0 and |w|<1e-4 branch)
+   gate covariance diag: per-mode average [0.05 0.05] -> with spread-of-means [0.0725 0.05  ]
+   speed-gate envelope under 0.95 cap, tau=0.01: v_gate=3.0 m/s  (mean-based: 0.569)
+   speed-gate envelope under 0.95 cap, tau=0.0125: v_gate=3.0 m/s  (mean-based: 0.569)
+   speed-gate envelope under 0.95 cap, tau=0.02: v_gate=0.5 m/s  (mean-based: 0.569)
+   speed-gate envelope under 0.95 cap, tau=0.05: v_gate=0.5 m/s  (mean-based: 0.569)
+   Pi_c row sums: {'person': [1.0, 1.0, 1.0], 'forklift': [1.0, 1.0, 1.0], 'amr': [1.0, 1.0, 1.0], 'box': [1.0, 1.0, 1.0], 'sign': [1.0, 1.0, 1.0]}
+   p(person) after k=1..4 LiDAR cycles with a high-score 'person' hit: ['0.950', '0.950', '0.950', '0.950']
+   ... with low-score hits: ['0.800', '0.950', '0.950', '0.950']
+   decay without camera evidence (eta=0.02/cycle): ['1s:0.83', '3s:0.65', '6s:0.49']
+K. augmented (n+k)x(k+n) assignment: scipy LSA == brute force in 150/150 random problems (finite BIG, no inf)
+   example: confirmed track (sigma .10, 0.15 m away, d2=2.25) vs coasting track (sigma .50, 0.30 m away, d2=0.36) -> det goes to track 0 (0=confirmed)
+   d2-only cost would pick track 1 (coasting steals)
+   birth cost -2 ln(lambda_B=0.01 m^-2) = 9.21; miss cost PD=.9: 4.61, PD=.5: 1.39
+L. CWNA q=0.1 m^2/s^3: steady sigma_v=0.143 m/s; predicted position sigma tau=1.0s: 0.24 m, tau=1.5s: 0.41 m, tau=3.0s: 1.05 m; 1-s velocity-change sd sqrt(q)=0.32 m/s
+L. CWNA q=0.25 m^2/s^3: steady sigma_v=0.198 m/s; predicted position sigma tau=1.0s: 0.36 m, tau=1.5s: 0.62 m, tau=3.0s: 1.62 m; 1-s velocity-change sd sqrt(q)=0.50 m/s
+L. CWNA q=0.5 m^2/s^3: steady sigma_v=0.252 m/s; predicted position sigma tau=1.0s: 0.49 m, tau=1.5s: 0.85 m, tau=3.0s: 2.26 m; 1-s velocity-change sd sqrt(q)=0.71 m/s
+   head-on closing 2.0+1.0 m/s, tau_warn 3.0 s, perception latency 0.3 s -> required confirmed-track range 9.9 m
+   head-on closing 2.0+1.0 m/s, tau_warn 3.0 s, perception latency 0.8 s -> required confirmed-track range 11.4 m
+   head-on closing 1.0+1.0 m/s, tau_warn 3.0 s, perception latency 0.3 s -> required confirmed-track range 6.6 m
+   head-on closing 1.0+1.0 m/s, tau_warn 3.0 s, perception latency 0.8 s -> required confirmed-track range 7.6 m
+   head-on closing 2.0+1.5 m/s, tau_warn 3.0 s, perception latency 0.3 s -> required confirmed-track range 11.5 m
+   head-on closing 2.0+1.5 m/s, tau_warn 3.0 s, perception latency 0.8 s -> required confirmed-track range 13.3 m
+   robot circumscribed radius sqrt(0.3^2+0.2^2) = 0.361 m
+M. 5 streams x 30 FPS = 150 img/s -> per-image budget 6.67 ms; batch of 5 at 30 Hz -> per-batch budget 33.3 ms
+   cross-robot batching wait <= one frame period 33.3 ms; depth pairing: RGB 30 Hz vs depth 15 Hz -> 3D rate 15 Hz, max RGB-depth skew 16.7 ms with slop 17 ms
+   skew pixel shift at max yaw rate 1.5 rad/s: fx*w*dt = 8.4 px ; object 1.5 m/s x 16.7 ms = 2.5 cm
+   CPU-budget ref (multi_robot.md s7): 32 thr x 80% = 25.6 cores

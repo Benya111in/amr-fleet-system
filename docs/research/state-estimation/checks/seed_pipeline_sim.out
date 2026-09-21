@@ -1,0 +1,33 @@
+variant step 1.0 m, 15 deg, top-20: 44760 coarse hypotheses, coarse lookups 4.0 M, fine lookups 3.9 M
+variant step 0.5 m, 10 deg, top-20: 265248 coarse hypotheses, coarse lookups 23.9 M, fine lookups 3.9 M
+variant step 0.5 m, 5 deg, top-20: 530496 coarse hypotheses, coarse lookups 47.7 M, fine lookups 3.9 M
+variant step 0.5 m, 5 deg, top-50: 530496 coarse hypotheses, coarse lookups 47.7 M, fine lookups 9.8 M
+trial 1/25 done
+trial 2/25 done
+trial 3/25 done
+trial 4/25 done
+trial 5/25 done
+trial 6/25 done
+trial 7/25 done
+trial 8/25 done
+trial 9/25 done
+trial 10/25 done
+trial 11/25 done
+trial 12/25 done
+trial 13/25 done
+trial 14/25 done
+trial 15/25 done
+trial 16/25 done
+trial 17/25 done
+trial 18/25 done
+trial 19/25 done
+trial 20/25 done
+trial 21/25 done
+trial 22/25 done
+trial 23/25 done
+trial 24/25 done
+trial 25/25 done
+step 1.0 m / 15 deg / top-20: truth in some fine window 8/25; final best correct 7/25; median m1 0.018; margin median 0.002 (min 0.000); unimodal-accept (m1<0.10 & margin>0.05) 2/25, false accepts 1
+step 0.5 m / 10 deg / top-20: truth in some fine window 20/25; final best correct 12/25; median m1 0.014; margin median 0.003 (min 0.000); unimodal-accept (m1<0.10 & margin>0.05) 4/25, false accepts 0
+step 0.5 m / 5 deg / top-20: truth in some fine window 22/25; final best correct 13/25; median m1 0.014; margin median 0.003 (min 0.000); unimodal-accept (m1<0.10 & margin>0.05) 4/25, false accepts 0
+step 0.5 m / 5 deg / top-50: truth in some fine window 23/25; final best correct 13/25; median m1 0.014; margin median 0.003 (min 0.000); unimodal-accept (m1<0.10 & margin>0.05) 3/25, false accepts 0

@@ -1,0 +1,8 @@
+WARNING ⚠️ user config directory '/root/.config/Ultralytics' is not writable, using '/tmp/Ultralytics'. Set YOLO_CONFIG_DIR to override.
+Creating new Ultralytics Settings v0.0.8 file ✅ 
+View Ultralytics Settings with 'yolo settings' or at '/tmp/Ultralytics/settings.json'
+Update Settings with 'yolo settings key=value', i.e. 'yolo settings runs_dir=path/to/dir'. For help see https://docs.ultralytics.com/usage/settings.
+YOLOv8n summary (fused): 72 layers, 3,151,904 parameters, 0 gradients, 8.7 GFLOPs
+{"forward_fp32_320": {"core_ms_median": 121.5, "core_ms_p90": 138.2, "wall_ms_median": 365.4, "n": 15}}
+{"predict_full_320": {"core_ms_median": 1242.3, "core_ms_p90": 1284.6, "wall_ms_median": 40158.2, "n": 15}}
+exit 137

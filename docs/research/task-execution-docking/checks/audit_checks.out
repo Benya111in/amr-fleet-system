@@ -1,0 +1,72 @@
+f = 337.2 px, VFOV = 70.9 deg
+
+== h_c sanity (brief §3.4)
+docked (-0.50,0,0) -> [0.   0.32 0.  ]  expect X=0, Z=0.32
+left turn psi=+2deg at x=-0.5 -> [0.01745 0.3197  0.03491]  expect X>0
+H_c at pre-dock:
+ [[-0.0087  1.      0.7999]
+ [-1.     -0.0087 -0.011 ]
+ [ 0.      0.      1.    ]] 
+ first-order X = y_r + (Z+l_c) psi -> dX/dpsi = 0.7999 (Z+l_c=0.80)
+
+== single-frame dock-frame sigma via inverse of h_c (x = h_c^-1(z), P = H^-1 R H^-T)
+ Z     sigZ   sigX(CRLB) sigX(closed Zsc/2f) sig_th[deg]  corr(X,th)  sig_yr[mm]  corr(yr,psi)
+1.32   4.87   0.554       0.391             5.263      -0.71       138.18      -1.000
+1.00   2.80   0.419       0.297             3.021      -0.71        62.51      -1.000
+0.62   1.07   0.260       0.184             1.161      -0.71        16.40      -1.000
+0.32   0.29   0.134       0.095             0.309      -0.71         2.80      -0.999
+MC Z=0.62 (600 LM-PnP): sig_yr = 16.6 mm, sig_psi = 1.176 deg, corr = -1.000
+
+== LiDAR line fit (0.5 deg beams, sigma_r=0.03 along beam, plate L=0.8)
+staging   R=1.35  N_formula=66 N_beams=67  sig_alpha formula 0.92 deg / MC 0.88 deg   sig_d formula 3.7 mm / MC 3.7 mm
+pre-dock  R=0.65  N_formula=126 N_beams=127  sig_alpha formula 0.66 deg / MC 0.63 deg   sig_d formula 2.7 mm / MC 2.5 mm
+docked    R=0.35  N_formula=195 N_beams=195  sig_alpha formula 0.53 deg / MC 0.48 deg   sig_d formula 2.1 mm / MC 1.9 mm
+
+== fused (y_r, psi) at pre-dock: 30 camera frames + 10 LiDAR scans, x2 variance inflation
+sig_x=0.27 mm sig_y=2.88 mm sig_psi=0.204 deg corr(y,psi)=-1.000
+P_t = F P F^T + Q_t : sig_y(docked)=1.81 mm sig_psi=0.204 deg corr=-1.000   [brief (P+Q_t, indep.): 3.1 mm]
+gate mu_psi=0.0 deg: joint(F-propagated)=0.9968  psi-marginal=0.9968
+gate mu_psi=0.3 deg: joint(F-propagated)=0.9297  psi-marginal=0.9297
+brief example: joint=0.9112 product=0.8965 bonferroni=0.8937
+
+== NEES mean 95% interval: N=90 [2.52, 3.53], N=100 [2.54, 3.50]
+E4 n=100 pass>=97  true p=0.97 -> P(pass)=0.647
+E4 n=100 pass>=97  true p=0.99 -> P(pass)=0.982
+E4 n=300 pass>=291  true p=0.97 -> P(pass)=0.587
+E4 n=300 pass>=291  true p=0.99 -> P(pass)=0.999
+Clopper-Pearson 95% two-sided lower bound at 291/300 = 0.9438, at 297/300 = 0.9711
+min successes /300 for one-sided 95% CP lower bound >= 0.97: 297
+
+== E[(C-d)^+]: closed 15.373 s vs MC 15.379 s
+LST vs EDF counterexample: A slack 100, B slack 190 -> EDF picks B, LST picks A
+
+== unladen mass m0 = 47.6 kg (robot_params.yaml: base 45 + wheels 2x1.0 + casters 2x0.3)
+  load  0 kg: a_max = 1.000 m/s^2, a_dock = 0.500 m/s^2  (with 45 kg: 1.000 / 0.500)
+  load  2 kg: a_max = 0.960 m/s^2, a_dock = 0.480 m/s^2  (with 45 kg: 0.957 / 0.479)
+  load 10 kg: a_max = 0.826 m/s^2, a_dock = 0.413 m/s^2  (with 45 kg: 0.818 / 0.409)
+  load 25 kg: a_max = 0.656 m/s^2, a_dock = 0.328 m/s^2  (with 45 kg: 0.643 / 0.321)
+
+== footprint-edge clearance to plate (front edge = x_r + 0.30)
+  staging  clearance 1.20 m
+  pre-dock clearance 0.50 m
+  docked   clearance 0.20 m
+  braking d(v=0.10) = v*0.15 + v^2/(2*1.0) = 0.020 m
+  braking d(v=0.20) = v*0.15 + v^2/(2*1.0) = 0.050 m
+  braking d(v=0.25) = v*0.15 + v^2/(2*1.0) = 0.069 m
+
+== E8 budget: mean 177 ms, worst 361 ms
+
+== control law: staging offsets -> pre-dock target (-0.80, 0, 0)
+  y0=-0.15 psi0=-10 -> final y=-0.0000 psi=+0.36 deg r=0.0045  omega-sat steps=0  v<v_min steps=0
+  y0=-0.15 psi0= +0 -> final y=-0.0000 psi=+0.32 deg r=0.0049  omega-sat steps=0  v<v_min steps=0
+  y0=-0.15 psi0=+10 -> final y=-0.0000 psi=+0.18 deg r=0.0042  omega-sat steps=0  v<v_min steps=0
+  y0=+0.00 psi0=-10 -> final y=-0.0000 psi=+0.08 deg r=0.0044  omega-sat steps=0  v<v_min steps=0
+  y0=+0.00 psi0= +0 -> final y=+0.0000 psi=+0.00 deg r=0.0047  omega-sat steps=0  v<v_min steps=0
+  y0=+0.00 psi0=+10 -> final y=+0.0000 psi=-0.08 deg r=0.0044  omega-sat steps=0  v<v_min steps=0
+  y0=+0.15 psi0=-10 -> final y=+0.0000 psi=-0.18 deg r=0.0042  omega-sat steps=0  v<v_min steps=0
+  y0=+0.15 psi0= +0 -> final y=+0.0000 psi=-0.32 deg r=0.0049  omega-sat steps=0  v<v_min steps=0
+  y0=+0.15 psi0=+10 -> final y=+0.0000 psi=-0.36 deg r=0.0045  omega-sat steps=0  v<v_min steps=0
+
+== alt A (two 0.12 m markers, b = 0.40 m)
+Z=0.45: sigZ(0.12 marker) CRLB 0.96 mm / closed 1.00 mm -> yaw sqrt2*sigZ/b = 0.19 deg (CRLB) / 0.20 deg (closed); single 0.15 marker 0.61 deg
+Z=1.00: sigZ(0.12 marker) CRLB 4.75 mm / closed 4.94 mm -> yaw sqrt2*sigZ/b = 0.96 deg (CRLB) / 1.00 deg (closed); single 0.15 marker 3.02 deg

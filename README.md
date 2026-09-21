@@ -244,4 +244,5 @@ git switch -c feature/<이름>            # 작업 → push → develop 대상 P
   [시퀀스 다이어그램](docs/architecture/sequences.md), [다중 로봇 네임스페이스/TF](docs/architecture/multi_robot.md),
   [센서 캘리브레이션 절차](docs/architecture/sensor_calibration.md)
 - [핵심 알고리즘](docs/algorithms/) — DWA, EKF, SLAM 파라미터 튜닝 근거
+- [알고리즘 설계 브리프](docs/research/) — 영역별 문헌 조사(2023~2026), 기준 알고리즘 유도, 독자 제안과 선행 연구 대비 위치, 적대적 리뷰 반영 이력
 - [성능 리포트](docs/reports/) — 위치 추정 RMSE, CTE, 응답 시간, 커버리지

@@ -1,0 +1,10 @@
+stop->go lateral v=0.3: time from motion onset to fire median 0.60s p90 0.70s (fired before onset: 0.0%)
+stop->go lateral v=1.0: time from motion onset to fire median 0.30s p90 0.40s (fired before onset: 0.1%)
+stop->go lateral v=1.5: time from motion onset to fire median 0.30s p90 0.30s (fired before onset: 0.0%)
+stop->go los     v=0.3: time from motion onset to fire median 0.60s p90 0.70s (fired before onset: 0.2%)
+stop->go los     v=1.0: time from motion onset to fire median 0.30s p90 0.40s (fired before onset: 0.1%)
+stop->go los     v=1.5: time from motion onset to fire median 0.30s p90 0.30s (fired before onset: 0.2%)
+DATMO unknown class: P(dyn)>0.5 when 4*rho_free > 0.481 -> rho* = 0.120
+   lateral stop->go v=0.3: strip v*t reaches rho*.W after 0.12s -> + scan quantisation 0.1 + proc 0.05 = 0.27s
+   lateral stop->go v=1.0: strip v*t reaches rho*.W after 0.04s -> + scan quantisation 0.1 + proc 0.05 = 0.19s
+   lateral stop->go v=1.5: strip v*t reaches rho*.W after 0.02s -> + scan quantisation 0.1 + proc 0.05 = 0.17s

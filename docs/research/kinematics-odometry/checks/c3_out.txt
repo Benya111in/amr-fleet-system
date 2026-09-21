@@ -1,0 +1,22 @@
+LPF fc=20.0: backward-Euler alpha=0.557 -> -3 dB at 13.74 Hz; exact alpha=0.6726 -> -3 dB at 20.000 Hz; noise var ratio alpha/(2-alpha)=0.507 (sigma x0.712); DC group delay beta/alpha=0.487 samples
+LPF fc=10.0: backward-Euler alpha=0.386 -> -3 dB at 7.92 Hz; exact alpha=0.4559 -> -3 dB at 10.000 Hz; noise var ratio alpha/(2-alpha)=0.295 (sigma x0.543); DC group delay beta/alpha=1.194 samples
+Allan: log 0.5 h, tau=300 s: M=6, rel. 1-sigma CI = 0.316
+Allan: log 4.0 h, tau=10 s: M=1440, rel. 1-sigma CI = 0.019
+Allan: log 4.0 h, tau=570 s: M=25, rel. 1-sigma CI = 0.144
+Allan: log 4.0 h, tau=300 s: M=48, rel. 1-sigma CI = 0.103
+gyro ARW N = sigma_g*sqrt(dt) = 2.0e-05 rad/sqrt(s); accel VRW = 1.7e-03 m/s/sqrt(s)
+lambda=0.995 @100 Hz, 60 s unexcited: lambda^-6000 = 1.15e+13; lambda=0.9995: 20.1
+GRC true/nom = [0.95238095 0.95238095]: 60 s max rel err over 20 seeds = 0.098 %, median t(<=1 %) = 7.0 s, max 8.3 s
+GRC true/nom = [1.04 0.97]: 60 s max rel err over 20 seeds = 3.449 %, median t(<=1 %) = inf s, max inf s
+GRC true/nom = [1.05 0.95]: 60 s max rel err over 20 seeds = 4.986 %, median t(<=1 %) = inf s, max inf s
+unexcited sum-direction variance: before 7.29e-07, after 60 s straight 7.08e-07 (Pmax 1.31e-04); ratio 0.971
+GRC info straight 1 m/s: sigma along h-direction after 10 s = 1.03e-04 = 0.045 % of psi_nom
+GRC info rotation 1.5 rad/s: sigma along h-direction after 10 s = 1.11e-04 = 0.049 % of psi_nom
+q = 8.75e-12, Pmax = 1.31e-04, max step = 2.29e-04
+
+depth: camera height 0.43 m, vfov/2 = 35.4 deg, floor visible from Z = 0.604 m; max 3-sigma height error on floor points in [0.60, 5] m = 1.30 cm at Z=5.00; sigma(1)=0.0054, sigma(5)=0.0502 (3 sigma along ray at 5 m = 0.151 m)
+f_x = 320/tan(43.5 deg) = 337.2 px
+payload  0 kg: total 47.6 kg, F_N upper bound per drive wheel (g=9.8) = 233.2 N
+payload  2 kg: total 49.6 kg, F_N upper bound per drive wheel (g=9.8) = 243.0 N
+payload 10 kg: total 57.6 kg, F_N upper bound per drive wheel (g=9.8) = 282.2 N
+payload 25 kg: total 72.6 kg, F_N upper bound per drive wheel (g=9.8) = 355.7 N

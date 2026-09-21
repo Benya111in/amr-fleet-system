@@ -1,0 +1,4 @@
+v=0.0: IMU share of S_v = 0.84, rho(r_v) <= 0.68, P(d2>tau) = 9.98e-04, P(2-of-2) = 3.9e-05 (1.40 per h at 10 Hz)
+v=0.3: IMU share of S_v = 0.41, rho(r_v) <= 0.33, P(d2>tau) = 9.89e-04, P(2-of-2) = 4.8e-06 (0.17 per h at 10 Hz)
+v=1.0: IMU share of S_v = 0.07, rho(r_v) <= 0.05, P(d2>tau) = 1.00e-03, P(2-of-2) = 1.2e-06 (0.04 per h at 10 Hz)
+v=2.0: IMU share of S_v = 0.02, rho(r_v) <= 0.01, P(d2>tau) = 1.01e-03, P(2-of-2) = 1.0e-06 (0.04 per h at 10 Hz)

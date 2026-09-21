@@ -1,0 +1,48 @@
+[OK ] 2.1 dth^2/24: computed 3.75e-05 vs brief 3.75e-05
+[OK ] 2.1 per-step error @2 m/s: computed 1.5e-06 vs brief 1.5e-06
+[OK ] 2.1 7.2 km bound: computed 0.27 vs brief 0.27
+[OK ] 2.2 delta: computed 0.0001266 vs brief 0.000127
+[OK ] 2.2 spurious RW sigma 1 h: computed 0.02192 vs brief 0.022
+[OK ] 2.2 heading quant bound 2delta/b: computed 0.0007031 vs brief 0.0007
+[OK ] 2.2 slip-term wheel speed sigma 2 m/s T_w: computed 0.008944 vs brief 0.0089
+[OK ] 2.3 sigma_vx 1.0 m/s: computed 0.007303 vs brief 0.0073
+[OK ] 2.3 sigma_w 1.0 m/s: computed 0.04057 vs brief 0.041
+[OK ] 2.3 sigma_vx 2.0 m/s: computed 0.01426 vs brief 0.014
+[OK ] 2.3 sigma_w 2.0 m/s: computed 0.07922 vs brief 0.079
+[OK ] 2.4 sigma_th 1.0: computed 0.02485 vs brief 0.025
+[OK ] 2.4 sigma_x 1.0: computed 0.004472 vs brief 0.0045
+[OK ] 2.4 sigma_y 1.0: computed 0.2869 vs brief 0.29
+[OK ] 2.4 sigma_th 2.0: computed 0.03514 vs brief 0.035
+[OK ] 2.4 sigma_x 2.0: computed 0.006325 vs brief 0.0063
+[OK ] 2.4 sigma_y 2.0: computed 0.4057 vs brief 0.41
+[OK ] 2.4 rotation 10 rev sigma_th: computed 0.009708 vs brief 0.0097
+[OK ] 3.2 floor visible from Z: computed 0.6042 vs brief 0.6
+[OK ] 3.2 max 3sigma floor height err: computed 0.01296 vs brief 0.013
+[OK ] 3.3 alpha fc=20: computed 0.6726 vs brief 0.673
+[OK ] 3.3 |H(fc)|^2 fc=20: computed 0.5 vs brief 0.5
+[OK ] 3.3 alpha fc=10: computed 0.4559 vs brief 0.456
+[OK ] 3.3 |H(fc)|^2 fc=10: computed 0.5 vs brief 0.5
+[OK ] 4.2 sqrt S_w 0.3: computed 0.00577 vs brief 0.0058
+[OK ] 4.2 sqrt S_v 0.3: computed 0.001877 vs brief 0.0019
+[OK ] 4.2 sqrt S_w 1.0: computed 0.01812 vs brief 0.018
+[OK ] 4.2 sqrt S_v 1.0: computed 0.004661 vs brief 0.0047
+[OK ] 4.2 sqrt S_w 2.0: computed 0.03606 vs brief 0.036
+[OK ] 4.2 sqrt S_v 2.0: computed 0.00904 vs brief 0.009
+[OK ] 4.6 NEES 20-run band lo: computed 2.024 vs brief 2.02
+[OK ] 4.6 NEES 20-run band hi: computed 4.165 vs brief 4.16
+      4.3 q = 8.753e-12 (brief v3 wrote 8.7e-12; correct rounding 8.8e-12)
+[OK ] 4.3 P_max: computed 0.0001313 vs brief 0.00013
+(B) EIV shrink per update, straight 1 m/s: initial (S = h'P h + R = 0.0389) 0.0010 % ; after excited direction converged (S ~ R = 0.000313) 0.125 % of psi
+(C) constant heading offset from start counts: sigma = delta/(sqrt6 b) = 1.44e-04 rad -> lateral after 20 m = 2.9 mm (vs non-systematic sigma_y 0.29 m)
+(D) per-window P(d2 > tau_on) and event detection P(2 consecutive):
+    m = 1.00 x resolution: p_win = 0.554; ch2 step event (visible 5 windows) 0.676; ch1 event 0.3 s (3 windows) 0.444, 0.5 s (5) 0.676
+    m = 1.25 x resolution: p_win = 0.853; ch2 step event (visible 5 windows) 0.971; ch1 event 0.3 s (3 windows) 0.835, 0.5 s (5) 0.971
+    m = 1.50 x resolution: p_win = 0.975; ch2 step event (visible 5 windows) 0.999; ch1 event 0.3 s (3 windows) 0.975, 0.5 s (5) 0.999
+    m = 2.00 x resolution: p_win = 1.000; ch2 step event (visible 5 windows) 1.000; ch1 event 0.3 s (3 windows) 1.000, 0.5 s (5) 1.000
+(E) steady symmetric slip 5 % at 1 m/s (0.05 m/s over-speed, onset 0.1 s ramp) from 5 s to 15 s, 50 runs:
+    v3 hysteresis only   : onset detected 50/50, flagged fraction of slip interval median 0.05 (min 0.04)
+    cumulative hold (v3.1): onset detected 50/50, flagged fraction of slip interval median 0.97 (min 0.97)
+(E) H0 0.3 m/s, 1 h total: flagged time fraction v3 0.0e+00, with cumulative hold 0.0e+00
+(E) H0 1.0 m/s, 1 h total: flagged time fraction v3 0.0e+00, with cumulative hold 0.0e+00
+(E) H0 2.0 m/s, 1 h total: flagged time fraction v3 0.0e+00, with cumulative hold 5.6e-05
+ALL (A) CHECKS OK: True (33/33)

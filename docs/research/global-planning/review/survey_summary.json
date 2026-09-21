@@ -1,0 +1,320 @@
+{
+ "slug": "global-planning",
+ "doc_path": "docs/research/global-planning/global-planning.md",
+ "web_tools_available": true,
+ "papers": [
+  {
+   "title": "Optimal any-angle path planning in static and dynamic environments (Zeta*, Zeta*-SIPP)",
+   "authors": "Y. Zou, C. Borst",
+   "venue_year": "arXiv 2607.00065, 2026-06",
+   "url": "https://arxiv.org/abs/2607.00065",
+   "status": "VERIFIED",
+   "relevance": "SOTA any-angle reference point (Anya-level static, 20x faster than TO-AA-SIPP dynamic); shows any-angle gains but assumes uniform cost, motivating post-processing instead of any-angle search on inflated costmaps."
+  },
+  {
+   "title": "Zeta*-SIPP: Improved Time-Optimal Any-Angle Safe-Interval Path Planning",
+   "authors": "Y. Zou, C. Borst",
+   "venue_year": "IJCAI 2024",
+   "url": "https://www.ijcai.org/proceedings/2024/754",
+   "status": "VERIFIED",
+   "relevance": "Time-optimal any-angle planning with dynamic obstacles via safe intervals; 70-90% compute reduction; contrasts with our costmap-replanning approach to dynamics."
+  },
+  {
+   "title": "Incremental Generalized Hybrid A*",
+   "authors": "S. Talia, O. Salzman, S. Srinivasa",
+   "venue_year": "IEEE RA-L 2025 (arXiv 2508.13392)",
+   "url": "https://arxiv.org/abs/2508.13392",
+   "status": "VERIFIED",
+   "relevance": "Anytime tree search replacing Hybrid A* grid dominance pruning (6x fewer expansions); informs interpretation of Smac Hybrid-A* baseline results."
+  },
+  {
+   "title": "Fast Shortest Path Polyline Smoothing With G1 Continuity and Bounded Curvature",
+   "authors": "P. Pastorelli, S. Dagnino, E. Saccon, M. Frego, L. Palopoli",
+   "venue_year": "IEEE RA-L 10(4) 2025 (arXiv 2409.09816)",
+   "url": "https://arxiv.org/abs/2409.09816",
+   "status": "VERIFIED",
+   "relevance": "Collision-free G1 polyline smoothing with curvature bounds; reference for our curvature-limited post-processing (C3)."
+  },
+  {
+   "title": "Fast Motion Planning for Non-Holonomic Mobile Robots via a Rectangular Corridor Representation of Structured Environments",
+   "authors": "A. Gonzalez-Garcia, S. Wyns, S. De Santis, J. Swevers, W. Decré",
+   "venue_year": "ICRA 2026 (arXiv 2602.09714)",
+   "url": "https://arxiv.org/abs/2602.09714",
+   "status": "VERIFIED",
+   "relevance": "Corridor-graph decomposition of structured (warehouse-like) free space for fast planning; deferred as a phase-2 option tied to fleet lane reservation."
+  },
+  {
+   "title": "Open-Source, Cost-Aware Kinematically Feasible Planning for Mobile and Surface Robotics (Smac Planner)",
+   "authors": "S. Macenski, M. Booker, J. Wallace, T. Fischer",
+   "venue_year": "arXiv 2401.13078, 2024 (v2 2025)",
+   "url": "https://arxiv.org/abs/2401.13078",
+   "status": "VERIFIED",
+   "relevance": "Defines the Nav2 Smac 2D/Hybrid/Lattice baselines and cost-aware A* our planner is compared against; closest prior for the cost-aware edge weight (C1 is a variant)."
+  },
+  {
+   "title": "Motion Planning in Dynamic Environments: A Survey from Classical to Modern Methods",
+   "authors": "Z. Shen et al.",
+   "venue_year": "arXiv 2606.02677, 2026-06",
+   "url": "https://arxiv.org/abs/2606.02677",
+   "status": "VERIFIED",
+   "relevance": "138-work taxonomy of dynamic-environment planning; background for replanning design choices."
+  },
+  {
+   "title": "Rapid Vector-based Any-angle Path Planning with Non-convex Obstacles (R2/R2+)",
+   "authors": "Y. K. Lai",
+   "venue_year": "PhD thesis, arXiv 2408.05806, 2024",
+   "url": "https://arxiv.org/abs/2408.05806",
+   "status": "VERIFIED",
+   "relevance": "Vector/bug-based optimal any-angle planners that excel with few turning points (warehouse-like), but on binary grids only; not adopted due to cost weighting."
+  },
+  {
+   "title": "Exploiting Euclidean Distance Field Properties for Fast and Safe 3D planning with a modified Lazy Theta*",
+   "authors": "J. A. Cobano, L. Merino, F. Caballero",
+   "venue_year": "Robotics and Autonomous Systems 2025 (arXiv 2505.24024)",
+   "url": "https://arxiv.org/abs/2505.24024",
+   "status": "VERIFIED",
+   "relevance": "Clearance (EDF) term in the cost that keeps the triangle inequality; supports our claim that a distance-derived cost can remain consistent (C1)."
+  },
+  {
+   "title": "Revisiting Replanning from Scratch: Real-Time Incremental Planning with Fast Almost-Surely Asymptotically Optimal Planners",
+   "authors": "M. E. C. Sabbadini, A. H. Liu, J. Ruan, T. S. Wilson, Z. Kingston, J. D. Gammell",
+   "venue_year": "ICRA 2026 (arXiv 2510.21074)",
+   "url": "https://arxiv.org/abs/2510.21074",
+   "status": "VERIFIED",
+   "relevance": "Argues from-scratch replanning can beat graph repair; the counter-hypothesis our tube-repair (C2) is explicitly benchmarked against."
+  },
+  {
+   "title": "Exact Wavefront Propagation for Globally Optimal One-to-All Path Planning on 2D Cartesian Grids",
+   "authors": "I. Ibrahim, J. Gillis, W. Decré, J. Swevers",
+   "venue_year": "IEEE RA-L 9(11) 2024 (arXiv 2409.11545)",
+   "url": "https://arxiv.org/abs/2409.11545",
+   "status": "VERIFIED",
+   "relevance": "O(n) exact any-angle one-to-all on 2D grids; exact alternative to NavFn's approximate Eikonal potential, but uniform-cost only."
+  },
+  {
+   "title": "Jump Point Search Pathfinding in 4-connected Grids (JPS4)",
+   "authors": "J. Baum",
+   "venue_year": "arXiv 2501.14816, 2025",
+   "url": "https://arxiv.org/abs/2501.14816",
+   "status": "VERIFIED",
+   "relevance": "Recent JPS variant; reports A* remains faster on open maps, supporting our decision not to build on JPS for an open-aisle warehouse with non-uniform costs."
+  },
+  {
+   "title": "Efficient Hierarchical Any-Angle Path Planning on Multi-Resolution 3D Grids",
+   "authors": "V. Reijgwart, C. Cadena, R. Siegwart, L. Ott",
+   "venue_year": "RSS 2025 (arXiv 2602.21174)",
+   "url": "https://arxiv.org/abs/2602.21174",
+   "status": "VERIFIED",
+   "relevance": "Hierarchical any-angle for very large maps; our 960k-cell map does not need hierarchy, cited for scalability positioning."
+  },
+  {
+   "title": "Optimal and Bounded Suboptimal Any-Angle Multi-agent Pathfinding",
+   "authors": "K. Yakovlev, A. Andreychuk, R. Stern",
+   "venue_year": "IROS 2024 (arXiv 2404.16379)",
+   "url": "https://arxiv.org/abs/2404.16379",
+   "status": "VERIFIED",
+   "relevance": "Any-angle MAPF with bounded suboptimality (CCBS + TO-AA-SIPP); relevant to the fleet team and to bounded-suboptimal trade-offs."
+  },
+  {
+   "title": "APP: A* Post-Processing Algorithm for Robots with Bidirectional Shortcut and Path Perturbation",
+   "authors": "Y. Li, H. Cheng",
+   "venue_year": "IEEE RA-L 8(11) 2023 (arXiv 2511.13042, posted 2025-11)",
+   "url": "https://arxiv.org/abs/2511.13042",
+   "status": "VERIFIED",
+   "relevance": "Closest prior work to our post-processing (C3): costmap-based shortcut + perturbation; we differ by a cost-integral acceptance test, clearance-gradient term and curvature-to-time profile."
+  },
+  {
+   "title": "Reducing Redundant Work in Jump Point Search (CJPS)",
+   "authors": "S. Zhao, D. Harabor, P. J. Stuckey",
+   "venue_year": "arXiv 2306.15928, 2023-06",
+   "url": "https://arxiv.org/abs/2306.15928",
+   "status": "VERIFIED",
+   "relevance": "JPS pathologies and 7-14x fixes in dynamic grids; used to explain why JPS (uniform cost) is rejected for inflated costmaps."
+  },
+  {
+   "title": "Probabilistic Focal Search: Accelerating Bounded-Suboptimal Search via Lower-Bound Advancement",
+   "authors": "M. V. Duc et al.",
+   "venue_year": "arXiv 2609.10584, 2026-09",
+   "url": "https://arxiv.org/abs/2609.10584",
+   "status": "VERIFIED",
+   "relevance": "Newest bounded-suboptimal search; considered and deferred (short f-plateaus on our map, optimality needed for time prediction)."
+  },
+  {
+   "title": "Bidirectional Bounded-Suboptimal Heuristic Search with Consistent Heuristics",
+   "authors": "S. S. Shperberg, N. Morad, L. Siag, A. Felner, D. Atzmon",
+   "venue_year": "arXiv 2511.10272, 2025",
+   "url": "https://arxiv.org/abs/2511.10272",
+   "status": "VERIFIED",
+   "relevance": "Bounded-suboptimal BAE* variants vs weighted A*; background for the epsilon=1.2 timeout fallback."
+  },
+  {
+   "title": "FMT^X: Lazy Wavefront Search for Dynamic Replanning",
+   "authors": "S. Espahbodi Nia",
+   "venue_year": "arXiv 2509.08521, 2025 (v2 2026)",
+   "url": "https://arxiv.org/abs/2509.08521",
+   "status": "VERIFIED",
+   "relevance": "Sampling-based dynamic replanning compared to D* Lite/RRTX; shows collision-check policy drives repair latency, relevant to C2 trade-offs."
+  },
+  {
+   "title": "Path Planning Trends for Autonomous Mobile Robot Navigation: A Review",
+   "authors": "Y. Tang, M. A. Zakaria, M. Younas",
+   "venue_year": "Sensors 25(4):1206, 2025",
+   "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11861809/",
+   "status": "VERIFIED",
+   "relevance": "Review of A* improvements and Bezier/B-spline post-smoothing trends for AMRs."
+  },
+  {
+   "title": "Research on Mobile Robot Path Planning Based on an Improved Bidirectional Jump Point Search Algorithm",
+   "authors": "(MDPI Electronics authors)",
+   "venue_year": "Electronics 14(8):1669, 2025",
+   "url": "https://doi.org/10.3390/electronics14081669",
+   "status": "VERIFIED",
+   "relevance": "Adaptive-weight bidirectional JPS (abstract seen via search snippet only; page returned 403); not adopted because weighted heuristics lose optimality."
+  },
+  {
+   "title": "GRACE: A Unified 2D Multi-Robot Path Planning Simulator & Benchmark for Grid, Roadmap, And Continuous Environments",
+   "authors": "C. Zang, A. Mannucci, I. Barz, P. Schillinger, F. Lier, W. Hönig",
+   "venue_year": "ICRA 2026 (arXiv 2603.10858)",
+   "url": "https://arxiv.org/abs/2603.10858",
+   "status": "VERIFIED",
+   "relevance": "Benchmark methodology across grid/roadmap/continuous representations; reference for the fleet-level evaluation protocol."
+  },
+  {
+   "title": "FDSPC: Fast and Direct Smooth Path Planning via Continuous Curvature Integration",
+   "authors": "Z. Chen, Y. Li",
+   "venue_year": "arXiv 2405.03281, 2024",
+   "url": "https://arxiv.org/abs/2405.03281",
+   "status": "VERIFIED",
+   "relevance": "Direct smooth-path generation without post-smoothing; not grid/costmap based, cited as an alternative design point."
+  },
+  {
+   "title": "Comparing Global Planners for navigation (Nav2 benchmark: Dijkstra, A*, Theta*, SMAC2D, 3000 tasks)",
+   "authors": "haris-mujeeb (Open Robotics Discourse)",
+   "venue_year": "Discourse post, 2026-05-01",
+   "url": "https://discourse.openrobotics.org/t/comparing-global-planners-for-navigation/54457",
+   "status": "VERIFIED",
+   "relevance": "Reports Theta* ~86% and Smac2D ~90% success vs 100% for Dijkstra/A* at ~20 ms; justifies keeping a complete A* as the primary search and any-angle as post-processing."
+  },
+  {
+   "title": "From the Desks of ROS Maintainers: A Survey of Modern & Capable Mobile Robotics Algorithms in ROS 2",
+   "authors": "S. Macenski, T. Moore, D. Lu, A. Merzlyakov, M. Ferguson",
+   "venue_year": "Robotics and Autonomous Systems 2023 (arXiv 2307.15236)",
+   "url": "https://arxiv.org/abs/2307.15236",
+   "status": "VERIFIED",
+   "relevance": "Stack-level survey of Nav2 planners/smoothers; background for baseline descriptions."
+  },
+  {
+   "title": "MMP-A*: Multimodal Perception Enhanced Incremental Heuristic Search on Path Planning",
+   "authors": "M. H. Ha et al.",
+   "venue_year": "arXiv 2601.01910, 2026",
+   "url": "https://arxiv.org/abs/2601.01910",
+   "status": "VERIFIED",
+   "relevance": "VLM-guided A* heuristics; rejected for explainability/peer-review constraints."
+  },
+  {
+   "title": "A Formal Basis for the Heuristic Determination of Minimum Cost Paths (A*)",
+   "authors": "P. Hart, N. Nilsson, B. Raphael",
+   "venue_year": "IEEE TSSC 1968",
+   "url": "https://doi.org/10.1109/TSSC.1968.300136",
+   "status": "RECALLED",
+   "relevance": "Baseline algorithm; admissibility/consistency theory used in Section 2."
+  },
+  {
+   "title": "D* Lite",
+   "authors": "S. Koenig, M. Likhachev",
+   "venue_year": "AAAI 2002",
+   "url": "https://www.aaai.org/Papers/AAAI/2002/AAAI02-072.pdf",
+   "status": "RECALLED",
+   "relevance": "Incremental replanning alternative to our tube repair; reasons for not adopting (goal changes per task, per-cell state for 5 robots) are given."
+  },
+  {
+   "title": "Theta*: Any-Angle Path Planning on Grids",
+   "authors": "A. Nash, K. Daniel, S. Koenig, A. Felner",
+   "venue_year": "AAAI 2007 / JAIR 2010 (arXiv 1401.3843)",
+   "url": "https://arxiv.org/abs/1401.3843",
+   "status": "RECALLED",
+   "relevance": "Any-angle search and A*-with-post-smoothing comparison; our LOS shortcut is the post-smoothing route."
+  },
+  {
+   "title": "Online Graph Pruning for Pathfinding on Grid Maps (JPS)",
+   "authors": "D. Harabor, A. Grastien",
+   "venue_year": "AAAI 2011",
+   "url": "https://ojs.aaai.org/index.php/AAAI/article/view/7994",
+   "status": "RECALLED",
+   "relevance": "Jump point search; evaluated and rejected because inflation makes costs non-uniform."
+  },
+  {
+   "title": "Cooperative Pathfinding (Local Repair A*, WHCA*)",
+   "authors": "D. Silver",
+   "venue_year": "AIIDE 2005",
+   "url": "https://www.aaai.org/Papers/AIIDE/2005/AIIDE05-020.pdf",
+   "status": "RECALLED",
+   "relevance": "Closest prior for the tube-bounded local repair (C2)."
+  },
+  {
+   "title": "Path Planning for Autonomous Vehicles in Unknown Semi-structured Environments (Hybrid A* + CG smoothing)",
+   "authors": "D. Dolgov, S. Thrun, M. Montemerlo, J. Diebel",
+   "venue_year": "IJRR 2010",
+   "url": "https://doi.org/10.1177/0278364909359210",
+   "status": "RECALLED",
+   "relevance": "Gradient-based smoothing with obstacle/curvature terms; basis of Nav2's smoother and our clearance-augmented variant."
+  },
+  {
+   "title": "Fast Marching Square (FM2) path planning with distance-based velocity maps",
+   "authors": "S. Garrido, L. Moreno, D. Blanco et al.",
+   "venue_year": "2011-2013 (various)",
+   "url": "https://doi.org/10.1109/ICRA.2011.5980469",
+   "status": "RECALLED",
+   "relevance": "Closest conceptual prior for the speed-map/time-cost search (C1); ours differs by deriving the speed map from the stopping-distance rule and the analytic inverse of Nav2 inflation."
+  },
+  {
+   "title": "ARA*: Anytime A* with Provable Bounds on Sub-Optimality",
+   "authors": "M. Likhachev, G. Gordon, S. Thrun",
+   "venue_year": "NeurIPS 2003",
+   "url": "https://papers.nips.cc/paper/2382-ara-anytime-a-with-provable-bounds-on-sub-optimality",
+   "status": "RECALLED",
+   "relevance": "Bounded-suboptimal fallback (epsilon=1.2) when the planning deadline is near."
+  }
+ ],
+ "baseline_summary": "Required baseline: 8-connected, cost-aware A* on the 1200x800 (N=960k) Nav2 costmap. State = cell index n = x + y*W; edge length l in {r, sqrt(2) r}, r = 0.05 m; corner-cutting forbidden (both orthogonal neighbours must be <= 252). Edge weight in Smac form w = l*(1 + kappa*c/252); the verified Humble sources give equivalent kappa ~4.03 for NavFn (50 + 0.8c per cell, 4-neighbour interpolated potential + gradient-descent path extraction), kappa = 1.0 (Humble default) for Smac 2D (8-neighbour heap A*), and 2.0*Euclid + 1.0*(c/252)^2 with Bresenham LOS for Nav2 Theta*. Heuristic: octile h_oct = r[max(|dx|,|dy|) + (sqrt2-1)min(|dx|,|dy|)], proven admissible and consistent because it is the exact free-grid distance and w >= l; worst-case 8-connected overhead 8.24% (theta = 22.5 deg). Tie-break by lexicographic (f, h). Data structures: float32 g, int32 parent, uint32 generation stamp (no memset), bitset closed, lazy-deletion binary heap; ~12 MB per instance; O((N+E) log N), typical 20-60 ms, worst 150-300 ms, with a connectivity pre-check for unreachable goals. Verified stack facts: nav2_core::GlobalPlanner interface, ComputePathToPose result carries planning_time, IsPathValid returns invalid_pose_indices, default BT replans at 1 Hz, inflation cost = floor(252*exp(-s(d - r_ins))) (inverse d(c) = r_ins - ln(c/252)/s gives clearance without an EDT), Nav2 smoother update y_i += w_d(x_i - y_i) + w_s(y_{i+1} + y_{i-1} - 2y_i) with convergence condition 0 < w_d, w_d + 4 w_s < 2.",
+ "proposals": [
+  {
+   "name": "TAR-A* (Time-Aware Repairing A*) — C1: stopping-distance speed map, time-domain cost search",
+   "idea": "Convert costmap cost to clearance via the analytic inverse of Nav2 inflation, set v_lim = clamp(sqrt(2 a_max d_free), v_floor, v_max) (v_max where c=0), and search with edge cost w_t = l / v_lim [s] and heuristic h_t = h_oct / v_max [s]. Proven admissible/consistent since v_lim <= v_max. Aisle-centering emerges from dynamics parameters (effective multiplier v_max/v_lim: 4.5 at 0.1 m free margin, 1.4 at 1.1 m) instead of an arbitrary cost_travel_multiplier, and the same model feeds travel-time prediction.",
+   "closest_prior_work": "Fast Marching Square speed maps (Garrido et al. 2011, RECALLED); Smac Cost-Aware A* (Macenski et al. 2024, VERIFIED); EDF-consistent Lazy Theta* cost (Cobano et al. RAS 2025, VERIFIED).",
+   "novelty_claim": "variant_of_prior",
+   "expected_gain": "Mean clearance +20-40% vs Smac2D kappa=1 with path length within -2..+3%; explainable, physically grounded weights; enables <=15% travel-time prediction error (naive L/v_max is 30-50% off). Planning time p95 <= 100 ms on 960k cells (division replaced by a 256-entry LUT).",
+   "risks": "Over-preference for aisle centres lengthening paths (tune v_floor, cost_scaling_factor); discontinuity at the inflation boundary if inflation_radius < r_ins + v_max^2/(2a) (mitigate with R_infl = 1.2 m, s = 2.0, or optional O(N) EDT); DWA's own near-obstacle slowdown must match v_lim for the time metric.",
+   "realtime_budget": "Full search p95 <= 100 ms, hard timeout 400 ms (of the 500 ms spec), <= 15 MB per planner instance; 5 robots at 1 Hz full replans <= 0.3 core."
+  },
+  {
+   "name": "TAR-A* — C2: tube-bounded local repair replanning with bounded fallback",
+   "idea": "On each replan, classify the previous path as VALID (return trimmed path, no search), LOCAL (only indices with cost >= 253 are invalid: search from p_{i_a} to p_{i_b} inside a Chebyshev tube of radius rho=3 m painted in a stamp array, accept only if J_new <= (1+eta) J_old + slack, else double rho up to twice) or FULL (global TAR-A*). A drift counter forces a full replan every K=5 repairs or when accumulated cost drift exceeds a threshold, so completeness is preserved and quality drift is bounded relative to the previous path (not to the new global optimum — stated explicitly).",
+   "closest_prior_work": "Local Repair A* / WHCA* (Silver 2005, RECALLED); D* Lite and LPA* (Koenig & Likhachev 2002/2004, RECALLED); Sabbadini et al. ICRA 2026 'Revisiting Replanning from Scratch' (VERIFIED) as the counter-hypothesis.",
+   "novelty_claim": "engineering_adaptation",
+   "expected_gain": "Replanning p50 <= 5 ms in >= 80% of dynamic-obstacle replans vs 30-80 ms full search; much smaller discrete Frechet distance between consecutive plans (path stability for DWA and fleet prediction); 5-robot replanning CPU ~0.03 core instead of ~0.3.",
+   "risks": "Accumulated detours if repairs chain (mitigated by drift reset); no bound vs new global optimum; depends on global_costmap update rate (default 1 Hz would delay obstacle insertion — recommend 5 Hz); benefit may not materialise if from-scratch search is already fast (this is exactly what the D30 benchmark tests).",
+   "realtime_budget": "Tube of ~1.4e4 cells for a 6 m invalid segment: ~1-2 ms search plus O(M) validity check; falls back to the 400 ms full-search budget."
+  },
+  {
+   "name": "TAR-A* — C3: cost-integrated LOS shortcut, clearance-weighted smoothing, curvature/velocity profile and predicted travel time",
+   "idea": "(a) String-pulling shortcut accepted only if the supercover segment is collision-free and its time integral int ds/v_lim <= (1+delta)(g_j - g_i), so straightening never worsens time cost or hugs walls; (b) Nav2 gradient smoother plus a clearance term w_c max(0, d_safe - d) grad d using the inflation inverse, with per-iteration rollback on collision/curvature violation; (c) Menger curvature -> v <= omega_max/kappa, forward/backward trapezoidal profile with a_max; (d) T_pred = alpha[ |dtheta_0|/omega_max + sum 2 ds/(v_{i-1}+v_i) + |dtheta_M|/omega_max ], alpha calibrated from logs. Published as amr_msgs/PlanInfo alongside nav_msgs/Path.",
+   "closest_prior_work": "A* post-smoothing (Botea 2004 / Nash 2007, RECALLED); APP bidirectional shortcut + perturbation on costmaps (Li & Cheng RA-L 2023, VERIFIED); Dolgov et al. 2010 CG smoothing (RECALLED); Nav2 SimpleSmoother/Smac smoother (VERIFIED source); Pastorelli et al. RA-L 2025 G1 bounded-curvature smoothing (VERIFIED).",
+   "novelty_claim": "variant_of_prior",
+   "expected_gain": "Recovers most of the 8.2% 8-connected length overhead without sacrificing completeness (unlike Theta*'s ~86% success in the 2026 Nav2 benchmark); curvature-feasible paths for the Pure Pursuit/DWA stack; directly delivers the spec's <=15% travel-time prediction metric.",
+   "risks": "Shortcut binary search cost O(M log M L/r) on long paths (bounded by the 400 ms budget); smoothing weights must satisfy w_d + 4 w_s < 2; time prediction accuracy depends on the DWA tracking policy and on avoidance stops being excluded from 'actual time' (open question).",
+   "realtime_budget": "Post-processing <= 10 ms typical; included in the 400 ms plugin budget; O(M) profile and prediction."
+  }
+ ],
+ "evaluation_plan": "Planners via planner_server planner_plugins [AmrAStar, NavFnDijkstra (use_astar=false), NavFnAStar (use_astar=true), Smac2D (kappa 1.0 and 2.0), SmacHybrid (REEDS_SHEPP, min_turning_radius 0.4), ThetaStar] on one shared global_costmap (static+obstacle+inflation, s=2.0, R_infl=1.2 m), tolerance 0.25, called through ComputePathToPose{planner_id}; record result planning_time and in-plugin steady_clock wall time. Datasets: P50 (the spec's 50 seeded start-goal pairs: free cell, cost <= 128, >= 10 m apart), P500 extension, H10 hand-picked hard cases (0.6 m corridor, dead-end aisle, dock approach, diagonal crossing), D30 dynamic-obstacle scenarios (0.3-1.5 m/s crossing workers/forklifts). Metrics mapped to the spec: success rate (>= 98% on P50), planning/replanning time p50/p95/max split by VALID/LOCAL/FULL mode (<= 500 ms), path length, min/mean clearance from an offline EDT of the static map (min >= 0.30 m), smoothness (heading changes > 10 deg, max curvature), predicted-vs-actual travel time over 50 DWA-tracked runs (<= 15%, before/after alpha calibration), consecutive-plan discrete Frechet distance on D30, RSS and 5-robot CPU. Procedure: (1) offline gtest/benchmark harness loading the PGM map into Costmap2D, 3 repetitions, median, determinism check via path hash; (2) online rclpy action-client benchmark over P50/P500 x planners; (3) D30: TAR-A* with LOCAL enabled vs FULL-forced vs Smac2D (optional simple D* Lite control); (4) travel-time calibration and error; (5) ablations: C1 off (kappa=1), C2 off, each C3 term off. CSV logs in logs/planning/ with [timestamp, planner_id, pair_id, success, plan_time_ms, wall_ms, length_m, min_clear_m, mean_clear_m, n_turns, max_curv, T_pred_s, mode, expansions] and [task_id, T_pred, T_actual, err].",
+ "implementation_plan": "C++17 inside the existing src/amr_navigation ament_cmake package (Python only for benchmark/analysis). Add deps pluginlib, rclcpp_lifecycle, nav2_util, nav_msgs, builtin_interfaces, ament_cmake_gtest. Files: include/amr_navigation/global/{grid_types,speed_map,grid_astar,tube_repair,path_postprocess,amr_astar_planner}.hpp and src/global/*.cpp (ROS-independent core operating on const uint8_t* cost, W, H, res); plugins/global_planner_plugin.xml declaring amr_navigation/AmrAStarPlanner with base nav2_core::GlobalPlanner and CMake pluginlib_export_plugin_description_file(nav2_core ...); config/global_planner.yaml (v_max, a_max, v_floor, omega_max, cost_scaling_factor synced with the costmap, inflation_radius, tube_radius, eta, k_margin, delta_shortcut, w_data, w_smooth, w_clear, d_safe, max_planning_time 0.4, allow_unknown); amr_msgs/msg/PlanInfo.msg (predicted_time, length, min_clearance, mode, expansions, plan_time_ms) published by the plugin next to the nav_msgs/Path returned from createPlan (costmap mutex locked for the search, as Smac does). Tests (gtest, target >= 70% coverage): speed-map inverse/monotonicity, A* cost equality vs Dijkstra on random grids, numerical heuristic-consistency check, corner-cut prohibition, determinism, timeout; tube repair bound and fallback; shortcut collision-free and cost-non-worsening, smoother convergence condition, profile acceleration constraints, synthetic-path time prediction; plugin lifecycle test with a synthetic Costmap2DROS. Benchmark: benchmark/{bench_planners.py, pairs_50.yaml, analyze.py}; docs/algorithms/astar.md condensed from the brief. Nav2 integration: keep the default 1 Hz replanning BT (plugin decides VALID/LOCAL/FULL) or the replan-only-if-path-invalid BT; recommend global_costmap update_frequency 5 Hz. Schedule: week 1 core A* + speed map + unit tests; week 2 plugin + NavFn/Smac benchmark pipeline; week 3 C3 post-processing + time prediction; week 4 C2 repair + D30 + ablations; week 5 report and tuning. Compute budget: full search p95 <= 100 ms, LOCAL p50 <= 5 ms, hard timeout 400 ms returning an empty path to BT recovery, <= 15 MB per instance, 5-robot replanning <= 0.3 core even if all replans are FULL.",
+ "open_questions": [
+  "Final warehouse map aisle-width distribution (number/length of 0.6 m corridors) drives inflation_radius, cost_scaling_factor and v_floor tuning.",
+  "Should the global costmap be the full 1200x800 map at 5 Hz update (vs the 1 Hz default) so dynamic obstacles reach the global planner within the 500 ms replanning budget; CPU impact to be measured.",
+  "Does the DWA team's near-obstacle slowdown policy match the stopping-distance v_lim used in C1? This is the precondition for the <=15% travel-time prediction target.",
+  "Definition of 'actual travel time' for the 15% metric (docking excluded? avoidance stops included?) must be agreed with the reporting team.",
+  "Should amr_perception's TrackedObstacle predicted footprints be injected as a global costmap layer (would raise the LOCAL-repair share)?",
+  "Should a hook for fleet lane reservations (extra_cost[N] added to w_t) be opened now, ahead of the corridor-graph phase-2 option?",
+  "arXiv export API returned HTTP 429 for every call (WebFetch and host curl); the survey used the arXiv search UI, /abs pages, GitHub Humble sources and venue pages instead. Numbers quoted from search summaries (e.g. Smac 38% faster than NavFn) should be re-checked in the full texts before appearing in the final report."
+ ]
+}
