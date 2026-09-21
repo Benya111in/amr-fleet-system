@@ -21,6 +21,8 @@ install(DIRECTORY
 # --- 테스트 ---
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
+  # 라이선스는 package.xml 에 한 번 선언한다. 파일별 저작권 헤더 검사(ament_copyright)는 생략.
+  set(ament_cmake_copyright_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
 
 endif()

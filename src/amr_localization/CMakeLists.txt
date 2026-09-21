@@ -22,10 +22,13 @@ install(DIRECTORY
 # --- 테스트 ---
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
+  # 라이선스는 package.xml 에 한 번 선언한다. 파일별 저작권 헤더 검사(ament_copyright)는 생략.
+  set(ament_cmake_copyright_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
 
   find_package(ament_cmake_pytest REQUIRED)
-  file(GLOB _pytests test/test_*.py)
+  # CONFIGURE_DEPENDS: 테스트 파일을 추가하면 재구성 없이 다음 빌드에 반영된다.
+  file(GLOB _pytests CONFIGURE_DEPENDS test/test_*.py)
   if(_pytests)
     ament_add_pytest_test(amr_localization_pytest test)
   endif()
