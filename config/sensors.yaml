@@ -1,61 +1,121 @@
 # 센서 사양 및 노이즈 모델 (명세 4장 1절 "센서 시스템 구성")
 # 명세 7장 제약: 센서 노이즈 모델을 반드시 적용해야 한다.
-# extrinsic 은 URDF TF 트리와 반드시 일치시킬 것.
+#
+# 좌표/이름 규약
+# - extrinsic 은 모두 base_link 기준 "본체 규약(body convention)" 링크의 원점/자세다:
+#   x 전방, y 좌측, z 상방 (REP-103). URDF 의 fixed joint 원점과 반드시 일치시킬 것
+#   (docs/architecture/README.md TF 트리와 동일). lidar_link / imu_link / camera_link 모두 rpy = 0.
+# - 카메라 optical 프레임(z 전방, x 우측, y 하방)은 camera_link 의 고정 자식이며
+#   rpy = (-pi/2, 0, -pi/2) 로 URDF 에서 만든다. extrinsic 에는 optical 회전을 넣지 않는다.
+# - 토픽/프레임 이름은 네임스페이스 상대 이름이다. 다중 로봇 시 launch 가 네임스페이스(robot1/scan)와
+#   프레임 접두사(robot1/lidar_link)를 주입한다 (config/ekf.yaml 과 같은 규약).
+# - "네이티브" 라 적은 노이즈는 Gazebo Fortress 센서 SDF 가 직접 지원하는 항목이고, 나머지는
+#   프로젝트 자체 노드가 적용한다.
 
 /**:
   ros__parameters:
 
     lidar:
-      topic: /scan
-      frame_id: lidar_link
-      samples: 720                # 360도 / 0.5도 해상도
-      angle_min: -3.14159         # [rad]
-      angle_max: 3.14159
-      range_min: 0.10             # [m]
-      range_max: 25.0             # [m]
-      update_rate: 10.0           # [Hz] 이상
-      noise_stddev: 0.03          # [m] 가우시안 노이즈 σ (명세 지정값)
+      topic: scan
+      frame_id: lidar_link            # 본체 규약, rpy 0 → 스캔 평면 = base_link xy 평면 (지면 +0.38 m, 차체 상면 위)
+      samples: 720
+      # 각도 산술: 빔은 angle_min 에서 시작해 (samples - 1) 개의 증분으로 놓인다.
+      #   angle_increment = (angle_max - angle_min) / (samples - 1)
+      # angle_max 를 +pi 로 두면 2pi/719 = 0.50069도 이고 첫/끝 빔이 ±180도 에서 겹친다 (Fortress 실측).
+      # 720 개 빔이 정확히 0.5도 간격으로 360도 를 덮으려면 마지막 빔은 +180도 - 0.5도 여야 한다:
+      #   angle_max       = pi - 2pi/720 = 3.13286601 rad (= 179.5도)
+      #   angle_increment = (3.13286601 + 3.14159265) / 719 = 0.00872665 rad = 0.5000도
+      # 빔 index 360 이 정확히 0도(전방), index 0 이 -180도(후방).
+      # Fortress 6.18 헤드리스 실측(gpu_lidar, ros_gz_bridge 경유): angle_min -180.000도, angle_max 179.500도,
+      #   angle_increment 0.500000도, ranges 720, 0도 빔 index 360.000 (이전 값은 0.500695도, 첫/끝 빔 겹침).
+      angle_min: -3.14159265          # [rad] -180도
+      angle_max: 3.13286601           # [rad] +179.5도
+      range_min: 0.10                 # [m]
+      range_max: 25.0                 # [m] 미검출 빔은 +inf 로 온다
+      update_rate: 10.0               # [Hz] 이상
+      noise_stddev: 0.03              # [m] 가우시안 σ (명세 지정값). 네이티브: <lidar><noise>
       extrinsic: {x: 0.15, y: 0.0, z: 0.20, roll: 0.0, pitch: 0.0, yaw: 0.0}
 
+    # RGB/Depth 공용 카메라 모듈의 본체 규약 링크 (docs TF 트리의 camera_link). 두 optical 프레임의 부모.
+    # 두 카메라는 같은 모듈이므로 extrinsic 을 여기 한 곳에만 둔다 (RGB-Depth 간 베이스라인은 0 으로 근사).
+    camera_link:
+      frame_id: camera_link
+      extrinsic: {x: 0.18, y: 0.0, z: 0.25, roll: 0.0, pitch: 0.0, yaw: 0.0}
+      # camera_link -> camera_optical_frame / camera_depth_optical_frame 고정 조인트의 rpy (URDF 에서 생성)
+      optical_rpy: [-1.5707963, 0.0, -1.5707963]
+
     depth_camera:
-      topic: /camera/depth/image_raw
-      points_topic: /camera/depth/points
-      frame_id: camera_depth_optical_frame
+      topic: camera/depth/image_raw
+      points_topic: camera/depth/points
+      info_topic: camera/depth/camera_info
+      link_frame_id: camera_link                # extrinsic 은 camera_link 블록 참조
+      frame_id: camera_depth_optical_frame      # 깊이 이미지/camera_info 의 header.frame_id (optical 규약)
       width: 640
       height: 480
       hfov: 1.518436              # [rad] = 87도
       range_min: 0.20             # [m]
       range_max: 10.0             # [m]
       update_rate: 15.0           # [Hz] 이상
-      # 깊이 노이즈는 거리 제곱에 비례하는 모델을 쓴다: σ(d) = base + k * d^2
-      noise_base: 0.005           # [m]
-      noise_quadratic_coeff: 0.002
-      extrinsic: {x: 0.18, y: 0.0, z: 0.25, roll: 0.0, pitch: 0.0, yaw: 0.0}
+      # 깊이 노이즈 (결정): 두 단계로 나눠 적용한다. 합성 σ(d) = sqrt(noise_base^2 + (noise_quadratic_coeff * d^2)^2)
+      #  - Fortress 깊이 카메라의 네이티브 노이즈는 거리 무관 가우시안뿐이다 → 시뮬레이터에는
+      #    noise_base 만 <camera><noise><stddev> 로 넣는다.
+      #  - 거리 제곱 항(스테레오 깊이의 실제 특성, RealSense D435 급이 약 0.0025·d^2)은 프로젝트의
+      #    깊이 전처리 노드(amr_perception, 점군 변환 직전)가 픽셀별로 N(0, noise_quadratic_coeff·d^2) 를 가산한다.
+      #    d=1 m: 0.005 m, d=3 m: 0.019 m, d=10 m: 0.20 m.
+      noise_base: 0.005           # [m]   시뮬레이터 네이티브 가우시안 σ
+      noise_quadratic_coeff: 0.002  # [m^-1] 전처리 노드가 적용하는 거리 제곱 계수
+      # 주의 (Fortress 6.18 실측): 깊이 점군 <topic>/points 의 좌표는 ignition_frame_id 를 optical 로 적어도
+      # 센서 본체 규약(x 전방, y 좌측, z 상방)으로 나온다 (전방 1.9 m 벽 → 점군 x 최대 1.91, 지면이 z = -0.5 로 관측,
+      # header.frame_id 는 camera_depth_optical_frame). 그대로 optical frame_id 를 붙이면 점군이 90도 돌아간다.
+      # → 점군은 시뮬레이터 것을 쓰지 않고 깊이 이미지 + camera_info 로부터 프로젝트가 직접 생성한다
+      #   (명세 2장 "Depth Camera 점군 변환" 구현 항목). 시뮬레이터 점군을 쓰려면 브리지 뒤에서 frame_id 를
+      #   camera_link 로 바꿔 달아야 한다.
 
     rgb_camera:
-      topic: /camera/image_raw
-      info_topic: /camera/camera_info
-      frame_id: camera_optical_frame
+      topic: camera/image_raw
+      info_topic: camera/camera_info
+      link_frame_id: camera_link                # extrinsic 은 camera_link 블록 참조
+      frame_id: camera_optical_frame            # 이미지/camera_info 의 header.frame_id (optical 규약)
       width: 640
       height: 480
       hfov: 1.518436              # [rad]
       update_rate: 30.0           # [Hz]
-      extrinsic: {x: 0.18, y: 0.0, z: 0.25, roll: 0.0, pitch: 0.0, yaw: 0.0}
 
     imu:
-      topic: /imu/data
-      frame_id: imu_link
+      topic: imu/data
+      frame_id: imu_link          # 본체 규약, rpy 0 (base_link 와 축 정렬)
       update_rate: 100.0          # [Hz] 이상
-      # 바이어스 + 가우시안 노이즈 모델 (명세 요구)
+      # 노이즈 모델 = 가우시안 백색 노이즈 + 바이어스. 네이티브: <imu><angular_velocity|linear_acceleration><x|y|z><noise>
+      # (SDF 는 축별로 쓰므로 아래 값을 x/y/z 세 축에 동일하게 넣는다)
+      #  - *_noise_stddev : 샘플마다 독립 N(0, σ)
+      #  - *_bias_mean / *_bias_stddev : 시작 시 한 번 |b| ~ N(bias_mean, bias_stddev) 를 뽑고 축별로 부호를
+      #    무작위로 정해 상수 오프셋으로 더한다 → 정지 캘리브레이션(명세 2장 "IMU 바이어스 보정")의 검출/제거 대상.
+      #  - *_dynamic_bias_* : 켜면 gz-sensors GaussianNoiseModel 이 같은 바이어스 변수를 AR(1) 랜덤워크로 갱신해
+      #    정적 오프셋이 감쇠한다 (소스 기준, 미실측). 정적 캘리브레이션 검증이 끝나기 전에는 0 으로 둔다.
+      # 바이어스 크기 근거 (소비자급 MEMS 데이터시트의 초기 영점 오프셋):
+      #   BMI088  : gyro ±1 deg/s (0.017 rad/s), accel ±20 mg (0.20 m/s^2)
+      #   MPU-6050: gyro ±20 deg/s,               accel ±50~80 mg
+      #   → gyro 0.01 rad/s (0.57 deg/s), accel 0.10 m/s^2 (10 mg).
+      # 검출 가능성: 100 Hz × 10 s 정지 평균의 노이즈 잔차는 gyro 0.0002/sqrt(1000) = 6e-6 rad/s,
+      #   accel 0.017/sqrt(1000) = 5e-4 m/s^2 → 바이어스가 잔차의 200 배 이상이라 확실히 검출·보정된다.
       accel_noise_stddev: 0.017   # [m/s^2]
-      accel_bias_stddev: 0.001
+      accel_bias_mean: 0.10       # [m/s^2]
+      accel_bias_stddev: 0.001    # [m/s^2]
+      accel_dynamic_bias_stddev: 0.0   # [m/s^2] 0 = 정적 바이어스만
+      accel_dynamic_bias_correlation_time: 300.0   # [s]
       gyro_noise_stddev: 0.0002   # [rad/s]
-      gyro_bias_stddev: 0.0000075
+      gyro_bias_mean: 0.01        # [rad/s]
+      gyro_bias_stddev: 0.0000075 # [rad/s]
+      gyro_dynamic_bias_stddev: 0.0    # [rad/s] 0 = 정적 바이어스만
+      gyro_dynamic_bias_correlation_time: 300.0    # [s]
       extrinsic: {x: 0.0, y: 0.0, z: 0.10, roll: 0.0, pitch: 0.0, yaw: 0.0}
 
     wheel_encoder:
-      topic: /wheel_odom
-      ticks_per_revolution: 4096  # 명세: 틱 분해능 4096 이상
-      # 슬립 노이즈 — 오도메트리 누적 오차의 주 원인 (명세 2장 분석 대상)
-      slip_noise_stddev: 0.01
+      topic: wheel_odom
+      ticks_per_revolution: 4096  # 명세: 틱 분해능 4096 이상 → 1 틱 = 2pi·0.0825/4096 = 0.127 mm
+      # Fortress DiffDrive 시스템에는 틱/슬립 모델이 없다 (조인트 각을 그대로 적분해 odom 을 낸다).
+      # 이 블록은 프로젝트 자체 엔코더/오도메트리 노드(joint_states → 틱 양자화 + 슬립 노이즈 → wheel_odom,
+      # 명세 2장 "순기구학·오도메트리 직접 구현")를 파라미터화한다. DiffDrive 의 odom 은 GT 비교용으로만 쓴다.
+      # 슬립 노이즈: 주기마다 바퀴 변위 Δs 에 (1 + N(0, slip_noise_stddev)) 를 곱한다 — 누적 오차의 주 원인(명세 2장 분석 대상).
+      slip_noise_stddev: 0.01     # [무차원] 바퀴 변위 대비 비율
       update_rate: 50.0           # [Hz]

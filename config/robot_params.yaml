@@ -1,31 +1,66 @@
 # AMR 로봇 물리/동역학 파라미터 (명세 4장 1절 "로봇 모델링")
-# 이 값들은 URDF(xacro), 컨트롤러, 플래너가 공통으로 참조한다.
+# 이 값들은 URDF(xacro), 컨트롤러, 플래너, 안전 노드가 공통으로 참조한다.
 # 파라미터 변경 시 재빌드가 필요 없도록 YAML 로 외부화한다 (명세 9장 평가 항목).
+#
+# 프레임 규약 (docs/architecture/README.md TF 트리)
+# - base_footprint: base_link 의 지면 투영. base_footprint -> base_link 는 z = robot.base_link_height 인 고정 조인트.
+# - base_link: 차체 박스의 기하 중심. config/sensors.yaml 의 extrinsic 은 모두 이 원점 기준.
+# - 차동 구동 축은 base_link 바로 아래(x = 0) → 회전 중심 = base_link 의 지면 투영.
 
 /**:
   ros__parameters:
 
     robot:
-      # 실제 물류 AMR 규격 참고: 600mm x 400mm x 300mm
+      # 실제 물류 AMR 규격 참고: 600mm x 400mm x 300mm (차체 박스)
       footprint_length: 0.60      # [m]
       footprint_width: 0.40       # [m]
       height: 0.30                # [m]
-      base_mass: 45.0             # [kg] 공차 중량
+      base_mass: 45.0             # [kg] 차체 공차 중량 (바퀴·캐스터 제외; 총 공차 = 45 + 2×1.0 + 2×0.3 = 47.6)
+      ground_clearance: 0.03      # [m] 차체 바닥 ~ 지면
+      base_link_height: 0.18      # [m] = ground_clearance + height/2 (base_footprint -> base_link 의 z)
+      # 차체 박스는 base_link 중심, z 범위 지면 +0.03 ~ +0.33. LiDAR 스캔 평면(지면 +0.38)이 상면 위에 있어
+      # 자기 차체를 보지 않는다.
 
       # 차동 구동 파라미터 — 순기구학 계산의 기준값
       wheel_radius: 0.0825        # [m]
       wheel_separation: 0.36      # [m] 좌우 바퀴 중심 간 거리
+      wheel_width: 0.035          # [m]
+      # 기하 정합: 바퀴 바깥면 |y| = wheel_separation/2 + wheel_width/2 = 0.18 + 0.0175 = 0.1975 < footprint_width/2 = 0.20
+      #   → 바퀴가 풋프린트 안에 들어간다 (여유 2.5 mm). wheel_width 가 0.04 를 넘으면 차체 밖으로 나온다.
+      # 바퀴 조인트 원점 (base_link 기준): (0, ±0.18, wheel_radius - base_link_height = -0.0975), 축 = y.
+      #   바퀴 상단(지면 +0.165)이 차체 바닥(+0.03) 안으로 0.135 들어오므로 URDF 에서 self_collide 를 끄거나 휠하우스를 판다.
+      wheel_mass: 1.0             # [kg] 바퀴 1개
+      wheel_friction_coeff: 1.0   # [무차원] 구동륜 mu (Gazebo <friction><ode><mu>)
+
+      # 캐스터: 구형, 차체 중심선 위 전/후 각 1개
+      caster_radius: 0.03         # [m] = ground_clearance → 캐스터 상단이 차체 바닥에 닿는다
+      caster_mass: 0.3            # [kg] 캐스터 1개
+      caster_x_offset: 0.24       # [m] 캐스터 중심 |x|. 조인트 원점: (±0.24, 0, caster_radius - base_link_height = -0.15)
+      caster_friction_coeff: 0.05 # [무차원] 미끄러지는 구 캐스터 근사 (mu 를 낮게)
+
+      # 관성 (URDF <inertial>). 비대각 성분은 0.
+      # 차체 = 균질 박스 (l=0.60, w=0.40, h=0.30, m=45): m/12 = 3.75
+      #   Ixx = m/12 (w^2 + h^2) = 3.75 × 0.25 = 0.9375
+      #   Iyy = m/12 (l^2 + h^2) = 3.75 × 0.45 = 1.6875
+      #   Izz = m/12 (l^2 + w^2) = 3.75 × 0.52 = 1.95
+      base_inertia: [0.9375, 1.6875, 1.95]     # [kg m^2] ixx, iyy, izz
+      # 바퀴 = 축(y) 방향 원통 (m=1.0, r=0.0825, w=0.035)
+      #   I_axis = m r^2 / 2            = 0.0034
+      #   I_perp = m (3 r^2 + w^2) / 12 = 0.0018
+      wheel_inertia: [0.0018, 0.0034, 0.0018]  # [kg m^2] ixx, iyy(축), izz
+      # 캐스터 = 구 (m=0.3, r=0.03): I = 2/5 m r^2 = 0.000108
+      caster_inertia: 0.000108                 # [kg m^2] ixx = iyy = izz
 
     # 동역학 제한 (명세: 최대속도 2.0, 최대가속도 1.0, 최대회전 1.5)
     limits:
       max_linear_velocity: 2.0        # [m/s]
       min_linear_velocity: -0.5       # [m/s] 후진
-      max_linear_acceleration: 1.0    # [m/s^2]
+      max_linear_acceleration: 1.0    # [m/s^2] 가속·감속 프로파일 공통 (safety 의 제동 거리 계산도 이 값을 쓴다)
       max_angular_velocity: 1.5       # [rad/s]
       max_angular_acceleration: 2.0   # [rad/s^2]
       max_linear_jerk: 2.0            # [m/s^3] 적재물 안정성 (명세 5장)
 
-    # 적재 용량별 질량 — 동역학에 반영 (명세 8장 물품 표)
+    # 적재 용량별 질량 — 동역학에 반영 (명세 8장 물품 표). 적재 시 총 질량 = robot.base_mass + payload.<type>.mass
     payload:
       small:
         mass: 2.0                 # [kg]
@@ -39,7 +74,37 @@
 
     # 안전 (명세 7장)
     safety:
-      emergency_stop_distance: 0.30   # [m] 이내 접근 시 즉시 정지
-      warning_zone_distance: 1.00     # [m] Warning Zone
+      # 거리 기준: 모든 구역 거리는 풋프린트 모서리(0.60 × 0.40 사각형)에서 장애물까지의 최단 거리다.
+      # LiDAR 원점은 base_link 전방 0.15 m 에 있으므로 전방 빔은 range 에서 0.15 (전면 모서리까지), 측방 빔은
+      # 0.20 을 빼야 풋프린트 기준이 된다 → 안전 노드는 스캔 점을 base_link 로 변환한 뒤 풋프린트 다각형까지의
+      # 거리를 계산한다 (range 를 그대로 쓰지 않는다).
+      distance_reference: footprint_edge
+      emergency_stop_distance: 0.30   # [m] (명세) 이내 접근 시 즉시 정지: 속도 지령 0, 프로파일러 우회
       critical_zone_distance: 0.50    # [m] Critical Zone
-      sensor_timeout: 0.5             # [s] 초과 시 센서 고장으로 판단
+      warning_zone_distance: 1.00     # [m] Warning Zone
+
+      # 제동 거리 d(v) = v · reaction_latency + v^2 / (2 · limits.max_linear_acceleration)
+      #   reaction_latency 0.15 s = LiDAR 1 주기(0.10) + 처리·제어 1 주기(0.05), a = 1.0 m/s^2 (프로파일 한계, 보수적)
+      #   v = 2.0 → 0.30 + 2.00 = 2.30 m : 고정 구역 1.0 / 0.5 / 0.3 m 만으로는 최고속에서 제때 정지할 수 없다.
+      # 그래서 구역마다 속도 상한을 두어 "구역 진입 속도로 다음 구역 경계 전에 정지" 가 성립하게 한다:
+      #   warning (1.0 m) → critical (0.5 m) 까지 여유 0.5 m : d(0.5) = 0.075 + 0.125 = 0.20 m ≤ 0.5 ✓ (허용 한계 0.86 m/s)
+      #   critical(0.5 m) → e-stop  (0.3 m) 까지 여유 0.2 m : d(0.2) = 0.030 + 0.020 = 0.05 m ≤ 0.2 ✓ (허용 한계 0.50 m/s)
+      #   e-stop  (0.3 m) : 0.2 m/s 에서 0.05 m 에 정지 → 0.25 m 여유
+      warning_zone_max_speed: 0.5     # [m/s]
+      critical_zone_max_speed: 0.2    # [m/s]
+      reaction_latency: 0.15          # [s]
+      # 구역 밖(여유 D ≥ 1.0 m)에서는 여유 거리 기반 연속 제한을 건다 (구역 상한이 더 낮으면 구역 상한 우선):
+      #   v_max(D) = -a·t + sqrt((a·t)^2 + 2·a·(D - emergency_stop_distance)),  t = reaction_latency
+      #   D = 2.6 → 2.0 m/s, D = 1.0 → 1.04, D = 0.5 → 0.50. 즉 최고속 2.0 m/s 는 전방 여유 2.6 m 이상일 때만 허용.
+      clearance_speed_limit_enabled: true
+
+      # 센서 고장 판정: 토픽별 타임아웃 ≈ 3 주기 (config/sensors.yaml 의 update_rate 기준)
+      sensor_timeouts:
+        lidar: 0.3            # [s] 10 Hz × 3
+        depth_camera: 0.2     # [s] 15 Hz × 3
+        rgb_camera: 0.1       # [s] 30 Hz × 3
+        imu: 0.05             # [s] 100 Hz × 5 — 3 주기(0.03)는 DDS 지터로 오탐 가능해 5 주기로 완화
+        wheel_encoder: 0.06   # [s] 50 Hz × 3
+      # 고장 시 대응 (명세: 안전 정지 또는 저속 운행): LiDAR·휠 엔코더 고장 → 안전 정지,
+      # IMU·카메라 고장 → 아래 상한으로 저속 운행
+      degraded_mode_max_speed: 0.2    # [m/s]
