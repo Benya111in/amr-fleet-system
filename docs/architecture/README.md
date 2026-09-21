@@ -19,9 +19,9 @@
 
 ```
 map
-└── odom                       (EKF 발행)
-    └── base_footprint
-        └── base_link
+└── odom                       (ekf_filter_node_map 발행: map → odom. AMCL 은 tf_broadcast: false)
+    └── base_footprint         (ekf_filter_node_odom 발행: odom → base_footprint. URDF 루트 링크)
+        └── base_link          (robot_state_publisher, URDF 고정 조인트)
             ├── lidar_link            (x: 0.15, y: 0, z: 0.20)
             ├── camera_link           (x: 0.18, y: 0, z: 0.25)
             │   ├── camera_optical_frame
@@ -30,5 +30,8 @@ map
             ├── left_wheel_link
             └── right_wheel_link
 ```
+
+다중 로봇(명세 4.9): `map` 은 공유하고 그 아래 프레임은 `amr_01/odom`, `amr_01/base_footprint` 처럼
+네임스페이스 접두사를 붙인다 (런치에서 주입, `config/ekf.yaml` 머리말 참고). 자식 프레임이 로봇마다 다르므로 충돌이 없다.
 
 검증: `ros2 run tf2_tools view_frames`

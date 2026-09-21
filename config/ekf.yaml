@@ -1,28 +1,78 @@
-# EKF 센서 퓨전 설정 (명세 3장 "위치 추정")
+# EKF 센서 퓨전 설정 (명세 4장 3절 "위치 추정", robot_localization 3.5.x / ROS2 Humble)
 #
-# 융합 입력: Wheel Odometry + IMU + AMCL
+# 융합 입력: Wheel Odometry + IMU + AMCL  →  dual-EKF 구조 (두 노드, 파일 하나)
+#   ekf_filter_node_odom : world_frame=odom. 휠 오도메트리 + IMU 만 융합.
+#                          odom → base_footprint TF 발행. 연속적이고 점프하지 않는다 (REP-105).
+#   ekf_filter_node_map  : world_frame=map.  같은 연속 입력 + AMCL 절대 위치(amcl_pose) 융합.
+#                          map → odom TF 발행. AMCL 재수렴/납치 복구 시 점프할 수 있다 (REP-105).
+#   하나의 EKF 에 AMCL 을 섞어 odom → base 를 발행하면 odom 프레임이 점프해 Nav2 로컬 플래너와
+#   센서 누적이 깨지므로 두 노드로 나눈다. 레이아웃은 robot_localization 동봉 예제
+#   /opt/ros/humble/share/robot_localization/params/dual_ekf_navsat_example.yaml 을 따른다.
 # 목표 정확도: 정지 3cm / 직선 5cm / 회전 8cm 이내
 #
-# 공분산 설정 근거는 docs/algorithms/ekf.md 에 문서화한다 (명세 요구).
-# 아래 값은 config/sensors.yaml 의 노이즈 파라미터에서 출발한 초기값이며,
-# 실측 후 튜닝해야 한다.
+# 런치 파일 작성 시 지켜야 할 것 (amr_localization/launch/localization.launch.py, 아직 미작성):
+#   - 두 노드 모두 이 파일 하나를 --params-file 로 넘긴다. 파라미터 키가 /**/<노드이름> 이므로
+#     어떤 네임스페이스(/amr_01 등) 아래에서 띄워도 해당 노드에 적용된다 (Humble 에서 검증함.
+#     키를 노드 이름만 쓰면 네임스페이스 안에서는 적용되지 않는다).
+#   - 노드 이름은 ekf_node 실행 시 name='ekf_filter_node_odom' / 'ekf_filter_node_map' 으로 지정한다.
+#   - 두 노드 모두 기본 출력 토픽이 odometry/filtered 이므로 map 노드는
+#     remappings=[('odometry/filtered', 'odometry/filtered_map')] 로 바꿔야 한다.
+#   - AMCL 설정(아직 미작성)에서는 tf_broadcast: false 로 둔다. map → odom 은 ekf_filter_node_map 이
+#     발행한다. 둘 다 발행하면 odom 프레임이 두 부모를 갖고 TF 가 요동한다.
+#   - 프레임 이름에 robot_localization 은 네임스페이스 접두사를 붙여 주지 않는다. 다중 로봇(명세 4.9,
+#     5대)에서는 odom_frame / base_link_frame 을 amr_01/odom, amr_01/base_footprint 처럼 런치에서
+#     파라미터 치환으로 주입한다. map_frame 은 모든 로봇이 공유하는 "map" 그대로 둔다
+#     (map → amr_01/odom, map → amr_02/odom … 자식이 서로 다르므로 TF 충돌이 없다).
+#     아래 값은 단일 로봇 기본값이다.
+#   - 토픽은 상대 이름(wheel_odom, imu/data, amcl_pose)이라 네임스페이스 아래로 해석된다.
+#     퍼블리셔(오도메트리 노드, Gazebo IMU 플러그인, AMCL)도 같은 네임스페이스에서 상대 이름으로
+#     발행해야 한다 (config/sensors.yaml 의 topic 값도 같은 상대 이름 규약을 따른다).
+#   - use_sim_time 은 런치에서 넘긴다 (Gazebo /clock).
+#
+# 공분산 설정 근거 (명세 4.3 "각 입력의 공분산 행렬 근거 문서화")
+#   측정 공분산 R 은 이 파일이 아니라 각 메시지의 covariance 필드에서 읽는다. 따라서 값의 출처는
+#   퍼블리셔이며, 퍼블리셔가 config/sensors.yaml 의 노이즈 파라미터로 채워야 한다:
+#     wheel_odom.twist.covariance     ← wheel_encoder.slip_noise_stddev 0.01  → σ²=1e-4 (vx, vy, vyaw)
+#     imu/data.angular_velocity_cov   ← imu.gyro_noise_stddev 0.0002 rad/s  → σ²=4e-8
+#     imu/data.linear_acceleration_cov← imu.accel_noise_stddev 0.017 m/s²   → σ²≈2.9e-4
+#     amcl_pose.pose.covariance       ← AMCL 파티클 분포에서 매 갱신 계산 (수렴 시 작아지고 납치 시 커진다)
+#   융합하는 변수의 covariance 를 0 으로 비워 두면 robot_localization 이 임의의 작은 값으로 대체해
+#   그 센서를 과신하므로 반드시 채운다.
+#   프로세스 노이즈 Q, 초기 공분산 P0 는 이 파일에서 15x15 전체 행렬(225개, 행 우선)로 준다.
+#   robot_localization 3.5.x 는 길이를 검사하지 않아 15개만 주면 힙 쓰레기값을 읽어 출력이 전부 NaN 이
+#   된다 (실제 발생했던 결함). 값은 robot_localization 기본값에서 출발한다. 실측(Ground Truth 대비
+#   RMSE, 명세 4.3) 후 튜닝하고 그 근거는 docs/algorithms/ekf.md 에 남긴다.
+#   상태 순서: x y z roll pitch yaw vx vy vz vroll vpitch vyaw ax ay az
+#   two_d_mode 에서 z roll pitch vz vroll vpitch az 는 0 으로 고정되므로 해당 성분은 의미가 없다.
 
-ekf_filter_node:
+# ---------------------------------------------------------------------------
+# 1. odom EKF — odom → base_footprint (연속 추정, Nav2 로컬 플래너/장애물 회피용)
+# ---------------------------------------------------------------------------
+/**/ekf_filter_node_odom:
   ros__parameters:
-    frequency: 50.0
-    sensor_timeout: 0.1
-    two_d_mode: true              # 2D 평면 주행이므로 z/roll/pitch 고정
+    frequency: 50.0               # [Hz] 휠 오도메트리 50Hz 와 맞춘다
+    sensor_timeout: 0.1           # [s] 이 시간 동안 입력이 없으면 예측만 수행
+    two_d_mode: true              # 2D 평면 주행: z/roll/pitch/vz/vroll/vpitch/az 고정
+    transform_time_offset: 0.0
+    transform_timeout: 0.0
     publish_tf: true
     publish_acceleration: false
+    print_diagnostics: true       # /diagnostics 로 타임스탬프·공분산 문제를 드러낸다
+    debug: false
+    reset_on_time_jump: true      # Gazebo 리셋 등으로 시각이 뒤로 가면 필터를 초기화 (sim time)
 
+    # 프레임: docs/architecture/README.md TF 트리와 일치시킬 것.
+    # base_link_frame 은 URDF 루트 링크와 같아야 한다. 이 프로젝트의 루트는 base_footprint 이고
+    # base_footprint → base_link 는 robot_state_publisher 가 발행하므로, EKF 는 odom → base_footprint 를 낸다.
     map_frame: map
     odom_frame: odom
-    base_link_frame: base_link
-    world_frame: odom             # odom->base_link 를 EKF 가 발행
+    base_link_frame: base_footprint
+    world_frame: odom             # odom 노드: odom → base_footprint 발행
 
-    # --- 입력 1: 휠 오도메트리 ---
-    # 속도만 신뢰한다. 위치는 슬립으로 드리프트하므로 융합하지 않는다.
-    odom0: /wheel_odom
+    # --- 입력 1: 휠 오도메트리 (nav_msgs/Odometry, 50Hz) ---
+    # 속도만 융합한다. 위치는 슬립이 누적된 적분값이라 융합하지 않는다.
+    # vy 도 융합한다: 차동 구동은 vy≡0 을 측정하므로 횡방향 드리프트를 억제하는 구속 조건이 된다.
+    odom0: wheel_odom
     odom0_config: [false, false, false,    # x, y, z
                    false, false, false,    # roll, pitch, yaw
                    true,  true,  false,    # vx, vy, vz
@@ -32,11 +82,108 @@ ekf_filter_node:
     odom0_relative: false
     odom0_queue_size: 10
 
-    # --- 입력 2: IMU ---
-    # yaw 와 각속도를 신뢰. 가속도는 노이즈가 커 선택적으로 사용.
-    imu0: /imu/data
+    # --- 입력 2: IMU (sensor_msgs/Imu, 100Hz) ---
+    # vyaw: 자이로. 휠 오도메트리보다 슬립에 강하므로 회전 시 주 정보원.
+    # yaw(절대 방위)는 융합하지 않는다: 6축 IMU 에는 절대 방위가 없고, Gazebo IMU 의 orientation 은
+    # 노이즈 없는 Ground Truth 라 융합하면 정확도 수치가 실제보다 좋게 나온다.
+    # ax, ay: 융합한다 (명세 8장 예시와 동일). 슬립/공회전 시 휠 속도가 틀려도 가속도계는 실제
+    #   가감속을 본다. 선회 중 IMU 가 보고하는 구심 가속도 ay=vx·vyaw 는 운동 모델의 2차항
+    #   (0.5·ay·dt²)으로 들어가 등속 선회의 이산화 오차를 없애며, vy 로 새는 양은 휠 오도메트리의
+    #   vy≡0 관측이 억제한다. 합성 선회 실측(vx 0.5, vyaw 0.5, 8초): 이상 원호 대비 위치 오차
+    #   ay 미융합 4.5mm → 융합 0.02mm 이하 (노이즈 없음), 6.0mm → 3.5mm (sensors.yaml 노이즈 모델), 잔류 vy ≤ 1mm/s.
+    #   전제: IMU 가 회전 중심에 있다 (sensors.yaml imu.extrinsic x=y=0). 회전 중심을 벗어나면 ω²r 항이
+    #   섞이므로 ay 를 끄거나 extrinsic 을 보정해야 한다.
+    imu0: imu/data
     imu0_config: [false, false, false,
-                  false, false, true,      # yaw
+                  false, false, false,     # yaw 융합 안 함
+                  false, false, false,
+                  false, false, true,      # vyaw
+                  true,  true,  false]     # ax, ay
+    imu0_differential: false
+    imu0_relative: false
+    imu0_queue_size: 20
+    imu0_remove_gravitational_acceleration: true   # Gazebo IMU 는 중력을 포함해 보고한다
+
+    # --- 프로세스 노이즈 공분산 Q (15x15, 대각, robot_localization 기본값) ---
+    # 클수록 예측을 덜 믿고 관측을 더 믿는다. 위치(x,y,yaw)는 관측이 없어 Q 로만 불확실성이 자란다.
+    #                            x     y     z  roll pitch   yaw    vx    vy    vz vroll vpitch vyaw   ax    ay    az
+    process_noise_covariance: [0.05,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0, 0.05,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0, 0.06,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0, 0.03,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0, 0.03,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0, 0.06,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,0.025,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,0.025,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0, 0.04,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0, 0.01,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0, 0.01,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0, 0.02,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0, 0.01,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0, 0.01,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,0.015]
+
+    # --- 초기 추정 공분산 P0 (15x15, 대각, robot_localization 기본값) ---
+    # odom 프레임은 로봇 기동 위치를 원점으로 정의하므로 초기 위치 불확실성은 사실상 0 이다.
+    #                              x     y     z  roll pitch   yaw    vx    vy    vz vroll vpitch vyaw   ax    ay    az
+    initial_estimate_covariance: [1.0e-9,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0, 1.0e-9,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0, 1.0e-9,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0, 1.0e-9,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0, 1.0e-9,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0, 1.0e-9,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0, 1.0e-9,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0, 1.0e-9,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0, 1.0e-9,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0, 1.0e-9,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0, 1.0e-9,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0, 1.0e-9,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0, 1.0e-9,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0, 1.0e-9,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0, 1.0e-9]
+
+# ---------------------------------------------------------------------------
+# 2. map EKF — map → odom (AMCL 절대 위치로 드리프트 보정, 전역 플래너/Fleet 용)
+# ---------------------------------------------------------------------------
+/**/ekf_filter_node_map:
+  ros__parameters:
+    frequency: 50.0
+    sensor_timeout: 0.1
+    two_d_mode: true
+    transform_time_offset: 0.0
+    transform_timeout: 0.0
+    publish_tf: true
+    publish_acceleration: false
+    print_diagnostics: true
+    debug: false
+    reset_on_time_jump: true
+
+    # AMCL 출력은 스캔 시각 스탬프로 뒤늦게(스캔 처리 지연) 도착한다. 이 옵션이 없으면 늦은 측정을
+    # 현재 상태에 그대로 적용해 주행 속도 × 지연만큼 오차가 남는다. 합성 실측(0.5m/s, 지연 100ms,
+    # Ground Truth 대비): false → RMSE 4.5cm (직선 5cm 요구를 거의 소진), true → 0.0001cm.
+    # 켜면 측정 시각으로 되돌아가 적용한 뒤 이후 측정을 다시 반영한다.
+    smooth_lagged_data: true
+    history_length: 1.0           # [s] 되돌릴 수 있는 최대 지연. AMCL 지연(수십~수백 ms)보다 넉넉히.
+
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_footprint   # odom 노드와 동일해야 한다 (URDF 루트 링크)
+    world_frame: map              # map 노드: map → odom 발행
+
+    # --- 입력 1·2: odom 노드와 동일한 연속 입력 (설정 근거는 위 참조) ---
+    odom0: wheel_odom
+    odom0_config: [false, false, false,
+                   false, false, false,
+                   true,  true,  false,    # vx, vy
+                   false, false, true,     # vyaw
+                   false, false, false]
+    odom0_differential: false
+    odom0_relative: false
+    odom0_queue_size: 10
+
+    imu0: imu/data
+    imu0_config: [false, false, false,
+                  false, false, false,
                   false, false, false,
                   false, false, true,      # vyaw
                   true,  true,  false]     # ax, ay
@@ -45,9 +192,11 @@ ekf_filter_node:
     imu0_queue_size: 20
     imu0_remove_gravitational_acceleration: true
 
-    # --- 입력 3: AMCL (map 기준 절대 위치) ---
-    # 드리프트 보정용. 업데이트 주기가 느리므로 공분산을 크게 잡는다.
-    pose0: /amcl_pose
+    # --- 입력 3: AMCL (geometry_msgs/PoseWithCovarianceStamped, map 프레임 절대 위치) ---
+    # x, y, yaw 만 융합. 공분산은 AMCL 이 파티클 분포로 계산해 메시지에 담는다.
+    # rejection_threshold 는 두지 않는다: 납치(Kidnapped) 후 AMCL 이 재수렴하면 큰 점프가 정상 관측이며,
+    # 이를 이상치로 버리면 map 프레임이 영원히 복구되지 않는다 (명세 4.3 납치 복구 요구).
+    pose0: amcl_pose
     pose0_config: [true,  true,  false,    # x, y
                    false, false, true,     # yaw
                    false, false, false,
@@ -57,12 +206,44 @@ ekf_filter_node:
     pose0_relative: false
     pose0_queue_size: 5
 
-    # --- 프로세스 노이즈 공분산 ---
-    # 대각 성분만 사용. 값이 클수록 예측을 덜 신뢰하고 관측을 더 신뢰한다.
-    process_noise_covariance: [0.05, 0.05, 0.06, 0.03, 0.03, 0.06,
-                               0.025, 0.025, 0.04, 0.01, 0.01, 0.02,
-                               0.01, 0.01, 0.015]
+    # --- 프로세스 노이즈 공분산 Q (15x15, 대각, robot_localization 기본값) ---
+    # x, y 의 Q 가 AMCL 을 얼마나 빨리 따라갈지 정한다. 합성 실측(AMCL 2Hz, 보고 공분산 σ=0.2m):
+    # 초기 오차 4.8m → 5cm 이내 수렴까지 약 3초. AMCL 에 σ=2cm 잡음을 준 정지 실측: RMSE 1.5cm,
+    # 최대 2.5cm (정지 3cm 요구 만족). 납치 복구를 더 빨리 반영해야 하면 x, y 를 키운다
+    # (동봉 예제 dual_ekf_navsat 은 1.0). 대신 AMCL 잡음이 덜 걸러져 map→odom 에 실린다.
+    #                            x     y     z  roll pitch   yaw    vx    vy    vz vroll vpitch vyaw   ax    ay    az
+    process_noise_covariance: [0.05,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0, 0.05,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0, 0.06,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0, 0.03,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0, 0.03,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0, 0.06,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,0.025,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,0.025,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0, 0.04,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0, 0.01,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0, 0.01,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0, 0.02,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0, 0.01,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0, 0.01,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,0.015]
 
-    initial_estimate_covariance: [1e-9, 1e-9, 1e-9, 1e-9, 1e-9, 1e-9,
-                                  1e-9, 1e-9, 1e-9, 1e-9, 1e-9, 1e-9,
-                                  1e-9, 1e-9, 1e-9]
+    # --- 초기 추정 공분산 P0 (15x15, 대각, robot_localization 기본값) ---
+    # 필터는 첫 측정(보통 휠 오도메트리 twist)으로 초기화되고 위치는 0 에서 시작한다. P0 를 키우지 않아도
+    # Q 가 빠르게 누적되어 첫 AMCL 관측을 받아들이므로(위 실측) 기본값을 유지한다.
+    #                              x     y     z  roll pitch   yaw    vx    vy    vz vroll vpitch vyaw   ax    ay    az
+    initial_estimate_covariance: [1.0e-9,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0, 1.0e-9,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0, 1.0e-9,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0, 1.0e-9,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0, 1.0e-9,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0, 1.0e-9,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0, 1.0e-9,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0, 1.0e-9,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0, 1.0e-9,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0, 1.0e-9,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0, 1.0e-9,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0, 1.0e-9,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0, 1.0e-9,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0, 1.0e-9,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0, 1.0e-9]
