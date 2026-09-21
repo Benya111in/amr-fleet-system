@@ -1,0 +1,7 @@
+#!/usr/bin/env python3
+"""ros2 run amr_evaluation cpu_sampler 진입점."""
+
+from amr_evaluation.cpu_sampler import main
+
+if __name__ == '__main__':
+    main()
