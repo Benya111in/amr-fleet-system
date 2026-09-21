@@ -12,6 +12,12 @@ find_package(rclpy REQUIRED)
 # --- Python 모듈 설치 ---
 ament_python_install_package(${PROJECT_NAME})
 
+# --- 실행 파일 (ros2 run amr_dashboard dashboard_node) ---
+install(PROGRAMS
+  scripts/dashboard_node
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 # --- 리소스 디렉토리 설치 ---
 install(DIRECTORY
   launch

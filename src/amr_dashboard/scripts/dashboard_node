@@ -1,0 +1,9 @@
+#!/usr/bin/env python3
+"""dashboard_node 실행 진입점 (ros2 run amr_dashboard dashboard_node)."""
+
+import sys
+
+from amr_dashboard.dashboard_node import main
+
+if __name__ == '__main__':
+    sys.exit(main())

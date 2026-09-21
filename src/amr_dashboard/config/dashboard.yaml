@@ -1,0 +1,29 @@
+# amr_dashboard dashboard_node 파라미터 (components.md §5.7)
+# 토픽 이름은 전역(/fleet/*, /map). robot_estop / reset_estop_service 는 로봇 네임스페이스 아래 상대 이름이며
+# 노드가 /<robot_id>/ 를 앞에 붙인다.
+dashboard_node:
+  ros__parameters:
+    host: "127.0.0.1"           # 기본은 이 컴퓨터만 (E-stop·작업 투입 API 에 인증이 없다). LAN 공개는 "0.0.0.0"
+    port: 8080
+    web_dir: ""                  # 빈 문자열 → share/amr_dashboard/web
+    log_dir: ""                  # 빈 문자열 → $ROS_WS/logs (dashboard_actions_YYYYmmdd.jsonl)
+    heartbeat_period: 5.0        # [s] SSE heartbeat 주기 (프록시 keep-alive)
+    executor_threads: 1          # 1 = SingleThreadedExecutor (기본, 지연 최소), 2 이상 = MultiThreadedExecutor
+    robot_ids: ["amr_01", "amr_02", "amr_03", "amr_04", "amr_05"]   # E-stop 대상 (FleetStatus 에서 본 로봇도 추가된다)
+    task_events_transient_local: false   # fleet_manager 가 /fleet/task_events 를 latched 로 내면 true (늦게 켜도 이력 수신)
+    max_alerts: 100              # 알림 이력 보관 수
+    max_task_events: 50          # 작업 타임라인 보관 수
+    topics:
+      fleet_status: "/fleet/status"
+      fleet_alerts: "/fleet/alerts"
+      task_events: "/fleet/task_events"
+      map: "/map"
+      task_request: "/fleet/task_request"
+      fleet_estop: "/fleet/estop"
+      robot_estop: "estop"                      # → /<robot_id>/estop
+      reset_estop_service: "safety/reset_estop" # → /<robot_id>/safety/reset_estop (해제 시 호출, "" 이면 생략)
+    world:                       # 지도(/map)를 받기 전 캔버스 범위 [m] (명세 4.1: 60 x 40 m)
+      origin_x: 0.0
+      origin_y: 0.0
+      width: 60.0
+      height: 40.0
