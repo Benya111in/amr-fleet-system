@@ -225,6 +225,8 @@ git checkout -b feature/<이름>          # 작업 → push → develop 대상 P
 
 ## 6. 문서
 
-- [시스템 아키텍처](docs/architecture/) — 컴포넌트/시퀀스 다이어그램
+- [시스템 아키텍처](docs/architecture/) — [컴포넌트·노드 그래프·인터페이스 표](docs/architecture/components.md),
+  [시퀀스 다이어그램](docs/architecture/sequences.md), [다중 로봇 네임스페이스/TF](docs/architecture/multi_robot.md),
+  [센서 캘리브레이션 절차](docs/architecture/sensor_calibration.md)
 - [핵심 알고리즘](docs/algorithms/) — DWA, EKF, SLAM 파라미터 튜닝 근거
 - [성능 리포트](docs/reports/) — 위치 추정 RMSE, CTE, 응답 시간, 커버리지
