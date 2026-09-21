@@ -187,12 +187,27 @@ docker compose build && docker compose up -d
 | `feature/*` | 기능 단위 작업 | 직접 커밋 |
 
 ```bash
-./scripts/setup_gitflow.sh              # 로컬 develop 브랜치 + 커밋 템플릿(.gitmessage) 등록
-git checkout develop && git pull
-git checkout -b feature/<이름>          # 작업 → push → develop 대상 PR
+./scripts/setup_gitflow.sh              # 로컬 develop 브랜치 + 커밋 템플릿(.gitmessage) + commit-msg 훅 설치
+git switch develop && git pull --ff-only
+git switch -c feature/<이름>            # 작업 → push → develop 대상 PR
 ```
 
-커밋 형식: `feat(navigation): A* 글로벌 플래너 직접 구현`
+커밋 형식: `feat(navigation): A* 글로벌 플래너 직접 구현` (규칙은 `.gitmessage`, 검사는 `scripts/check_commit_msg.sh`)
+
+- `setup_gitflow.sh` 는 `scripts/check_commit_msg.sh` 를 부르는 commit-msg 훅을 이 저장소의 훅 디렉토리
+  (`.git/hooks`, 또는 저장소 안을 가리키는 `core.hooksPath`)에 설치한다. 이미 있던 commit-msg 훅은
+  `commit-msg.local` 로 옮겨 형식 검사 뒤에 이어서 실행하고(실행 권한이 없어 무시되던 파일은 백업만),
+  `core.hooksPath` 가 저장소 밖(전역 설정)을 가리키면 설치하지 않고 정리 방법을 안내한 뒤 끝난다.
+  스크립트가 없는 체크아웃(`main`, 옛 브랜치)에서는 훅이 검사 없이 통과한다.
+- PR 은 CI(`.github/workflows/ci.yml`)를 통과해야 병합된다 — 룰셋의 필수 상태 검사 두 개:
+  `commit-lint`(PR 범위 커밋의 메시지 원문 + PR 제목을 위 스크립트로 검사, 훅과 같은 판정)와
+  `build-test`(공식 `ros:humble` 이미지에서 `colcon build -Werror` + `colcon test`, 린터 포함).
+- 병합 방식은 "Create a merge commit" 또는 "Rebase and merge". "Squash and merge" 는 PR 제목이 커밋 첫 줄이 되므로
+  저장소 설정(Settings → General → Pull Requests)에서 끄거나, 켜 둔다면 PR 제목도 커밋 형식을 지켜야 한다
+  (`commit-lint` 가 제목도 검사하므로 어느 쪽이든 형식이 어긋난 첫 줄은 develop 에 들어가지 않는다).
+- 병합 순서: `feature/dev-env-fixes`(PR1) → `feature/dev-process-docs`(PR2). `build-test` 는 `ament_*` 린터까지
+  통과해야 하는데 그 수정(저작권 검사 생략, pep257, `amr_msgs/package.xml` 순서)은 PR1 에 있다 — PR2 는 PR1 위에
+  rebase 되어 있고, PR1 없이 PR2 만 올리면 `build-test` 가 실패한다.
 
 ---
 

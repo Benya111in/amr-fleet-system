@@ -1,6 +1,7 @@
 # CI: 커밋 메시지 검사 + colcon 빌드/테스트 (명세 4.1 conventional commits, 7장 colcon build 무경고)
 #
-# - commit-lint : PR 범위(base..head)의 모든 커밋 첫 줄을 scripts/check_commit_msg.sh 로 검사
+# - commit-lint : PR 범위(base..head)의 모든 커밋 메시지 원문과 PR 제목("Squash and merge" 시 커밋 첫 줄)을
+#                 scripts/check_commit_msg.sh 로 검사 — 로컬 commit-msg 훅과 같은 입력, 같은 판정
 # - build-test  : 공식 ros:humble 이미지에서 rosdep → colcon build(-Werror) → colcon test
 #                 (프로젝트 GPU 이미지는 12GB 라 GitHub 러너(디스크 ~14GB)에서 쓸 수 없다)
 # 룰셋의 필수 상태 검사 이름은 job name 과 같다: "commit-lint", "build-test"
@@ -12,10 +13,11 @@ on:
   push:
     branches: [develop, main]
 
-# 같은 PR/브랜치에 새 push 가 오면 이전 실행은 취소
+# 같은 PR 에 새 push 가 오면 이전 실행은 취소. develop/main 으로의 push 는 병합 커밋마다 결과를 남겨야 하므로
+# 취소하지 않는다 (연달아 병합해도 앞 커밋의 검사가 사라지지 않는다)
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -59,18 +61,37 @@ jobs:
         env:
           RANGE: ${{ steps.range.outputs.range }}
         run: |
-          git log --format=%s "$RANGE" > subjects.txt
-          echo "검사 대상 커밋: $(wc -l < subjects.txt)개 ($RANGE)"
+          # 커밋마다 메시지 원문(%B)을 그대로 넘긴다. %s 는 첫 단락을 한 줄로 합쳐 버려서
+          # 본문이 둘째 줄에 바로 붙은 커밋이 훅은 통과하고 CI 만 '72자 초과'로 떨어진다.
+          shas=$(git rev-list --reverse "$RANGE")
+          echo "검사 대상 커밋: $(git rev-list --count "$RANGE")개 ($RANGE)"
           fail=0
-          while IFS= read -r subject; do
-            if printf '%s\n' "$subject" | bash scripts/check_commit_msg.sh; then
-              echo "  ok   $subject"
+          for sha in $shas; do
+            subject=$(git show -s --format=%B "$sha" | sed -n '1p')
+            subject=${subject//::/: :}   # 커밋 메시지 속 '::' 가 워크플로 명령으로 해석되지 않게
+            if git show -s --format=%B "$sha" | bash scripts/check_commit_msg.sh; then
+              printf '  ok   %s %s\n' "${sha:0:7}" "$subject"
             else
-              echo "::error::커밋 메시지 형식 위반: $subject"
+              printf '::error::커밋 메시지 형식 위반: %s %s\n' "${sha:0:7}" "$subject"
               fail=1
             fi
-          done < subjects.txt
+          done
           exit "$fail"
+
+      - name: PR 제목 검사 ("Squash and merge" 시 커밋 첫 줄이 된다)
+        if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          # squash 병합은 PR 제목을 커밋 첫 줄로 쓰므로 제목도 같은 규칙으로 검사한다
+          # (README 4장: 저장소 설정에서 Squash and merge 를 끄거나, 제목을 커밋 형식으로 쓴다)
+          shown=${PR_TITLE//::/: :}
+          if printf '%s\n' "$PR_TITLE" | bash scripts/check_commit_msg.sh; then
+            printf '  ok   PR 제목: %s\n' "$shown"
+          else
+            printf '::error::PR 제목이 커밋 형식(<type>(<scope>): <subject>)이 아니다: %s\n' "$shown"
+            exit 1
+          fi
 
   build-test:
     name: build-test

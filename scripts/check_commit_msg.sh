@@ -2,8 +2,8 @@
 # 커밋 메시지 첫 줄을 Conventional Commits 형식으로 검사한다 (명세 4.1 형상 관리).
 #
 # 사용법:
-#   scripts/check_commit_msg.sh <메시지 파일>              # git commit-msg 훅 (setup_gitflow.sh 가 등록)
-#   git log -1 --format=%B | scripts/check_commit_msg.sh   # CI: stdin 으로 메시지 전달
+#   scripts/check_commit_msg.sh <메시지 파일>                     # git commit-msg 훅 (setup_gitflow.sh 가 등록)
+#   git show -s --format=%B <sha> | scripts/check_commit_msg.sh   # CI: stdin 으로 원문 전달 (훅과 같은 첫 줄)
 #
 # 규칙 (.gitmessage 와 동일):
 #   <type>(<scope>)!: <subject>
@@ -33,8 +33,12 @@ esac
 
 # 메시지 읽기: 파일 인자 또는 stdin
 if [ $# -eq 1 ]; then
-    [ -r "$1" ] || { echo "[commit-msg] 파일을 읽을 수 없다: $1" >&2; exit 2; }
-    msg=$(cat -- "$1")
+    # 디렉토리나 읽을 수 없는 경로는 빈 메시지(rc 1)가 아니라 사용법 오류(rc 2)다
+    if ! { [ -f "$1" ] && [ -r "$1" ]; }; then
+        echo "[commit-msg] 파일을 읽을 수 없다: $1" >&2
+        exit 2
+    fi
+    msg=$(cat -- "$1") || { echo "[commit-msg] 파일을 읽을 수 없다: $1" >&2; exit 2; }
 else
     msg=$(cat)
 fi

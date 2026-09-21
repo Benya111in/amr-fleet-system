@@ -32,4 +32,4 @@
 #   - subject 는 명령형, 마침표 없이, 50자 이내 권장 (첫 줄 72자 초과 시 커밋 거부)
 #   - body 는 무엇을/왜 (어떻게는 코드가 설명한다)
 #   - breaking change 는 type 뒤에 ! 를 붙이고 footer 에 BREAKING CHANGE: 로 명시
-#   - git 이 만드는 Merge / Revert "..." / fixup! 메시지는 검사에서 제외
+#   - git 이 만드는 Merge / Revert "..." / fixup! / squash! 메시지는 검사에서 제외
