@@ -279,3 +279,22 @@ def speeds_at(track: Sequence[Sample], times: Sequence[float],
         s = interpolate(track, t, max_gap)
         out.append(abs(s.v) if s is not None else math.nan)
     return out
+
+
+LANE_MOVING_V = 0.05        # [m/s] 이보다 느린 장애물은 진행축이 없다 (차선 좌표 없음)
+
+
+def lane_coords(ox: float, oy: float, vx: float, vy: float,
+                rx: float, ry: float) -> Tuple[float, float]:
+    """
+    장애물 진행축 기준 로봇 좌표 (along: 진행 방향 +, lateral: 진행 방향 왼쪽 +).
+
+    08 접촉 원인 귀속용: |lateral| 이 두 반지름 합보다 작으면 로봇이 장애물이 지나갈 자리에 서 있었다는
+    뜻이고(정지선을 못 지킴), 크면 장애물이 옆에서 들어온 것이다. 멈춘 장애물은 축이 없어 (NaN, NaN).
+    """
+    speed = math.hypot(vx, vy)
+    if speed < LANE_MOVING_V:
+        return math.nan, math.nan
+    ux, uy = vx / speed, vy / speed
+    dx, dy = rx - ox, ry - oy
+    return dx * ux + dy * uy, -dx * uy + dy * ux

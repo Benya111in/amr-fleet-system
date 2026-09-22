@@ -62,6 +62,20 @@ def test_speeds_at_contact_classification():
     assert metrics.speeds_at([], [0.0])[0] != metrics.speeds_at([], [0.0])[0]     # NaN
 
 
+def test_lane_coords_contact_attribution():
+    # +x 로 1 m/s 걷는 작업자, 로봇은 2 m 앞 · 왼쪽 0.5 m (08 접촉 원인 귀속)
+    along, lat = metrics.lane_coords(0.0, 0.0, 1.0, 0.0, 2.0, 0.5)
+    assert along == pytest.approx(2.0) and lat == pytest.approx(0.5)
+    # +y 로 걸으면 왼쪽은 −x 쪽: 같은 로봇 위치가 오른쪽(−)·앞(+0.5) 으로 바뀐다
+    along, lat = metrics.lane_coords(0.0, 0.0, 0.0, 1.0, 2.0, 0.5)
+    assert along == pytest.approx(0.5) and lat == pytest.approx(-2.0)
+    # 대각선 진행이어도 |가로| 는 진행축까지의 수직 거리
+    _, lat = metrics.lane_coords(0.0, 0.0, 1.0, 1.0, 1.0, 0.0)
+    assert lat == pytest.approx(-math.sqrt(0.5))
+    # 멈춰 있는 장애물은 진행축이 없다 → NaN (차선 좌표를 쓰지 않는다)
+    assert all(math.isnan(c) for c in metrics.lane_coords(0.0, 0.0, 0.0, 0.0, 1.0, 1.0))
+
+
 def test_first_motion_and_latency():
     speeds = ((0.0, 0.0), (0.1, 0.01), (0.2, 0.06), (0.3, 0.2))
     track = [metrics.Sample(t, 0, 0, 0, v, 0.0) for t, v in speeds]
