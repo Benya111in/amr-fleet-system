@@ -15,7 +15,7 @@ from amr_bringup import fleet_spawn, launch_utils as lu
 from launch import LaunchContext
 from launch.actions import (DeclareLaunchArgument, ExecuteProcess, GroupAction,
                             IncludeLaunchDescription, LogInfo, OpaqueFunction,
-                            RegisterEventHandler)
+                            RegisterEventHandler, TimerAction)
 from launch.utilities import perform_substitutions
 import pytest
 import yaml
@@ -78,8 +78,27 @@ def setup(launch_name, **args):
 
 
 def includes(_ctx, actions):
-    """[(패키지, 런치 파일, {인자})] — 기록된 include 만."""
-    return [a for a in actions if isinstance(a, Included)]
+    """[(패키지, 런치 파일, {인자})] — 기록된 include 만 (지연된 스택은 TimerAction 안에 있다)."""
+    out = []
+    for a in actions:
+        if isinstance(a, Included):
+            out.append(a)
+        elif isinstance(a, TimerAction):
+            out += [b for b in a.actions if isinstance(b, Included)]
+    return out
+
+
+def include_delays(actions, name):
+    """런치 파일 이름별 [지연 s] — TimerAction 밖의 include 는 0."""
+    out = []
+    for a in actions:
+        if isinstance(a, Included) and a[1] == name:
+            out.append(0.0)
+        elif isinstance(a, TimerAction):
+            for b in a.actions:
+                if isinstance(b, Included) and b[1] == name:
+                    out.append(float(a.period))
+    return out
 
 
 def by_file(incs, name):
@@ -302,3 +321,20 @@ def test_dds_profile_follows_localhost_only_and_shm_size():
         seg = root.find('.//p:segment_size', ns)
         assert (seg is not None and seg.text == str(16 * 1024 * 1024)) == shm
         assert (root.find('.//p:interfaceWhiteList/p:address', ns) is not None) == whitelisted
+
+
+def test_stacks_are_staggered_per_robot(prefix):
+    # 5대를 한꺼번에 띄우면 lifecycle_manager 가 get_state 응답을 못 받아 스택을 내렸다 (시나리오 12 실측)
+    spawn = fleet_spawn.load_fleet_spawn(str(CONFIG))
+    opts = _opts()
+    assert opts.stack_stagger_s == 6.0
+    acts = lu.stack_actions(spawn.robots, True, opts)
+    assert include_delays(acts, 'localization.launch.py') == [0.0, 6.0, 12.0, 18.0, 24.0]
+    assert [a[2]['robot_name'] for a in includes(None, acts)
+            if a[1] == 'localization.launch.py'] == [r.name for r in spawn.robots]
+    opts.stack_stagger_s = 0.0
+    zero = lu.stack_actions(spawn.robots, True, opts)
+    assert include_delays(zero, 'localization.launch.py') == [0.0] * 5
+    assert not any(isinstance(a, TimerAction) for a in zero)
+    single = lu.stack_actions(spawn.robots[:1], False, _opts())
+    assert include_delays(single, 'localization.launch.py') == [0.0]
