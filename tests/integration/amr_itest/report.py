@@ -10,8 +10,15 @@
 출력  logs/itest/junit.xml     모든 스위트를 합친 JUnit (CI 리포터용)
       logs/itest/summary.json  시나리오별 상태·사유·판정 항목·측정 요약·소요 시간·호스트 부하
       logs/itest/summary.md    사람이 읽는 표
-종료 코드  0: 실패/에러/누락 없음 (skip 은 통과로 셈, --fail-on-skip 이면 실패)
-          1: 하나라도 failed / error / missing
+종료 코드  0: 실패/에러/누락 없음, 그리고 실패로 세는 skip 없음
+          1: 하나라도 failed / error / missing, 또는 실패로 세는 skip·partial
+skip 정책 (skip 은 통과가 아니다)
+  기본          구현된 시나리오가 needs 패키지가 모두 설치된 워크스페이스에서 skip(전부) 또는 partial(일부 skip)
+                이면 실패로 센다 — GPU 없음·백엔드/구성 불가·대역 금지처럼 환경 때문에 못 돈 것도 포함.
+                needs 패키지가 설치되지 않았으면(부분 워크스페이스) skip 으로만 남는다.
+  --fail-on-skip  모든 skip·partial 을 실패로 (needs 설치 여부 무관)
+  --allow-skip    skip·partial 을 실패로 세지 않는다 (하네스 개발용 — 집계에 그대로 표시)
+실행·skip 수는 항상 출력한다 (시나리오 수와 테스트 케이스 수).
 """
 
 import argparse
@@ -22,13 +29,24 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from amr_itest import catalog
 from amr_itest import junit
+from amr_itest import requirements as req
 from amr_itest import results
 from amr_itest.config import repo_root
+
+FAIL_ON_SKIP_DEFAULT = 'default'   # needs 가 설치된 구현 시나리오의 skip 만 실패
+FAIL_ON_SKIP_ALL = 'all'
+FAIL_ON_SKIP_NONE = 'none'
+
 
 SUMMARY_JSON = 'summary.json'
 SUMMARY_MD = 'summary.md'
 AGGREGATE_XML = 'junit.xml'
 UNIT_DIR = 'unit'
+
+
+def missing_needs(scenario) -> List[str]:
+    """시나리오 needs 중 설치되지 않은 패키지."""
+    return [p for p in scenario.needs if not req.has_package(p)]
 
 
 def scenario_entry(log_root: Path, scenario) -> Dict[str, Any]:
@@ -41,10 +59,15 @@ def scenario_entry(log_root: Path, scenario) -> Dict[str, Any]:
                                         else '')
     checks = res.get('checks', [])
     failed = [c for c in checks if not c.get('passed')]
+    if status == junit.PARTIAL and not reason:
+        reason = junit.skip_message(xml)
     return {
         'id': scenario.id, 'number': scenario.number, 'title': scenario.title,
         'status': status, 'skip_reason': reason,
+        'cases': junit.case_counts(xml if xml.is_file() else None),
+        'missing_needs': missing_needs(scenario),
         'implemented': scenario.implemented, 'backend': res.get('backend'),
+        'profile': res.get('measurements', {}).get('profile'),
         'components': res.get('components', {}),
         'threshold': scenario.threshold,
         'checks': checks, 'failed_checks': failed,
@@ -73,10 +96,37 @@ def collect(log_root: Path, ids: Optional[Sequence[str]] = None) -> Dict[str, An
             'host_now': results.host_load()}
 
 
+def skip_is_failure(entry: Dict[str, Any], policy: str = FAIL_ON_SKIP_DEFAULT) -> bool:
+    """skip·partial 을 실패로 셀까 (모듈 설명의 skip 정책)."""
+    if entry['status'] not in (junit.SKIPPED, junit.PARTIAL):
+        return False
+    if policy == FAIL_ON_SKIP_ALL:
+        return True
+    if policy == FAIL_ON_SKIP_NONE:
+        return False
+    return bool(entry['implemented']) and not entry['missing_needs']
+
+
+def counts_line(summary: Dict[str, Any], policy: str = FAIL_ON_SKIP_DEFAULT) -> str:
+    """실행·skip 수 한 줄 (시나리오 수 + 테스트 케이스 수)."""
+    entries = summary['scenarios']
+    executed = [e for e in entries if e['status'] not in (junit.SKIPPED, junit.MISSING)]
+    skipped = [e for e in entries if e['status'] == junit.SKIPPED]
+    partial = [e for e in entries if e['status'] == junit.PARTIAL]
+    as_fail = [e['id'] for e in entries if skip_is_failure(e, policy)]
+    cases = {k: sum(e['cases'][k] for e in entries) for k in ('total', 'executed', 'skipped')}
+    return (f"시나리오 {len(entries)}: 실행 {len(executed)} (그중 일부 skip {len(partial)}), "
+            f"전부 skip {len(skipped)}, 실패로 센 skip {len(as_fail)}"
+            + (f" {as_fail}" if as_fail else '')
+            + f" | 테스트 케이스 {cases['total']}: 실행 {cases['executed']}, skip {cases['skipped']}")
+
+
 def _short(entry: Dict[str, Any], limit: int = 160) -> str:
     """표의 비고 칸: skip 사유 / 실패 판정 / 통과 판정 요약."""
     if entry['status'] == junit.SKIPPED:
         text = entry['skip_reason']
+    elif entry['status'] == junit.PARTIAL and not entry['failed_checks']:
+        text = f"일부 skip: {entry['skip_reason']}"
     elif entry['failed_checks']:
         text = '; '.join(f"FAIL {c['name']}={c['value']}" for c in entry['failed_checks'])
     else:
@@ -89,13 +139,18 @@ def to_markdown(summary: Dict[str, Any]) -> str:
     lines = ['# 통합 테스트 결과', '',
              f"로그 루트: `{summary['log_root']}`  ",
              f"합계: {', '.join(f'{k} {v}' for k, v in sorted(summary['counts'].items()))}  ",
+             f"{counts_line(summary, summary.get('skip_policy', FAIL_ON_SKIP_DEFAULT))}  ",
              f"하네스 단위 테스트: {summary['unit']['status'] or '실행 안 함'}  ",
              f"호스트 부하(집계 시점): {summary['host_now']['loadavg']} / "
              f"{summary['host_now']['cpus']} CPU", '',
-             '| # | 시나리오 | 상태 | 백엔드 | 소요 [s] | 비고 |',
-             '| --- | --- | --- | --- | --- | --- |']
+             '| # | 시나리오 | 상태 | 구성 / 백엔드 | 케이스 실행/skip | 소요 [s] | 비고 |',
+             '| --- | --- | --- | --- | --- | --- | --- |']
+    policy = summary.get('skip_policy', FAIL_ON_SKIP_DEFAULT)
     for e in summary['scenarios']:
-        lines.append(f"| {e['number']} | {e['title']} | {e['status']} | {e['backend'] or '-'} | "
+        status = e['status'] + (' (실패로 셈)' if skip_is_failure(e, policy) else '')
+        lines.append(f"| {e['number']} | {e['title']} | {status} | "
+                     f"{e.get('profile') or '-'} / {e['backend'] or '-'} | "
+                     f"{e['cases']['executed']}/{e['cases']['skipped']} | "
                      f"{e['duration_s'] if e['duration_s'] is not None else '-'} | "
                      f"{_short(e)} |")
     lines.append('')
@@ -118,11 +173,11 @@ def write(summary: Dict[str, Any], log_root: Path) -> Dict[str, Any]:
     return totals
 
 
-def exit_code(summary: Dict[str, Any], fail_on_skip: bool = False) -> int:
+def exit_code(summary: Dict[str, Any], policy: str = FAIL_ON_SKIP_DEFAULT) -> int:
     bad = {junit.FAILED, junit.ERROR, junit.MISSING}
-    if fail_on_skip:
-        bad.add(junit.SKIPPED)
     if any(e['status'] in bad for e in summary['scenarios']):
+        return 1
+    if any(skip_is_failure(e, policy) for e in summary['scenarios']):
         return 1
     if summary['unit']['status'] in (junit.FAILED, junit.ERROR):
         return 1
@@ -143,7 +198,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog='amr_itest.report', description=__doc__.split('\n')[1])
     p.add_argument('--log-dir', default=str(repo_root() / 'logs' / 'itest'))
     p.add_argument('--scenarios', nargs='*', default=None, help='집계할 시나리오 id (기본: 전부)')
-    p.add_argument('--fail-on-skip', action='store_true', help='skip 도 실패로 셈')
+    p.add_argument('--fail-on-skip', action='store_true',
+                   help='모든 skip·partial 을 실패로 셈 (needs 설치 여부 무관)')
+    p.add_argument('--allow-skip', action='store_true',
+                   help='skip·partial 을 실패로 세지 않음 (기본: needs 가 설치된 구현 시나리오의 skip 은 실패)')
     p.add_argument('--list', action='store_true', help='시나리오 목록만 출력')
     p.add_argument('--readme-table', action='store_true', help='README 시나리오 표 출력')
     p.add_argument('--resolve', nargs='*', default=None,
@@ -179,12 +237,19 @@ def main(argv: Optional[List[str]] = None) -> int:
         sid, status, message = args.synthetic
         junit.synthetic(log_root / sid / 'junit.xml', sid, 'launch_test', status, message)
         return 0
+    if args.fail_on_skip and args.allow_skip:
+        print('--fail-on-skip 과 --allow-skip 은 함께 쓸 수 없다', file=sys.stderr)
+        return 2
+    policy = (FAIL_ON_SKIP_ALL if args.fail_on_skip else
+              FAIL_ON_SKIP_NONE if args.allow_skip else FAIL_ON_SKIP_DEFAULT)
     summary = collect(log_root, args.scenarios)
+    summary['skip_policy'] = policy
     totals = write(summary, log_root)
     print(to_markdown(summary))
     print(f"JUnit 합계: tests {totals['tests']}, failures {totals['failures']}, "
           f"errors {totals['errors']}, skipped {totals['skipped']} → {log_root / AGGREGATE_XML}")
-    return exit_code(summary, args.fail_on_skip)
+    print(counts_line(summary, policy))
+    return exit_code(summary, policy)
 
 
 if __name__ == '__main__':

@@ -79,7 +79,7 @@ class Requirement:
     """
     요구사항 하나.
 
-    kind: package | executable | launch | module | file | gpu
+    kind: package | executable | launch | config | module | file | gpu
     why:  무엇 때문에 필요한지 (건너뛰기 사유에 그대로 나온다)
     """
 
@@ -104,6 +104,9 @@ class Requirement:
             ok, what = has_python_module(self.name), f'python module {self.name}'
         elif self.kind == 'file':
             ok, what = Path(self.name).is_file(), f'file {self.name}'
+        elif self.kind == 'config':
+            ok = config_file(self.package, self.name) is not None
+            what = f'config file {self.package}/config/{self.name}'
         elif self.kind == 'gpu':
             ok, what = gpu_device_present(), 'GPU device (/dev/nvidia0 or /dev/dri/renderD*)'
         else:
@@ -123,6 +126,11 @@ def executable(pkg: str, exe: str, why: str = '') -> Requirement:
 
 def launch(pkg: str, name: str, why: str = '') -> Requirement:
     return Requirement('launch', pkg, name, why)
+
+
+def config(pkg: str, name: str, why: str = '') -> Requirement:
+    """share/<pkg>/config/<name>."""
+    return Requirement('config', pkg, name, why)
 
 
 def module(name: str, why: str = '') -> Requirement:

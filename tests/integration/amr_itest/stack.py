@@ -39,6 +39,7 @@ REAL_NODES: Dict[str, Tuple[str, str, str]] = {
     'scan_filter': ('amr_localization', 'scan_filter_node', 'components.md §5.2'),
     'velocity_profiler': ('amr_navigation', 'velocity_profiler_node', 'components.md §5.3'),
     'safety': ('amr_perception', 'safety_node', 'components.md §5.4'),
+    'pointcloud_filter': ('amr_perception', 'pointcloud_filter_node', 'components.md §5.4'),
 }
 
 # 실제 노드에 넘길 패키지 설정 후보 (있는 것만, components.md §6 설정 파일 매핑)
@@ -49,38 +50,69 @@ PACKAGE_CONFIGS: Dict[str, Tuple[str, ...]] = {
     'amr_perception': ('perception.yaml', 'safety.yaml'),
 }
 
-# system.launch.py 가 포함하는 하위 런치 (amr_bringup 계약)
+# system.launch.py 가 포함하는 하위 런치 (amr_bringup launch_utils STACKS 계약 — 인자 이름 with_<스택>).
+# 월드(warehouse.launch.py)는 스위치 없이 항상 포함된다.
+SYSTEM_WORLD = ('amr_simulation', 'warehouse.launch.py')
 SYSTEM_SUBLAUNCH = {
-    'use_simulation': ('amr_simulation', 'warehouse.launch.py'),
-    'use_localization': ('amr_localization', 'localization.launch.py'),
-    'use_navigation': ('amr_navigation', 'navigation.launch.py'),
-    'use_perception': ('amr_perception', 'perception.launch.py'),
-    'use_behavior': ('amr_behavior', 'behavior.launch.py'),
+    'with_localization': ('amr_localization', 'localization.launch.py'),
+    'with_navigation': ('amr_navigation', 'navigation.launch.py'),
+    'with_perception': ('amr_perception', 'perception.launch.py'),
+    'with_behavior': ('amr_behavior', 'behavior.launch.py'),
 }
+# 로봇 수와 무관한 전역 노드 (launch_utils GLOBALS). 단일 로봇 시나리오는 끈다 (기본 true)
+SYSTEM_GLOBALS = ('with_fleet', 'with_dashboard', 'with_evaluation')
+# system() 이 system.launch.py 에 넘기는 인자 이름 — unit/test_launch_contract.py 가 설치된 런치 파일의
+# DeclareLaunchArgument 와 대조한다 (선언되지 않은 인자는 조용히 무시되므로)
+SYSTEM_ARGS = ('use_sim_time', 'robot_name', 'prefix', 'world', 'headless', 'x', 'y', 'yaw',
+               'localization_mode', 'map_yaml') + tuple(SYSTEM_SUBLAUNCH) + SYSTEM_GLOBALS
+MULTI_ARGS = ('num_robots', 'use_sim_time', 'world', 'headless', 'localization_mode',
+              'map_yaml') + tuple(SYSTEM_SUBLAUNCH) + SYSTEM_GLOBALS
 
 
 def _bool(v: bool) -> str:
     return 'true' if v else 'false'
 
 
-def system_requirements(use_simulation: bool = True, use_localization: bool = True,
-                        use_navigation: bool = True, use_perception: bool = True,
+def system_flags(use_localization: bool = True, use_navigation: bool = True,
+                 use_perception: bool = True, use_behavior: bool = False) -> Dict[str, bool]:
+    """시나리오 쪽 이름(use_*) → system.launch.py 스위치(with_*)."""
+    return {'with_localization': use_localization, 'with_navigation': use_navigation,
+            'with_perception': use_perception, 'with_behavior': use_behavior}
+
+
+def system_requirements(use_localization: bool = True, use_navigation: bool = True,
+                        use_perception: bool = True,
                         use_behavior: bool = False) -> List[req.Requirement]:
     """
     system.launch.py 와 켜는 하위 런치의 요구사항.
 
-    스켈레톤 시나리오는 Stack 을 만들기 전에 이것과 자기 노드 요구사항을 한 번에 확인해, 빠진
-    것을 모두 건너뛰기 사유에 담는다 (패키지가 머지되면 자동으로 켜진다).
+    시나리오는 Stack 을 만들기 전에 이것과 자기 노드 요구사항을 한 번에 확인해, 빠진 것을 모두
+    건너뛰기 사유에 담는다. bringup 은 없는 스택을 로그 한 줄로 건너뛰므로(launch_utils.stack_actions)
+    하네스가 먼저 막지 않으면 스택 없이 뜬 채 판정한다.
     """
-    flags = {'use_simulation': use_simulation, 'use_localization': use_localization,
-             'use_navigation': use_navigation, 'use_perception': use_perception,
-             'use_behavior': use_behavior}
-    reqs = [req.launch('amr_bringup', 'system.launch.py', 'system profile')]
-    for flag, on in flags.items():
+    reqs = [req.launch('amr_bringup', 'system.launch.py', 'system profile'),
+            req.launch(*SYSTEM_WORLD, 'system.launch.py 월드')]
+    for flag, on in system_flags(use_localization, use_navigation, use_perception,
+                                 use_behavior).items():
         if on:
             pkg, launch_file = SYSTEM_SUBLAUNCH[flag]
             reqs.append(req.launch(pkg, launch_file, f'system.launch.py {flag}:=true'))
     return reqs
+
+
+def drive_topic_for(navigation: bool, profiler: bool, safety: bool) -> str:
+    """
+    하네스가 직접 주행 명령을 낼 토픽 (components.md §4.1 체인의 가장 앞 빈자리).
+
+    cmd_vel 의 발행자는 safety_node 하나뿐이어야 한다: safety 가 있으면 그 입력(cmd_vel_smoothed),
+    profiler 가 있으면 그 입력(cmd_vel_nav). Nav2 가 있으면 cmd_vel_nav 는 controller 와 같이 쓰므로
+    navigate_to_pose 를 쓰지 않을 때만 직접 명령한다.
+    """
+    if navigation or profiler:
+        return 'cmd_vel_nav'
+    if safety:
+        return 'cmd_vel_smoothed'
+    return 'cmd_vel'
 
 
 class Stack:
@@ -97,6 +129,8 @@ class Stack:
         self.entities: List = []
         self.components: Dict[str, str] = {}
         self.drive_topic = 'cmd_vel'
+        self.spawn_pose: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+        self.system_args: Dict[str, str] = {}
         self.cfg = config.config_dir()
         self.standin_names: List[str] = []
         self._pythonpath = os.pathsep.join(
@@ -124,6 +158,17 @@ class Stack:
             kind = STANDIN
         self.components[component] = kind
         return kind
+
+    def standin_only(self, component: str, why: str) -> None:
+        """
+        실제 노드로 바꿀 수 없는 대역 (운동학 시뮬레이터, component 프로필의 AMCL·실행기).
+
+        ITEST_STANDINS=never 면 건너뛴다 — "실제 노드만" 이라면서 대역으로 합격하지 않게.
+        """
+        if self.settings.standins == 'never':
+            self.ctx.skip(f'{component}: stand-in only in this profile ({why}) — '
+                          'ITEST_STANDINS=never forbids it; use ITEST_PROFILE=system')
+        self.components[component] = STANDIN
 
     def base_params(self) -> list:
         """모든 노드에 주는 설정: robot_params.yaml, sensors.yaml + 공통 오버라이드."""
@@ -182,7 +227,7 @@ class Stack:
         """
         sens = config.sensors()
         if self.backend == KINEMATIC:
-            self.components['simulator'] = STANDIN
+            self.standin_only('simulator', 'kinematic_sim replaces Gazebo')
             imu_real = self.choose('imu_filter', [self._real_req('imu_filter')]) == REAL
             scan_real = self.choose('scan_filter', [self._real_req('scan_filter')]) == REAL
             self.standin('kinematic_sim', 'kinematic_sim', {
@@ -257,8 +302,9 @@ class Stack:
         if amcl:
             # 대역 AMCL 노이즈: 축별 σ 1.5 cm · yaw 0.01 rad, 2 Hz, 지연 0.1 s. config/ekf.yaml 의
             # map 필터는 x·y 프로세스 노이즈가 커서(0.05) AMCL 고정값을 거의 그대로 따르므로 정지 구간
-            # RMSE ≈ √2·σ 가 된다 (시나리오 04 결과 해석 시 참고 — 실제 AMCL 이 들어오면 그 값을 잰다).
-            self.components['amcl'] = STANDIN
+            # RMSE ≈ √2·σ 가 된다 — 이 구성의 04 는 EKF 배관 확인이지 위치 추정 정확도가 아니다
+            # (실제 AMCL 은 system 프로필: 지도 + Gazebo 스캔).
+            self.standin_only('amcl', 'GT + noise; real AMCL needs map + scan (system profile)')
             self.standin('amcl_pose', 'amcl', {'rate': 2.0, 'sigma_xy': 0.015,
                                                'sigma_yaw': 0.01, 'latency': 0.1})
         self.ctx.require([req.executable('robot_localization', 'ekf_node',
@@ -290,11 +336,26 @@ class Stack:
             self.drive_topic = 'cmd_vel_nav'
         if safety:
             if self.choose('safety', [self._real_req('safety')]) == REAL:
-                self.real_node(*REAL_NODES['safety'][:2])
+                self.real_node(*REAL_NODES['safety'][:2], params=self._depth_cloud())
             else:
                 self.standin('safety_gate', 'safety_node')
             if not profiler:
                 self.drive_topic = 'cmd_vel_smoothed'
+
+    def _depth_cloud(self) -> list:
+        """
+        실제 safety_node 의 전방 깊이 점군 입력 (camera/depth/points_filtered, LiDAR 평면 아래 물체).
+
+        safety_node 는 점군이 0.4 s 넘게 없으면 전진을 0.2 m/s 로 묶는다 (components.md §5.4). Gazebo 는 실제
+        pointcloud_filter_node 로 깊이 영상에서 만들고, 깊이 카메라가 없는 운동학 대역에서는 입력을 끈다
+        (depth_cloud.enabled false — components 에 기록; LiDAR 평면 아래 물체 판정은 이 구성에서 시험하지 않는다).
+        """
+        if self.backend == GAZEBO and self.choose(
+                'pointcloud_filter', [self._real_req('pointcloud_filter')]) == REAL:
+            self.real_node(*REAL_NODES['pointcloud_filter'][:2])
+            return []
+        self.components['depth_cloud'] = 'off (no depth camera in this stack)'
+        return [{'depth_cloud.enabled': False}]
 
     def task_executor(self, drive_speed: float = 0.3, drive_time: float = 0.6) -> None:
         """
@@ -303,10 +364,7 @@ class Stack:
         실제 task_executor_node 는 navigate_to_pose(Nav2) + 지도 + 위치 추정이 있어야 동작하므로
         system 프로필(system.launch.py use_behavior:=true)에서 시험한다.
         """
-        if self.settings.standins == 'never':
-            self.ctx.skip('task_executor: the real node needs the full Nav2 system — '
-                          'run with ITEST_PROFILE=system (ITEST_STANDINS=never)')
-        self.components['task_executor'] = STANDIN
+        self.standin_only('task_executor', 'the real node needs Nav2, map and docks')
         self.standin('task_executor', 'task_executor_node',
                      {'drive_speed': drive_speed, 'drive_time': drive_time,
                       'robot_id': self.ns}, with_config=False)
@@ -337,20 +395,79 @@ class Stack:
     # ------------------------------------------------------------------ system 프로필
     def system(self, use_localization: bool = True, use_navigation: bool = True,
                use_perception: bool = True, use_behavior: bool = False,
-               extra_args: Optional[Dict[str, str]] = None) -> None:
-        """amr_bringup system.launch.py 를 포함한다 (필요한 하위 런치를 먼저 확인)."""
-        flags = {'use_simulation': self.backend == GAZEBO, 'use_localization': use_localization,
-                 'use_navigation': use_navigation, 'use_perception': use_perception,
-                 'use_behavior': use_behavior}
-        self.ctx.require(system_requirements(**flags), 'system profile')
-        args = {'use_sim_time': _bool(self.use_sim_time), 'robot_name': self.ns}
+               extra_args: Optional[Dict[str, str]] = None,
+               pose: Tuple[float, float, float] = (0.0, 0.0, 0.0)) -> None:
+        """
+        amr_bringup system.launch.py 를 포함한다 (필요한 하위 런치를 먼저 확인).
+
+        스택 스위치는 with_<스택> 이다 (SYSTEM_ARGS — 선언되지 않은 인자는 조용히 무시된다).
+        스폰 자세 pose 는 명시적으로 넘긴다: 기본은 시나리오 좌표의 기준인 월드 원점 (0, 0, 0) — 랙 B-C
+        통로 한가운데 (system.launch.py 기본값은 fleet_spawn.yaml 의 대기 구역). AMCL 초기 자세·대기 자세도
+        bringup 이 같은 값으로 준다. 지도는 map_yaml 로 명시 (<repo>/maps/warehouse.yaml, map = 월드 —
+        시나리오가 cases.ProbeCase.check_map_registration 으로 확인). fleet / dashboard / evaluation 은
+        단일 로봇 시나리오에 필요 없으므로 끄고, 필요하면 extra_args 로 켠다.
+        """
+        if self.backend != GAZEBO:
+            self.ctx.skip('system profile needs the gazebo backend (system.launch.py includes '
+                          'the world)')
+        flags = system_flags(use_localization, use_navigation, use_perception, use_behavior)
+        self.ctx.require(system_requirements(use_localization, use_navigation, use_perception,
+                                             use_behavior), 'system profile')
+        args = {'use_sim_time': _bool(self.use_sim_time), 'robot_name': self.ns,
+                'prefix': self.prefix, 'world': self.settings.world, 'headless': 'true',
+                'x': repr(float(pose[0])), 'y': repr(float(pose[1])),
+                'yaw': repr(float(pose[2])), 'localization_mode': 'localization',
+                'map_yaml': str(self.map_yaml)}
+        args.update({g: 'false' for g in SYSTEM_GLOBALS})
         args.update({k: _bool(v) for k, v in flags.items()})
         args.update(extra_args or {})
+        unknown = sorted(set(args) - set(SYSTEM_ARGS))
+        if unknown:
+            raise ValueError(f'system.launch.py 가 선언하지 않은 인자: {unknown}')
         self.include('amr_bringup', 'system.launch.py', args)
+        self.system_args = dict(args)
+        self.components.update({'simulator': REAL, 'description': REAL})
         for flag, on in flags.items():
-            self.components[flag.replace('use_', '')] = REAL if on else 'off'
-        if use_navigation:
-            self.drive_topic = 'cmd_vel_nav'
+            self.components[flag[len('with_'):]] = REAL if args[flag] == 'true' else 'off'
+        for flag in SYSTEM_GLOBALS:
+            self.components[flag[len('with_'):]] = REAL if args[flag] == 'true' else 'off'
+        self.components['map'] = (args['map_yaml'] if args['localization_mode'] == 'localization'
+                                  else args['localization_mode'])
+        self.spawn_pose = tuple(float(v) for v in pose)
+        self.drive_topic = drive_topic_for(use_navigation, use_navigation, use_perception)
+
+    def multi_robot(self, robots: int, extra_args: Optional[Dict[str, str]] = None) -> None:
+        """
+        amr_bringup multi_robot.launch.py (월드 1 + 로봇 N대 전체 스택 + fleet). 스폰은 fleet_spawn.yaml.
+
+        evaluation(로봇마다 로거 여럿)과 dashboard 는 끈다 — CPU 측정(명세 4.10)을 부풀리지 않게.
+        """
+        if self.backend != GAZEBO:
+            self.ctx.skip('multi-robot profile needs the gazebo backend')
+        self.ctx.require(system_requirements(True, True, True, True)
+                         + [req.launch('amr_bringup', 'multi_robot.launch.py', '다중 로봇 기동'),
+                            req.launch('amr_fleet', 'fleet_manager.launch.py', 'fleet')],
+                         'multi-robot')
+        args = {'num_robots': str(robots), 'use_sim_time': 'true', 'headless': 'true',
+                'world': self.settings.world, 'localization_mode': 'localization',
+                'map_yaml': str(self.map_yaml), 'with_fleet': 'true', 'with_dashboard': 'false',
+                'with_evaluation': 'false'}
+        args.update({k: 'true' for k in SYSTEM_SUBLAUNCH})
+        args.update(extra_args or {})
+        unknown = sorted(set(args) - set(MULTI_ARGS))
+        if unknown:
+            raise ValueError(f'multi_robot.launch.py 가 선언하지 않은 인자: {unknown}')
+        self.include('amr_bringup', 'multi_robot.launch.py', args)
+        self.system_args = dict(args)
+        self.components.update({'simulator': REAL, 'description': REAL, 'robots': str(robots)})
+        for flag in tuple(SYSTEM_SUBLAUNCH) + SYSTEM_GLOBALS:
+            self.components[flag[len('with_'):]] = REAL if args[flag] == 'true' else 'off'
+        self.components['map'] = args['map_yaml']
+
+    @property
+    def map_yaml(self):
+        """map_server 지도 (저장소의 maps/warehouse.yaml — 월드에 정합된 지도)."""
+        return config.repo_root() / 'maps' / 'warehouse.yaml'
 
     # ------------------------------------------------------------------ 마무리
     def add(self, entity) -> None:

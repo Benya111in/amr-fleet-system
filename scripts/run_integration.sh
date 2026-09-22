@@ -15,38 +15,48 @@
 #   --robot NAME                     로봇 네임스페이스 (기본 amr_01)
 #   --frame-prefix P                 TF 프레임 접두어 (다중 로봇 규약이면 amr_01/)
 #   --timeout-scale X                모든 대기 상한 배율 (고부하 호스트에서 2~4)
-#   --scenario-timeout SEC           시나리오 하나의 wall 상한 (기본 1800, 장시간은 5 h)
+#   --scenario-timeout SEC           시나리오 하나의 wall 상한 (기본 1800, 14 는 운용 시간 + 30 분)
 #   --log-dir DIR                    결과 루트 (기본 logs/itest)
-#   --domain-id N                    ROS_DOMAIN_ID (기본: 이 실행 전용 100~199 — dev 스택과 섞이지 않게,
-#                                    'env' 면 현재 값 유지)
+#   --domain-id N|auto|env           ROS_DOMAIN_ID (기본 auto: 이 실행 전용 1~101 난수 — dev 스택·다른 실행과
+#                                    섞이지 않게. 'env' 면 현재 값 유지. 병렬 CI 는 N 을 명시)
+#   --ign-partition NAME|auto|env    IGN_PARTITION (기본 auto: ITEST_IGN_PARTITION, 없으면 itest_<난수> — 바꿀 때
+#                                    원래 값을 출력한다. 'env' 면 호출한 셸의 IGN_PARTITION 유지)
 #   --include-long                   기본 세트에 장시간 시나리오(14) 포함
-#   --fail-on-skip                   skip 도 실패로 셈 (모든 패키지가 머지된 최종 CI)
+#   --soak-hours H                   14 의 운용 시간 (ITEST_SOAK_HOURS, 기본 4.0)
+#   --fail-on-skip                   모든 skip 을 실패로 셈 (needs 패키지 설치 여부 무관)
+#   --allow-skip                     skip 을 실패로 세지 않음 (기본: needs 패키지가 모두 설치된 시나리오의 skip·
+#                                    일부 skip 은 실패 — GPU 없음 등 환경 때문에 못 돈 것도 통과가 아니다)
 #   --no-unit                        하네스 단위 테스트(tests/integration/unit) 생략
 #   --unit-only                      하네스 단위 테스트만
 #   --coverage                       하네스 단위 테스트 커버리지 (pytest-cov → logs/itest/unit/)
 #   -v, --verbose                    러너 출력을 화면에도 (항상 <id>/launch.log 에 남는다)
 #
+# 시행 수 (명세 캠페인 기본값, 스모크에서 줄일 때 — 줄이면 시행 수 판정이 실패한다)
+#   ITEST_TRIALS (08, 30) · ITEST_RT_SAMPLES (13, 50) · ITEST_MR_TASKS (12, 5) · ITEST_SOAK_HOURS (14, 4.0)
+#
 # 결과  logs/itest/<id>/{result.json, junit.xml, launch.log, *.csv}
 #       logs/itest/junit.xml (전체 합본), summary.json, summary.md
-# 종료 코드  0 전부 통과 또는 skip / 1 실패·에러·시간 초과 / 2 사용법·환경 오류 / 130 중단
+# 종료 코드  0 전부 통과 / 1 실패·에러·시간 초과·실패로 세는 skip / 2 사용법·환경 오류 / 130 중단
 #
-# Gazebo 시나리오(01·02 의 gazebo 백엔드, 03·05~08·10~12·14)는 헤드리스 렌더링 센서에 GPU 가 필요하다.
-# dev 컨테이너(docker-compose.yml 의 nvidia 장치 예약)나 `docker run --gpus all` 에서 돌린다.
-# GPU 가 없으면 해당 시나리오는 사유와 함께 skip 되고, 04·09·13 은 운동학 대역으로 돈다.
+# Gazebo 시나리오(01, 03~08·10~14 의 system 구성, 02·09 의 gazebo 백엔드)는 헤드리스 렌더링 센서에 GPU 가
+# 필요하다. dev 컨테이너(docker-compose.yml 의 nvidia 장치 예약)나 `docker run --gpus all --shm-size=8g` 에서
+# 돌린다. GPU 없는 CI 는 운동학 구성만 고른다: --sim kinematic --profile component 2 4 9 13
+# (04·13 의 component 구성은 AMCL·실행기 대역이라 명세 판정이 아니다 — result.json components 참고).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS="${ROS_WS:-$(dirname "${SCRIPT_DIR}")}"
 cd "${WS}"
 
-usage() { sed -n '2,38p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,48p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 SELECT=()
 LOG_DIR="${WS}/logs/itest"
 SCENARIO_TIMEOUT=""
 DOMAIN_ID="auto"
+PARTITION="auto"
 INCLUDE_LONG=0
-FAIL_ON_SKIP=0
+SKIP_POLICY=()
 RUN_UNIT=1
 UNIT_ONLY=0
 COVERAGE=0
@@ -63,8 +73,11 @@ while [ $# -gt 0 ]; do
         --scenario-timeout) SCENARIO_TIMEOUT="$2"; shift 2 ;;
         --log-dir) LOG_DIR="$(realpath -m "$2")"; shift 2 ;;
         --domain-id) DOMAIN_ID="$2"; shift 2 ;;
+        --ign-partition) PARTITION="$2"; shift 2 ;;
         --include-long) INCLUDE_LONG=1; shift ;;
-        --fail-on-skip) FAIL_ON_SKIP=1; shift ;;
+        --soak-hours) export ITEST_SOAK_HOURS="$2"; shift 2 ;;
+        --fail-on-skip) SKIP_POLICY=(--fail-on-skip); shift ;;
+        --allow-skip) SKIP_POLICY=(--allow-skip); shift ;;
         --no-unit) RUN_UNIT=0; shift ;;
         --unit-only) UNIT_ONLY=1; shift ;;
         --coverage) COVERAGE=1; shift ;;
@@ -87,6 +100,20 @@ else
 fi
 set -u
 
+# Fast DDS 프로파일: bringup 런치(amr_bringup launch_utils.dds_environment)와 같은 파일을 하네스 프로브·
+# component 구성 노드에도 준다 — 참가자 포트 시도 한도(5대 ≈ 150 참가자), 영상 SHM 세그먼트, /dev/shm 가
+# 작으면 SHM 확대 없는 변형(docker 기본 64 MB: --shm-size=8g 권장), ROS_LOCALHOST_ONLY=1 이면 127.0.0.1 변형.
+# 선택 규칙은 launch_utils.dds_profile_name 하나를 쓴다 (이미 설정돼 있으면 그대로)
+if [ -z "${FASTRTPS_DEFAULT_PROFILES_FILE:-}" ]; then
+    DDS_PROFILE="$(python3 -c 'import os
+from ament_index_python.packages import get_package_share_directory as share
+from amr_bringup.launch_utils import dds_profile_name
+print(os.path.join(share("amr_bringup"), "config", dds_profile_name()))' 2>/dev/null || true)"
+    if [ -n "${DDS_PROFILE}" ] && [ -f "${DDS_PROFILE}" ]; then
+        export FASTRTPS_DEFAULT_PROFILES_FILE="${DDS_PROFILE}"
+    fi
+fi
+
 HARNESS="${WS}/tests/integration"
 export PYTHONPATH="${HARNESS}${PYTHONPATH:+:${PYTHONPATH}}"
 export ITEST_LOG_DIR="${LOG_DIR}"
@@ -98,13 +125,32 @@ if [ "${LIST}" = "1" ]; then
     exit 0
 fi
 
-# 이 실행 전용 DDS 도메인·Gazebo 파티션 (같은 컨테이너의 dev 스택/다른 실행과 섞이지 않게)
+# 이 실행 전용 DDS 도메인·Gazebo 파티션 (같은 컨테이너의 dev 스택/다른 실행과 섞이지 않게).
+# 난수는 /dev/urandom — 새 컨테이너마다 거의 같은 $$ 로 만들면 병렬 실행이 같은 값을 받는다.
+# 도메인은 1~101 (ROS 2 Linux 권장 상한 101: 그 위는 포트가 임시 포트 범위와 겹친다), 호출한 셸의 값은 피한다.
+rand16() { od -An -N2 -tu2 /dev/urandom | tr -d ' '; }
 if [ "${DOMAIN_ID}" = "auto" ]; then
-    export ROS_DOMAIN_ID=$(( 100 + $$ % 100 ))
+    d=$(( 1 + $(rand16) % 101 ))
+    [ "${d}" = "${ROS_DOMAIN_ID:-0}" ] && d=$(( d % 101 + 1 ))
+    export ROS_DOMAIN_ID="${d}"
 elif [ "${DOMAIN_ID}" != "env" ]; then
+    case "${DOMAIN_ID}" in
+        ''|*[!0-9]*) echo "--domain-id: 0~232 정수, auto, env 중 하나: ${DOMAIN_ID}" >&2; exit 2 ;;
+    esac
+    [ "${DOMAIN_ID}" -le 101 ] || echo "경고: ROS_DOMAIN_ID ${DOMAIN_ID} > 101 (Linux 임시 포트 범위와 겹칠 수 있다)" >&2
     export ROS_DOMAIN_ID="${DOMAIN_ID}"
 fi
-export IGN_PARTITION="${ITEST_IGN_PARTITION:-itest_$$}"
+CALLER_PARTITION="${IGN_PARTITION:-}"
+if [ "${PARTITION}" = "env" ]; then
+    export IGN_PARTITION="${CALLER_PARTITION}"
+elif [ "${PARTITION}" = "auto" ]; then
+    export IGN_PARTITION="${ITEST_IGN_PARTITION:-itest_$(printf '%04x' "$(rand16)")}"
+else
+    export IGN_PARTITION="${PARTITION}"
+fi
+if [ -n "${CALLER_PARTITION}" ] && [ "${CALLER_PARTITION}" != "${IGN_PARTITION}" ]; then
+    echo "    IGN_PARTITION: 호출 셸의 ${CALLER_PARTITION} 대신 ${IGN_PARTITION} (유지하려면 --ign-partition env)"
+fi
 
 # 실행할 시나리오 id
 IDS=()
@@ -123,7 +169,8 @@ fi
 mkdir -p "${LOG_DIR}"
 T_START=$(date +%s)
 echo "=== 통합 테스트: ${#IDS[@]} 시나리오 (ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}, IGN_PARTITION=${IGN_PARTITION})"
-echo "    로그: ${LOG_DIR}   부하: $(cut -d' ' -f1-3 /proc/loadavg) / $(nproc) CPU"
+echo "    로그: ${LOG_DIR}   부하: $(cut -d' ' -f1-3 /proc/loadavg) / $(nproc) CPU, uptime $(cut -d' ' -f1 /proc/uptime) s"
+echo "    DDS: ${FASTRTPS_DEFAULT_PROFILES_FILE:-(기본)}   /dev/shm: $(df -h /dev/shm | awk 'NR==2 {print $2}')"
 
 UNIT_RC=0
 if [ "${RUN_UNIT}" = "0" ]; then
@@ -169,8 +216,12 @@ for id in "${IDS[@]}"; do
     mkdir -p "${dir}"
     rm -f "${dir}/junit.xml" "${dir}/launch.log"
     limit="${SCENARIO_TIMEOUT:-1800}"
-    [ "${id}" = "14_soak" ] && [ -z "${SCENARIO_TIMEOUT}" ] && limit=18000
+    if [ "${id}" = "14_soak" ] && [ -z "${SCENARIO_TIMEOUT}" ]; then
+        # 운용 시간 + 30 분 (기동·준비·종료)
+        limit=$(python3 -c 'import math, os; print(int(math.ceil(float(os.environ.get("ITEST_SOAK_HOURS", "4.0")) * 3600)) + 1800)')
+    fi
     t0=$(date +%s)
+    export ITEST_SCENARIO_TIMEOUT="${limit}"     # 반복 시나리오가 남은 시간으로 새 시행을 정한다
     if [ "${VERBOSE}" = "1" ]; then
         setsid timeout --signal=INT --kill-after=60 "${limit}" \
             "${RUNNER[@]}" "${file}" --junit-xml "${dir}/junit.xml" \
@@ -192,13 +243,13 @@ for id in "${IDS[@]}"; do
     fi
     status=$(python3 -c 'import sys; from amr_itest import junit; print(junit.status_of(sys.argv[1]))' \
         "${dir}/junit.xml")
-    printf '    %-26s %-8s %5d s  (rc=%s)\n' "${id}" "${status}" "${dt}" "${rc}"
+    printf '    %-26s %-8s %5d s  (rc=%s, 부하 %s)\n' "${id}" "${status}" "${dt}" "${rc}" \
+        "$(cut -d' ' -f1 /proc/loadavg)"
 done
 
 echo
 echo "--- 집계"
-REPORT_ARGS=()
-[ "${FAIL_ON_SKIP}" = "1" ] && REPORT_ARGS+=(--fail-on-skip)
+REPORT_ARGS=("${SKIP_POLICY[@]}")
 RC=0
 if [ ${#IDS[@]} -gt 0 ]; then
     report --scenarios "${IDS[@]}" "${REPORT_ARGS[@]}" || RC=$?
@@ -207,5 +258,5 @@ else
 fi
 [ "${UNIT_RC}" = "0" ] || RC=1
 
-echo "총 소요: $(( $(date +%s) - T_START )) s, 종료 시 부하: $(cut -d' ' -f1-3 /proc/loadavg)"
+echo "총 소요: $(( $(date +%s) - T_START )) s, 종료 시 부하: $(cut -d' ' -f1-3 /proc/loadavg), uptime $(cut -d' ' -f1 /proc/uptime) s"
 exit "${RC}"

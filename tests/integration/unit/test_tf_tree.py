@@ -19,8 +19,26 @@ def _graph():
         g.add('map', 'odom', t, False)
         g.add('/odom', 'base_footprint', t, False)
     g.add('base_footprint', 'base_link', 0.0, True, (0.0, 0.0, 0.18))
-    g.add('base_link', 'lidar_link', 0.0, True, (0.15, 0.0, 0.2))
+    g.add('base_link', 'lidar_link', 0.0, True, (0.15, 0.0, 0.02))      # 차체 안 LiDAR (0.20 m 평면)
     return g
+
+
+# 현재 설정과 같은 기하 (config/sensors.yaml · robot_params.yaml, 센서 재배치 후)
+ROBOT = {'robot': {'base_link_height': 0.18, 'wheel_separation': 0.36, 'wheel_radius': 0.0825}}
+SENSORS = {'lidar': {'extrinsic': {'x': 0.15, 'y': 0.0, 'z': 0.02}},
+           'camera_link': {'extrinsic': {'x': 0.29, 'y': 0.0, 'z': 0.07}},
+           'imu': {'extrinsic': {'x': 0.0, 'y': 0.0, 'z': 0.1}}}
+
+
+def test_expected_edges_require_geometry_keys():
+    """기하 키가 없으면 옛 기본값으로 조용히 판정하지 않고 KeyError."""
+    with pytest.raises(KeyError, match='base_link_height'):
+        tf_tree.expected_edges(SENSORS, {}, {})
+    with pytest.raises(KeyError, match='lidar.extrinsic'):
+        tf_tree.expected_edges({'camera_link': SENSORS['camera_link']}, ROBOT, {})
+    edges = {e.child: e for e in tf_tree.expected_edges(SENSORS, ROBOT, {})}
+    assert edges['lidar_link'].translation == pytest.approx((0.15, 0.0, 0.02))
+    assert edges['camera_link'].translation == pytest.approx((0.29, 0.0, 0.07))
 
 
 def test_graph_structure():
@@ -67,10 +85,10 @@ def test_expected_edges_from_config():
 
 
 def test_check_edges_reports_problems():
-    expected = tf_tree.expected_edges({}, {}, {})
+    expected = tf_tree.expected_edges(SENSORS, ROBOT, {})
     g = _graph()
     g.add('base_link', 'imu_link', 0.0, True, (0.0, 0.0, 0.5))             # 값 틀림
-    g.add('odom', 'camera_link', 0.0, True, (0.18, 0.0, 0.25))             # 부모 틀림
+    g.add('odom', 'camera_link', 0.0, True, (0.29, 0.0, 0.07))             # 부모 틀림
     g.add('world', 'base_footprint', 0.0, False)                            # 이중 부모
     checks = {c.expected.child: c for c in tf_tree.check_edges(
         g, expected, min_rate={'odom': 100.0})}
@@ -83,7 +101,7 @@ def test_check_edges_reports_problems():
     row = checks['imu_link'].as_row()
     assert len(row) == len(tf_tree.EDGE_CSV_COLUMNS) and row[8] == 0
     g2 = tf_tree.TfGraph()
-    g2.add('base_link', 'lidar_link', 0.0, True, (0.0, 0.0, 0.0),
+    g2.add('base_link', 'lidar_link', 0.0, True, (0.15, 0.0, 0.02),
            tf_tree.quat_from_rpy(0.0, 0.0, 0.1))
     rot = tf_tree.check_edges(g2, [e for e in expected if e.child == 'lidar_link'])[0]
     assert rot.rotation_error == pytest.approx(0.1) and 'rotation' in rot.problems[0]

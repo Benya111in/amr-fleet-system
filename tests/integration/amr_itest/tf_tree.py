@@ -203,8 +203,12 @@ EDGE_CSV_COLUMNS = ['parent', 'child', 'publisher', 'kind', 'present', 'translat
                     'rotation_error_deg', 'rate_hz', 'ok', 'problems']
 
 
-def _xyz(ext: Dict) -> Vec3:
-    return (float(ext.get('x', 0.0)), float(ext.get('y', 0.0)), float(ext.get('z', 0.0)))
+def _xyz(ext: Dict, what: str = 'extrinsic') -> Vec3:
+    """외부 파라미터(extrinsic)의 x, y, z (필수 — 없으면 KeyError: 옛 기본값으로 판정하지 않는다)."""
+    try:
+        return (float(ext['x']), float(ext['y']), float(ext['z']))
+    except KeyError as exc:
+        raise KeyError(f'{what}.{exc.args[0]} 가 설정에 없다') from None
 
 
 def _rpy(ext: Dict) -> Quat:
@@ -223,9 +227,12 @@ def expected_edges(sensors: Dict, robot: Dict, ekf: Dict, prefix: str = '') -> L
         return name if name == 'map' or not prefix else prefix + name
 
     rb = robot.get('robot', {})
-    height = float(rb.get('base_link_height', 0.18))
-    sep = float(rb.get('wheel_separation', 0.36))
-    radius = float(rb.get('wheel_radius', 0.0825))
+    try:
+        height = float(rb['base_link_height'])
+        sep = float(rb['wheel_separation'])
+        radius = float(rb['wheel_radius'])
+    except KeyError as exc:
+        raise KeyError(f'robot_params.yaml robot.{exc.args[0]} 가 없다') from None
     lidar = sensors.get('lidar', {})
     cam = sensors.get('camera_link', {})
     imu = sensors.get('imu', {})
@@ -245,15 +252,18 @@ def expected_edges(sensors: Dict, robot: Dict, ekf: Dict, prefix: str = '') -> L
         ExpectedEdge(odom_f, base_fp, 'ekf_filter_node_odom', False),
         ExpectedEdge(base_fp, base, rsp, True, (0.0, 0.0, height), ident),
         ExpectedEdge(base, f(lidar.get('frame_id', 'lidar_link')), rsp, True,
-                     _xyz(lidar.get('extrinsic', {})), _rpy(lidar.get('extrinsic', {}))),
+                     _xyz(lidar.get('extrinsic', {}), 'lidar.extrinsic'),
+                     _rpy(lidar.get('extrinsic', {}))),
         ExpectedEdge(base, cam_f, rsp, True,
-                     _xyz(cam.get('extrinsic', {})), _rpy(cam.get('extrinsic', {}))),
+                     _xyz(cam.get('extrinsic', {}), 'camera_link.extrinsic'),
+                     _rpy(cam.get('extrinsic', {}))),
         ExpectedEdge(cam_f, f(rgb.get('frame_id', 'camera_optical_frame')), rsp, True,
                      (0.0, 0.0, 0.0), optical_q),
         ExpectedEdge(cam_f, f(depth.get('frame_id', 'camera_depth_optical_frame')), rsp, True,
                      (0.0, 0.0, 0.0), optical_q),
         ExpectedEdge(base, f(imu.get('frame_id', 'imu_link')), rsp, True,
-                     _xyz(imu.get('extrinsic', {})), _rpy(imu.get('extrinsic', {}))),
+                     _xyz(imu.get('extrinsic', {}), 'imu.extrinsic'),
+                     _rpy(imu.get('extrinsic', {}))),
         ExpectedEdge(base, f('left_wheel_link'), rsp + ' (joint_states)', False,
                      (0.0, sep / 2.0, radius - height), None),
         ExpectedEdge(base, f('right_wheel_link'), rsp + ' (joint_states)', False,

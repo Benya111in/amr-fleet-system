@@ -8,7 +8,7 @@
   ITEST_PROFILE        auto | component | system — 스택 구성
                          component  하네스가 노드 단위로 조립 (실제 노드가 있으면 실제, 없으면 대역)
                          system     amr_bringup/system.launch.py 전체 (모든 하위 런치가 있어야 함)
-                         auto       시나리오 기본값 (04/09/13: component, 스켈레톤: system)
+                         auto       시나리오 catalog profiles 의 첫 번째 (04·13: system, 02·09: component)
   ITEST_STANDINS       auto | always | never — 대역 노드 정책 (component 프로필)
                          auto   실제 노드가 설치돼 있으면 실제, 없으면 대역
                          always 항상 대역 (하네스 자체 검증용)
@@ -17,6 +17,9 @@
   ITEST_TIMEOUT_SCALE  모든 대기 상한에 곱하는 배율 (호스트 부하가 크면 키운다, 기본 1.0)
   ITEST_WORLD          Gazebo 월드 파일 (기본 warehouse.sdf, amr_simulation/worlds 기준 또는 절대 경로)
   ITEST_SEED           대역 노드 난수 시드 (기본 7)
+  ITEST_SCENARIO_TIMEOUT  러너가 이 시나리오에 준 wall 상한 [s] (run_integration.sh 가 시나리오마다 내보낸다,
+                       없으면 무제한). 시행을 반복하는 시나리오는 남은 시간(ProbeCase.time_left)으로 새 시행을
+                       시작할지 정한다 — 러너에 잘려 측정값 없이 끝나지 않게
 """
 
 from dataclasses import dataclass
@@ -87,14 +90,30 @@ def ekf_params(node: str = 'ekf_filter_node_map') -> Dict[str, Any]:
     return load_ros_params(config_dir() / 'ekf.yaml', f'/**/{node}')
 
 
-def get(d: Dict[str, Any], dotted: str, default: Any = None) -> Any:
-    """중첩 dict 를 'a.b.c' 경로로 읽는다 (없으면 default)."""
+_REQUIRED = object()
+
+
+def get(d: Dict[str, Any], dotted: str, default: Any = _REQUIRED) -> Any:
+    """
+    중첩 dict 를 'a.b.c' 경로로 읽는다.
+
+    default 를 주지 않으면 필수 키: 없으면 KeyError (설정이 바뀌었는데 하네스가 옛 기본값으로 조용히 재는
+    일이 없게 — 예: LiDAR 를 차체 안 0.20 m 로 옮긴 뒤에도 0.38 m 평면으로 판정하던 기본값).
+    """
     cur: Any = d
     for key in dotted.split('.'):
         if not isinstance(cur, dict) or key not in cur:
+            if default is _REQUIRED:
+                raise KeyError(f'설정 키 {dotted!r} 없음')
             return default
         cur = cur[key]
     return cur
+
+
+def scan_plane_height() -> float:
+    """스캔 평면(LiDAR)의 지면 높이 [m] = robot.base_link_height + lidar.extrinsic.z (필수 키)."""
+    return (float(get(robot_params(), 'robot.base_link_height'))
+            + float(get(sensors(), 'lidar.extrinsic.z')))
 
 
 def _env(name: str, default: str) -> str:
@@ -114,6 +133,7 @@ class Settings:
     timeout_scale: float = 1.0
     world: str = 'warehouse.sdf'
     seed: int = 7
+    scenario_timeout: float = math.inf
 
     @classmethod
     def from_env(cls) -> 'Settings':
@@ -141,6 +161,7 @@ class Settings:
             timeout_scale=scale,
             world=_env('ITEST_WORLD', 'warehouse.sdf'),
             seed=int(_env('ITEST_SEED', '7')),
+            scenario_timeout=float(_env('ITEST_SCENARIO_TIMEOUT', 'inf')),
         )
 
     @property

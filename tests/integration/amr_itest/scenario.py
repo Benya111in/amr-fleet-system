@@ -10,7 +10,7 @@
     @pytest.mark.launch_test
     def generate_test_description():
         CTX.begin()                         # 로그 디렉토리 정리 + result.json
-        stack = Stack(CTX, CTX.select_backend())   # 불가능하면 여기서 SkipTest
+        stack = Stack(CTX, *CTX.select())   # (backend, profile) — 불가능하면 여기서 SkipTest
         ...
         return stack.launch_description(), {'ctx': CTX, 'stack': stack}
 
@@ -18,6 +18,7 @@
 "skip decorator" 경로로 처리해 모든 테스트 케이스를 skipped(사유 포함)로 JUnit 에 남긴다.
 (launch_testing 의 unittest 러너 안에서는 pytest.skip 의 Skipped 예외가 통하지 않는다.
 pytest 로 직접 돌릴 때는 conftest.py 가 CTX.skip_reason 을 보고 SKIPPED 로 바꾼다.)
+skip 은 통과가 아니다: 집계(report.py)는 needs 패키지가 모두 설치된 시나리오의 skip 을 실패로 센다.
 """
 
 from dataclasses import asdict, dataclass
@@ -58,9 +59,12 @@ class Scenario:
     threshold: str              # 합격 기준
     log_format: str             # 산출 로그 (파일 + 열)
     backends: Tuple[str, ...] = (KINEMATIC,)   # 지원 백엔드, auto 는 앞에서부터 가능한 것
-    profiles: Tuple[str, ...] = (COMPONENT,)   # 지원 스택 구성, auto 는 첫 번째
+    profiles: Tuple[str, ...] = (COMPONENT,)   # 지원 스택 구성, auto 는 첫 번째 (system 은 gazebo 만)
     implemented: bool = True    # False = 스켈레톤 (필요 노드가 머지되면 켜짐)
     long_running: bool = False  # True = 기본 실행에서 제외 (명시적으로 골라야 실행)
+    # 시나리오가 쓰는 워크스페이스 패키지. 모두 설치돼 있는데 skip 되면 집계는 실패로 센다
+    # (report.skip_is_failure — GPU 없음·백엔드 불가처럼 환경 때문에 못 돈 것도 통과가 아니다)
+    needs: Tuple[str, ...] = ()
 
     @property
     def id(self) -> str:
@@ -71,6 +75,7 @@ class Scenario:
         d['id'] = self.id
         d['backends'] = list(self.backends)
         d['profiles'] = list(self.profiles)
+        d['needs'] = list(self.needs)
         return d
 
 
@@ -113,31 +118,48 @@ class Context:
             head = f'{context}: ' if context else ''
             self.skip(head + '; '.join(missing))
 
-    # --- 백엔드 ---
+    # --- 백엔드·구성 ---
     def backend_missing(self, backend: str) -> Sequence[str]:
         if backend == GAZEBO:
             return req.missing(gazebo_requirements())
         return []
 
+    def select(self) -> Tuple[str, str]:
+        """(backend, profile): 스택 구성을 먼저 고르고 그 구성이 허용하는 백엔드를 고른다."""
+        profile = self.select_profile()
+        return self.select_backend(), profile
+
+    def backend_candidates(self) -> Tuple[str, ...]:
+        """시나리오 백엔드 중 고른 구성이 허용하는 것 (system 프로필 = system.launch.py = Gazebo 만)."""
+        if self.profile == SYSTEM:
+            return tuple(b for b in self.scenario.backends if b == GAZEBO)
+        return self.scenario.backends
+
     def select_backend(self) -> str:
         """
         ITEST_SIM 과 시나리오 지원 목록으로 백엔드를 고른다.
 
-        auto: backends 를 앞에서부터 보며 요구사항이 충족되는 첫 번째.
+        auto: 후보를 앞에서부터 보며 요구사항이 충족되는 첫 번째.
         명시(kinematic/gazebo): 지원하지 않거나 요구사항이 없으면 건너뛴다.
+        select_profile() 이 먼저 불렸으면 그 구성이 허용하는 백엔드만 본다 (select()).
         """
         want = self.settings.sim
+        candidates = self.backend_candidates()
+        if not candidates:
+            self.skip(f'profile {self.profile!r} needs the gazebo backend; scenario '
+                      f'{self.scenario.id} supports {", ".join(self.scenario.backends)}')
         if want != 'auto':
-            if want not in self.scenario.backends:
-                self.skip(f'backend {want!r} not supported by scenario {self.scenario.id} '
-                          f'(supported: {", ".join(self.scenario.backends)})')
+            if want not in candidates:
+                self.skip(f'backend {want!r} not supported by scenario {self.scenario.id}'
+                          f'{" with profile " + self.profile if self.profile else ""} '
+                          f'(supported: {", ".join(candidates)})')
             miss = self.backend_missing(want)
             if miss:
                 self.skip(f'backend {want}: ' + '; '.join(miss))
             self.backend = want
         else:
             reasons = []
-            for cand in self.scenario.backends:
+            for cand in candidates:
                 miss = self.backend_missing(cand)
                 if not miss:
                     self.backend = cand

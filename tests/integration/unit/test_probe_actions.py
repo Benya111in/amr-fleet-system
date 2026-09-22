@@ -142,6 +142,40 @@ def test_action_caller(probe):
     assert rejected.call(Wait.Goal(), 5.0) == (None, None)
 
 
+def test_seed_pose_amcl_and_ekf(probe):
+    """배치 단계: initialpose 발행 + map EKF set_pose + AMCL 무이동 갱신 (kidnap_monitor 와 같은 묶음)."""
+    import math
+    from geometry_msgs.msg import PoseWithCovarianceStamped
+    from robot_localization.srv import SetPose
+    from std_srvs.srv import Empty
+    got = {'ekf': [], 'nomotion': 0}
+
+    def on_set_pose(req, res):
+        got['ekf'].append(req.pose)
+        return res
+
+    def on_nomotion(req, res):
+        got['nomotion'] += 1
+        return res
+    probe.node.create_service(SetPose, '/robot_x/' + actions.EKF_SET_POSE, on_set_pose)
+    probe.node.create_service(Empty, '/robot_x/' + actions.AMCL_NOMOTION, on_nomotion)
+    rec = probe.subscribe('/robot_x/initialpose', PoseWithCovarianceStamped, keep_messages=10)
+    assert probe.wait_for_publisher('/robot_x/initialpose', 0.1) is False     # 아직 발행자 없음
+    out = actions.seed_pose(probe, 'robot_x', 0.8, 5.0, math.pi / 2, timeout=5.0)
+    assert out == {'initialpose': 3, 'ekf_set_pose': True, 'amcl_nomotion_updates': 2}
+    assert probe.wait_until(lambda: rec.count >= 1, 5.0)
+    msg = rec.last()
+    assert msg.header.frame_id == 'map' and msg.pose.pose.position.x == pytest.approx(0.8)
+    assert msg.pose.covariance[0] == pytest.approx(0.05 ** 2)
+    assert got['nomotion'] == 2 and len(got['ekf']) == 1
+    ekf = got['ekf'][0].pose.pose
+    assert ekf.position.y == pytest.approx(5.0) and ekf.orientation.z == pytest.approx(
+        math.sin(math.pi / 4))
+    # 서비스가 없으면 발행만 하고 실패를 보고한다 (예외 없음)
+    none = actions.seed_pose(probe, 'nobody', 0.0, 0.0, 0.0, timeout=0.2, repeats=1)
+    assert none == {'initialpose': 1, 'ekf_set_pose': False, 'amcl_nomotion_updates': 0}
+
+
 def test_cases(itest_env):
     ctx = Context(catalog.get(9)).begin()
 
