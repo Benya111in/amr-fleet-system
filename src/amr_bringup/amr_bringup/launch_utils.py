@@ -21,6 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 import os
+import shutil
 import sys
 import tempfile
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
@@ -352,8 +353,27 @@ def spawn_sequence(robots: Sequence[RobotSpec], spawn: FleetSpawn, opts: Options
 DDS_PROFILE_VAR = 'FASTRTPS_DEFAULT_PROFILES_FILE'
 
 
-def dds_profile_name(environ=os.environ) -> str:
-    """ROS_LOCALHOST_ONLY=1 이면 UDPv4 를 127.0.0.1 로 묶은 변형 (사용자 전송이 rmw 의 localhost 설정을 대체한다)."""
+SHM_MIN_BYTES = 2 * 1024 ** 3   # 16 MB SHM 세그먼트 × 참가자 ≈ 150 (5대)를 담을 /dev/shm 하한
+
+
+def shm_capacity(path: str = '/dev/shm') -> int:
+    """/dev/shm 전체 용량 [B] (없거나 못 읽으면 0)."""
+    try:
+        return shutil.disk_usage(path).total
+    except OSError:
+        return 0
+
+
+def dds_profile_name(environ=os.environ, shm_bytes: Optional[int] = None) -> str:
+    """
+    프로파일 파일 이름 (config/ 아래).
+
+    /dev/shm 가 SHM_MIN_BYTES 보다 작으면 SHM 확대 없는 변형 (docker 기본 64 MB 에서 16 MB 세그먼트가 공간을 다 써
+    통신이 멎었다). 그 밖에 ROS_LOCALHOST_ONLY=1 이면 UDPv4 를 127.0.0.1 로 묶은 변형 (사용자 전송이 rmw 의
+    localhost 설정을 대체한다).
+    """
+    if (shm_capacity() if shm_bytes is None else shm_bytes) < SHM_MIN_BYTES:
+        return 'fastdds_multi_robot_noshm.xml'
     if environ.get('ROS_LOCALHOST_ONLY', '0').strip() == '1':
         return 'fastdds_multi_robot_localhost.xml'
     return 'fastdds_multi_robot.xml'
@@ -377,8 +397,10 @@ def dds_environment() -> List:
         return []
     if not os.path.isfile(path):
         return []
+    note = ('/dev/shm 가 작아 SHM 확대 없음 — ipc: host 또는 shm_size ≥ 2 GB 권장'
+            if path.endswith('_noshm.xml') else '참가자 100 개 초과·영상 SHM')
     return [SetEnvironmentVariable(DDS_PROFILE_VAR, path),
-            LogInfo(msg=f'[bringup] {DDS_PROFILE_VAR}={path} (참가자 100 개 초과·영상 SHM)')]
+            LogInfo(msg=f'[bringup] {DDS_PROFILE_VAR}={path} ({note})')]
 
 
 def bringup_actions(robots: Sequence[RobotSpec], spawn: FleetSpawn, opts: Options,
