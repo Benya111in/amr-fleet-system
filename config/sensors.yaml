@@ -17,7 +17,14 @@
 
     lidar:
       topic: scan
-      frame_id: lidar_link            # 본체 규약, rpy 0 → 스캔 평면 = base_link xy 평면 (지면 +0.38 m, 차체 상면 위)
+      frame_id: lidar_link            # 본체 규약, rpy 0 → 스캔 평면 = lidar_link xy 평면 (지면 +0.20 m, 차체 안)
+      # 장착 (결정): 차체 안 360도 슬롯. 스캔 평면 지면 +0.20 m = robot.base_link_height 0.18 + extrinsic z 0.02.
+      #  - 데크(차체 상면, 지면 +0.33 m) 아래라 적재물이 스캔을 가리지 않는다.
+      #  - 높이 0.20 m 를 넘는 바닥 물체(중형 박스 0.30, 대형 0.40, 다른 로봇 차체 0.03~0.33)는 보인다.
+      #    0.20 m 보다 낮은 물체(소형 박스 0.15, 지게차 포크 0.05~0.10)는 LiDAR 사각 → 전방은 깊이 카메라가 맡는다.
+      #  - 자기 차체 가림: 시뮬레이션은 gpu_lidar <visibility_mask> 로 자기 로봇 시각체만 제외한다
+      #    (로봇마다 다른 비트, urdf/amr_gazebo.xacro self_visibility_bit). 다른 로봇 차체는 그대로 보인다 (실측).
+      #    실기는 슬롯 기둥이 가리는 각도 구간을 scan_filter_node 의 angle_mask 로 뺀다 (docs/architecture/sensor_calibration.md §4).
       samples: 720
       # 각도 산술: 빔은 angle_min 에서 시작해 (samples - 1) 개의 증분으로 놓인다.
       #   angle_increment = (angle_max - angle_min) / (samples - 1)
@@ -34,13 +41,17 @@
       range_max: 25.0                 # [m] 미검출 빔은 +inf 로 온다
       update_rate: 10.0               # [Hz] 이상
       noise_stddev: 0.03              # [m] 가우시안 σ (명세 지정값). 네이티브: <lidar><noise>
-      extrinsic: {x: 0.15, y: 0.0, z: 0.20, roll: 0.0, pitch: 0.0, yaw: 0.0}
+      extrinsic: {x: 0.15, y: 0.0, z: 0.02, roll: 0.0, pitch: 0.0, yaw: 0.0}
 
     # RGB/Depth 공용 카메라 모듈의 본체 규약 링크 (docs TF 트리의 camera_link). 두 optical 프레임의 부모.
     # 두 카메라는 같은 모듈이므로 extrinsic 을 여기 한 곳에만 둔다 (RGB-Depth 간 베이스라인은 0 으로 근사).
+    # 장착 (결정): 차체 전면(x = +0.30) 창 안쪽 1 cm, 데크 아래, 광학 중심 지면 +0.25 m (= 0.18 + 0.07), 수평.
+    #  - 수직 화각 ±35.4도 (hfov 87도, 4:3) → 바닥은 렌즈 전방 0.25 / tan(35.4도) = 0.35 m 부터 보인다.
+    #  - 적재물(데크 위)은 렌즈 뒤·위라 화각에 들어오지 않는다. 사람 전신(1.75 m)은 약 2.1 m 부터 한 화면에 든다.
+    #  - 도킹 마커 판 중심 높이 = 이 광학 중심 높이 (amr_simulation worlds/gen_warehouse_world.py MARKER_Z).
     camera_link:
       frame_id: camera_link
-      extrinsic: {x: 0.18, y: 0.0, z: 0.25, roll: 0.0, pitch: 0.0, yaw: 0.0}
+      extrinsic: {x: 0.29, y: 0.0, z: 0.07, roll: 0.0, pitch: 0.0, yaw: 0.0}
       # camera_link -> camera_optical_frame / camera_depth_optical_frame 고정 조인트의 rpy (URDF 에서 생성)
       optical_rpy: [-1.5707963, 0.0, -1.5707963]
 
@@ -80,6 +91,16 @@
       height: 480
       hfov: 1.518436              # [rad]
       update_rate: 30.0           # [Hz]
+      # 영상 노이즈 (명세 7장). 목표: 정규화 밝기(0~1) 기준 시간 노이즈 σ = noise_stddev.
+      #   0.007 × 255 ≈ 1.8 DN (8 bit) — 실내 조도에서 소형 CMOS 의 시간 노이즈 수준(중간 밝기 SNR ≈ 40 dB).
+      #   도킹 ArUco 정밀도(명세 8장 2 cm / 1도)와 YOLO 강건성을 노이즈 없는 영상이 아니라 이 조건에서 잰다.
+      # 네이티브 <camera><noise> 는 ogre2 후처리 셰이더라 설정값이 영상 σ 와 같지 않다 (Fortress 6.18 실측, 정지 장면
+      # 40 프레임의 픽셀별 σ 평균, 포화 픽셀 제외): 설정 0.007 → 0.00001 (8 bit 양자화에 묻혀 사실상 0),
+      # 0.02 → 0.0005, 0.035 → 0.0022, 0.05 → 0.0046, 0.06 → 0.0066, 0.065 → 0.0077, 0.1 → 0.019 (σ² 에 비례).
+      # 어두운 픽셀일수록 σ 가 크다(설정 0.1: 밝기 0~50 에서 13.8 DN, 200~255 에서 2.4 DN).
+      # → xacro 는 gz_noise_stddev(보정값)를 SDF 에 넣고, noise_stddev 는 결과 영상의 목표 σ(검증 기준)로 둔다.
+      noise_stddev: 0.007             # [정규화] 목표 영상 σ
+      gz_noise_stddev: 0.062          # Gazebo <camera><noise><stddev> — 위 σ 를 내도록 실측 보정한 값
 
     imu:
       topic: imu/data_raw         # 센서(Gazebo 브리지) 원시 출력. imu_filter_node 가 LPF + 바이어스 보정 후
@@ -115,6 +136,8 @@
       topic: wheel_odom
       ticks_per_revolution: 4096  # 명세: 틱 분해능 4096 이상 → 1 틱 = 2pi·0.0825/4096 = 0.127 mm
       # Fortress DiffDrive 시스템에는 틱/슬립 모델이 없다 (조인트 각을 그대로 적분해 odom 을 낸다).
+      # 물리 슬립은 Fortress WheelSlip 시스템(ignition-gazebo-wheel-slip-system)이 있지만 쓰지 않는다 (결정):
+      # 엔코더 오차 모델은 명세 2장 드리프트 분석의 대상이라 파라미터로 통제되는 소프트웨어 모델로 둔다.
       # 이 블록은 프로젝트 자체 엔코더/오도메트리 노드(joint_states → 틱 양자화 + 슬립 노이즈 → wheel_odom,
       # 명세 2장 "순기구학·오도메트리 직접 구현")를 파라미터화한다. DiffDrive 의 odom 은 GT 비교용으로만 쓴다.
       # 슬립 노이즈: 주기마다 바퀴 변위 Δs 에 (1 + N(0, slip_noise_stddev)) 를 곱한다 — 누적 오차의 주 원인(명세 2장 분석 대상).

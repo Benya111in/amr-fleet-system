@@ -1,0 +1,28 @@
+# 동적 장애물 지면 진실 / 충돌 판정 파라미터 (obstacle_truth_node, collision_monitor_node 공용)
+# 장애물 목록은 월드 SDF 에서 온다: actor(사람) 전부 + 아래 models (gz OdometryPublisher → /sim/<이름>/odom).
+# 발자국 치수는 models/<모델>/model.sdf 의 충돌체 외곽 (모델 원점 기준 [x_min, x_max, y_min, y_max], 모델마다 4개씩).
+
+/**:
+  ros__parameters:
+    world_file: ""                  # 비우면 share/amr_simulation/worlds/warehouse.sdf (런치는 기동한 월드 파일을 넘긴다)
+    # 사람: 원 발자국. 반지름 0.30 = 어깨 반폭 0.20 + 팔 흔듦·보폭 여유 (models/worker 메시 폭 0.56 m)
+    actor_radius: 0.30
+    actor_height: 1.80
+    models: ["forklift_main", "shuttle_amr"]
+    # forklift: 차체 뒤 -1.2 ~ 포크 끝 +2.0, 폭 ±0.64 (바퀴 바깥) — 포크 사이 빈 공간까지 덮는 보수적 사각형
+    # shuttle_amr: 차체 0.60 x 0.40
+    model_footprints: [-1.2, 2.0, -0.64, 0.64,
+                       -0.30, 0.30, -0.20, 0.20]
+    model_heights: [2.2, 0.45]
+    model_odom_topic: "/sim/{name}/odom"
+
+obstacle_truth_node:
+  ros__parameters:
+    rate: 50.0                      # [Hz] sim time (로봇 ground_truth/odom 과 같은 주기)
+    frame_id: world                 # Gazebo 월드 원점 (= map 원점, 지도를 월드 원점에서 만들 때)
+
+collision_monitor_node:
+  ros__parameters:
+    robots: ["amr_01"]
+    footprint_padding: 0.0          # [m] 로봇 발자국 여유 (대형 적재물 폭 0.50 을 넣으려면 0.05)
+    contact_release: 0.05           # [m] 접촉 사건이 끝났다고 보는 거리 (경계 떨림 중복 계산 방지)
