@@ -104,7 +104,9 @@ SCENARIOS: List[Scenario] = [
         log_format='avoidance.csv [trial, reached, time_s, contacts, min_distance_m, nearest, '
                    'min_ttc_s, max_deviation_m, episodes, return_s, contacts_robot_moving] (시행마다 '
                    '갱신), contacts.csv [trial, time, obstacle, distance_m, robot_speed_mps, '
-                   'robot_moving]',
+                   'robot_moving, obstacle_speed_mps, obstacle_heading_deg, lane_lateral_m, '
+                   'lane_along_m, yield_state, stop_distance_m] (뒤 6개는 원인 귀속 근거 — '
+                   '판정에 쓰지 않는다)',
         backends=(GAZEBO,), profiles=(SYSTEM,), needs=NAV),
     Scenario(
         number=9, slug='emergency_stop', title='긴급 정지',
