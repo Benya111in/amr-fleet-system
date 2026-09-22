@@ -171,3 +171,35 @@ graph TD
 - 접두어 프레임 + 공유 `/tf` 로 Nav2 5대를 실제로 띄워 본 적은 아직 없다. 프레임 이름은 Nav2 에 불투명한 문자열이므로 동작에는 문제가 없을 것으로 보나, 첫 통합 시 `view_frames` 로 트리를 확인한다.
 - Depth 카메라의 `<ignition_frame_id>` 는 미확인(2장).
 - 스폰 좌표는 월드 레이아웃 확정 후 갱신한다.
+
+## 9. 구현 현황 (amr_bringup)
+
+> 이 절이 머리말의 런치 위치(`src/amr_fleet/launch/…`)와 §5 스폰 좌표 표를 대신한다. 런치는 `amr_bringup` 에 있고,
+> 옛 좌표 (4.0 + 1.5·(i−1), 3.0) 은 랙 B열(y = 3)에 걸린다 (amr_02·amr_03 중심이 rack_B5 안).
+
+- 진입점: `ros2 launch amr_bringup multi_robot.launch.py` (N대, `num_robots` 기본 5) / `system.launch.py` (1대, `robot_name` 기본 `amr_01`). 둘 다 `amr_bringup/launch_utils.py` 의 같은 구성 요소를 같은 순서로 쓰고, 차이는 대수와 프레임 접두어(다중 `amr_0N/`, 단일 `''`, sensor_calibration.md §1.2)뿐이다. 접두어는 `description.launch.py prefix` 로 xacro 에 들어가 URDF 링크와 Gazebo 센서 frame_id 에 함께 붙는다 (§2 의 robot_state_publisher `frame_prefix` 는 쓰지 않음 — 이중 접두어).
+- 순서: 월드 1개(`warehouse.launch.py spawn_robot:=false`) + 로봇마다 `description.launch.py` → `world_gate hold`(월드가 뜨기 전부터 `/world/warehouse/control` 에 pause 요청 → 로드 직후 **일시 정지**) → 로봇마다 `spawn.launch.py` 를 한꺼번에 → `world_gate release`(`ign model --list` 에 N대 확인 → **재개**; `spawn_timeout_s` 를 넘기면 누락 로봇을 ERROR 로 알리고 재개) → 로봇마다 스택 `localization / navigation / perception / behavior`. 스택은 패키지와 `launch/<스택>.launch.py` 가 **런치 시점에** 설치돼 있을 때만 포함하고, 없으면 `skipped: package not built yet` 로그만 남긴다. `fleet_manager.launch.py`(robot_ids = 스폰한 로봇), `dashboard.launch.py`, `evaluation.launch.py`(로봇마다, cpu_sampler 는 첫 로봇만)는 시작 즉시.
+- 일시 정지 이유 (실측, 5대): 멈추지 않으면 센서가 sim 3.2 s 에 생겨 로봇마다 scan 32·camera 97·depth 48·imu 350 개가 1 ms 간격 stamp 로 3~5 s 동안 쏟아졌다. 멈추면 로드 직후(sim 0.00~0.04 s)에 멈춰 스폰 확인(5.6~7.5 s)까지 sim 시간이 흐르지 않고, 재개 뒤 짧은 간격 발행은 imu 5개(7 ms)뿐이었다. 근거와 세부는 `world_gate.py` 머리말.
+- 스폰 좌표: `config/fleet_spawn.yaml` — 남동 대기 구역 x = 18, 20, 22, 24, 26 / y = −16, yaw π/2. `test/test_spawn_poses.py` 가 `warehouse.sdf` 의 box 충돌체·actor 궤적·지게차 구간과 대조한다 (벽 3.8 m, 기둥 ≥ 8.6 m, 동적 경로 ≥ 6.0 m).
+- 스택 런치에 주는 인자 (선언하지 않은 인자는 무시됨): `robot_name`, `namespace`(= robot_name), `prefix`·`frame_prefix`(단일 로봇은 `''` 를 명시), `use_sim_time`, `initial_x/y/yaw`(= 스폰 자세, AMCL 초기 자세), `waiting_pose`(`"x,y,yaw"` = 스폰 자세 — 로봇마다 다른 대기 위치), `start_map_server`(첫 로봇만 `true`, 루트 map_server 1개).
+- 통신 지연(§6): `fleet_spawn.yaml` 의 공통 `comm_latency_ms` 는 manager·모든 adapter 에, `robots[].comm_latency_ms` 는 그 로봇 adapter(`robot_state` 송신)에만 들어간다. fleet.yaml 뒤에 `/<id>/fleet_adapter_node` 키를 덧붙인 임시 파라미터 파일을 `params_file` 로 넘긴다 (0 ≤ lo ≤ hi ≤ 100 ms 검사; 확인: 공통 60 → manager·adapter `[0, 60]`, amr_02 만 `[20, 80]`). manager → 로봇(`assign_task`) 방향은 지연 모델이 하나라 공통 값만 쓴다.
+
+### 9.1 실측 — 센서 + 시뮬레이터 + fleet + dashboard + evaluation (온보드 스택 미포함)
+
+2026-09-22, 이미지 `amr-fleet-system:wf-final`, 헤드리스, RTX 5090, 32 스레드. 재개 30 s 뒤부터 88 s 창, cpu_sampler 1 Hz. 호스트는 다른 사용자 시뮬레이션과 공유하므로 판정은 우리 프로세스 그룹(= 컨테이너 cgroup) 값이고 호스트 전체는 참고값이다. RTF 는 같은 시각 별도 컨테이너의 빈 월드(같은 1 ms 물리)와 짝지었다.
+
+| | 1대 | 5대 (1차) | 5대 (2차) |
+| --- | --- | --- | --- |
+| 창 (KST) · uptime load1 | 12:00:24–12:01:52 · 22.9→15.6 | 11:56:07–11:57:35 · 7.2→22.0 | 12:23:33–12:25:01 · 24.9→25.8 |
+| RTF 월드 / 빈 월드 기준선 | 0.97 / 1.00 | 0.69 / 0.99 | 0.65 / 0.98 |
+| 우리 CPU 평균 / p95 (32 스레드 대비) | 10.6 / 11.1 % | 23.2 / 26.0 % | 22.0 / 25.6 % |
+| └ Gazebo 서버 평균 | 4.6 % | 7.6 % | 7.4 % |
+| 호스트 전체 CPU 평균 / p95 (참고) | 41.6 / 56.1 % | 39.2 / 53.8 % | 40.4 / 83.3 % |
+| 메모리 (컨테이너) | 1.37 GiB | 2.48 GiB | 2.54 GiB |
+| GPU 메모리 (우리 Gazebo) · 사용률 평균/p95 (GPU 전체) | 215 MiB · 9/16 % | 538 MiB · 9/13 % | 542 MiB · 11/23 % |
+
+- 명세 4.10 (≤ 80 %): 이 부분만으로 5대 평균 23 %, p95 26 %. 측정은 RTF 0.65~0.69 에서였으므로 sim 속도에 비례하는 몫이 모두 늘어난다고 봐도 RTF 1.0 환산 ≤ 34 %.
+- 로봇 1대당 약 +3 % (≈ 1 코어). 역할별(5대, ps 수명 평균): evaluation 로거 16개 2.3 코어, Gazebo 2.1, fleet_adapter 5개 0.8, 브리지 10개 0.6, fleet_manager·dashboard·robot_state_publisher 각 ≈ 0.2.
+- RTF: 같은 시각 빈 월드가 0.98~0.99 이므로 5대의 0.65~0.69 는 호스트 경합이 아니라 월드 자체(렌더링 센서 15개 + 1 kHz 물리)의 한계다. §7 의 "RTF 를 CPU 와 함께 보고" 대상.
+- 센서 주기 (sim 시각 header stamp, 5대 모두): scan 10.0, imu/data_raw 100.0, camera 30.3, depth 15.15 Hz (이미지는 `ros2 bag` 기록으로 확인 — 파이썬 구독자는 5대 동시에 따라가지 못해 구독 쪽에서 버린다). 1 개 초과 발행자는 `/tf`·`/tf_static`(robot_state_publisher 5개)뿐이고, TF 는 `amr_0N/base_footprint` 를 뿌리로 하는 서로 떨어진 트리 5개(각 12 프레임, 다른 접두어 없음)이며 odom 프레임(Gazebo DiffDrive TF)은 없다. `/fleet/status` robots[]·대시보드 `/api/state` 모두 5대.
+- 관찰 (담당 패키지 참고): `joint_states` 가 로봇마다 1 kHz (Fortress JointStatePublisher 주기 옵션 없음, amr_gazebo.xacro), `/clock` 도 1 kHz 라 use_sim_time 파이썬 노드마다 ≈ 0.14 코어를 쓴다 — 로봇마다 evaluation 로거 3개를 띄우는 구성이 CPU 1위다.

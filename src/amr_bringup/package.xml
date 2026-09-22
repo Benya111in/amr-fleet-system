@@ -3,21 +3,36 @@
 <package format="3">
   <name>amr_bringup</name>
   <version>0.1.0</version>
-  <description>전체 시스템 통합 런치</description>
+  <description>전체 시스템 통합 런치 (단일 로봇 system.launch.py, 다중 로봇 multi_robot.launch.py)</description>
   <maintainer email="enhyunss@gmail.com">enhyunss</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
 
-  <depend>amr_description</depend>
-  <depend>amr_simulation</depend>
-  <depend>amr_localization</depend>
-  <depend>amr_navigation</depend>
-  <depend>amr_perception</depend>
-  <depend>amr_behavior</depend>
+  <!-- 런치가 include 하는 패키지 (launch/config 만 쓰므로 실행 의존) -->
+  <exec_depend>amr_simulation</exec_depend>
+  <exec_depend>amr_description</exec_depend>
+  <exec_depend>amr_fleet</exec_depend>
+  <exec_depend>amr_dashboard</exec_depend>
+  <exec_depend>amr_evaluation</exec_depend>
+  <!-- 로봇별 스택: 런치 시점에 launch 파일이 있을 때만 포함한다 (launch_utils.STACKS) -->
+  <exec_depend>amr_localization</exec_depend>
+  <exec_depend>amr_navigation</exec_depend>
+  <exec_depend>amr_perception</exec_depend>
+  <exec_depend>amr_behavior</exec_depend>
+  <!-- world_gate 가 ign CLI(Gazebo Fortress)를, spawn.launch.py 가 ros_gz_sim create 를 쓴다 -->
+  <exec_depend>ros_gz_sim</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
+  <test_depend>ament_cmake_pytest</test_depend>
+  <test_depend>python3-pytest</test_depend>
+  <test_depend>python3-pytest-cov</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

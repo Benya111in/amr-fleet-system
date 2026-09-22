@@ -6,8 +6,16 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 find_package(ament_cmake REQUIRED)
+find_package(ament_cmake_python REQUIRED)
 
-# 이 패키지는 launch/config/urdf 등 리소스만 제공한다 (파이썬 모듈 없음).
+# --- Python 모듈 설치 (런치 구성 요소: 스폰 목록, 월드 게이트, 런치 조립) ---
+ament_python_install_package(${PROJECT_NAME})
+
+# --- 실행 파일 (ros2 run amr_bringup world_gate) — 모듈의 main() 을 부르는 얇은 진입점 ---
+install(PROGRAMS
+  scripts/world_gate
+  DESTINATION lib/${PROJECT_NAME}
+)
 
 # --- 리소스 디렉토리 설치 ---
 install(DIRECTORY
@@ -23,6 +31,12 @@ if(BUILD_TESTING)
   set(ament_cmake_copyright_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
 
+  find_package(ament_cmake_pytest REQUIRED)
+  # CONFIGURE_DEPENDS: 테스트 파일을 추가하면 재구성 없이 다음 빌드에 반영된다.
+  file(GLOB _pytests CONFIGURE_DEPENDS test/test_*.py)
+  if(_pytests)
+    ament_add_pytest_test(amr_bringup_pytest test)
+  endif()
 endif()
 
 ament_package()
