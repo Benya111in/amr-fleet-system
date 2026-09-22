@@ -17,6 +17,13 @@ amr_simulation 의 지면 진실 노드가 모든 동적 장애물을 판정한�
 로그 avoidance.csv (시행마다 갱신), contacts.csv (접촉마다 장애물·부호 거리·그 순간 GT 로봇 속도).
 접촉은 로봇 속도로 나눠 기록한다 (> 0.05 m/s = 움직이며 부딪침, 이하 = 멈춘 로봇에 장애물이 닿음) — 판정은
 그대로 '모든 접촉 0' 이고, 나눔은 원인 귀속(회피 계획 vs 정지 중 회피 동작 없음) 근거다.
+contacts.csv 는 그 귀속에 필요한 기하도 같이 남긴다 (판정에는 쓰지 않는다):
+  obstacle_speed_mps/obstacle_heading_deg  접촉 순간 장애물 지면 진실 속도·진행 방향
+  lane_lateral_m/lane_along_m              장애물 진행축 기준 로봇 좌표 (가로: 왼쪽 +, 세로: 앞 +)
+                                           → |가로| ≤ 두 반지름 합이면 로봇이 장애물 차선 안에 있었다
+  yield_state/stop_distance_m              접촉 직전 제어 주기의 dwa/stats [11]·[12] (정지선 판단)
+dwa/stats 에는 스탬프가 없어 지면 진실 오도메트리의 (수신 벽시계, sim 스탬프) 대응으로 맞춘다 — 제어
+주기 한 번 정도의 오차가 있으므로 근거용이지 판정용이 아니다.
 """
 
 import json
@@ -32,7 +39,7 @@ import launch_testing.markers
 from nav_msgs.msg import Odometry, Path
 import numpy as np
 import pytest
-from std_msgs.msg import String
+from std_msgs.msg import Float64MultiArray, String
 from std_srvs.srv import Trigger
 
 CTX = Context(catalog.get(8))
@@ -51,7 +58,12 @@ LIFECYCLE = ('/lifecycle_manager_map', 'lifecycle_manager_localization',
              'lifecycle_manager_navigation')
 COLUMNS = ['trial', 'reached', 'time_s', 'contacts', 'min_distance_m', 'nearest', 'min_ttc_s',
            'max_deviation_m', 'episodes', 'return_s', 'contacts_robot_moving']
-CONTACT_COLUMNS = ['trial', 'time', 'obstacle', 'distance_m', 'robot_speed_mps', 'robot_moving']
+CONTACT_COLUMNS = ['trial', 'time', 'obstacle', 'distance_m', 'robot_speed_mps', 'robot_moving',
+                   'obstacle_speed_mps', 'obstacle_heading_deg', 'lane_lateral_m', 'lane_along_m',
+                   'yield_state', 'stop_distance_m']
+ATTRIB_GAP_S = 0.3                     # 접촉 시각 ↔ 트랙·제어 표본 허용 시차 (넘으면 빈 칸)
+YIELD_STATES = {0: 'clear', 1: 'yield', 2: 'committed'}   # dwa/stats [11]
+DEFAULT_OBSTACLE_R = 0.3               # [m] /info 에 없는 장애물의 반지름 가정
 
 
 @pytest.mark.launch_test
@@ -79,6 +91,11 @@ def obstacle_radii(info_json: str) -> dict:
             x0, x1, y0, y1 = o['footprint']
             out[o['id']] = max(math.hypot(x, y) for x in (x0, x1) for y in (y0, y1))
     return out
+
+
+def obstacle_ids(info_json: str) -> dict:
+    """/sim/dynamic_obstacles/info → {모델 이름: track_id} (접촉 사건의 이름 → 지면 진실 트랙)."""
+    return {o['name']: o['id'] for o in json.loads(info_json or '[]') if 'name' in o}
 
 
 class TestDynamicObstacles(cases.ProbeCase):
@@ -116,6 +133,49 @@ class TestDynamicObstacles(cases.ProbeCase):
                                                     ob.velocity.x - rvx, ob.velocity.y - rvy, r))
         return best
 
+    def _track_at(self, tr_t, tr, name: str, t: float):
+        """접촉 시각 t 에 가장 가까운 지면 진실 트랙 표본에서 그 장애물 (없으면 None)."""
+        if not len(tr_t) or not math.isfinite(t):
+            return None
+        k = int(np.clip(np.searchsorted(tr_t, t), 0, len(tr) - 1))
+        if abs(tr_t[k] - t) > ATTRIB_GAP_S:
+            return None
+        tid = self.ids.get(name)
+        return next((o for o in tr[k][1].obstacles if o.track_id == tid), None)
+
+    def _attribution(self, w0: float, events: list, track: list) -> list:
+        """접촉마다 [장애물 속도, 진행 방향, 차선 가로·세로, yield 상태, 정지선 거리] (CSV 근거)."""
+        tr = [(m.header.stamp.sec + m.header.stamp.nanosec * 1e-9, m)
+              for _, m in self.tracks.messages(w0)]
+        tr_t = np.array([t for t, _ in tr])
+        gt = self.gt.messages(w0)
+        wall = np.array([w for w, _ in gt])                       # 수신 벽시계
+        sim = np.array([metrics.sample_from_odom(m).t for _, m in gt])   # 같은 표본의 sim 스탬프
+        stats = self.stats.messages(w0)
+        st_w = np.array([w for w, _ in stats])
+        rows = []
+        for ev in events:
+            t = float(ev.get('t', math.nan))
+            row = [math.nan, math.nan, math.nan, math.nan, '', math.nan]
+            ob = self._track_at(tr_t, tr, ev.get('obstacle'), t)
+            if ob is not None:
+                row[0] = math.hypot(ob.velocity.x, ob.velocity.y)
+                row[1] = math.degrees(math.atan2(ob.velocity.y, ob.velocity.x))
+                s = metrics.interpolate(track, t)
+                if s is not None:
+                    along, lat = metrics.lane_coords(
+                        ob.position.x, ob.position.y, ob.velocity.x, ob.velocity.y, s.x, s.y)
+                    row[2], row[3] = lat, along
+            if len(st_w) and len(sim) > 1 and sim[0] <= t <= sim[-1]:   # 외삽 금지 (interp 는 자른다)
+                w = float(np.interp(t, sim, wall))   # 접촉 시각 → 벽시계 (stats 에는 스탬프가 없다)
+                j = int(np.searchsorted(st_w, w)) - 1                   # 접촉 직전 제어 주기
+                d = list(stats[j][1].data) if 0 <= j < len(stats) else []
+                if len(d) > 12 and w - st_w[j] <= ATTRIB_GAP_S:
+                    row[4] = YIELD_STATES.get(int(d[11]), int(d[11]))
+                    row[5] = d[12] if d[12] >= 0.0 else math.inf
+            rows.append(row)
+        return rows
+
     def test_10_trials(self) -> None:
         from action_msgs.msg import GoalStatus
         from amr_msgs.msg import TrackedObstacleArray
@@ -133,6 +193,8 @@ class TestDynamicObstacles(cases.ProbeCase):
                                       keep_messages=2000)
         info = self.probe.subscribe('/sim/dynamic_obstacles/info', String, 'latched')
         plan = self.probe.subscribe('plan', Path, keep_messages=50)
+        type(self).stats = self.probe.subscribe('dwa/stats', Float64MultiArray,
+                                                keep_messages=4000)
         nav = actions.ActionCaller(self.probe, NavigateToPose, 'navigate_to_pose')
         self.assertTrue(nav.wait_server(self.timeout(300.0)), 'navigate_to_pose 서버 없음')
         self.wait_lifecycle_active(LIFECYCLE, 300.0)
@@ -140,6 +202,7 @@ class TestDynamicObstacles(cases.ProbeCase):
         self.require_topic(info, 1, 60.0, '/sim/dynamic_obstacles/info (obstacle_truth_node)')
         self.require_topic(self.summary, 1, 60.0, '/sim/collision_monitor/summary')
         radii = obstacle_radii(info.last().data)
+        type(self).ids = obstacle_ids(info.last().data)
         self.measure('dynamic_obstacles', json.loads(info.last().data))
         self.wait_startup_still()
         rows, eps_all, contact_rows = [], [], []
@@ -176,9 +239,10 @@ class TestDynamicObstacles(cases.ProbeCase):
             speeds = metrics.speeds_at(track, [float(ev.get('t', math.nan)) for ev in mine])
             n_moving = sum(1 for v in speeds if v > metrics.CONTACT_MOVING_V)
             moving_contacts += n_moving
+            attrib = self._attribution(w0, mine, track) if mine else []
             contact_rows += [[trial, ev.get('t'), ev.get('obstacle'), ev.get('distance'), v,
-                              int(v > metrics.CONTACT_MOVING_V) if math.isfinite(v) else '']
-                             for ev, v in zip(mine, speeds)]
+                              int(v > metrics.CONTACT_MOVING_V) if math.isfinite(v) else ''] + a
+                             for ev, v, a in zip(mine, speeds, attrib)]
             if mine:
                 self.ctx.record.write_csv('contacts.csv', CONTACT_COLUMNS, contact_rows)
             devs = [worldmap.polyline_distance(path, s.x, s.y) if len(path) else math.nan
@@ -193,8 +257,13 @@ class TestDynamicObstacles(cases.ProbeCase):
             rows.append([trial, int(ok), self.probe.now() - t0, n_contacts, dmin, nearest,
                          self._min_ttc(w0, radii), max_dev, len(eps), ret, n_moving])
             self.ctx.record.write_csv('avoidance.csv', COLUMNS, rows)
+        in_lane = sum(1 for r in contact_rows
+                      if isinstance(r[8], float) and math.isfinite(r[8])
+                      and abs(r[8]) <= self.robot_r + radii.get(self.ids.get(r[2]),
+                                                                DEFAULT_OBSTACLE_R))
         self.measure('summary', {'trials': len(rows), 'reached': reached,
                                  'contacts': contacts, 'contacts_robot_moving': moving_contacts,
+                                 'contacts_in_obstacle_lane': in_lane,
                                  'encounters': encounters,
                                  'deviation_episodes': len(eps_all),
                                  'max_deviation_m': cases.fmt(worst_dev),
