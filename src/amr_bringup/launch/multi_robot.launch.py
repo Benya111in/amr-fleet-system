@@ -20,6 +20,8 @@
                   (slam = 매핑: map_server·AMCL 대신 slam_toolbox)
     map_yaml      루트 map_server 지도 YAML ('' = $ROS_WS/maps/warehouse.yaml, map 프레임 = 월드 좌표)
     nav_ttc_bt    navigation use_ttc_bt (기본 auto = TTC 재계획 BT, false = TTC 조건 없는 BT)
+    stack_stagger_s  로봇 i 스택 시작 지연 = i × 이 값 [s] (기본 6, 0 = 동시). 5대를 한꺼번에 띄우면
+                  Nav2 lifecycle_manager 가 get_state 응답을 못 받아 스택을 내린다 (launch_utils 주석)
 Groot ZMQ 포트는 로봇 i(0부터)마다 1666 + 2i / 1667 + 2i (task_executor_node, 같은 호스트에서 포트 충돌 방지).
 
 로봇 이름 = 네임스페이스 = Gazebo 모델 이름 (amr_01 …), TF 프레임 접두어 '<이름>/' — URDF 링크와 Gazebo 센서

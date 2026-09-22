@@ -31,7 +31,7 @@ from amr_bringup import fleet_spawn, world_gate
 from amr_bringup.fleet_spawn import FleetSpawn, RobotSpec
 from launch.actions import (DeclareLaunchArgument, ExecuteProcess, GroupAction,
                             IncludeLaunchDescription, LogInfo, RegisterEventHandler,
-                            SetEnvironmentVariable)
+                            SetEnvironmentVariable, TimerAction)
 from launch.event_handlers import OnProcessExit
 from launch.launch_context import LaunchContext
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -90,6 +90,9 @@ def common_arguments() -> List[DeclareLaunchArgument]:
         # 구조를 고쳤다 (Gazebo ComputePathToPose 41 → 0.25 회/s, costmap.md). false 는 TTC 조건 없는 BT
         DeclareLaunchArgument('nav_ttc_bt', default_value='auto',
                               description='navigation.launch.py use_ttc_bt (auto | true | false)'),
+        # 로봇 스택을 로봇마다 이만큼 늦춰 띄운다 (stack_actions 주석: 5대 동시 기동 실패)
+        DeclareLaunchArgument('stack_stagger_s', default_value='6.0',
+                              description='로봇 i 스택 시작 지연 = i × 이 값 [s] (0 = 동시)'),
         # 이름이 'map' 이면 안 된다: 포함한 런치가 부모 범위의 launch 인자를 그대로 보므로(모듈 설명)
         # localization.launch.py 의 map 기본값이 '' 로 가려져 map_server 가 지도 없이 뜬다 (실측)
         DeclareLaunchArgument('map_yaml', default_value='',
@@ -119,6 +122,7 @@ class Options:
     localization_mode: str = 'localization'
     map_yaml: str = ''
     nav_ttc_bt: str = 'auto'
+    stack_stagger_s: float = 6.0
 
     @property
     def world_name(self) -> str:
@@ -140,7 +144,8 @@ def read_options(context: LaunchContext, entry: str) -> Options:
                    dashboard_port=arg('dashboard_port').strip(),
                    localization_mode=arg('localization_mode').strip() or 'localization',
                    map_yaml=arg('map_yaml').strip(),
-                   nav_ttc_bt=arg('nav_ttc_bt').strip().lower() or 'auto')
+                   nav_ttc_bt=arg('nav_ttc_bt').strip().lower() or 'auto',
+                   stack_stagger_s=float(arg('stack_stagger_s') or 0.0))
 
 
 def launch_file(pkg: str, name: str) -> Tuple[Optional[str], str]:
@@ -235,7 +240,14 @@ def stack_extra_arguments(label: str, opts: Options) -> Dict[str, str]:
 
 
 def stack_actions(robots: Sequence[RobotSpec], prefixed: bool, opts: Options) -> List:
-    """켜진 스택마다: 설치돼 있으면 로봇별 include, 없으면 한 줄 로그."""
+    """
+    켜진 스택마다: 설치돼 있으면 로봇별 include, 없으면 한 줄 로그.
+
+    로봇 i 의 스택은 i · stack_stagger_s 만큼 늦춰 띄운다 (0 이면 동시). Nav2 lifecycle_manager 는 관리 노드의
+    get_state 응답을 몇 초 안에 못 받으면 "async_send_request failed → Aborting bringup" 으로 스택을 통째로
+    내리는데, 5대를 한꺼번에 띄우면 controller_server 가 제어기 플러그인 4종을 싣는 동안 응답이 늦어 3/3 실행에서
+    로봇 1~3 대가 그렇게 죽었다 (통합 시나리오 12 실측). 늦춰 띄우면 플러그인 로드가 겹치지 않는다.
+    """
     out: List = []
     names = ','.join(r.name for r in robots)
     for flag, pkg, name, label in STACKS:
@@ -246,10 +258,14 @@ def stack_actions(robots: Sequence[RobotSpec], prefixed: bool, opts: Options) ->
             out.append(LogInfo(msg=f'[bringup] {label} skipped: package not built yet ({why}); '
                                    f'robots {names} run without it'))
             continue
-        out.append(LogInfo(msg=f'[bringup] {label}: {pkg}/launch/{name} × {len(robots)}'))
-        out += [include_path(path, {**stack_arguments(r, frame_prefix(r, prefixed), opts, i),
-                                    **stack_extra_arguments(label, opts)})
-                for i, r in enumerate(robots)]
+        out.append(LogInfo(msg=f'[bringup] {label}: {pkg}/launch/{name} × {len(robots)}'
+                               + (f' (로봇마다 {opts.stack_stagger_s:g} s 간격)'
+                                  if opts.stack_stagger_s > 0.0 and len(robots) > 1 else '')))
+        for i, r in enumerate(robots):
+            action = include_path(path, {**stack_arguments(r, frame_prefix(r, prefixed), opts, i),
+                                         **stack_extra_arguments(label, opts)})
+            delay = i * opts.stack_stagger_s
+            out.append(action if delay <= 0.0 else TimerAction(period=delay, actions=[action]))
     return out
 
 

@@ -203,6 +203,9 @@ graph TD
   공간을 다 써 통신이 멎었다 (실측). compose 는 `ipc: host` 라 해당 없고, 시험용 컨테이너는 `--shm-size=8g` 로 띄운다
   (전체 스택 1대 ≈ 0.6 GB 사용). ros2 CLI·통합 테스트 프로브처럼 같은 그래프에 붙는 외부 도구도 같은 변수를 줘야 100 개 넘는
   참가자를 본다 (`scripts/run_integration.sh`).
+- 로봇 스택은 로봇마다 `stack_stagger_s`(기본 6 s)씩 늦춰 띄운다: 5대를 한꺼번에 띄우면 `controller_server` 가 제어기
+  플러그인 4종을 싣는 동안 lifecycle_manager 의 `get_state` 응답이 늦어 "async_send_request failed → Aborting bringup"
+  으로 로봇 1~3 대의 스택이 통째로 죽었다 (통합 시나리오 12, 3/3 실행). 5대면 스택 기동이 24 s 늦어진다.
 - lifecycle bond 시간 30 s (`localization.launch.py`·`navigation.launch.py` `BOND_TIMEOUT_S`): 5대 + 과부하(load 60–230)에서
   4 s (map)·10 s (amcl) 로는 "bond 로 닿지 않음 → 기동 중단" 이 났다.
 
