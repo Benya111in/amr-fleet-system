@@ -706,7 +706,8 @@ class IncidentManager:
                    or not bool(inc.mask.blocks(
                        _resample(v.path, 0.5 * inc.mask.spec.resolution)).any()))
         if plan_ok:
-            active_others = [r for r in others if r in views and views[r].active]
+            active_others = [r for r in others
+                             if r in views and views[r].active and views[r].mobile]
             if active_others:
                 done = (self._others_passed(inc, others, world)
                         and self._release_ok(inc, others, world))
@@ -744,8 +745,17 @@ class IncidentManager:
         return True
 
     def _others_passed(self, inc: Incident, others: Sequence[str], world: WorldView) -> bool:
+        """
+        상대가 분쟁 영역을 벗어났는지 (움직일 수 없는 상대는 기다리지 않는다).
+
+        E-stop·관측 끊김으로 못 움직이는 로봇은 서 있는 장애물이고, 해소는 희생 로봇이 그를 피해
+        돌아가는 것으로 끝난다 — 통합 시나리오 12 에서는 구역 안에서 E-stop 된 로봇이 "지나가기" 를
+        기다리다 exhausted(no_alt_path) 로 끝났다. 대신 _release_ok 가 원래 경로로 되돌리기 전에
+        그 로봇을 정지 장애물로 예측해 막는다.
+        """
         views = world.robots
-        return all(r not in views or self._passed(views[r], inc, world) for r in others)
+        return all(r not in views or not views[r].mobile or self._passed(views[r], inc, world)
+                   for r in others)
 
     def _release_ok(self, inc: Incident, others: Sequence[str], world: WorldView) -> bool:
         """희생 로봇을 원래 목표 경로로 풀어도 상대와 정면 · 교차 충돌이 예측되지 않는지."""
@@ -761,13 +771,22 @@ class IncidentManager:
                                 cfg.release_horizon_s, 0.25, 0.0)
         for r in others:
             o = world.robots.get(r)
-            if o is None or not o.active or o.path is None:
+            if o is None:
                 continue
-            to = predict_trajectory(r, o.x, o.y, o.yaw, o.path, cfg.nominal_speed,
-                                    cfg.release_horizon_s, 0.25, 0.0)
+            immobile = not o.mobile or o.stale
+            if immobile:
+                # 움직일 수 없는 로봇은 서 있는 장애물 — 원래 경로가 그 자리를 지나면 되돌리지 않는다
+                to = predict_trajectory(r, o.x, o.y, o.yaw, None, 0.0,
+                                        cfg.release_horizon_s, 0.25, 0.0)
+            elif not o.active or o.path is None:
+                continue
+            else:
+                to = predict_trajectory(r, o.x, o.y, o.yaw, o.path, cfg.nominal_speed,
+                                        cfg.release_horizon_s, 0.25, 0.0)
             c = find_conflict(tv, to, cfg.safety_distance, cfg.time_window_s,
                               cfg.head_on_angle_deg, cfg.following_angle_deg)
-            if c is not None and c.kind != FOLLOWING:
+            # 뒤따르기(FOLLOWING)는 상대가 비켜 주며 가므로 되돌려도 되지만, 서 있는 로봇은 비키지 않는다
+            if c is not None and (immobile or c.kind != FOLLOWING):
                 return False
         return True
 
