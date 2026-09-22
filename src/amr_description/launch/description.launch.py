@@ -8,7 +8,7 @@ robot_state_publisher 를 네임스페이스 /<robot_name> 에서 띄운다.
 
     ros2 launch amr_description description.launch.py
     ros2 launch amr_description description.launch.py robot_name:=amr_02 prefix:=amr_02/
-    ros2 launch amr_description description.launch.py payload_mass:=10.0   # medium 적재
+    ros2 launch amr_description description.launch.py payload:=medium   # 중형 박스 10 kg 적재
 
 인자
     robot_name    네임스페이스 + Gazebo 모델 이름 (기본 amr_01)
@@ -21,8 +21,18 @@ robot_state_publisher 를 네임스페이스 /<robot_name> 에서 띄운다.
                   CLI 에서 빈 값(prefix:=)은 ros2 launch 가 거부하므로 접두어가 없으면 인자를 생략한다
     use_sim_time  Gazebo /clock 사용 (기본 true)
     config_dir    YAML 디렉토리 (기본 $ROS_WS/config, ROS_WS 미설정 시 /ros2_ws/config)
-    payload_mass  cargo_link 질량 [kg] (기본 0.0; robot_params.yaml payload.<type>.mass 참고).
-                  스폰 시점 질량만 바꾼다 — 주행 중 적재/하역은 DetachableJoint (urdf/amr_base.xacro 주석)
+    payload       적재물 종류 none | small | medium | large (기본 none). 데크 위 실제 크기 박스 + 질량
+                  (robot_params.yaml payload.<종류>.{size, mass})
+    payload_mass  적재 질량 [kg] 덮어쓰기 (기본 -1 = 종류의 질량). payload 없이 질량만 주면 그 질량을 담는
+                  가장 작은 종류의 박스로 모델링한다 (payload_mass:=25 → large). 0 이면 적재물 없음.
+                  스폰 시점 질량만 바꾼다 — 주행 중 적재/하역은 runtime_payload
+    runtime_payload
+                  true(기본)면 주행 중 적재/하역용 DetachableJoint 를 모델에 넣는다 (urdf/amr_gazebo.xacro
+                  "런타임 적재물"). 화물 모델은 amr_simulation payload_manager_node 가 만든다
+                  (spawn.launch.py 가 기동)
+    self_visibility_bit
+                  자기 차체 가시성 비트 (기본 "" = robot_name 끝 숫자로 자동, urdf/amr.urdf.xacro). 동시에 뜨는
+                  로봇끼리 달라야 한다 — 같으면 서로의 LiDAR 에 안 보인다
     use_joint_state_publisher
                   Gazebo 없이 모델만 볼 때 true (기본 false). 시뮬레이션에서는
                   joint_states 가 Gazebo JointStatePublisher → 브리지(spawn.launch.py)로 들어온다
@@ -30,7 +40,9 @@ robot_state_publisher 를 네임스페이스 /<robot_name> 에서 띄운다.
 발행
     /<robot_name>/robot_description   (latched)
     /tf_static                         base_footprint → base_link → 센서/캐스터/적재함 프레임 (URDF 고정 조인트)
-    /tf                                base_link → 바퀴 프레임 (joint_states 기반, 기본 20 Hz)
+    /tf                                base_link → 바퀴 프레임 (joint_states 기반). joint_states 는 물리
+                                       스텝마다 1 kHz 로 오지만 /tf 는 robot_state_publisher 의
+                                       publish_frequency(기본 20 Hz) 상한으로 나간다 (multi_robot.md §2)
     odom → base_footprint 는 여기서 발행하지 않는다 (EKF 담당, config/ekf.yaml)
 """
 
@@ -56,7 +68,10 @@ def generate_launch_description() -> LaunchDescription:
     prefix = LaunchConfiguration("prefix")
     use_sim_time = LaunchConfiguration("use_sim_time")
     config_dir = LaunchConfiguration("config_dir")
+    payload = LaunchConfiguration("payload")
     payload_mass = LaunchConfiguration("payload_mass")
+    runtime_payload = LaunchConfiguration("runtime_payload")
+    self_visibility_bit = LaunchConfiguration("self_visibility_bit")
 
     args = [
         DeclareLaunchArgument(
@@ -72,8 +87,17 @@ def generate_launch_description() -> LaunchDescription:
             "config_dir", default_value=_default_config_dir(),
             description="robot_params.yaml / sensors.yaml 디렉토리"),
         DeclareLaunchArgument(
-            "payload_mass", default_value="0.0",
-            description="적재 질량 [kg] — cargo_link 관성에 반영"),
+            "payload", default_value="none",
+            description="적재물 종류 none|small|medium|large — 데크 위 실제 크기 박스"),
+        DeclareLaunchArgument(
+            "payload_mass", default_value="-1",
+            description="적재 질량 [kg] 덮어쓰기 (-1 = payload 종류의 질량, 0 = 적재물 없음)"),
+        DeclareLaunchArgument(
+            "runtime_payload", default_value="true",
+            description="주행 중 적재/하역용 DetachableJoint (화물 모델 <robot_name>_cargo)"),
+        DeclareLaunchArgument(
+            "self_visibility_bit", default_value="",
+            description="자기 차체 가시성 비트 (빈 값 = robot_name 끝 숫자로 자동)"),
         DeclareLaunchArgument(
             "use_joint_state_publisher", default_value="false",
             description="Gazebo 없이 모델만 볼 때 joint_state_publisher 기동"),
@@ -88,7 +112,10 @@ def generate_launch_description() -> LaunchDescription:
             " robot_name:=", robot_name,
             " prefix:=", prefix,
             " config_dir:=", config_dir,
+            " payload:=", payload,
             " payload_mass:=", payload_mass,
+            " runtime_payload:=", runtime_payload,
+            " self_visibility_bit:=", self_visibility_bit,
         ]),
         value_type=str)
 
