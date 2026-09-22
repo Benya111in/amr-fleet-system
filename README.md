@@ -35,9 +35,9 @@ sudo ./scripts/setup_host.sh
 git clone https://github.com/Benya111in/amr-fleet-system.git
 cd amr-fleet-system
 
-# 1) YOLOv8 가중치 내려받기 (대용량이라 git 에 없음 — 최초 1회.
-#    호스트에 wget 이 없으면 3) 이미지 빌드 뒤 `docker compose run --rm dev ./scripts/download_models.sh` 로
-#    컨테이너 안에서 실행해도 된다. src/ 가 공유되므로 결과는 같다)
+# 1) (선택) COCO 사전학습 가중치 내려받기 — 미세조정 가중치
+#    src/amr_perception/models/yolov8n_warehouse.pt 는 저장소에 들어 있어 이 단계 없이도 인식이 돈다.
+#    이 스크립트는 그 파일이 없을 때 쓰는 대체(COCO) 가중치를 받는다 (창고 상자·표지판은 거의 못 찾는다)
 ./scripts/download_models.sh
 
 # 2) 사람별 환경변수 — 서버를 여러 명이 같이 쓰므로 프로젝트 이름/ROS 도메인/Gazebo 파티션을
@@ -67,9 +67,21 @@ WERROR=1 ./scripts/build.sh     # -Werror 추가: 경고를 에러로 승격 (�
 # 6) 테스트 + 커버리지 (컨테이너 안)
 ./scripts/test.sh
 
-# 7) 전체 시스템 기동 (런치 파일이 갖춰진 뒤): builder 성공 후 simulation → localization →
-#    navigation → fleet → dashboard 순으로 뜬다 (perception 은 simulation 뒤)
+# 7) 전체 시스템 기동 — compose 프로필 (builder 성공 후 simulation → localization →
+#    navigation → fleet → dashboard 순, perception 은 simulation 뒤)
 docker compose --profile run up -d
+
+# 또는 런치 하나로 (컨테이너 안). 1대:
+ros2 launch amr_bringup system.launch.py
+#    5대 + 플릿 + 대시보드 (http://localhost:8080):
+ros2 launch amr_bringup multi_robot.launch.py num_robots:=5
+#    지도 새로 만들기 (SLAM):
+ros2 launch amr_bringup system.launch.py localization_mode:=slam x:=0.0 y:=0.0 yaw:=0.0 \
+    with_navigation:=false with_perception:=false with_behavior:=false
+
+# 8) 통합 시나리오 (컨테이너 안, 14 개)
+./scripts/run_integration.sh --list
+./scripts/run_integration.sh 4 9 13
 ```
 
 `src/` 는 호스트와 컨테이너가 공유(bind mount)하므로, 호스트 에디터로 수정한 코드가
@@ -213,28 +225,27 @@ git switch -c feature/<이름>            # 작업 → push → develop 대상 P
 
 ## 5. 구현 현황
 
-환경 세팅만 완료된 상태이며, 기능은 전부 미착수다.
+명세 4장의 기능은 모두 구현했다. 측정값과 조건은 각 알고리즘 문서(`docs/algorithms/`)와 성능 보고서
+(`docs/reports/`)에 있고, 아래 표는 요약이다. **미충족 항목은 그대로 적는다** (예: 정지 위치 추정 최대
+오차 4.2 cm > 3 cm — 서측 도크 앞 지도 국소 어긋남). 명세 4.10 캠페인 측정(동적 회피 30회·5대 CPU·
+4시간 연속 운용)은 `docs/reports/` 의 성능 보고서에 조건과 함께 적는다.
 
 ### 인프라
-- [x] Docker + compose 환경
-- [x] GPU 패스스루 (nvidia-container-toolkit)
-- [x] ROS2 Humble + Gazebo Fortress 이미지
-- [x] 패키지 스켈레톤
-- [x] GitHub 원격 + Git Flow 브랜치 보호(ruleset), 빌드/테스트/커버리지 스크립트
+- [x] Docker + compose 환경, GPU 패스스루, ROS2 Humble + Gazebo Fortress 이미지
+- [x] GitHub 원격 + Git Flow 브랜치 보호(ruleset), 빌드/테스트/커버리지 스크립트, CI
+- [x] 11개 패키지 (`src/`), 단위·통합 시험 2 395개 (0 실패), 통합 시나리오 14개
 
 ### 기능 (명세 4장)
-- [ ] 1. 시뮬레이션 환경 및 로봇 모델링 (60x40m 월드, URDF, 센서 노이즈)
-- [ ] 2. 로봇 기초 (키네마틱스, 오도메트리, TF 트리)
-- [ ] 3. 위치 추정 (SLAM, AMCL, EKF 퓨전)
-- [ ] 4. 경로 계획 (A*/DWA 직접 구현, Costmap)
-- [ ] 5. 모션 제어 (Pure Pursuit, PID, 속도 프로파일)
-- [ ] 6. AI 인지 (YOLOv8, Pinhole 2D→3D)
-- [ ] 7. 동적 환경 대응 (추적, TTC, 회피, 안전)
-- [ ] 8. 작업 수행 (BehaviorTree, 도킹)
-- [ ] 9. Fleet Management (5대, 할당, 교착 해소, 대시보드)
-- [ ] 10. 통합·테스트·문서화 (커버리지 70%)
-
-권장 구현 순서는 명세 4장 하단 "구현 순서 권장" 참고.
+- [x] 1. 시뮬레이션 환경 및 로봇 모델링 (60×40 m 월드, URDF, 센서 노이즈, 적재 질량 변화)
+- [x] 2. 로봇 기초 (차동 구동 기구학·오도메트리 직접 구현, 센서 전처리, TF 트리)
+- [x] 3. 위치 추정 (slam_toolbox 매핑, AMCL 튜닝, 이중 EKF, 스캔-지도 정합, 납치 복구 8/8)
+- [x] 4. 경로 계획 (A*·DWA 직접 구현, Costmap 3층, TEB·DWB 비교, 0.60 m 통로 10/10)
+- [x] 5. 모션 제어 (Pure Pursuit, PID, S-curve·저크 제한)
+- [x] 6. AI 인지 (YOLOv8 미세조정 3클래스, Pinhole 2D→3D, ArUco)
+- [x] 7. 동적 환경 대응 (칼만 추적, TTC, VO 회피, 접근 기반 안전 정지)
+- [x] 8. 작업 수행 (BehaviorTree 43종 노드, 정밀 도킹 GT 5.2 mm / 0.20°)
+- [x] 9. Fleet Management (5대 동시 기동, 할당, 교통·교착 해소, 대시보드)
+- [x] 10. 통합·테스트·문서화 (커버리지 패키지별 70 % 이상)
 
 ---
 
