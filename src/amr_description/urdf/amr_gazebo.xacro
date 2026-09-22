@@ -23,6 +23,28 @@
   URDF 에서는 <gazebo reference="링크"><visual><visibility_flags> 확장으로 넣는다 — sdformat 이 병합(lumping) 후
   이름이 "<링크>_visual*" 인 시각체에 붙이므로 URDF 시각체에는 이름을 주지 않는다.
 
+  런타임 적재물 (명세 4.1 "적재 질량 변화가 동역학에 반영", 8장 물품 표 — 결정, Fortress 6.18 실측)
+    ignition-gazebo-detachable-joint-system 을 로봇 모델에 넣는다 (xacro 인자 runtime_payload, 기본 true):
+    부모 = 병합 링크 <prefix>base_footprint, 자식 = 별도 화물 모델 <robot_name>_cargo 의 link.
+    amr_simulation payload_manager_node 가 payload/attach·payload/mass 를 받아 물품 크기·질량의 박스를 그 이름으로
+    데크 바로 위에 만들고(UserCommands create) 붙이며, 하역이면 떼고(detach) 지운다(remove).
+    붙이면 DART 가 화물 바디를 로봇 스켈레톤으로 옮겨 고정 조인트로 묶는다 → 질량·관성이 로봇 동역학에 실제로 들어간다
+    (힘을 흉내 내는 것이 아니다 — 가감속 실측은 payload_manager_node 머리말). 한 스켈레톤이 되면 self_collide=false 라
+    화물-데크 접촉은 계산하지 않는다.
+    Fortress 6.18 DetachableJoint 동작 (최소 월드 실측):
+      - 설정 시점에 자식 모델이 없어도 된다. 초기 상태가 "붙이기 요청"이라 매 스텝 자식을 찾다가, 모델이 생기는 스텝에
+        스스로 붙는다. 찾지 못하면 스텝마다 경고 2줄("Child Model/Link ... could not be found", 1 ms 스텝이면 초당
+        2000 줄 — 실측 약 7 s 에 각 7080 줄)을 찍으므로 suppress_child_warning 을 켠다 (켜면 0 줄, 실측).
+        이 스텝마다 찾기의 비용은 측정 한계 아래다: 물리 전용 월드 5대(센서 없음, RTF 상한 없음)에서 Gazebo 서버
+        CPU 초 / sim 초 = 플러그인 없음 0.707 (0.686~0.719), 찾는 중 0.668, 5대 25 kg 부착 0.692, 하역 뒤 0.672
+        (조건마다 20 s 창 6개, 호스트 부하 평균 124~194 / 32 코어).
+      - detach 뒤에는 attach 토픽을 받아야 다시 붙는다 (같은 이름 모델을 새로 만들어도 스스로 붙지 않는다).
+      - 붙이는 순간의 상대 자세를 그대로 고정한다 (2 m 옆의 모델에 attach 하면 2 m 떨어진 채 묶인다). 그래서 화물을
+        월드 밖에 미리 세워 두지 않는다 — 초기 "붙이기 요청" 때문에 스폰 즉시 먼 화물이 로봇에 묶인다.
+      - state 토픽(ignition.msgs.StringMsg "attached" / "detached")은 상태가 바뀔 때만 나간다.
+    LiDAR(지면 +0.20)·카메라(+0.25)는 데크(+0.33) 아래라 화물이 스캔 평면·시야에 들어오지 않는다. 화물 시각체에도
+    이 로봇의 자기 비트를 줘 자기 센서에서 뺀다 (다른 로봇 센서에는 보인다).
+
   휠 엔코더: Fortress 에는 엔코더 센서가 없다. 물리 슬립은 WheelSlip 시스템(ignition-gazebo-wheel-slip-system)이
   있지만 쓰지 않는다 (결정: 슬립 노이즈는 드리프트 분석 대상이라 파라미터로 통제되는 소프트웨어 모델로 둔다).
   JointStatePublisher 가 내보내는 joint_states 의
@@ -165,6 +187,22 @@
         <dimensions>3</dimensions>
       </plugin>
     </gazebo>
+
+    <!-- ===== 런타임 적재물 (머리말 "런타임 적재물") ===== -->
+    <xacro:if value="${runtime_payload}">
+      <gazebo>
+        <plugin filename="ignition-gazebo-detachable-joint-system"
+                name="ignition::gazebo::systems::DetachableJoint">
+          <parent_link>${prefix}base_footprint</parent_link>
+          <child_model>${cargo_model}</child_model>
+          <child_link>link</child_link>
+          <attach_topic>/${robot_name}/cargo/attach</attach_topic>
+          <detach_topic>/${robot_name}/cargo/detach</detach_topic>
+          <output_topic>/${robot_name}/cargo/state</output_topic>
+          <suppress_child_warning>true</suppress_child_warning>
+        </plugin>
+      </gazebo>
+    </xacro:if>
 
     <!-- ===== 2D LiDAR (gpu_lidar) ===== -->
     <!-- angle_max 는 YAML 값을 그대로 쓴다: samples 개 빔이 [angle_min, angle_max] 를 등분한다
