@@ -156,25 +156,25 @@ def test_rotation_run_and_missing_ekf():
 
 
 def test_closed_form_predictions_match_monte_carlo():
-    # 직진: 주기당 곱셈 슬립 σ_s 를 두 바퀴에 독립 적용 → 헤딩 분산 2kL/b²
+    # 직진: 거리당 슬립 (Var Δs_i = σ_s² ℓ_ref |Δs_i|) 을 두 바퀴에 독립 적용 → 헤딩 분산 2kL/b²
     rng = np.random.default_rng(3)
-    sigma_s, b, v, dt, length = 0.01, 0.36, 1.0, 0.02, 20.0
+    sigma_s, b, v, dt, length, ref = 0.01, 0.36, 1.0, 0.02, 20.0, 0.01
     steps = int(length / (v * dt))
     ds = v * dt
-    eps = rng.normal(0.0, sigma_s, size=(4000, steps, 2))
-    dth = ds * (eps[:, :, 0] - eps[:, :, 1]) / b
+    noise = rng.normal(0.0, 1.0, size=(4000, steps, 2)) * sigma_s * math.sqrt(ref * ds)
+    dth = (noise[:, :, 0] - noise[:, :, 1]) / b
     th = np.cumsum(dth, axis=1)
     y = np.sum(ds * th, axis=1)
-    p = da.predicted_straight(length, v, sigma_s, b, dt)
+    p = da.predicted_straight(length, sigma_s, b, ref)
     assert th[:, -1].std() == pytest.approx(p['sigma_yaw'], rel=0.05)
     assert y.std() == pytest.approx(p['sigma_y'], rel=0.05)
     # 제자리 회전: 바퀴 변위 ±ωbΔt/2
     w, angle = 0.5, 2 * math.pi
     a = w * b / 2 * dt
     n = int(angle / (2 * a / b))
-    eps = rng.normal(0.0, sigma_s, size=(4000, n, 2))
-    th = np.sum(a * (1 + eps[:, :, 0]) / b + a * (1 + eps[:, :, 1]) / b, axis=1)
-    pr = da.predicted_rotation(angle, w, sigma_s, b, dt)
+    noise = rng.normal(0.0, 1.0, size=(4000, n, 2)) * sigma_s * math.sqrt(ref * a)
+    th = np.sum((a + noise[:, :, 0]) / b + (a + noise[:, :, 1]) / b, axis=1)
+    pr = da.predicted_rotation(angle, sigma_s, b, ref)
     assert th.std() == pytest.approx(pr['sigma_yaw'], rel=0.05)
 
 
@@ -235,8 +235,8 @@ def test_summarize_rotation_prediction_and_single_values():
     data['gt_yaw'] = da.wrap(np.linspace(0.0, 2 * math.pi, n))
     data['odom_yaw'] = data['gt_yaw'].copy()
     m = da.analyze_run(data, 'rotate', '0')
-    text = da.summarize([m], {'sigma_s': 0.01, 'separation': 0.36, 'dt': 0.02,
-                              'angular_speed': 0.5})
+    text = da.summarize([m], {'sigma_s': 0.01, 'separation': 0.36,
+                              'slip_reference_distance': 0.01})
     assert '- rotate 0' in text
     assert da.umbmark([m]) is None
     assert da.summarize([m]).startswith('# ')

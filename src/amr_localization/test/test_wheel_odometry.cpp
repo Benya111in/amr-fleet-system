@@ -6,8 +6,10 @@
 
 #include <Eigen/Dense>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -131,6 +133,97 @@ TEST(WheelOdometry, RobustToDroppedMessages)
   EXPECT_NEAR(r.last.pose.theta, rr.last.pose.theta, 1e-3);
 }
 
+namespace
+{
+/// 1 kHz joint_states 를 직진 v 로 흘리되 period 마다 gap [s] 동안 메시지가 끊긴다. 최종 x.
+struct GapRun
+{
+  double x{0.0};
+  double truth{0.0};
+  int ambiguous{0};
+  double max_var_v{0.0};
+};
+
+GapRun runWithGaps(
+  const WheelOdometryParams & p, double v, double gap, double period, double duration,
+  bool wrap_angles, bool with_velocity)
+{
+  WheelOdometry odom(p);
+  GapRun res;
+  const double omega = v / kR;
+  const double rate = 1000.0;
+  const int n = static_cast<int>(std::lround(duration * rate));
+  for (int i = 0; i <= n; ++i) {
+    const double t = static_cast<double>(i) / rate;
+    const double phase = std::fmod(t, period);
+    if (phase > period - gap && i != n) {
+      continue;  // 공백 (best-effort 구독 depth 5 에서 1 kHz 스트림이 막힌 경우)
+    }
+    double angle = omega * t;
+    if (wrap_angles) {
+      angle = std::remainder(angle, 2.0 * M_PI);
+    }
+    const double vel = with_velocity ? omega : std::numeric_limits<double>::quiet_NaN();
+    WheelOdometryOutput out;
+    if (odom.update(10.0 + t, angle, angle, out, vel, vel)) {
+      res.x = out.pose.x;
+      res.truth = v * (out.stamp - 10.0);     // 마지막 발행 시각의 참값
+      res.ambiguous += out.ambiguous_steps;
+      res.max_var_v = std::max(res.max_var_v, out.twist_covariance.var_v);
+    }
+  }
+  return res;
+}
+}  // namespace
+
+TEST(WheelOdometry, JointStateGapsNeverLoseRevolutions)
+{
+  // 리뷰 재현: 1 m/s 에서 0.3 s 공백은 바퀴 회전 3.6 rad > π → 이전 구현(차를 (−π, π] 로 접음)은
+  // 한 바퀴 2πr = 0.518 m 를 잃었다 (x = 3.482 vs 4.000). 다회전 카운터는 1 · 2 m/s 모두 보존한다.
+  for (const double v : {1.0, 2.0}) {
+    const GapRun r = runWithGaps(quantOnlyParams(), v, 0.3, 1.0, 4.0, false, true);
+    EXPECT_NEAR(r.x, r.truth, 1e-3) << "v " << v;
+    EXPECT_EQ(r.ambiguous, 0) << "v " << v;
+    // 속도 없이 연속 각만 와도 같다 (Gazebo 조인트 각은 감기지 않는 누적각)
+    const GapRun nv = runWithGaps(quantOnlyParams(), v, 0.3, 1.0, 4.0, false, false);
+    EXPECT_NEAR(nv.x, nv.truth, 1e-3) << "v " << v;
+  }
+}
+
+TEST(WheelOdometry, WrappedInputUsesVelocityHintAcrossGaps)
+{
+  // (−π, π] 로 감겨 오는 입력: 조인트 속도 × 공백으로 2π 분기를 고른다 (0.3 s @ 2 m/s = 7.3 rad)
+  WheelOdometryParams p = quantOnlyParams();
+  p.encoder.wrapped_input = true;
+  for (const double v : {1.0, 2.0}) {
+    const GapRun r = runWithGaps(p, v, 0.3, 1.0, 4.0, true, true);
+    EXPECT_NEAR(r.x, r.truth, 1e-3) << "v " << v;
+    EXPECT_EQ(r.ambiguous, 0);
+  }
+  // 속도 힌트가 없으면 분기를 정할 수 없다 → 모호 구간으로 표시하고
+  // 트위스트 분산을 한 바퀴 크기로 키운다
+  const GapRun r = runWithGaps(p, 2.0, 0.3, 1.0, 4.0, true, false);
+  EXPECT_GT(r.ambiguous, 0);
+  const double rev = 2.0 * M_PI * kR;
+  EXPECT_GT(r.max_var_v, rev * rev / (4.0 * 0.3 * 0.3));
+  // 공백이 π/ω_max 보다 짧으면(연속 50 Hz) 모호하지 않다
+  const GapRun ok = runWithGaps(p, 2.0, 0.0, 1.0, 2.0, true, false);
+  EXPECT_EQ(ok.ambiguous, 0);
+  EXPECT_NEAR(ok.x, ok.truth, 1e-3);
+}
+
+TEST(WheelOdometry, ImpossibleJointJumpIsFlagged)
+{
+  // 연속 입력에서 0.02 s 에 100 rad 점프 (조인트 리셋 등) 는 믿지 않는다
+  WheelOdometry odom(quantOnlyParams());
+  WheelOdometryOutput out;
+  odom.update(1.0, 0.0, 0.0, out);
+  EXPECT_TRUE(odom.update(1.02, 100.0, 100.0, out));
+  EXPECT_EQ(out.ambiguous_steps, 1);
+  EXPECT_EQ(odom.ambiguousSteps(), 1);
+  EXPECT_GT(out.twist_covariance.var_v, 1.0);
+}
+
 TEST(WheelOdometry, TimeReversalResets)
 {
   WheelOdometry odom(quantOnlyParams());
@@ -153,15 +246,16 @@ TEST(WheelOdometry, ResetPoseKeepsEncoderReference)
 
 TEST(WheelOdometry, TwistCovarianceFollowsSlipModel)
 {
-  // 직진 1 m/s, 50 Hz: Var v = 2σ_s²Δs²/(4T²) + 양자화 2(δ²/6)/(4T²)
+  // 직진 1 m/s, 50 Hz: Var v = 2σ_s²ℓ_ref Δs/(4T²) + 양자화 2(δ²/6)/(4T²)
   WheelOdometryParams p;
   p.seed = 11;
   WheelOdometry odom(p);
   const RunResult r = run(odom, 1.0, 0.0, 1.0, 50.0);
   const double ds = 0.02;
   const double q = tickDistance() * tickDistance() / 6.0;
-  const double expected_v = (2.0 * 1e-4 * ds * ds + 2.0 * q) / (4.0 * 0.02 * 0.02);
-  // 측정 Δs 는 잡음이 섞여 있어 σ_s²Δs² 가 약간 달라진다 → 5 %
+  const double expected_v =
+    (2.0 * 1e-4 * p.noise.slip_reference_distance * ds + 2.0 * q) / (4.0 * 0.02 * 0.02);
+  // 측정 Δs 는 잡음이 섞여 있어 |Δs| 가 약간 달라진다 → 5 %
   EXPECT_NEAR(r.last.twist_covariance.var_v / expected_v, 1.0, 0.05);
   EXPECT_NEAR(
     r.last.twist_covariance.var_w / (expected_v * 4.0 / (kB * kB)), 1.0, 0.05);

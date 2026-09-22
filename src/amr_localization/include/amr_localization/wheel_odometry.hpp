@@ -1,7 +1,10 @@
 // 휠 오도메트리 코어 (ROS 비의존): 인코더 에뮬레이터 → 순기구학 → 원호 적분 → 공분산.
 // wheel_odometry_node 는 이 클래스를 감싸 joint_states → wheel_odom 으로 연결하는 얇은 래퍼다.
 //
-// 자세는 누적 조인트 각(위치)에서 계산하므로 메시지가 빠져도 이동량이 사라지지 않는다.
+// 자세는 다회전 누적 조인트 각(위치)에서 계산하므로 메시지가 빠져도
+// (공백 0.3 s @ 2 m/s 포함) 이동량이 사라지지 않는다 (encoder_model.hpp 다회전 카운터).
+// 분기를 정할 수 없는 구간(감긴 입력 + 속도 없음)은 그 구간 변위 분산을
+// 한 바퀴 둘레² 로 키워 EKF 가 믿지 않게 한다.
 // 트위스트는 발행 구간 T 의 누적 변위 / T 로 구하고, 공분산은 같은 구간의 변위 분산에서 계산한다.
 
 #ifndef AMR_LOCALIZATION__WHEEL_ODOMETRY_HPP_
@@ -10,6 +13,7 @@
 #include <Eigen/Core>
 
 #include <cstdint>
+#include <limits>
 
 #include "amr_localization/diff_drive_kinematics.hpp"
 #include "amr_localization/encoder_model.hpp"
@@ -46,6 +50,7 @@ struct WheelOdometryOutput
   std::int64_t ticks_right{0};
   double tick_rate_left{0.0};    ///< [tick/s]
   double tick_rate_right{0.0};
+  int ambiguous_steps{0};        ///< 이 구간에서 분기 모호·불가능 점프로 분산을 키운 샘플 수
 };
 
 /// 휠 오도메트리 코어.
@@ -54,8 +59,15 @@ class WheelOdometry
 public:
   explicit WheelOdometry(const WheelOdometryParams & params);
 
-  /// 조인트 각 [rad] 을 넣는다. 발행 시점이면 out 을 채우고 true.
-  bool update(double stamp, double left_angle, double right_angle, WheelOdometryOutput & out);
+  /// 조인트 각 [rad] (과 선택적 조인트 속도 [rad/s], 없으면 NaN) 을 넣는다.
+  /// 발행 시점이면 out 을 채우고 true.
+  bool update(
+    double stamp, double left_angle, double right_angle, WheelOdometryOutput & out,
+    double left_velocity = std::numeric_limits<double>::quiet_NaN(),
+    double right_velocity = std::numeric_limits<double>::quiet_NaN());
+
+  /// 기동 후 분기 모호·불가능 점프로 분산을 키운 샘플 수 (진단).
+  std::int64_t ambiguousSteps() const {return ambiguous_total_;}
 
   /// 자세·공분산을 주어진 값으로 초기화 (인코더 기준점은 유지).
   void resetPose(const Pose2D & pose = Pose2D());
@@ -99,6 +111,8 @@ private:
   double acc_slip_var_right_{0.0};
   std::int64_t interval_ticks_left_{0};
   std::int64_t interval_ticks_right_{0};
+  int interval_ambiguous_{0};
+  std::int64_t ambiguous_total_{0};
 };
 
 }  // namespace amr_localization

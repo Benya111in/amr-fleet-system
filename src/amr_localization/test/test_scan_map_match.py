@@ -97,6 +97,62 @@ def test_global_seed_degenerate_inputs(room):
     assert global_seed.search(field, no_free, ranges, amin, inc, 25.0) == []
 
 
+def symmetric_aisle():
+    """점대칭(180° 회전 대칭) 창고 통로: 같은 랙 두 열 + 중앙 대칭 기둥 → 모든 자세에 완전한 별칭이 있다."""
+    grid, res = make_room(20.0, 14.0, boxes=((3.0, 4.0, 8.0, 1.0), (9.0, 9.0, 8.0, 1.0),
+                                             (4.0, 9.5, 0.5, 0.5), (15.5, 4.0, 0.5, 0.5)))
+    # make_room 은 셀 경계에 정렬돼 있으므로 180° 회전이 정확히 같은 격자다
+    assert np.array_equal(grid, grid[::-1, ::-1])
+    return grid, res
+
+
+def test_alias_gate_rejects_symmetric_aisle_alias():
+    # 점대칭 통로: 전역 탐색의 1·2 위가 서로의 별칭(ρ 차 < 여백) → 어느 쪽을 시드로 넣어도 수렴 게이트가
+    # 다른 쪽 ρ 와 가르지 못해 수렴을 보류해야 한다 (리뷰: 별칭 ρ 0.70~0.93 이 ρ ≥ 0.7 만으로 통과)
+    grid, res = symmetric_aisle()
+    field = DistanceField(grid.ravel().tolist(), GridSpec(grid.shape[1], grid.shape[0], res))
+    true_pose = (6.3, 7.1, 0.4)
+    alias = (20.0 - true_pose[0], 14.0 - true_pose[1], true_pose[2] - math.pi)
+    offset = (0.15, 0.0, 0.0)
+    ranges, amin, inc = raycast(grid, res, compose(true_pose, offset), noise=0.03, seed=5)
+    hyps = global_seed.search(field, field.free, ranges, amin, inc, 25.0, offset)
+    assert len(hyps) >= 2
+    top = [(h.x, h.y, h.yaw) for h in hyps[:2]]
+    assert any(global_seed.pose_close(t, true_pose, 0.3, math.radians(5)) for t in top)
+    assert any(global_seed.pose_close(t, alias, 0.3, math.radians(5)) for t in top)
+    beams = global_seed.base_beams(ranges, amin, inc, 25.0, 180, offset)
+    for current in (true_pose, alias):
+        # 수렴한 AMCL 자세(연속값)를 현재 추정으로, 다른 가설을 별칭으로 — 어느 쪽이든 가를 수 없다
+        alt = global_seed.alternative_poses(hyps, current, (0.0, 0.0, 0.0))
+        assert alt
+        margin = global_seed.alias_margin(field, beams, current, alt, 0.2)
+        assert margin < 0.05                    # 게이트가 수렴을 보류한다
+        # 국소 정밀화 없이 비교하면 가설 격자 양자화 때문에 별칭 쪽이 불리해 틀린 수렴도 통과할 수 있다
+        assert global_seed.refined_ratio(field, beams, current, 0.2)[0] >= \
+            global_seed.inlier_ratio(field, beams, current, 0.2)
+    # 비대칭 방에서는 1 위가 별칭들보다 여백 이상 앞선다 → 수렴 허용
+    grid2, _ = make_room()
+    field2 = DistanceField(grid2.ravel().tolist(), GridSpec(grid2.shape[1], grid2.shape[0], res))
+    pose2 = (10.3, 5.2, -2.1)
+    r2, amin, inc = raycast(grid2, res, compose(pose2, offset), noise=0.03, seed=2)
+    hyps2 = global_seed.search(field2, field2.free, r2, amin, inc, 25.0, offset)
+    beams2 = global_seed.base_beams(r2, amin, inc, 25.0, 180, offset)
+    alt2 = global_seed.alternative_poses(hyps2, pose2, (0.0, 0.0, 0.0))
+    assert global_seed.alias_margin(field2, beams2, pose2, alt2, 0.2) >= 0.05
+
+
+def test_alternative_poses_follow_odom_motion():
+    h = [global_seed.Hypothesis(1.0, 2.0, math.pi / 2, 0.0),
+         global_seed.Hypothesis(5.0, 5.0, 0.0, 0.0)]
+    # 탐색 이후 제자리 90° 회전 + 전방 1 m: 가설마다 자기 헤딩 기준으로 옮긴다
+    alt = global_seed.alternative_poses(h, (6.0, 5.0, math.pi / 2), (1.0, 0.0, math.pi / 2))
+    assert len(alt) == 1                     # 두 번째 가설은 현재 추정과 같은 가설
+    assert alt[0] == pytest.approx((1.0, 3.0, math.pi), abs=1e-9)
+    assert global_seed.alias_margin(None, np.zeros((0, 2)), (0, 0, 0), alt, 0.2) is None
+    assert global_seed.alias_margin(None, np.ones((3, 2)), (0, 0, 0), [], 0.2) is None
+    assert global_seed.refined_ratio(None, np.zeros((0, 2)), (1, 2, 3), 0.2) == (0.0, (1, 2, 3))
+
+
 def test_nms_keeps_distinct():
     hyp = global_seed.Hypothesis
     hyps = [hyp(0.0, 0.0, 0.0, 0.1), hyp(0.2, 0.0, 0.0, 0.2), hyp(5.0, 0.0, 0.0, 0.3),

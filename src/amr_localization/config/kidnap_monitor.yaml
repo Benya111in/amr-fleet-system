@@ -26,7 +26,10 @@
     spin_angle: 6.283185307       # [rad] 한 바퀴: 360° LiDAR 라도 회전은 AMCL 갱신·리샘플(update_min_a)을 구동한다
     spin_time_allowance: 30.0     # [s]
     converge_cov: 0.1             # [m²] 수렴: AMCL var(x)+var(y) < 0.1 (σ ≈ 0.22 m) 이고
-    converge_match: 0.7           #       인라이어 비율 ≥ 0.7 이
+    converge_match: 0.7           #       인라이어 비율 ≥ 0.7 이고
+    converge_margin: 0.05         #       다른 전역 가설(별칭, 탐색 이후 odom 이동만큼 옮긴 자세)의 같은 스캔
+                                  #       인라이어 비율보다 0.05 이상 높은 것이 (점대칭·주기 별칭 ρ 0.70~0.93,
+                                  #       정답 대비 차 0.07 이상 — slam.md §5.2; 못 가르면 lost 유지)
     converge_count: 5             #       5 회 연속 (≈ 2.5 s)
     recovery_timeout: 120.0       # [s] 이 안에 수렴 못 하면 FAILED (lost 유지, 수렴하면 언제든 복귀)
     cooldown: 3.0                 # [s] 복구 직후 재감지 유예
@@ -53,5 +56,6 @@
     ekf_set_pose_service: ''      # launch 가 map EKF 의 set_pose 서비스 이름을 넣는다 ('' = 사용 안 함)
     fallback_cmd_vel_topic: ''    # spin 서버 없는 단독 시험에서만 'cmd_vel' (운용 시 cmd_vel 발행자는 safety_node 하나)
     fallback_angular_speed: 0.5   # [rad/s]
-    lidar_offset: [0.15, 0.0, 0.0]  # [m, m, rad] base_footprint→lidar_link (launch 가 sensors.yaml extrinsic 으로 덮어씀)
+    lidar_offset: [0.15, 0.0, 0.0]  # [m, m, rad] base_footprint→lidar_link 2D (launch 가 sensors.yaml extrinsic 으로 덮어씀;
+                                    # 스캔 평면 높이 0.20 m 는 2D 일치도에 쓰이지 않는다)
     event_log: ''                 # 이벤트 CSV 경로 ('' = 기록 안 함)

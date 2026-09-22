@@ -174,12 +174,15 @@ ScanFilterStats ScanFilter::apply(
     const double hi = M_PI - params_.shadow_min_angle;
     const double sin_inc = std::sin(inc);
     const double cos_inc = std::cos(inc);
+    // 같은 면의 두 빔 거리 차는 잡음만으로 N(0, 2σ_r²) → k·√2·σ_r 이하면 베일로 보지 않는다
+    const double sigma_r = std::max(params_.shadow_range_noise_stddev, 0.0);
+    const double noise_jump = params_.shadow_noise_factor * std::sqrt(2.0) * sigma_r;
     const std::size_t pairs = full_circle ? n : n - 1;
     for (std::size_t i = 0; i < pairs; ++i) {
       const std::size_t j = (i + 1) % n;
       const double ri = snapshot[i];
       const double rj = snapshot[j];
-      if (!std::isfinite(ri) || !std::isfinite(rj)) {
+      if (!std::isfinite(ri) || !std::isfinite(rj) || std::abs(ri - rj) <= noise_jump) {
         continue;
       }
       const double beta = std::atan2(rj * sin_inc, ri - rj * cos_inc);

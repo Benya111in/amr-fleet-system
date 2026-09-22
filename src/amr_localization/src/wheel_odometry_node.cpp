@@ -3,6 +3,7 @@
 //
 // 인터페이스 (docs/architecture/components.md §5.2)
 //   Sub  joint_states      sensor_msgs/JointState  바퀴 조인트 누적 각
+//                          (+ 속도: 감긴 입력의 2π 분기 힌트)
 //   Pub  wheel_odom        nav_msgs/Odometry       frame <prefix>odom, child <prefix>base_footprint
 //   Pub  wheel_odom/ticks  sensor_msgs/JointState  (디버그) position = 누적 틱, velocity = 틱/s
 //   Srv  wheel_odom/reset  std_srvs/Trigger        자세·공분산 0 으로 (드리프트 실험 시작점)
@@ -13,6 +14,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <random>
 #include <string>
@@ -72,6 +74,11 @@ public:
     p.encoder.quantize = declare_parameter("enable_quantization", true);
     p.encoder.slip_noise = declare_parameter("enable_slip_noise", true);
     p.noise.slip_noise_stddev = p.encoder.slip_noise ? p.encoder.slip_noise_stddev : 0.0;
+    // 거리당 슬립 기준 거리 ℓ_ref (σ_s 가 정의된 굴림 거리).
+    // 인코더 φ_ref = ℓ_ref / r 는 코어가 계산한다.
+    p.noise.slip_reference_distance = declare_parameter("slip_reference_distance", 0.01);
+    p.encoder.wrapped_input = declare_parameter("joint_position_wrapped", false);
+    p.encoder.max_wheel_speed = declare_parameter("max_wheel_speed", 30.0);
     p.noise.slip_distance_coeff = declare_parameter("slip_distance_coeff", 0.0);
     p.wheel_param_rel_stddev = declare_parameter("wheel_param_rel_stddev", 0.0);
     p.lateral_stddev = declare_parameter("lateral_velocity_stddev", 0.02);
@@ -175,11 +182,23 @@ private:
     if (stamp.nanoseconds() == 0) {
       stamp = now();
     }
+    // 조인트 속도는 선택 (Gazebo JointStatePublisher 는 채운다): 감긴 입력의 2π 분기 힌트
+    const bool has_velocity = msg.velocity.size() == msg.name.size();
+    const double nan = std::numeric_limits<double>::quiet_NaN();
     WheelOdometryOutput out;
     if (!odometry_->update(
-        stamp.seconds(), msg.position[left_index_], msg.position[right_index_], out))
+        stamp.seconds(), msg.position[left_index_], msg.position[right_index_], out,
+        has_velocity ? msg.velocity[left_index_] : nan,
+        has_velocity ? msg.velocity[right_index_] : nan))
     {
       return;
+    }
+    if (out.ambiguous_steps > 0) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 5000,
+        "wheel angle branch ambiguous or impossible jump (%d samples, %d total): "
+        "twist variance inflated by one wheel revolution",
+        out.ambiguous_steps, static_cast<int>(odometry_->ambiguousSteps()));
     }
     publish(stamp, out);
   }

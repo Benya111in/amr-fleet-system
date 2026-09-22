@@ -15,7 +15,11 @@
 //      임계의 r·Δα 항은 인접 빔 끝점 간격(거리에 비례)을 반영한다.
 //   4. 섀도우(베일) 제거: 인접 빔 끝점을 잇는 선과 광선의 각
 //      β = atan2(r_j sin Δα, r_i − r_j cos Δα) 가 shadow_min_angle 미만 또는
-//      π − shadow_min_angle 초과면 먼 쪽 점 제거 (모서리 혼합 픽셀).
+//      π − shadow_min_angle 초과이고, 거리 차가 잡음으로 설명되지 않을 때
+//      (|r_i − r_j| > shadow_noise_factor·√2·σ_r) 먼 쪽 점 제거 (모서리 혼합 픽셀).
+//      잡음 조건이 없으면 근거리(r·Δα ≪ σ_r)에서 같은 면의 잡음 차만으로 β 가 작아져
+//      먼 쪽(잡음이 + 인 쪽)만 지워지고 남은 점이 짧게 치우친다
+//      (σ 0.03 m, 0.5 m 벽: 59 % 유지, −1.5 cm).
 // 360° 스캔이면(첫·끝 빔이 한 증분 간격) 이웃 탐색이 배열 끝에서 감긴다.
 
 #ifndef AMR_LOCALIZATION__SCAN_FILTER_HPP_
@@ -43,6 +47,10 @@ struct ScanFilterParams
   int outlier_min_neighbors{1};       ///< 필요한 지지 이웃 수
   bool shadow_filter_enabled{true};
   double shadow_min_angle{0.17453292519943295};  ///< [rad] (10°)
+  /// σ_r [m] LiDAR 거리 잡음 (sensors.yaml lidar.noise_stddev)
+  double shadow_range_noise_stddev{0.03};
+  /// k: 거리 차 |r_i − r_j| ≤ k·√2·σ_r 이면 잡음으로 보고 유지
+  double shadow_noise_factor{3.0};
 };
 
 /// 단계별 제거 통계.

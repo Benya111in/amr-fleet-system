@@ -5,7 +5,7 @@
 //   Σ_pψ ← F_p Σ_pψ + F_ψ Σ_ψψ
 //   F_p = ∂p'/∂p, F_u = ∂p'/∂(Δs_R, Δs_L)   (정확한 원호 적분의 야코비안)
 //   F_ψ = F_u diag(b Δφ_R, b Δφ_L)
-//   Σ_u = diag(Var Δs_R, Var Δs_L) — 슬립 잡음 σ_s²Δs_i² + 물리 슬립 k|Δs_i|.
+//   Σ_u = diag(Var Δs_R, Var Δs_L) — 거리당 슬립 잡음 σ_s² ℓ_ref |Δs_i| + 물리 슬립 k|Δs_i|.
 //   양자화는 Σ_u 에 넣지 않는다: 누적 카운트의 양자화 오차는 유계라 매 주기 백색으로 더하면
 //   가짜 랜덤워크가 된다 → 발행 시 1 회만 더한다.
 // 트위스트: 발행 구간 T 의 바퀴 변위 분산 σ_i²(T) 로부터
@@ -34,15 +34,17 @@ struct StepJacobians
 /// 정확한 원호 적분(integrateExactArc)의 야코비안. theta = 주기 시작 헤딩.
 StepJacobians exactArcJacobians(double theta, const BodyIncrement & increment, double separation);
 
-/// 바퀴 변위 잡음 모델 파라미터 (config/sensors.yaml wheel_encoder).
+/// 바퀴 변위 잡음 모델 파라미터 (config/sensors.yaml wheel_encoder, wheel_odometry.yaml).
 struct WheelNoiseParams
 {
-  double slip_noise_stddev{0.01};    ///< σ_s: 주기당 곱셈 슬립 잡음 [무차원]
+  double slip_noise_stddev{0.01};    ///< σ_s: 기준 굴림 ℓ_ref 에서의 상대 슬립 σ [무차원]
+  double slip_reference_distance{0.01};  ///< ℓ_ref [m]: 슬립 분산 σ_s² ℓ_ref |Δs| 의 기준 거리
   /// k [m]: 물리 슬립 분산 계수 Var = k|Δs| (사전값 0, 드리프트 실험으로 식별)
   double slip_distance_coeff{0.0};
 };
 
-/// 한 주기 바퀴 변위 분산 (자세 전파용, 양자화 제외): σ_s²Δs² + k|Δs| [m²].
+/// 한 주기 바퀴 변위 분산 (자세 전파용, 양자화 제외): (σ_s² ℓ_ref + k)|Δs| [m²].
+/// 거리에 비례하므로 누적 분산은 샘플 주기·속도와 무관하다.
 double stepDisplacementVariance(const WheelNoiseParams & noise, double ds);
 
 /// 양자화 유계항: 구간 양 끝 카운트의 반올림 오차 차 q_end − q_start 의 분산 δ²/6 [m²]

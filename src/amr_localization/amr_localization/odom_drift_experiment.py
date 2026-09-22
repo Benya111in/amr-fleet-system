@@ -67,7 +67,7 @@ class OdomDriftExperiment(Node):
         self.declare_parameter('sigma_s', 0.01)                # 리포트 폐형 예측용
         self.declare_parameter('wheel_separation', 0.36)       # [m] 리포트 유효 파라미터 기준
         self.declare_parameter('wheel_radius', 0.0825)         # [m]
-        self.declare_parameter('encoder_period', 0.02)
+        self.declare_parameter('slip_reference_distance', 0.01)   # [m] 슬립 기준 굴림 ℓ_ref
         # [s] (벽시계) 첫 런 전에 wheel_odom/reset 서비스 발견을 기다리는 상한
         self.declare_parameter('service_wait', 15.0)
 
@@ -244,9 +244,7 @@ class OdomDriftExperiment(Node):
         meta = {'sigma_s': float(g('sigma_s').value),
                 'separation': float(g('wheel_separation').value),
                 'wheel_radius': float(g('wheel_radius').value),
-                'dt': float(g('encoder_period').value),
-                'linear_speed': self.limits.linear_speed,
-                'angular_speed': self.limits.angular_speed}
+                'slip_reference_distance': float(g('slip_reference_distance').value)}
         runs = drift_analysis.analyze_directory(self.output_dir, meta)
         self.get_logger().info(f'{len(runs)} runs analysed → {self.output_dir}/summary.md')
         for line in (self.output_dir / 'summary.md').read_text(encoding='utf-8').splitlines():

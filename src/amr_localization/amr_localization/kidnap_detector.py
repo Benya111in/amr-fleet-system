@@ -9,7 +9,11 @@ kidnap_monitor_node 가 메시지를 넣고, 돌려받은 동작(Action)을 ROS 
   3. 스캔-맵 불일치: 빔 끝점이 점유 셀에서 inlier_dist 이내인 비율 ρ 가 match_thresh 미만
                     match_window 회 연속 (정지 중 납치는 AMCL 이 갱신조차 하지 않으므로 이것이 주 신호)
 상태: TRACKING → SUSPECT(suspect_time 지속) → LOST(재초기화 + 회전) → 수렴 확인 → TRACKING.
-수렴: AMCL trace < converge_cov 이고 ρ ≥ converge_match 가 converge_count 회 연속.
+수렴: AMCL trace < converge_cov 이고 ρ ≥ converge_match 이며, 전역 탐색이 낸 다른 가설(별칭)들을 같은 odom
+이동만큼 옮긴 자세보다 인라이어 비율이 converge_margin 이상 높은 것(alias_margin, 양쪽 모두 국소 정밀화 후 비교)이
+converge_count 회 연속.
+점대칭·주기 배치의 별칭은 ρ 0.70~0.93 이 나와 ρ 하한만으로는 틀린 가설을 받아들인다 (리뷰) — 별칭과 가를 수
+없으면(여백 부족) 수렴을 선언하지 않고 lost 를 유지한다 (틀린 자세로 주행하는 것보다 안전 측).
 회전이 끝나도 수렴하지 않으면 spin_retry 회까지 다시 돌고, 그래도 안 되면 전역 재초기화를
 reinit_retry 회 반복한 뒤 FAILED (lost 유지, 수렴하면 언제든 복귀).
 """
@@ -63,6 +67,7 @@ class KidnapParams:
     suspect_time: float = 1.0          # [s] SUSPECT 지속 → LOST
     converge_cov: float = 0.1          # [m²] 수렴 판정 trace 상한
     converge_match: float = 0.7        # 수렴 판정 인라이어 비율 하한
+    converge_margin: float = 0.05      # 수렴 판정: ρ(현재) − max ρ(별칭 가설) 하한 (국소 정밀화 후)
     converge_count: int = 5            # 연속 만족 횟수
     spin_angle: float = 2.0 * math.pi  # [rad] 복구 회전량
     spin_retry: int = 1                # 재초기화(시도) 한 번당 회전 횟수
@@ -201,6 +206,8 @@ class KidnapDetector:
         self._anchor: Optional[Tuple[Pose, Pose]] = None   # (AMCL 자세, 그 시각 odom 자세)
         self._low_match = 0
         self._last_match: Optional[float] = None
+        self._last_margin: Optional[float] = None    # ρ(현재) − max ρ(별칭)
+        self.alias_rejections = 0                     # 여백 부족으로 수렴을 보류한 판정 수
         self._amcl_alarm = False      # 지속 경보: 공분산
         self._amcl_reason = ''
         self._match_alarm = False     # 지속 경보: 스캔-맵 불일치
@@ -250,6 +257,10 @@ class KidnapDetector:
                 jump = f'jump {dp:.2f} m / {math.degrees(dth):.0f} deg vs odom'
         return self._evaluate(t, jump)
 
+    def odom_pose_at(self, t: float) -> Optional[Pose]:
+        """시각 t 의 odom 자세 (버퍼 보간, 없으면 None)."""
+        return interpolate_pose(self._odom, t)
+
     def map_pose_at(self, t: float) -> Optional[Pose]:
         """
         시각 t 의 map 자세 = 마지막 AMCL 자세 ∘ (그 이후 odom 상대 이동).
@@ -263,11 +274,17 @@ class KidnapDetector:
             return None
         return compose(self._anchor[0], relative_pose(self._anchor[1], odom_now))
 
-    def on_match(self, t: float, ratio: float, valid_beams: int) -> List[Action]:
-        """스캔-맵 인라이어 비율 (kidnap_monitor_node 가 map 자세로 계산)."""
+    def on_match(self, t: float, ratio: float, valid_beams: int,
+                 alias_margin: Optional[float] = None) -> List[Action]:
+        """
+        스캔-맵 인라이어 비율 (kidnap_monitor_node 가 map 자세로 계산).
+
+        alias_margin: 복구 중 ρ(현재 추정) − max ρ(다른 가설, 별칭) (global_seed.alias_margin; 없으면 None).
+        """
         if valid_beams < self.params.min_match_beams:
             return self._evaluate(t, '')
         self._last_match = ratio
+        self._last_margin = alias_margin
         if ratio < self.params.match_thresh:
             self._low_match += 1
         else:
@@ -336,6 +353,10 @@ class KidnapDetector:
                   and self._amcl_cov[0] < self.params.converge_cov
                   and self._amcl_cov[1] < self.params.yaw_cov_thresh)
         match_ok = self._last_match is not None and self._last_match >= self.params.converge_match
+        if cov_ok and match_ok and self._last_margin is not None and (
+                self._last_margin < self.params.converge_margin):
+            self.alias_rejections += 1        # 별칭과 가를 수 없다 → 수렴 보류
+            return False
         return cov_ok and match_ok
 
     def _set_state(self, t: float, state: State, reason: str) -> None:
@@ -350,6 +371,7 @@ class KidnapDetector:
         self._converged_count = 0
         self._low_match = 0
         self._last_match = None
+        self._last_margin = None
         self._set_state(t, State.RECOVERING, f'LOST: {reason}')
         return [Action(ActionType.PUBLISH_LOST, True)] + self._reinitialize(t, reason)
 

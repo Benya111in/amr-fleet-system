@@ -140,6 +140,31 @@ def test_covariance_alarm_and_recovery():
     assert det.recovery_times == [pytest.approx(5.6 - 1.6)]
 
 
+def test_alias_margin_blocks_convergence_until_resolved():
+    # 별칭(대칭 배치) 가설이 현재 추정만큼 잘 맞으면(ρ_alt ≈ ρ) 수렴을 선언하지 않고 lost 를 유지한다
+    p = KidnapParams(suspect_time=0.5, converge_count=2, converge_margin=0.05)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 30.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 2.0, 0.1)
+    det.tick(1.6)
+    assert det.state == State.RECOVERING
+    det.on_amcl(5.0, (3.0, 4.0, 0.5), 0.02, 0.01)
+    for k in range(10):
+        assert det.on_match(5.1 + 0.5 * k, 0.93, 150, alias_margin=0.02) == []
+    assert det.state == State.RECOVERING and det.lost
+    assert det.alias_rejections >= 10
+    # 한 스캔만 여백을 넘으면 연속 조건(converge_count 2)을 못 채운다
+    assert det.on_match(10.2, 0.95, 150, alias_margin=0.10) == []
+    assert det.on_match(10.7, 0.93, 150, alias_margin=-0.01) == []
+    # 회전·이동으로 별칭이 떨어져 나가면(여백 ≥ 0.05 가 2 회 연속) 수렴
+    det.on_match(11.2, 0.95, 150, alias_margin=0.15)
+    actions = det.on_match(11.7, 0.94, 150, alias_margin=0.32)
+    assert ActionType.SET_EKF_POSE in kinds(actions)
+    assert det.state == State.TRACKING and not det.lost
+    # 별칭 정보가 없으면(None) 이전 규칙 (ρ 하한만)
+    assert KidnapParams().converge_margin == pytest.approx(0.05)
+
+
 def test_amcl_update_before_lost_does_not_count_for_convergence():
     p = KidnapParams(match_window=1, suspect_time=0.0, converge_count=1)
     det = KidnapDetector(p)

@@ -46,6 +46,8 @@ public:
       static_cast<int>(declare_parameter<std::int64_t>("outlier_min_neighbors", 1));
     p.shadow_filter_enabled = declare_parameter("shadow_filter_enabled", true);
     p.shadow_min_angle = declare_parameter("shadow_min_angle_deg", 10.0) * M_PI / 180.0;
+    p.shadow_range_noise_stddev = declare_parameter("shadow_range_noise_stddev", 0.03);
+    p.shadow_noise_factor = declare_parameter("shadow_noise_factor", 3.0);
     stats_period_ = declare_parameter("stats_log_period", 30.0);
     filter_ = std::make_unique<ScanFilter>(p);
 
@@ -56,10 +58,11 @@ public:
     RCLCPP_INFO(
       get_logger(),
       "scan filter: range [%.2f, %.2f] m, window [%.3f, %.3f] rad, %zu masks, outlier w=%d "
-      "thr=%.2f+%.1f*r*dA, shadow %s (%.1f deg)",
+      "thr=%.2f+%.1f*r*dA, shadow %s (%.1f deg, |dr| > %.1f*sqrt2*%.3f m)",
       p.range_min, p.range_max, p.angle_window_min, p.angle_window_max, p.angle_mask.size(),
       p.outlier_window, p.outlier_thresh, p.outlier_range_gain,
-      p.shadow_filter_enabled ? "on" : "off", p.shadow_min_angle * 180.0 / M_PI);
+      p.shadow_filter_enabled ? "on" : "off", p.shadow_min_angle * 180.0 / M_PI,
+      p.shadow_noise_factor, p.shadow_range_noise_stddev);
   }
 
 private:
