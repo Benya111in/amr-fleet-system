@@ -10,12 +10,22 @@
 
   월드(amr_simulation/worlds/*.sdf) 필수 시스템 — 없으면 아래 센서/스폰이 동작하지 않는다:
     ignition-gazebo-physics-system
-    ignition-gazebo-user-commands-system      (ros_gz_sim create 스폰 서비스)
+    ignition-gazebo-user-commands-system      (create 스폰 서비스 — scripts/gz_world.py spawn)
     ignition-gazebo-sensors-system            <render_engine>ogre2</render_engine>  (gpu_lidar, camera, depth_camera)
     ignition-gazebo-imu-system                (imu)
-    ignition-gazebo-scene-broadcaster-system  (GUI/장면 조회, 선택)
+    ignition-gazebo-scene-broadcaster-system  (scene/info — gz_world.py 가 스폰 결과를 확인한다, GUI)
 
-  휠 엔코더: Fortress 에는 엔코더 센서/슬립 모델이 없다. JointStatePublisher 가 내보내는 joint_states 의
+  자기 차체 제외 (결정, 실측): LiDAR 가 차체 안 슬롯에 있어 차체 박스가 스캔 평면을 둘러싼다. gpu_lidar/카메라의
+  <visibility_mask> 와 시각체 <visibility_flags> 로 "자기 로봇 시각체만" 센서에서 뺀다 — 이 로봇의 모든 링크 시각체는
+  flags = 1 << self_visibility_bit (amr.urdf.xacro), 이 로봇의 센서는 mask = 0xFFFFFFFF − 그 비트. 다른 로봇은
+  비트가 달라 보이고, 월드 모델은 기본 flags(0xFFFFFFFF)라 보인다. Fortress 6.18 / ign-sensors 6.9 / ign-rendering 6.6
+  (ogre2) 에서 실측 확인: 자기 차체 반환 0, 옆 로봇 차체·바닥 중형 박스는 반환됨. 충돌체(물리)에는 영향이 없다.
+  URDF 에서는 <gazebo reference="링크"><visual><visibility_flags> 확장으로 넣는다 — sdformat 이 병합(lumping) 후
+  이름이 "<링크>_visual*" 인 시각체에 붙이므로 URDF 시각체에는 이름을 주지 않는다.
+
+  휠 엔코더: Fortress 에는 엔코더 센서가 없다. 물리 슬립은 WheelSlip 시스템(ignition-gazebo-wheel-slip-system)이
+  있지만 쓰지 않는다 (결정: 슬립 노이즈는 드리프트 분석 대상이라 파라미터로 통제되는 소프트웨어 모델로 둔다).
+  JointStatePublisher 가 내보내는 joint_states 의
   position(rad, 연속 누적)·velocity 에 대해 팀의 엔코더/오도메트리 노드(명세 2장 "순기구학·오도메트리")가
     ticks_k = floor(position_k / (2π) · wheel_encoder.ticks_per_revolution)       (4096 틱 양자화)
     Δs_k    = (ticks_k − ticks_{k−1}) · 2π r / ticks_per_revolution · (1 + N(0, wheel_encoder.slip_noise_stddev))
@@ -55,7 +65,29 @@
                      dyn_tau="${imu['accel_dynamic_bias_correlation_time']}"/>
   </xacro:macro>
 
+  <!-- 자기 차체 가시성 비트: 링크의 모든 (이름 없는) 시각체에 visibility_flags 를 붙인다 (머리말 "자기 차체 제외") -->
+  <xacro:macro name="self_visibility" params="link">
+    <gazebo reference="${link}">
+      <visual>
+        <visibility_flags>${self_visibility_flags}</visibility_flags>
+      </visual>
+    </gazebo>
+  </xacro:macro>
+
   <xacro:macro name="amr_gazebo" params="prefix robot_name">
+
+    <!-- ===== 자기 차체 가시성 비트 (시각체가 있는 링크 전부) ===== -->
+    <xacro:self_visibility link="${prefix}base_link"/>
+    <xacro:self_visibility link="${prefix}left_wheel_link"/>
+    <xacro:self_visibility link="${prefix}right_wheel_link"/>
+    <xacro:self_visibility link="${prefix}front_caster_link"/>
+    <xacro:self_visibility link="${prefix}rear_caster_link"/>
+    <xacro:self_visibility link="${prefix}${lidar['frame_id']}"/>
+    <xacro:self_visibility link="${prefix}${cam['frame_id']}"/>
+    <xacro:self_visibility link="${prefix}${imu['frame_id']}"/>
+    <xacro:if value="${payload_mass > 0.0}">
+      <xacro:self_visibility link="${prefix}cargo_link"/>
+    </xacro:if>
 
     <!-- ===== 접촉 마찰 (robot_params.yaml robot.*_friction_coeff). 캐스터는 낮은 mu 로 미끄러지는 구 근사 ===== -->
     <gazebo reference="${prefix}left_wheel_link">
@@ -77,9 +109,15 @@
 
     <gazebo>
       <!--
-        차동 구동 (모터 드라이버 모델). 속도/가속도 제한은 robot_params.yaml limits 그대로 (Fortress DiffDrive 의
-        min/max_linear|angular_velocity|acceleration). odom 은 /<robot_name>/odom_gz 로만 내보내며(비교용),
-        이 플러그인의 tf(tf_topic)는 절대 ROS 로 브리지하지 않는다 — odom→base_footprint TF 는 EKF 가 발행한다.
+        차동 구동 (모터 드라이버 = 컨트롤러 한계). 속도/가속도 제한은 robot_params.yaml limits (Fortress DiffDrive 의
+        min/max_linear|angular_velocity|acceleration). 물리 한계는 바퀴 조인트 토크/속도 한계(drive.*, amr_base.xacro)가
+        따로 걸어 적재 질량이 크면 이 한계보다 늦게 가속·제동한다.
+        감속 한계(min_linear_acceleration)는 정상 감속 1.0 이 아니라 비상 감속 limits.emergency_deceleration 이다 (결정):
+        정상 감속 프로파일은 velocity_profiler_node 가 지키고, E-Stop 은 safety_node 가 프로파일을 우회해 0 을 내므로
+        여기서 1.0 으로 묶으면 E-Stop 도 2.0 m/s 에서 2 m 를 미끄러진다. 한계가 부호 기준이라 후진 가속에도 적용된다.
+        odom 은 /<robot_name>/odom_gz 로만 내보내며(비교용), 이 플러그인의 tf(gz /<robot_name>/odom_gz/tf)는
+        기본으로 ROS 에 브리지하지 않는다 — odom→base_footprint TF 는 EKF 가 발행한다. EKF 가 생기기 전 초기 매핑에만
+        spawn.launch.py bridge_odom_tf:=true 로 /tf 에 넘긴다 (EKF 와 동시 사용 금지).
 
         저크 제한(max_linear_jerk)은 여기 넣지 않는다 (결정). Fortress DiffDrive 의 SpeedLimiter 는 목표를
         내다보지 않고 저크만 자르기 때문에 목표 속도 근처에서 감속을 늦게 시작해 ±a²/(2j) 로 계속 진동한다
@@ -96,7 +134,7 @@
         <wheel_radius>${wheel_radius}</wheel_radius>
         <topic>/${robot_name}/cmd_vel</topic>
         <odom_topic>/${robot_name}/odom_gz</odom_topic>
-        <tf_topic>/${robot_name}/odom_gz/tf_unused</tf_topic>
+        <tf_topic>/${robot_name}/odom_gz/tf</tf_topic>
         <frame_id>${prefix}odom</frame_id>
         <child_frame_id>${prefix}base_footprint</child_frame_id>
         <odom_publish_frequency>${encoder['update_rate']}</odom_publish_frequency>
@@ -105,7 +143,7 @@
         <max_angular_velocity>${limits['max_angular_velocity']}</max_angular_velocity>
         <min_angular_velocity>${-limits['max_angular_velocity']}</min_angular_velocity>
         <max_linear_acceleration>${limits['max_linear_acceleration']}</max_linear_acceleration>
-        <min_linear_acceleration>${-limits['max_linear_acceleration']}</min_linear_acceleration>
+        <min_linear_acceleration>${-limits['emergency_deceleration']}</min_linear_acceleration>
         <max_angular_acceleration>${limits['max_angular_acceleration']}</max_angular_acceleration>
         <min_angular_acceleration>${-limits['max_angular_acceleration']}</min_angular_acceleration>
       </plugin>
@@ -158,6 +196,8 @@
             <mean>0.0</mean>
             <stddev>${lidar['noise_stddev']}</stddev>
           </noise>
+          <!-- 자기 차체 제외 (머리말). 차체 안 슬롯에 있으므로 이것이 없으면 모든 빔이 차체 안쪽 면에 맞는다 -->
+          <visibility_mask>${self_blind_mask}</visibility_mask>
         </lidar>
       </sensor>
     </gazebo>
@@ -189,11 +229,15 @@
             <near>${rgb_clip_near}</near>
             <far>${rgb_clip_far}</far>
           </clip>
-          <xacro:if value="${'noise_stddev' in rgb}">
+          <!-- 렌즈가 전면 창 1 cm 안쪽이라 차체 전면이 near clip 안에 들지만, 자기 차체는 규칙대로 뺀다 -->
+          <visibility_mask>${self_blind_mask}</visibility_mask>
+          <!-- 영상 노이즈: ogre2 셰이더 설정값은 결과 σ 와 달라 보정값 gz_noise_stddev 를 쓴다 (sensors.yaml rgb_camera 주석).
+               보정값이 없으면 noise_stddev 를 그대로 넣는다 -->
+          <xacro:if value="${'gz_noise_stddev' in rgb or 'noise_stddev' in rgb}">
             <noise>
               <type>gaussian</type>
               <mean>0.0</mean>
-              <stddev>${rgb['noise_stddev']}</stddev>
+              <stddev>${rgb.get('gz_noise_stddev', rgb.get('noise_stddev'))}</stddev>
             </noise>
           </xacro:if>
         </camera>
@@ -219,6 +263,7 @@
             <near>${depth['range_min']}</near>
             <far>${depth['range_max']}</far>
           </clip>
+          <visibility_mask>${self_blind_mask}</visibility_mask>
           <depth_camera>
             <clip>
               <near>${depth['range_min']}</near>
