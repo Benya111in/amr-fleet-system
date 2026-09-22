@@ -1,0 +1,29 @@
+# scan_filter_node 파라미터 (명세 4.2 "LiDAR 거리 필터, 각도 필터, 아웃라이어 제거")
+# 알고리즘: docs/algorithms/kinematics.md §6. 빔 수·angle_min/increment 는 바꾸지 않는다 (720 빔 × 0.5°).
+# [공유] range_min/max 는 localization.launch.py 가 config/sensors.yaml lidar.* 에서 덮어쓴다.
+/**/scan_filter_node:
+  ros__parameters:
+    # --- 1. 거리 필터 (REP-117: < min → −Inf, > max·미검출 → +Inf) ---
+    range_min: 0.10               # [m] 센서 사양 하한. 실제 적용 = max(센서 range_min, 이 값)
+    range_max: 25.0               # [m] 센서 사양 상한. 실제 적용 = min(센서 range_max, 이 값)
+
+    # --- 2. 각도 필터 (센서 프레임, 제거 빔은 NaN) ---
+    angle_window_min: -3.14159265 # [rad] 유지할 창 하한 (기본: 전 방위)
+    angle_window_max: 3.14159265  # [rad] 상한
+    # angle_mask: [시작1, 끝1, 시작2, 끝2, ...]  [rad] 제거할 반시계 호 목록 (시작 > 끝이면 ±π 를 넘는 호).
+    #   기본 없음: 스캔 평면(지면 +0.38 m)이 차체 상면(+0.33 m)보다 높아 자기 차체가 보이지 않는다.
+    #   적재물이 스캔 평면을 가리는 구성에서만 해당 섹터를 넣는다 (ROS 파라미터는 빈 배열을 YAML 로 줄 수 없어 생략).
+
+    # --- 3. 아웃라이어(스페클) 제거: 이웃 일관성 ---
+    outlier_window: 2             # [빔] ±2 빔(±1°) 안에서 지지 이웃을 찾는다. 0 = 끔
+    outlier_thresh: 0.15          # [m] 기본 거리 임계 = 5σ (σ = 0.03 m) → 같은 표면의 잡음 이웃은 거의 항상 통과
+    outlier_range_gain: 3.0       # [무차원] 임계 += gain · r · |Δi| · Δα (먼 거리에서 인접 끝점 간격이 커지는 것 보정;
+                                  #   20 m 에서 1 빔 간격 0.17 m → 임계 0.67 m)
+    outlier_min_neighbors: 1      # 지지 이웃이 이보다 적으면 고립점 → NaN (먼지·빗방울형 단발 반사 제거)
+
+    # --- 4. 섀도우(베일) 제거 ---
+    shadow_filter_enabled: true
+    shadow_min_angle_deg: 10.0    # [deg] 인접 끝점 선분과 광선의 각이 10° 미만/170° 초과면 먼 쪽 점 제거
+                                  #   (모서리 혼합 픽셀 → 벽 사이 허공에 생기는 가짜 점. laser_filters 기본값과 동일)
+
+    stats_log_period: 30.0        # [s] 단계별 평균 제거 수 로그 주기 (0 = 끔)
