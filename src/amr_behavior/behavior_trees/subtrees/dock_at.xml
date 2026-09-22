@@ -1,27 +1,43 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   DockAt: docking_server_node 의 dock 액션으로 정밀 도킹 (복구 ③ 도킹 실패, 명세: 최대 3회).
-    인자: dock_id ("" = 도킹 생략), approach_pose (staging 자세)
+    인자: dock_id ("" = 도킹 생략, allow_undocked_tasks 작업만), approach_pose (staging 자세)
     설정: dock_attempts (= 3), dock_max_retries (goal 당 서버 접근 횟수, 기본 1)
 
   재시도 카운터는 BT 의 RetryUntilSuccessful 하나뿐이다 (goal 당 서버 접근 1회 → 물리적 접근 ≤ dock_attempts).
   실패한 시도마다 RecoverDocking (0.3 m 후진 → 마커가 안 보이면 staging 재접근) 후 다시 도킹한다.
-  dock_attempts 회 모두 실패하면 FAILURE (→ 메인 트리 dock_failed: 에러 보고 + 대기 구역 복귀).
+  dock_attempts 회 모두 실패하면 FAILURE (→ 메인 트리 dock_failed: 에러 보고 + 대체 작업).
+  교통 hold 가 걸리면 도킹 goal 을 취소하고 양보한 뒤 다시 보낸다 (시도로 세지 않는다).
+
+  Undock: 도크에서 undock_dist(1.55 m) 만큼 후진 이탈 (적재·하역·충전 뒤) → 도크 staging. 판 앞(범퍼 0.35 m)과
+    도크 박스 사이에서 제자리 회전하지 않고 도킹 전에 Nav2 가 도착했던 자리에서 다음 주행을 시작한다.
+    실패는 흡수한다 (Nav2 가 이어서 경로를 찾는다). 1.55 m / 0.1 m/s = 15.5 s 라 time_allowance 는 30 s.
 -->
 <root>
   <BehaviorTree ID="DockAt">
     <RetryUntilSuccessful name="DockingAttempts" num_attempts="{dock_attempts}">
       <Fallback name="DockOrRecover">
-        <Sequence name="DockOnce">
+        <ReactiveSequence name="GuardedDock">
           <SetPhase phase="DOCKING"/>
+          <SubTreePlus ID="TrafficGate" __autoremap="true"/>
           <Dock dock_id="{dock_id}" approach_pose="{approach_pose}" max_retries="{dock_max_retries}"
                 attempts_used="{last_dock_attempts}" final_position_error="{last_dock_position_error}"
                 final_angle_error="{last_dock_angle_error}"/>
-        </Sequence>
+        </ReactiveSequence>
         <ForceFailure name="CountAttempt">
           <SubTreePlus ID="RecoverDocking" approach_pose="{approach_pose}" __autoremap="true"/>
         </ForceFailure>
       </Fallback>
     </RetryUntilSuccessful>
+  </BehaviorTree>
+
+  <BehaviorTree ID="Undock">
+    <ReactiveSequence name="GuardedUndock">
+      <SetPhase phase="UNDOCKING"/>
+      <SubTreePlus ID="TrafficGate" __autoremap="true"/>
+      <ForceSuccess>
+        <BackUp name="BackOutOfDock" backup_dist="{undock_dist}" backup_speed="0.1" time_allowance="30"/>
+      </ForceSuccess>
+    </ReactiveSequence>
   </BehaviorTree>
 </root>

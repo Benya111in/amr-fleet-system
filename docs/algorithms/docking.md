@@ -2,21 +2,23 @@
 
 > 명세 4.8 "도킹 시스템": 마커(ArUco 또는 가상 마커) 인식 기반 정밀 접근, **위치 오차 2 cm · 각도 오차 1° 이내**,
 > 실패 시 재시도, **최대 3회 실패 시 에러 보고 및 대체 작업**. 9장 평가 질문 "도킹 정밀도가 요구사항을 만족하는가?".
-> 코드: `include/amr_behavior/docking/docking_controller.hpp`, `src/docking/*.cpp` (제어기는 ROS 비의존).
+> 코드: `include/amr_behavior/docking/*.hpp`, `src/docking/*.cpp` (제어기는 ROS 비의존). BT 쪽은 [behavior_tree.md](behavior_tree.md).
 
 ## 1. 구성
 
 ```mermaid
 flowchart LR
   BT["task_executor_node<br/>DockAt 서브트리"] -->|"dock (amr_msgs/action/Dock)<br/>dock_id, approach_pose, max_retries"| DS["docking_server_node"]
-  AR["aruco_detector_node<br/>(amr_perception)"] -->|"perception/dock_marker_pose<br/>PoseStamped, base_link, ≤30 Hz"| DS
-  DS -->|"cmd_vel_nav 20 Hz"| VP["velocity_profiler_node"] --> SF["safety_node"] -->|cmd_vel| GZ["Gazebo DiffDrive"]
+  AR["aruco_detector_node<br/>(amr_perception)"] -->|"perception/dock_marker_pose<br/>PoseStamped, base_link, 마커 모델 프레임 (+x 법선), ≤30 Hz"| DS
+  DS -->|"cmd_vel_nav 20 Hz"| VP["velocity_profiler_node"] -->|cmd_vel_smoothed| SF["safety_node"] -->|cmd_vel| GZ["Gazebo DiffDrive"]
+  DS -->|"safety/dock_exclusion<br/>PolygonStamped, base_link, 20 Hz (도킹 세션)"| SF
   DS -->|"feedback: current_phase, distance_remaining, attempt"| BT
-  DS -.->|"enabled=true (선택, detector_node)"| AR
+  DS -.->|"perception/aruco/enable (SetBool, 선택)"| AR
 ```
 
-2단계 도킹: ① BT 의 `MoveTo` 가 Nav2 로 **staging 자세**(마커 면 법선 위 1.5 m, 마커를 바라봄)까지 이동 →
-② `docking_server_node` 가 마커 관측만으로 시각 서보(20 Hz)를 돌려 **docked 자세**(마커 면 앞 `standoff`)에 맞춘다.
+2단계 도킹: ① BT 의 `MoveTo` 가 Nav2 로 **staging 자세**(판 면 법선 위, 판을 바라봄 — 도크 1.69 m, 충전소 1.49 m)까지
+이동 → ② `docking_server_node` 가 마커 관측만으로 시각 서보(20 Hz)를 돌려 **docked 자세**(판 면 앞 `standoff`)에 맞춘다.
+적재·하역·충전 뒤에는 BT 가 `Undock`(1.0 m 후진)으로 staging 부근까지 물러난 뒤 다음 주행을 시작한다.
 
 ## 2. 기하
 
@@ -33,19 +35,58 @@ $$\begin{bmatrix}x_r\\y_r\end{bmatrix}=R(-\psi^\*)\,(\mathbf 0-\mathbf t),\qquad
 오차: 종방향 $e_x=-x_r$ (남은 거리, +면 덜 감), 횡방향 $e_y=y_r$, 방위 $\psi$. 판정 위치 오차 $\sqrt{e_x^2+e_y^2}$.
 (`computeErrors()`, 시험 `ErrorsMatchRobotPoseInDockFrame`: 임의 자세에서 1e-9 일치.)
 
-### 2.2 마커 자세 규약 (`perception/dock_marker_pose`)
-frame = `<robot>/base_link` (다르면 tf2 로 변환). 위치 = 마커 중심, 자세의 **z 축 = 마커 면 바깥 법선** (OpenCV ArUco
-`solvePnP` 규약). 다른 규약이면 `marker_normal_axis` (`z`, `-z`, `x`, `-x`) 로 바꾼다. 법선의 수평 성분이 0.2 미만이면(마커가
-눕거나 잘못된 자세) 관측을 버린다.
+### 2.2 마커 자세 규약 (`perception/dock_marker_pose`, 계약 C3)
+frame = `<robot>/base_link` (다르면 tf2 로 변환). 위치 = 마커 중심, 자세 = **마커 모델 프레임: +x = 판 바깥 법선(로봇 쪽),
++z = 위** — amr_perception `aruco_detector_node` 의 출력 규약(`aruco.py`: R_cv→model 의 열 = [z_cv, x_cv, y_cv], Gazebo
+`dock_marker` 모델과 같음). 판을 정면으로 마주 보면 base_link 기준 yaw = π, 쿼터니언 (0, 0, 1, 0). `marker_normal_axis`
+기본값은 `x` 이다(`z`/`-z`/`-x` 도 받는다 — OpenCV `solvePnP` 원시 자세를 내는 다른 검출기용). 고른 축의 수평 성분이
+0.2 미만이면(판이 눕거나 축 규약이 틀림) 관측을 버리고 5 s 에 한 번 경고한다.
 
-### 2.3 standoff 와 staging 설계
-| 값 | 근거 |
+리뷰 지적: 이전 기본값 `z` 는 이 규약의 z 축(연직)을 법선으로 읽어 **모든 실관측을 버렸다** (search 에 머묾 → 3회 실패).
+회귀 시험:
+- `MarkerToObservation.DetectorModelFrameConventionIsTheDefault` (gtest): 노드 기본 축이 `x`, 검출기 쿼터니언을 `x` 로 읽으면
+  법선 π, `z` 로 읽으면 버린다.
+- `test_dock_marker_contract.py` (pytest, 교차 패키지): `amr_perception.aruco.render_marker_image` 로 알려진 자세의 마커를
+  렌더링 → `ArucoPoseEstimator.detect` → `aruco_detector_node.to_base`(`sensors.yaml` 카메라 장착) 로 검출기와 같은 경로로
+  자세를 만들고(진값과 2 cm·1.5° 안임을 먼저 확인), **빌드된 `docking_server_node` 실행 파일**에 30 Hz 로 넣는다 →
+  approach/align 단계로 들어가고 보고 남은 거리가 진값 기하와 3 cm 안, 음성 대조로 `marker_normal_axis:=z` 는 search 에 머문다.
+
+### 2.3 staging·standoff (월드·센서에서 유도)
+기하 출처: `warehouse.sdf`(`gen_warehouse_world.py`: `HALF_X` 30, `MARKER_Z` 0.25, `CHARGER_Y` −18.4, `STATION_FRONT` 0.25, 판
+두께 0.02) + `config/sensors.yaml`(camera_link base_link 전방 0.29 m·위 0.07 m, hfov 87°, 640 px → f ≈ 337 px) +
+`robot_params.yaml`(풋프린트 0.60 × 0.40, base_link 높이 0.18). `test_config_launch.py::
+test_dock_table_matches_world_and_camera_geometry` 가 도크 표를 이 값들과 대조한다(레이아웃이 바뀌면 먼저 깨진다).
+
+| 값 | 기하 |
 | --- | --- |
-| standoff **0.65 m** | 풋프린트 전면(base_link +0.30 m)–마커 판 0.35 m > `safety_node` 긴급정지 0.30 m. brief 의 0.50 m(판까지 0.20 m)는 safety 예외 영역(dock exclusion)이 필요해 채택하지 않음. 카메라(base_link +0.18 m)–마커 0.47 m 에서 0.18 m 마커 ≈ 129 px (f ≈ 337 px) |
-| staging **1.5 m** | 카메라–마커 1.32 m 에서 마커 ≈ 46 px (검출 한계 ≈ 24 px 의 2배). Nav2 도착 오차 ±0.25 m·±15° 에서도 마커 방위 ≤ 26° < 반화각 43.5° |
-| final 속도 0.05 m/s | Critical 존(0.5 m, 0.2 m/s 상한) 안. 20 Hz 에서 주기당 2.5 mm → 2 cm 판정 해상도 충분 |
+| 마커 판 면 | 입고 도크 x = −29.98 (판 중심 −29.99), 출고 x = +29.98, 충전소 y = −18.13 (스테이션 전면 −18.15 + 판). 판 중심 높이 0.25 m = 카메라 광학 중심 높이 |
+| staging | 판 법선 위, 판을 바라봄. 도크 base_link–판 **1.69 m** (카메라–판 1.40 m, 0.18 m 마커 ≈ 43 px), 충전소 **1.49 m** (1.20 m, ≈ 51 px). 검출 하한 `min_side_px` 12 px 의 3.6·4.2 배 |
+| standoff **0.65 m** | 범퍼(base_link +0.30)–판 0.35 m, 카메라–판 0.36 m (마커 ≈ 169 px, 판 0.30 m ≈ 281 px < 480 px 높이) |
+| 도크 박스 | 접근선 양옆 ±1 m, 판에서 1.28 m (x = ∓28.7) — staging 카메라 방위 ±83° 로 시야 밖 → 인식은 `perceive_yaw` 로 돌아본다 ([behavior_tree.md](behavior_tree.md) §4.1) |
 
-도크 좌표 (`behavior.yaml docks`): 입고 도크 마커 x = −29.79 (법선 +x), 출고 x = +29.79 (법선 −x), 충전소 y = −18.14 (법선 +y).
+standoff 0.65 m 에서 범퍼–판 0.35 m 는 safety 정지 거리 0.30 m 보다 크지만, LiDAR 노이즈 σ 3 cm 에서 한 스캔의 빔 최솟값은
+0.30 m 아래로 흔들린다 — 이전 판의 "0.35 > 0.30 이라 안전" 은 노이즈를 빠뜨린 논리였다(리뷰 지적). 그래서 §2.4 의
+예외 사각형을 둔다. docked 상태의 실측 LiDAR 최소 풋프린트 거리는 §7.5 표에 있다.
+
+### 2.4 도킹 예외 사각형 `safety/dock_exclusion` (계약 C2)
+- **모양**: 마커 프레임(x = 바깥 법선, y = 판 가로)의 사각형 x ∈ [−0.30, +0.12] m, y ∈ [−0.5, +0.5] m. 판 뒤 0.30 m(벽 0.02 m 뒤
+  포함), 판 앞 0.12 m(LiDAR σ 3 cm 의 4배 — 판 앞 0.12 m 보다 먼 사람·물체는 0.30 m 규칙 그대로), 가로 ±0.5 m(범퍼 모서리
+  ±0.2 m 에서 벽까지 대각 거리가 0.46 m 가 되는 폭 — 그 밖의 벽 점은 원래 규칙으로도 멈추지 않는다). safety_node 는 이 안의
+  점에 `exclusion_stop_distance`(0.10 m) 를 쓰고 Critical 속도 상한을 건다.
+- **프레임**: 매 주기 마커 추정(goal 중에는 추적기, 끝난 뒤에는 신선한 관측)으로 **base_frame** 에서 계산해 보낸다. C2 는
+  TF 로 풀리는 아무 프레임을 허용하지만, 이 브랜치의 safety_node 는 폴리곤 프레임 → base 변환을 프레임별로 한 번만
+  조회해 캐시한다(센서 장착용 가정) — map 프레임 폴리곤이면 첫 변환이 굳어 로봇이 움직일수록 틀어진다. base_frame 이면
+  항등 변환이라 안전하다 (→ 교차 패키지 요청).
+- **세션**: goal 수락 때 시작해 goal 이 끝난 뒤에도 로봇이 판에서 standoff + `exclusion.release_distance`(0.5 m) = 1.15 m 밖으로
+  물러나거나 마커가 `exclusion.marker_timeout`(0.5 s) 동안 안 보이면 끝난다 → 적재·하역·충전 중(정지)과 이탈 후진 동안에도
+  docked standoff 가 근접 정지를 걸지 않는다. 계약 C2 의 "goal 동안 ≥ 10 Hz" 보다 넓은 구간이다(§8).
+- **주기**: 제어 타이머(20 Hz, 노드 시계 = sim time). safety_node 는 0.3 s 지난 폴리곤을 버린다.
+- 시험: `DockExclusion.PolygonCoversPlateAndWallButNotTheRobot`, `PublishesDockExclusionDuringTheSession`(≥ 10 Hz, 최대 간격
+  < 0.3 s, 판 중심 포함·범퍼 제외, 1.15 m 밖으로 물러나면 중단), `ExclusionSessionEndsWhenMarkerIsLostAfterTheGoal`,
+  `test_dock_marker_contract.py`(실행 파일, 검출기 자세 입력으로 ≥ 10 Hz).
+- 근접 정지와 E-stop (계약 C1): safety_node 의 근접 정지는 `safety/zone`=STOP 이며 E-stop 이 아니다. 실행기의 `EstopGate` 는
+  `safety/estop_active`(버튼·센서 고장)만 본다. 이 브랜치의 safety_node 는 아직 근접 정지 때도 `estop_active` 를 올리는
+  이전 동작이라, §7.5 측정에서 예외 사각형 밖 근접 정지가 걸리면 그대로 기록했다.
 
 ## 3. 추정: `MarkerTracker`
 
@@ -69,8 +110,8 @@ $$\omega=\operatorname{sat}_{\omega_{max}}\!\big(k_h\,(\psi_d-\psi)\big),\qquad 
 $L=e_x$ (목표점을 직접 겨눔)이면 $y\propto e_x$ — 횡오차가 **남은 거리에 비례해 줄어 목표점에서 정확히 0** 이 된다.
 대신 도착 방위가 처음 방위각만큼 남으므로, 목표점에 도달하면(§5 final) 제자리 회전으로 방위만 맞춘다
 — 차동구동 회전 중심이 base_link 바로 아래이므로 제자리 회전은 위치 오차를 바꾸지 않는다. $L_{min}$(0.05 m)은
-$e_x\to0$ 특이점 회피용이다. 처음 구현은 $L_{min}=0.3$ m(접근선 추종형)였는데, 마지막 0.3 m 에서 횡오차가
-$e^{-1}$ 로만 줄어 staging 오프셋 ±0.15 m 에서 최종 횡오차 2.1–2.6 cm 가 남았다(단위 시험 실패) → 0.05 m 로 바꿨다.
+$e_x\to0$ 특이점 회피용이다 ($L_{min}=0.3$ m 접근선 추종형은 마지막 0.3 m 에서 횡오차가 $e^{-1}$ 로만 줄어 단위 시험의
+수렴 격자에서 2 cm 를 넘었다).
 
 ### 4.2 Park–Kuipers 부드러운 제어 (`graceful`, 기본)
 brief §3.5 (Nav2 graceful controller 와 같은 식). 목표를 로봇 중심 극좌표 $(r,\phi,\delta)$ 로 두고
@@ -83,19 +124,27 @@ $$v=\operatorname{clamp}\Big(\min\big(\tfrac{v_{cap}}{1+\beta|\kappa|^\lambda},\
 곡률로 속도를 줄이고 $\omega$ 포화 시에도 곡률을 지키므로(마지막 식) 횡오차와 방위를 **동시에** 0 으로 모은다.
 $k_\phi=2,\ k_\delta=1,\ \beta=0.4,\ \lambda=2,\ r_{slow}=0.25$ m.
 
-### 4.3 두 법칙 비교
-운동학 폐루프 시험(§7.2, 조건마다 15회, 같은 시드·시작 자세, 튜닝 후 코드)의 진값 오차:
+### 4.3 두 법칙 비교 (운동학 폐루프, 이 브랜치)
+`src/amr_behavior/test/scripts/kin_run.sh` (`dock_trials_kin.py`) 가 설치된 `docking_server_node` 에 운동학 적분 로봇과 합성 마커 관측
+(위치 σ, 요각 σ, 5 % 누락)을 붙여 폐루프로 돌렸다. dock_1 기하(standoff 0.65 m, staging 1.69 m), 시작 횡오프셋 ±0.2 m·방위 ±15°
+무작위(시드 1), 조건마다 15 회. 판정은 운동학 참값. load average 115–185 / 32 (운동학 시험은 시간 스텝 고정이라 결과는 부하와 무관,
+소요 시간만 영향).
 
-| 법칙 | `filter_coef` | 성공 (명세 안) | 위치 평균 / 최대 | 각도 평균 / 최대 | 시도 | 평균 소요 |
-| --- | --- | --- | --- | --- | --- | --- |
-| graceful | 1.0 | 15/15 (15) | 10.1 / 12.1 mm | 0.28 / 0.47° | 전부 1회 | 19.8 s |
-| graceful | 0.3 | 15/15 (15) | 10.2 / 12.9 mm | 0.40 / 0.86° | 전부 1회 | 19.6 s |
-| proportional | 1.0 | 15/15 (15) | 9.5 / 11.6 mm | 0.35 / 0.70° | 전부 1회 | 20.5 s |
-| proportional | 0.3 | 15/15 (15) | 10.0 / 11.9 mm | 0.40 / 0.69° | 전부 1회 | 19.9 s |
+| 제어 법칙 | `filter_coef` | `heading_stop_tolerance` | 관측 잡음 (위치 / 요각) | 성공 (규격 내) | 위치 오차 평균 / 최대 | 각 오차 평균 / 최대 | 시도 분포 (1/2/3) | 평균 소요 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **graceful (기본)** | 1.0 (끔) | 0.5° | 2 mm / 0.5° | 15/15 (15) | 9.8 / 12.0 mm | 0.26 / 0.58° | 15/0/0 | 22.7 s |
+| graceful | 0.3 | 0.5° | 2 mm / 0.5° | 15/15 (15) | 8.2 / 9.8 mm | 0.43 / 0.69° | 15/0/0 | 21.2 s |
+| graceful | 1.0 | **1.0°** | 2 mm / 0.5° | 15/15 (15) | 9.8 / 10.9 mm | 0.32 / 0.53° | 15/0/0 | 22.7 s |
+| graceful | 1.0 | 0.5° | **5 mm / 1.0°** | 15/15 (15) | 6.9 / 9.4 mm | 0.22 / 0.42° | 10/4/1 | 51.8 s |
+| proportional | 1.0 | 0.5° | 2 mm / 0.5° | 15/15 (15) | 9.3 / 10.9 mm | 0.28 / 0.83° | 15/0/0 | 13.3 s |
+| proportional | 0.3 | 0.5° | 2 mm / 0.5° | 15/15 (15) | 8.3 / 9.7 mm | 0.48 / 0.73° | 15/0/0 | 12.4 s |
 
-두 법칙 모두 명세를 여유 있게 만족하고 정밀도 차이는 시행 간 산포 수준이다(위치 최대 0.5 mm 차). 기본값은 **graceful** 로
-두었다: 곡률로 속도를 줄여 횡·방위 오차를 **이동 중에 함께** 줄이고(비례 법칙은 도달 후 제자리 회전으로 방위를 따로
-맞춘다), 각도 최대 오차가 가장 작다(0.47°). 소요 시간(검색 포함 약 20 s)은 법칙보다 final 속도 상한(0.05 m/s)이 정한다.
+- 두 법칙 모두 운동학적으로는 2 cm / 1° 를 넉넉히 만족한다. proportional 이 빠르지만(정렬 → 직진) 최대 각 오차가 0.83° 로
+  1° 에 가깝다. graceful 은 횡오차·방위를 같이 모으므로 각 오차 최대가 0.58° 이고, 잡음을 2.5 배로 키우면 판정 게이트가
+  재시도로 막아(10/4/1) 규격 밖 도킹이 0 이다 → 기본 graceful.
+- 저역 필터(`filter_coef` 0.3)는 위치 오차는 줄이나 각 오차 최대를 키워(지연) 기본은 끔.
+- 정지 허용치 0.5° 는 판정 1° 에 여유를 남긴다(리뷰 지적 "1° 에서 바로 멈춰 여유 없음" 반영). 1.0° 로 넓혀도 이 조건에서는
+  규격 안이지만 실제 관측(§7) 잡음에서는 여유가 없다.
 
 ## 5. 단계와 판정
 
@@ -104,29 +153,33 @@ $k_\phi=2,\ k_\delta=1,\ \beta=0.4,\ \lambda=2,\ r_{slow}=0.25$ m.
 | `search` | 시도 시작, 관측 없음 | 제자리 ±`search_sweep`(0.5 rad) 삼각파 회전 (0.25 rad/s), `search_timeout` 8 s |
 | `align` | $e_x>$ `final_distance` 이고 진행 방향 오차 > `align_threshold`(20°) | 제자리 정렬, 10° 미만에서 해제 (히스테리시스) |
 | `approach` | $e_x>$ 0.15 m | 제어 법칙, $v\le$ 0.15 m/s |
-| `final` | $e_x\le$ 0.15 m | 제어 법칙, $v\le$ 0.05 m/s. **도달** $|e_x|\le$ `stop_distance`(8 mm, 해제 8 + 2·4 = 16 mm 히스테리시스) 뒤에는 전진을 멈추고 제자리 방위 정렬만 ($e_x<0$ 이면 저속 후진) |
-| 판정 | **도달한 뒤** 위치 ≤ 0.02 m **그리고** 방위 ≤ 1° 가 **신선한 관측으로 10 주기(0.5 s) 연속** | 정지 → success |
+| `final` | $e_x\le$ 0.15 m | 제어 법칙, $v\le$ 0.05 m/s. **종방향 도달** $|e_x|\le$ `stop_distance`(8 mm, 해제 16 mm) 뒤에는 전진을 멈추고 제자리 방위 정렬만 ($e_x<0$ 이면 저속 후진). **방위 도달**: 종방향 도달 뒤 $|\hat\psi|\le$ `heading_stop_tolerance`(0.5°) 까지 정렬 (해제 1°) |
+| 판정 | **종방향·방위 도달 뒤** 위치 ≤ 0.02 m **그리고** 방위 ≤ 1° 가 **신선한 관측으로 10 주기(0.5 s) 연속** | 정지 → success |
 | `backup` | 시도 실패, 남은 시도 있음 | $-$0.1 m/s 로 0.3 m 후진 → 다음 시도 `search` |
 
+방위 도달(리뷰 nit): 위치는 2 cm 경계가 아니라 8 mm 까지 들어간 뒤 판정하는데, 방위는 $|\hat\psi|\le 1°$ 가 되자마자 판정을
+시작해 1° 경계에서 멈췄다 — 검출기에 방위 편향이 있으면 진값이 1° 에 가까워진다. `heading_stop_tolerance` 가 그 방위판이다.
 시도 실패 사유: `marker_lost`(2 s 무관측), `search_timeout`, `attempt_timeout`(45 s), `overshoot`($e_x<-5$ cm),
 `lateral`(종방향 도달 후 횡오차가 20 주기 남음 — 그 자리에선 고칠 수 없으므로 후진 후 재접근).
 결과: `success`, `final_position_error`, `final_angle_error`(추정 기준, 추정 없으면 −1), `attempts_used`. 취소 시 즉시 정지.
+취소 요청을 받은 goal 이 아직 끝나지 않았을 때 새 goal 이 오면 새 goal 이 선점한다(BT 가 교통 hold 로 halt 한 직후 재전송).
 
 **재시도 계수 (명세 "최대 3회")**: BT `DockAt` 이 goal 당 `max_retries=1` 로 보내고 `RetryUntilSuccessful(3)` 이 센다
 (그 사이 `RecoverDocking`: 후진 0.3 m → 마커 안 보이면 staging 재접근). 서버를 직접 부를 때는 `max_retries`(0 → `max_attempts`=3)
 만큼 서버가 스스로 후진·재시도한다. 어느 경로든 물리적 접근은 최대 3회이며, 3회 실패 시 BT 가 `task_status=FAILED`
-(`dock_failed`) 보고 후 대기 구역으로 복귀한다(대체 작업).
+(`dock_failed`) 보고 후 대체 작업(물품이 실려 있으면 적재 도크로 되돌려 놓기, 대기 구역 복귀)을 한다.
 
 ## 6. 파라미터 (`config/behavior.yaml`, `docking_server_node`)
 
 | 파라미터 | 기본 | 의미 · 튜닝 근거 |
 | --- | --- | --- |
-| `control_law` | graceful | §4.3 비교 결과 |
+| `control_law` | graceful | §4.3 |
 | `standoff` / `docks.<id>.standoff` | 0.65 m | §2.3 |
 | `position_tolerance` / `angle_tolerance` | 0.02 m / 0.01745 rad | 명세값 그대로 |
+| `heading_stop_tolerance` | 0.00873 rad (0.5°) | 판정 전 방위 정렬 목표 (§5, §7.3) |
 | `settle_frames` | 10 | 0.5 s 유지 (components.md) |
 | `final_distance` | 0.15 m | final 저속 구간 |
-| `stop_distance` | 0.008 m | 종방향 도달 판정 — 허용오차 경계(2 cm)가 아니라 목표점 근처까지 들어가 추정 오차 여유를 둔다 (§7.3 튜닝) |
+| `stop_distance` | 0.008 m | 종방향 도달 판정 — 허용오차 경계(2 cm)가 아니라 목표점 근처까지 들어가 추정 오차 여유를 둔다 |
 | `max_linear_speed` / `final_linear_speed` | 0.15 / 0.05 m/s | Critical 존 상한 0.2 이하 |
 | `max_angular_speed` | 0.4 rad/s | |
 | `k_distance` / `k_heading` / `lookahead` | 0.8 / 1.5 / 0.05 m | 비례 법칙 (§4.1) |
@@ -134,92 +187,56 @@ $k_\phi=2,\ k_\delta=1,\ \beta=0.4,\ \lambda=2,\ r_{slow}=0.25$ m.
 | `linear_deadband` / `angular_deadband` | 4 mm / 0.004 rad | 떨림 방지 |
 | `marker_timeout` / `search_timeout` / `attempt_timeout` | 2 / 8 / 45 s | components.md marker_timeout 2 s |
 | `backup_distance` / `backup_speed` | 0.3 m / 0.1 m/s | 명세 재시도 |
-| `filter_coef` | 1.0 (끔) | §7.4: 관측 노이즈 σ 2 mm/0.5° 에서는 저역통과(0.3)가 지연만 더해 각도 최대 오차를 키웠다 |
+| `filter_coef` | 1.0 (끔) | §7.4 |
 | `max_attempts` | 3 | goal.max_retries = 0 일 때 |
-| `marker_normal_axis` / `base_frame` / `detector_node` | z / base_link / "" | §2.2, 다중 로봇은 런치가 `<ns>/base_link` 주입 |
+| `marker_normal_axis` | x | §2.2 (계약 C3) |
+| `base_frame` | base_link | 다중 로봇은 런치가 `<ns>/base_link` 주입 (예외 사각형 프레임도 이것) |
+| `detector_enable_service` | "" | `perception/aruco/enable`(SetBool) 을 주면 도킹 세션 동안만 검출기를 켠다 (검출기는 `enabled` 파라미터를 기동 때만 읽으므로 서비스로 바꿨다) |
+| `exclusion.enabled` / `half_width` / `depth` / `front_margin` / `release_distance` / `marker_timeout` | true / 0.5 / 0.3 / 0.12 / 0.5 m / 0.5 s | §2.4 (계약 C2) |
 
 ## 7. 검증과 튜닝
 
-(`amr-fleet-system:wf-final` 일회용 컨테이너. 외부 gsim 작업이 끝난 뒤였으나 다른 컨테이너와 호스트를 나눠 써서 32 스레드
-호스트의 1분 load average 가 1.7–27 이었다. 정밀도는 부하와 무관하고, 소요 시간·RTF 는 이 조건의 값이다.)
+### 7.1 Gazebo 실제 체인 (명세 2 cm / 1°)
 
-### 7.1 단위 시험
+체인: 렌더링 카메라 → `aruco_detector_node`(설치본) → `perception/dock_marker_pose` → `docking_server_node` → `cmd_vel_nav`
+→ `velocity_profiler_node` → `cmd_vel_smoothed` → **`safety_node`**(접근 기반 정지 + 도킹 예외 다각형, 계약 C1·C2) → `cmd_vel`
+→ DiffDrive. staging 까지는 Nav2 (EKF + AMCL, map = 월드 지도). 판정은 **GT** (`ground_truth/odom`, 도킹 성공 1 s 뒤 자세와 도크
+목표 자세의 차) — 서버 자가 보고가 아니다. 도구 `src/amr_behavior/test/scripts/dock_trials_gz.py` (`dock_up.sh` 로 시스템 기동).
+2026-09-22 22:27–22:36 KST, load average 5–12 / 32, RTF 0.976–0.988.
 
-- `test_docking_controller` (gtest 22건, 매개변수화 포함): 도크 프레임 오차가 임의 자세에서 진값과 1e-9 일치, 추적기 예측이
-  운동과 일치·저역통과의 각도 wrap, 비례 법칙 속도 포화·정지 대역, graceful 조향 방향·상한, **수렴 격자**(staging 오프셋
-  횡 ±0.15 m × 방위 ±10° × 종 0.85 m, 두 법칙) 전부 2 cm/1° 안·속도 상한 준수, 측정 노이즈(σ 2 mm/0.3°)에서 수렴, **도달 대역**
-  (진값 ≤ 1 cm 에서 정지, 허용오차 안이라도 도달 전에는 계속 전진, 12 mm 흔들림은 히스테리시스로 유지·20 mm 로 밀리면 재전진),
-  큰 방위 오차 → align 먼저, 3 s 마커 끊김 → `marker_lost` → 후진 → 2회차 성공, 마커 없음 → 탐색은 제자리 회전만·시도 사이
-  후진 2번·3회 후 실패, 시도 시간 초과·과진입, 횡 잔차 → `lateral`, 판정 연속 프레임 요구, 취소.
-- `test_docking_server` (4건): 마커 자세 → 관측 축 규약(z, −z, x, −x), **ROS 경유 폐루프**(액션 + 토픽 + 프로세스 안 운동학
-  모사)로 명세 안 도킹, 마커 없음 → `attempts_used = 3`·`success = false`, 실행 중 취소·동시 goal 거절.
+| 항목 | 결과 (입고 도크 1·2 번갈아 10 회) |
+| --- | --- |
+| 성공 / GT 규격 안 | **10 / 10** / **10 / 10**, 모두 1 회째 시도 |
+| 위치 오차 (GT) 평균 / 최대 | **5.2 / 6.1 mm** — 종방향 −4.2 ~ −6.1 mm (모두 약간 덜 들어감), 횡방향 −0.2 ~ +1.2 mm |
+| 각도 오차 (GT) 평균 / 최대 | **0.20 / 0.34°** |
+| 도킹 소요 (sim) | 평균 23.2 s (22.2–24.1) |
+| 안전 상태 | 도킹 중 zone 최대 1 (WARNING), STOP 0 회, `estop_active` 0 회. 도킹 완료 자세에서 스캔 최소 거리 평균 0.28 m (< 0.3 m) 인데 zone 0 — 예외 다각형(20 Hz, 최대 간격 0.051 s)이 판 쪽 점의 정지 거리를 0.10 m 로 바꾼다 |
 
-### 7.2 폐루프 시험 설정
+- 종방향 −5 mm 의 일정한 편향은 마커 깊이 추정(PnP) 쪽으로 보인다 (횡·각은 편향 없음). 규격 여유(20 mm)의 1/4 이라 보정하지
+  않았다 — 필요하면 도크 표 standoff 를 5 mm 줄인다.
+- 리뷰 지적 재현과의 비교: 수정 전(마커 축 z, 예외 다각형 없음) 통합 트리에서는 0/10 (모든 관측 버림), 축만 고치면 도킹은
+  되지만 `safety_node` 가 근접 정지를 E-stop 으로 래치해 0/4 였다. 같은 날 축·예외 다각형만 고치고 **이전** `safety_node`
+  (근접 정지 = estop_active) 로 돈 10 회는 7/10 (실패 3 회: staging 주행이 근접 정지·E-stop 으로 중단 2 회, 도킹 중 근접 정지
+  래치로 3 회 시도 소진 1 회) — 현재 결과와의 차이는 안전
+  게이트 재설계(계약 C1)의 효과다.
+- 한계: 출고 도크(dock_a/b)와 충전소 도킹의 반복 측정은 하지 않았다 (종단 작업 §9.3 에서 출고 도크 1 회). 지도는 전체 스택 시운전의
+  재매핑 판(`maps/` 이전 판, map = 월드)으로 돌렸다 — 도킹은 마커로 정하므로 staging 주행에만 영향.
 
-- **운동학**: 설치된 `docking_server_node`(behavior.yaml) ↔ 시험 스크립트(`dock_trials.py --mode kinematic`). `cmd_vel_nav` 를
-  100 Hz 로 적분(차동 구동), 가상 마커를 30 Hz 로 발행 — base_link 기준 위치 노이즈 σ 2 mm, 법선 방위 σ 0.5°, 누락 5 %,
-  카메라 반화각 43.5° 밖 미검출. 시작 = staging(마커 면 1.5 m) + 횡 U(±0.2 m) + 방위 U(±15°). 진값 = 적분 자세 vs 목표 자세.
-  조건마다 15회(같은 시드).
-- **Gazebo** (`--gpus all`, 헤드리스): `warehouse.sdf` + `amr_description` 로봇(DiffDrive), 입고 도크 `dock_1` 앞. 시도마다
-  `set_pose` 로 staging + 횡 U(±0.15 m) + 방위 U(±10°). 마커 관측은 `ground_truth/odom` 에서 만든 가상 마커(노이즈·누락 위와 같음),
-  `cmd_vel_nav` 는 `cmd_vel` 로 직결(velocity_profiler·safety 생략), 진값 = `ground_truth/odom`. RTF 0.96–0.99.
+### 7.2 운동학 폐루프 (제어 법칙 비교)
 
-### 7.3 튜닝: 정지 규칙 (허용오차 경계 → 도달 대역 `stop_distance`)
-
-처음 구현은 "추정 오차가 2 cm·1° 안에 들어오면 곧바로 정지하고 판정"(final 에서 $|e_x|\le$ 정지대역 + tol/2 = 14 mm 면 제자리
-정렬)이었다. 모든 시험이 명세를 만족했지만 진값 위치 오차가 12–13 mm 에 몰렸고 최대 17 mm 로 여유가 3 mm 뿐이었다 — 방위가
-먼저 맞으면 2 cm 경계를 넘자마자 멈추기 때문이다. 판정을 "종방향 도달($|e_x|\le$ 8 mm, 해제 16 mm) **뒤에만**" 하도록 바꿨다.
-
-| 조건 (15회, Gazebo 10회) | 변경 전: 위치 평균 / 최대 | 변경 후: 위치 평균 / 최대 | 각도 최대 (전 → 후) |
-| --- | --- | --- | --- |
-| 운동학 graceful, fc 1.0 | 12.2 / 15.3 mm | 10.1 / 12.1 mm | 0.57° → 0.47° |
-| 운동학 graceful, fc 0.3 | 12.7 / 17.3 mm | 10.2 / 12.9 mm | 0.66° → 0.86° |
-| 운동학 proportional, fc 1.0 | 12.9 / 16.4 mm | 9.5 / 11.6 mm | 0.56° → 0.70° |
-| **Gazebo** graceful, fc 1.0 | 12.6 / 15.3 mm | **10.2 / 11.9 mm** | 0.55° → 0.62° |
-
-최대 위치 오차가 15–17 mm → 12–13 mm 로 줄어 명세 대비 여유가 3 mm → 7–8 mm 가 됐다. 소요 시간 변화는 없다(19–21 s).
-남은 약 10 mm 는 도달 대역(8 mm)과 도달 시점의 횡 잔차다. 대역을 더 줄이면 추정 노이즈(σ 2 mm)에 도달·해제가 흔들린다.
-
-### 7.4 관측 필터 (`filter_coef`)와 노이즈 내성
-
-| 관측 노이즈 (위치 σ / 방위 σ) | `filter_coef` | 성공 (명세 안) | 위치 평균 / 최대 | 각도 평균 / 최대 | 시도 1 / 2 / 3회 | 평균 소요 |
-| --- | --- | --- | --- | --- | --- | --- |
-| 2 mm / 0.5° (기본) | 1.0 | 15/15 (15) | 10.1 / 12.1 mm | 0.28 / 0.47° | 15 / 0 / 0 | 19.8 s |
-| 2 mm / 0.5° | 0.3 | 15/15 (15) | 10.2 / 12.9 mm | 0.40 / 0.86° | 15 / 0 / 0 | 19.6 s |
-| **5 mm / 1°** (2.5배) | 1.0 | 15/15 (15) | 5.8 / 7.8 mm | 0.15 / 0.39° | 11 / 4 / 0 | 46.9 s |
-| 5 mm / 1° | 0.3 | 15/15 (15) | 6.3 / 9.2 mm | 0.18 / 0.55° | 10 / 4 / 1 | 50.8 s |
-
-- 1차 저역통과(`filter_coef` 0.3, opennav_docking 방식)는 두 노이즈 수준 모두에서 이득이 없었다 — 관측 사이는 이미 속도 지령
-  예측으로 메우고, 필터 지연이 방위 수렴을 늦춰 각도 최대 오차와 소요 시간이 늘었다. 기본값은 1.0(끔).
-- 노이즈를 2.5배로 키워도 **정밀도는 유지**됐다(진값 최대 7.8 mm·0.39°, 판정이 통과할 때까지 기다리므로 오히려 작다). 대신
-  "추정 방위 ≤ 1° 가 10 프레임 연속" 판정이 방위 σ 1° 에서는 드물게 성립해 시도 시간이 늘고(평균 47 s) 27–33 % 가 시도 상한
-  45 s 에 걸려 2–3회차에 성공했다. 이는 매 프레임 추정을 그대로 판정하는 구조의 한계이며, brief §3.6 CGD(추정 공분산으로
-  "지금 판정하면 2 cm/1° 를 만족할 확률"을 계산)의 교체 지점이 `MarkerTracker`/`inTolerance` 다 (§8).
-
-### 7.5 재시도 (Gazebo, 마커 가림)
-
-시도 시작 5–8 s 동안 마커를 가린 3회: 매번 `marker_lost`(2 s) → 0.3 m 후진 → 재탐색 → **2회차에 성공**, 진값 위치 최대
-11.2 mm·각도 최대 0.54°, 평균 27.3 s(가림 없는 시도 + 약 7 s). 3회 모두 실패하는 경로는 단위 시험(서버·제어기)과 BT 기능 시험
-(behavior_tree.md §9.2 E: `dock_failed` → ERROR → 대기 구역 복귀)으로 확인했다.
-
-### 7.6 한계
-
-- 마커 관측은 가상(진값 + 노이즈)이다. 카메라 → ArUco 검출(`amr_perception` 의 검출 노드) → `perception/dock_marker_pose` 경로의
-  실제 노이즈·지연은 이 시험에 없다. 노이즈 수준은 brief §3.2 의 pre-dock 추정(σ 수 mm·1° 미만)을 가정했고, §7.4 의 2.5배
-  노이즈 조건으로 여유를 확인했다.
-- Gazebo 시험은 `cmd_vel_nav` → `cmd_vel` 직결이다. 전체 체인에서는 `safety_node` 의 Critical 존 상한(0.2 m/s)이 도킹 속도
-  상한(0.15/0.05 m/s)보다 커서 지령이 바뀌지 않아야 하지만, 정지 거리(0.30 m)와 standoff 0.65 m(범퍼–마커 판 0.35 m) 관계는
-  통합 시험에서 확인해야 한다.
+§4.3 표.
 
 ## 8. 확장점 (brief §3.4–3.8)
 
-- **CGD (Covariance-Gated Docking)**: `MarkerTracker` 를 상대자세 EKF 로 바꾸고 PnP 공분산(코너 노이즈 → 변환 사슬)과
-  LiDAR 직선 적합 요각을 융합, final 진입 전 결합 확률 게이트로 "지금 들어가면 2 cm/1° 를 만족할 확률"을 검사해 사유별
-  재시도(정지 관측 / 제자리 회전 / 재접근)를 고른다. 관측 메시지에 공분산이 필요하다(`amr_msgs/MarkerObservation` 제안).
-  교체 지점: `MarkerTracker::predict/correct`(추정), `DockingController::inTolerance`(판정) — §7.4 의 고노이즈 판정 지연을
-  "프레임별 임계"에서 "추정 공분산 기반 확률"로 바꿔 줄이는 것이 목표다.
+- **CGD (Covariance-Gated Docking)**: `MarkerTracker` 를 상대자세 EKF 로 바꾸고 PnP 공분산(검출기가 이미
+  `perception/dock_marker_pose_cov` 로 낸다)과 LiDAR 직선 적합 요각을 융합, final 진입 전 결합 확률 게이트로 "지금 들어가면
+  2 cm/1° 를 만족할 확률"을 검사해 사유별 재시도(정지 관측 / 제자리 회전 / 재접근)를 고른다. 교체 지점:
+  `MarkerTracker::predict/correct`(추정), `DockingController::inTolerance`(판정).
+- **마커 id 확인**: 검출기는 가장 가까운 마커를 내고 id 는 `perception/dock_marker_id` 로 따로 낸다. 도크 간격(4 m)과 staging
+  에서의 시야로는 이웃 도크 마커가 보이지 않지만, 복구 중 엉뚱한 자세에서는 이웃 마커로 붙을 수 있다 — 도크 표에
+  `marker_id` 를 두고 id 를 확인하는 것이 다음 개선이다 (PoseStamped 에 id 가 없어 두 토픽을 짝지어야 한다).
 - **실패 사유 코드 전달**: 서버는 시도별 사유(`marker_lost`/`search_timeout`/`attempt_timeout`/`overshoot`/`lateral`)를 로그로
   남긴다. `Dock.action` 결과에 사유 필드가 생기면 BT 의 `RecoverDocking` 이 사유별 복구(재접근 vs 제자리 재관측)를 고를 수 있다.
-- **적재 질량 반영**: `payload/mass` 로 감속 상한을 $a\,m_0/(m_0+m_{load})$ 로 줄인다 (현재는 velocity_profiler_node 가 담당).
-- **dock exclusion zone**: standoff 를 0.5 m 이하로 줄이려면 `safety_node` 가 도크 판 폴리곤 안에서만 정지거리를 줄이는
-  예외가 필요하다 (brief §3.8).
+- **standoff 단축**: 예외 사각형이 생겨 standoff 를 0.5 m 이하로 줄일 수 있다 (brief §3.8). 지금은 0.65 m 로 측정했다.
+- **세션 범위의 계약화**: 예외 사각형은 goal 이 끝난 뒤 docked·이탈 구간에도 나간다(§2.4). C2 문구("goal 동안")를
+  "도킹 세션 동안"으로 넓히자고 제안한다.

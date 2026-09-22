@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 
+#include "amr_behavior/bt_nodes/charger_allocation.hpp"
+#include "amr_behavior/bt_nodes/charging_session.hpp"
 #include "amr_behavior/bt_nodes/is_battery_ok.hpp"
 #include "amr_behavior/bt_nodes/is_dock_marker_visible.hpp"
 #include "amr_behavior/bt_nodes/is_estop_clear.hpp"
@@ -19,9 +21,10 @@
 #include "amr_behavior/bt_nodes/is_task_assigned.hpp"
 #include "amr_behavior/bt_nodes/is_traffic_hold.hpp"
 #include "amr_behavior/bt_nodes/keep_running_until_success.hpp"
+#include "amr_behavior/bt_nodes/payload_state.hpp"
 #include "amr_behavior/bt_nodes/report_task_status.hpp"
 #include "amr_behavior/bt_nodes/resumable_sequence.hpp"
-#include "amr_behavior/bt_nodes/set_charging.hpp"
+#include "amr_behavior/bt_nodes/return_pending.hpp"
 #include "amr_behavior/bt_nodes/set_fail_reason.hpp"
 #include "amr_behavior/bt_nodes/set_phase.hpp"
 #include "amr_behavior/bt_nodes/simulate_payload.hpp"
@@ -40,16 +43,23 @@ void registerCoreNodes(BT::BehaviorTreeFactory & factory, const ContextPtr & ctx
   registerWithArg<IsLocalized>(factory, "IsLocalized", ctx);
   registerWithArg<IsObjectDetected>(factory, "IsObjectDetected", ctx);
   registerWithArg<IsDockMarkerVisible>(factory, "IsDockMarkerVisible", ctx);
+  registerWithArg<IsPayloadEmpty>(factory, "IsPayloadEmpty", ctx);
+  registerWithArg<IsPayloadStranded>(factory, "IsPayloadStranded", ctx);
+  registerWithArg<IsReturnPending>(factory, "IsReturnPending", ctx);
   // Action (ROS 불필요: 컨텍스트 훅으로 발행)
   registerWithArg<SimulateLoad>(factory, "SimulateLoad", ctx);
   registerWithArg<SimulateUnload>(factory, "SimulateUnload", ctx);
   registerWithArg<ReportTaskStatus>(factory, "ReportTaskStatus", ctx);
   registerWithArg<SetPhase>(factory, "SetPhase", ctx);
-  registerWithArg<SetCharging>(factory, "SetCharging", ctx);
+  registerWithArg<MarkPayloadReturnAttempted>(factory, "MarkPayloadReturnAttempted", ctx);
+  registerWithArg<ClearReturnPending>(factory, "ClearReturnPending", ctx);
+  registerWithArg<SelectCharger>(factory, "SelectCharger", ctx);
+  registerWithArg<ReleaseCharger>(factory, "ReleaseCharger", ctx);
   // Control / Decorator
   factory.registerNodeType<ResumableSequence>("ResumableSequence");
   factory.registerNodeType<KeepRunningUntilSuccess>("KeepRunningUntilSuccess");
   factory.registerNodeType<SetFailReason>("SetFailReason");
+  registerWithArg<ChargingSession>(factory, "ChargingSession", ctx);
 }
 
 namespace

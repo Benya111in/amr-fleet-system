@@ -145,6 +145,7 @@ void DockingController::start(double now, int max_attempts)
   settle_count_ = 0;
   lateral_stall_count_ = 0;
   arrived_ = false;
+  heading_arrived_ = false;
   enterPhase(Phase::kSearch, now);
 }
 
@@ -173,6 +174,7 @@ void DockingController::failAttempt(double now, const std::string & reason)
   settle_count_ = 0;
   lateral_stall_count_ = 0;
   arrived_ = false;
+  heading_arrived_ = false;
   enterPhase(attempt_ < max_attempts_ ? Phase::kBackup : Phase::kFailed, now);
 }
 
@@ -305,8 +307,18 @@ Command DockingController::update(double now, const std::optional<MarkerObservat
     arrived_ = false;
   }
 
+  // 방위 도달 (히스테리시스, 종방향 도달 뒤에만): 1° 경계가 아니라 heading_stop_tolerance 까지
+  // 제자리 정렬한 뒤 판정한다 (접근 중 우연히 작았던 방위로 도달 처리하지 않는다)
+  if (!arrived_) {
+    heading_arrived_ = false;
+  } else if (std::fabs(e.heading) <= params_.heading_stop_tolerance) {
+    heading_arrived_ = true;
+  } else if (std::fabs(e.heading) > params_.angle_tolerance) {
+    heading_arrived_ = false;
+  }
+
   // 판정: 도달 후 허용오차 안에서 신선한 관측이 settle_frames 연속이면 성공 (그동안 정지 유지)
-  if (arrived_ && inTolerance(e)) {
+  if (arrived_ && heading_arrived_ && inTolerance(e)) {
     lateral_stall_count_ = 0;
     if (tracker_.age(now) <= 2.0 * params_.control_period) {
       ++settle_count_;

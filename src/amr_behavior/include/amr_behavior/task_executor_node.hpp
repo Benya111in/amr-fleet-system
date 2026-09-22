@@ -4,12 +4,17 @@
 //                                          (message "busy:<…>" 등 거절 사유)
 // Pub   task_status (amr_msgs/Task)        상태 전이마다 (IN_PROGRESS → COMPLETED / FAILED)
 // Pub   executor/phase (String, latched)   IDLE/MOVING/DOCKING/LOADING/UNLOADING/RETURNING/…
+// SrvS  clear_payload (std_srvs/Trigger)      되돌려 놓지 못한 물품을 작업자가 내렸음 → 작업 재개
 // Pub   payload/attach (String), payload/mass (Float32), charging/enable (Bool) — 모두 latched
-// Sub   battery_state, safety/estop_active(latched), traffic/hold, traffic/yield_pose,
-//       localization/lost(latched), perception/detected_objects, perception/dock_marker_pose
+// Pub/Sub /fleet/charger_claims (String JSON {"robot","charger","since"}, 1 Hz 심장박동)
+//       충전소 점유
+// Sub   battery_state, safety/estop_active(latched: 버튼·센서 고장 E-stop 만, 계약 C1),
+//       traffic/hold, traffic/yield_pose, localization/lost(latched), perception/detected_objects,
+//       perception/dock_marker_pose
 // ActC  navigate_to_pose, dock, spin, backup, wait
 // SrvC  {global,local}_costmap/clear_entirely_{global,local}_costmap
-// Groot BT::PublisherZMQ (groot.publisher_port / groot.server_port)
+// Groot BT::PublisherZMQ (groot.publisher_port / groot.server_port, 다중 로봇은 bringup 이
+//       로봇 i 에 1666 + 2i / 1667 + 2i 를 준다)
 // 트리 tick 은 벽시계 타이머(tick_rate_hz)로 돌고, 서비스·구독·액션 콜백과 같은 단일 스레드
 // 실행기에서 처리된다.
 #ifndef AMR_BEHAVIOR__TASK_EXECUTOR_NODE_HPP_
@@ -32,6 +37,7 @@
 #include "std_msgs/msg/bool.hpp"
 #include "std_msgs/msg/float32.hpp"
 #include "std_msgs/msg/string.hpp"
+#include "std_srvs/srv/trigger.hpp"
 
 namespace amr_behavior
 {
@@ -58,6 +64,8 @@ private:
   void onAssignTask(
     const std::shared_ptr<amr_msgs::srv::AssignTask::Request> request,
     std::shared_ptr<amr_msgs::srv::AssignTask::Response> response);
+  void publishChargerClaim(const std::string & charger, double since);
+  void onChargerClaim(const std::string & json);
 
   std::shared_ptr<ExecutorContext> ctx_;
   TaskTreeConfig tree_config_;
@@ -92,7 +100,23 @@ private:
   rclcpp::Subscription<amr_msgs::msg::DetectedObjectArray>::SharedPtr objects_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr marker_sub_;
   rclcpp::Service<amr_msgs::srv::AssignTask>::SharedPtr assign_srv_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr clear_payload_srv_;
+  std::string charger_claims_topic_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr claim_pub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr claim_sub_;
+  rclcpp::TimerBase::SharedPtr claim_timer_;
 };
+
+/// robot_id 끝 숫자 → 0 기반 번호 (amr_01 → 0, amr_05 → 4, 숫자가 없으면 0). 충전소 선호 순서용.
+int robotIndexFromId(const std::string & robot_id);
+
+/// 충전소 점유 메시지 (JSON 한 줄) 만들기·읽기. 읽기 실패면 false.
+std::string encodeChargerClaim(
+  const std::string & robot, const std::string & charger,
+  double since);
+bool decodeChargerClaim(
+  const std::string & json, std::string & robot, std::string & charger,
+  double & since);
 
 }  // namespace amr_behavior
 

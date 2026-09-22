@@ -1,27 +1,38 @@
 # amr_behavior 파라미터 (명세 4.8 작업 수행 시스템, components.md §5.5 · §6)
 # 재빌드 없이 튜닝한다 (명세 9장). 튜닝 근거·측정값은 docs/algorithms/behavior_tree.md, docking.md.
 # 물품 표(payload.<type>.mass / load_time)는 config/robot_params.yaml 을 launch 가 함께 넘긴다.
-# 모든 좌표는 map 프레임(= warehouse.sdf 월드 원점, SLAM 지도 원점을 월드 원점에 맞춘 경우).
+# 모든 좌표는 map 프레임 = 월드 프레임 (계약 C4: maps/warehouse 는 월드 원점·방위에 맞춰 만든 SLAM 지도).
 
 # ---------------------------------------------------------------- 공용 도크 표
-# task_executor_node 는 staging (주행 목표, 작업 자세 → 도크 대응), docking_server_node 는 standoff 를 쓴다.
-#   staging  [x, y, yaw]  마커 면에서 바깥 법선으로 1.5 m, 마커를 바라보는 방향. 카메라–마커 1.32 m 에서
-#                         0.18 m 마커가 약 46 px (f ≈ 337 px) 로 검출 가능, Nav2 도착 오차 ±0.25 m·±15° 에서도
-#                         마커 방위 ≤ 26° < 반화각 43.5°.
-#   standoff [m]          도킹 완료 시 마커 면 ~ base_link 거리. 0.65 → 범퍼(base_link 전방 0.30)–마커 판 0.35 m 로
-#                         safety_node 긴급정지 거리 0.30 m 밖 (Critical 존 0.2 m/s 상한 > 도킹 final 속도 0.05).
-# 마커 위치: warehouse.sdf (gen_warehouse_world.py) — 입고 도크 x = −29.79, 출고 x = +29.79, 충전소 y = −18.14.
+# task_executor_node 는 staging (주행 목표, 작업 자세 → 도크 대응)·perceive_yaw, docking_server_node 는 standoff 를 쓴다.
+# 기하 출처: warehouse.sdf (amr_simulation worlds/gen_warehouse_world.py) + config/sensors.yaml.
+#   마커 판 면: 입고 x = −29.98 (판 중심 −29.99, HALF_X − 0.01, 두께 0.02), 출고 x = +29.98, 충전소 y = −18.13,
+#              판 중심 높이 MARKER_Z 0.25 m = 카메라 광학 중심 높이. 흑백 영역 0.18 m, 판 0.30 m.
+#   카메라: base_link 전방 0.29 m (camera_link x), 지면 0.25 m, hfov 87°, 640 px → f ≈ 337 px.
+#   staging  [x, y, yaw]  마커를 바라보는 자세. 도크: base_link–판 2.20 m (카메라–판 1.91 m, 마커 ≈ 32 px),
+#                         충전소: 1.49 m (카메라–판 1.20 m, ≈ 51 px). 검출 하한 min_side_px 12 px.
+#                         도크 staging 을 판에서 2.20 m 에 두는 이유: 도크 박스(접근선 양옆 ±1 m, x = ∓28.7)와 나란한
+#                         1.69 m 에서는 제자리 회전(외접원 0.36 m)과 박스 모서리 사이가 0.34 m 라 safety_node 회전 규칙
+#                         (0.30 m, LiDAR σ 3 cm)이 근접 정지를 걸었다 (Gazebo 실측). 2.20 m 에서는 0.61 m.
+#   standoff [m]          도킹 완료 시 판 면 ~ base_link 거리. 0.65 → 범퍼(base_link 전방 0.30)–판 0.35 m,
+#                         카메라–판 0.36 m (마커 ≈ 169 px). LiDAR σ 3 cm 에서 최소 거리가 0.30 m 아래로 흔들리므로
+#                         도킹 세션 동안 docking_server_node 가 safety/dock_exclusion 을 보낸다 (계약 C2).
+#   perceive_yaw [rad]    staging 위치에서 물품(도크 박스)이 카메라 시야에 드는 방위 (선택). 도크 박스는 접근선
+#                         양옆 ±1 m, 판에서 1.28 m (x = ∓28.7) → staging 방위에서는 카메라 방위 ±58° 라 반화각
+#                         43.5° 밖. y+1 의 box_medium 을 정면으로 보는 방위(∓47.4° 회전): 거리 base_link 1.36 m / 카메라 1.07 m.
+#   marker_id             월드의 ArUco id (DICT_4X4_50: 도크 0~3, 충전소 4~6). docking_server_node 는 perception/dock_marker_id
+#                         가 다른 관측을 버린다 — search 회전(±0.5 rad)에서는 4 m 옆 이웃 도크 마커(≈ 14 px)도 시야에 든다.
 /**:
   ros__parameters:
     docks:
       ids: [dock_1, dock_2, dock_a, dock_b, charger_c1, charger_c2, charger_c3]
-      dock_1: {staging: [-28.29, 17.0, 3.14159265], standoff: 0.65}
-      dock_2: {staging: [-28.29, 13.0, 3.14159265], standoff: 0.65}
-      dock_a: {staging: [28.29, 17.0, 0.0], standoff: 0.65}
-      dock_b: {staging: [28.29, 13.0, 0.0], standoff: 0.65}
-      charger_c1: {staging: [-26.0, -16.64, -1.57079633], standoff: 0.65}
-      charger_c2: {staging: [-22.0, -16.64, -1.57079633], standoff: 0.65}
-      charger_c3: {staging: [-18.0, -16.64, -1.57079633], standoff: 0.65}
+      dock_1: {staging: [-27.78, 17.0, 3.14159265], standoff: 0.65, perceive_yaw: 2.3146, marker_id: 0}
+      dock_2: {staging: [-27.78, 13.0, 3.14159265], standoff: 0.65, perceive_yaw: 2.3146, marker_id: 1}
+      dock_a: {staging: [27.78, 17.0, 0.0], standoff: 0.65, perceive_yaw: 0.8270, marker_id: 2}
+      dock_b: {staging: [27.78, 13.0, 0.0], standoff: 0.65, perceive_yaw: 0.8270, marker_id: 3}
+      charger_c1: {staging: [-26.0, -16.64, -1.57079633], standoff: 0.65, marker_id: 4}
+      charger_c2: {staging: [-22.0, -16.64, -1.57079633], standoff: 0.65, marker_id: 5}
+      charger_c3: {staging: [-18.0, -16.64, -1.57079633], standoff: 0.65, marker_id: 6}
 
 # ---------------------------------------------------------------- 작업 실행기
 /**/task_executor_node:
@@ -31,21 +42,24 @@
     tick_rate_hz: 50.0              # [Hz] BT tick. 응답 예산(sequences.md): tick 주기 20 ms → 평균 대기 10 ms
     map_frame: map                  # 전역 지도 프레임 (접두어 없음, multi_robot.md §2)
     groot:
-      enabled: true                 # BT::PublisherZMQ (Groot 1 모니터). 5대 한 호스트면 로봇마다 포트를 다르게
-      publisher_port: 1666          # 상태 변화 PUB
-      server_port: 1667             # 트리 구조 REQ/REP
+      enabled: true                 # BT::PublisherZMQ (Groot 1 모니터, 프로세스당 1 개)
+      publisher_port: 1666          # 상태 변화 PUB. 다중 로봇: amr_bringup 이 로봇 i 에 1666 + 2i 를 준다
+      server_port: 1667             # 트리 구조 REQ/REP (bringup: 1667 + 2i)
       max_msg_per_second: 25        # 상태 변화 메시지 상한 (Groot 1 기본값)
     bt_log_file: ""                 # "" = 끔. 경로를 주면 BT::FileLogger(.fbl) → Groot 로그 재생
-    publish_payload_mass: true      # payload/mass 를 실행기가 발행 (payload_manager_node 가 배치되면 false)
+    publish_payload_mass: true      # payload/mass 발행 (계약 C5: 실행기가 attach·mass 를 내고 payload_manager_node 가 받는다)
     server_wait_timeout_ms: 5000    # 액션/서비스 서버 발견 대기 상한 → 넘으면 그 노드 FAILURE (복구 경로)
     goal_response_timeout_ms: 2000  # goal 수락/서비스 응답 대기 상한
 
     # assign_task 수락 정책 (IDLE 이 아니면 "busy:<phase>")
     accept_battery_min_percent: 20.0  # [%] 이 미만이면 거절 ("battery_low") → 충전 우선
     accept_while_returning: false     # true 면 RETURNING 중에도 수락 (복귀를 끝낸 뒤 시작)
+    allow_undocked_tasks: false       # false: 등록 도크와 맞지 않는 적재/하역 자세는 "invalid:no_dock:*" 거절
+                                      # true: 도킹 없이 Nav2 도착 자세에서 적재/하역 (명시적 선택, 경고 로그)
 
-    # 작업 자세 → 도크 대응: staging 위치에서 이 반경 안의 가장 가까운 도크 (도크 간격 4 m 의 절반 이하)
-    dock_match_radius: 1.6            # [m] staging–패드 중심 0.79 m, staging–마커 1.5 m 를 모두 포함
+    # 작업 자세 → 도크 대응: staging 위치에서 이 반경 안의 가장 가까운 도크 (도크·충전소 간격 4 m 의 절반 미만).
+    # 반경 밖이면 allow_undocked_tasks=false 에서 작업 거절
+    dock_match_radius: 1.8            # [m] staging–패드 중심 0.28 m, 충전소 staging–판 1.49 m 포함 (도크 판 면 2.2 m 는 밖)
     dock_match_yaw_tolerance: 3.1416  # [rad] ≥ π 면 방향 무시 (플릿 JSON 은 yaw 를 생략할 수 있다)
 
     # 재시도 (첫 시도 포함 횟수)
@@ -59,6 +73,7 @@
     relocalization_timeout_ms: 30000  # 위치 상실 시 재위치추정 대기 → 넘으면 주행 시도 실패 (복구 회전)
     charge_timeout_ms: 3600000      # 충전 상한 1 h
     charge_retry_delay_ms: 10000    # 충전 실패 후 재시도 간격
+    error_hold_ms: 1500             # 실패 보고 뒤 ERROR 유지 — fleet_adapter 2 Hz 샘플(0.5 s) + 지연 100 ms 보다 길게
 
     # 인식 조건 (IsObjectDetected)
     perception_class: box           # YOLO 클래스 이름 (perception.yaml 과 같은 표기)
@@ -75,11 +90,16 @@
     perception_spin_angle: 0.52     # [rad] 인식 복구 회전 ≈ 30° (sequences.md: spin ±30°)
     dock_backup_dist: 0.3           # [m] 도킹 재시도 전 후진 (명세 도킹 재시도)
     marker_max_age: 1.0             # [s] 재시도 전 마커 가시 판정 (검출 30 Hz → 30 프레임)
-    undock_dist: 0.5                # [m] 충전 후 이탈
+    undock_dist: 1.55               # [m] 적재·하역·충전 뒤 후진 이탈: standoff 0.65 → 판에서 2.20 m (도크 staging).
+                                    # 판 앞(범퍼 0.35 m)·도크 박스 사이(±1 m)에서 제자리 회전하지 않고 Nav2 가 staging 에서 출발
 
     # 위치
     waiting_pose: [22.0, -16.0, 0.0]  # 대기 구역 (warehouse.sdf waiting_zone_pad). 다중 로봇은 런치에서 로봇별로 덮어쓴다
-    charger_dock_id: charger_c1       # 충전 도크 (docks 표의 id, "" = 충전 비활성)
+    # 충전소 후보 (warehouse.sdf CHARGERS C1~C3). 로봇 번호(amr_0k → k−1)만큼 돌린 순서로 고른다
+    # (amr_01 → c1, amr_02 → c2, amr_03 → c3, amr_04 → c1 …). 다른 로봇이 점유한 곳은 건너뛴다. [] = 충전 비활성
+    charger_dock_ids: [charger_c1, charger_c2, charger_c3]   # docks 표의 충전소 id
+    charger_claims_topic: /fleet/charger_claims   # 점유 심장박동 (전역, 1 Hz). "" = 공유 안 함 (단일 로봇)
+    charger_claim_timeout: 3.0        # [s] 이만큼 못 들은 점유는 무효
 
     # 물품 표 기본값 (config/robot_params.yaml 이 덮어쓴다: 명세 8장 표)
     payload_types: [small, medium, large]   # payload.<type>.mass / load_time 을 읽을 종류
@@ -90,13 +110,25 @@
     control_rate_hz: 20.0           # [Hz] 시각 서보 주기 (components.md: 20 Hz)
     control_law: graceful           # graceful (Park–Kuipers) | proportional. 비교: docs/algorithms/docking.md
     base_frame: base_link           # 마커 자세 기준 프레임 (다중 로봇: <robot>/base_link, 런치가 주입)
-    marker_normal_axis: z           # 마커 면 바깥 법선에 해당하는 마커 축 (OpenCV ArUco: +z)
-    detector_node: ""               # "" = 끔. aruco_detector_node 이름을 주면 goal 동안만 enabled=true
+    marker_normal_axis: x           # 마커 면 바깥 법선에 해당하는 마커 축 (계약 C3: aruco_detector_node 는 마커
+                                    # 모델 프레임 +x = 법선, +z = 위 로 낸다. OpenCV solvePnP 원시 자세면 z)
+    detector_enable_service: ""     # "" = 끔. perception/aruco/enable (SetBool) 을 주면 도킹 세션 동안만 켠다
+    # 도킹 예외 사각형 safety/dock_exclusion (계약 C2, 마커 프레임 기준, frame = base_frame, 제어 주기 20 Hz 발행).
+    # 세션 = goal 수락 ~ goal 이 끝나고 판에서 standoff + release_distance 밖으로 물러나거나 마커가 안 보일 때까지
+    # (적재·하역·충전 중과 이탈 후진 포함). 안의 LiDAR 점은 safety_node exclusion_stop_distance(0.10 m) 로 판정.
+    exclusion:
+      enabled: true                 # false = 예외 사각형 발행 안 함
+      half_width: 0.5               # [m] 판 중심 ± — 범퍼 모서리(±0.2)–벽 대각 거리가 0.46 m 가 되는 폭까지
+      depth: 0.3                    # [m] 판 면 뒤 (벽 0.02 m 뒤 포함)
+      front_margin: 0.12            # [m] 판 면 앞 — LiDAR σ 3 cm 의 4배 (판 앞 사람·물체는 0.30 m 규칙 그대로)
+      release_distance: 0.5         # [m] 성공 뒤 판–base_link 가 standoff + 이 값을 넘으면 세션 종료
+      marker_timeout: 0.5           # [s] goal 밖에서 마커가 이만큼 안 보이면 세션 종료
     max_attempts: 3                 # goal.max_retries = 0 일 때 접근 횟수 (명세 3회)
     standoff: 0.65                  # [m] docks.<id>.standoff 가 없을 때
     # 판정 (명세: 위치 2 cm, 각도 1°) — 추정 오차 여유를 두지 않고 명세값 그대로, 대신 0.5 s 유지 요구
     position_tolerance: 0.02        # [m]
     angle_tolerance: 0.01745        # [rad] = 1°
+    heading_stop_tolerance: 0.00873 # [rad] = 0.5°: 판정 전 제자리 정렬 목표 (1° 경계에서 멈추지 않는다)
     settle_frames: 10               # 20 Hz × 10 = 0.5 s 연속 (components.md: 안정 0.5 s 유지)
     # 단계·속도 상한
     final_distance: 0.15            # [m] 이 안은 final 단계 (저속)
@@ -130,3 +162,22 @@
     backup_speed: 0.1               # [m/s]
     max_overshoot: 0.05             # [m]
     filter_coef: 1.0                # 관측 저역통과 (1 = 끔, 0.1 = opennav_docking 기본)
+    marker_id_max_age: 0.2          # [s] perception/dock_marker_id 가 이보다 오래되면 id 확인 생략
+
+# ---------------------------------------------------------------- 시뮬레이션 배터리 (amr_behavior/battery_model.py)
+# Gazebo 로봇에는 배터리가 없다 → battery_state 를 이 모델이 낸다 (실기에서는 BMS 드라이버, start_battery_model:=false).
+# P = idle + (drive + payload·m)·|v| + turn·|ω|, 충전은 charging/enable 이고 정지 중일 때만.
+/**/battery_model_node:
+  ros__parameters:
+    capacity_wh: 480.0              # [Wh] 24 V 20 Ah 팩
+    nominal_voltage: 24.0           # [V]
+    idle_power_w: 30.0              # [W] 정지 중 (컴퓨터·센서) → 대기만으로 100 % 에서 16 h
+    drive_power_w_per_mps: 60.0     # [W/(m/s)] 공차 주행 → 1 m/s 연속 주행 5.3 h
+    payload_power_w_per_kg_mps: 1.0 # [W/(kg·m/s)] 적재 질량 (payload/mass) 비례 추가 전력
+    turn_power_w_per_radps: 10.0    # [W/(rad/s)] 제자리 회전
+    charge_power_w: 480.0           # [W] 1 C → 20 → 80 % 36 min
+    drain_scale: 1.0                # 방전 배율 (시험 가속용, 충전에는 적용 안 함)
+    stationary_speed: 0.02          # [m/s] 이 이하면 정지 → 충전 허용
+    initial_percent: 100.0          # [%] 시작 잔량
+    odom_timeout: 1.0               # [s] odometry/filtered 가 끊기면 정지로 본다
+    publish_rate_hz: 1.0            # [Hz] battery_state 주기

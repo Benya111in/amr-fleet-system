@@ -2,10 +2,14 @@
 #include "amr_behavior/task_executor_node.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <limits>
 #include <map>
 #include <memory>
+#include <regex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -33,6 +37,59 @@ rclcpp::QoS latchedQos()
   return rclcpp::QoS(1).reliable().transient_local();
 }
 }  // namespace
+
+int robotIndexFromId(const std::string & robot_id)
+{
+  const size_t end = robot_id.size();
+  size_t begin = end;
+  while (begin > 0 && std::isdigit(static_cast<unsigned char>(robot_id[begin - 1]))) {
+    --begin;
+  }
+  if (begin == end || end - begin > 6) {
+    return 0;
+  }
+  return std::max(0, std::stoi(robot_id.substr(begin)) - 1);
+}
+
+std::string encodeChargerClaim(
+  const std::string & robot, const std::string & charger,
+  double since)
+{
+  // 무손실 (%.17g): 받는 쪽은 이 값을 자기 since(원래 double)와 비교한다.
+  // 반올림(%.3f)하면 같은 1 ms 안에 점유한 두 로봇이 서로 "상대가 늦다" 고 보아
+  // 둘 다 같은 충전소를 유지했다 (부하 시 실측)
+  char stamp[40];
+  std::snprintf(stamp, sizeof(stamp), "%.17g", since);
+  return "{\"robot\": \"" + robot + "\", \"charger\": \"" + charger + "\", \"since\": " + stamp +
+         "}";
+}
+
+bool decodeChargerClaim(
+  const std::string & json, std::string & robot, std::string & charger,
+  double & since)
+{
+  static const std::regex kRobot("\"robot\"\\s*:\\s*\"([^\"]*)\"");
+  static const std::regex kCharger("\"charger\"\\s*:\\s*\"([^\"]*)\"");
+  static const std::regex kSince("\"since\"\\s*:\\s*(-?[0-9.eE+-]+)");
+  std::smatch m;
+  if (!std::regex_search(json, m, kRobot)) {
+    return false;
+  }
+  robot = m[1].str();
+  if (!std::regex_search(json, m, kCharger)) {
+    return false;
+  }
+  charger = m[1].str();
+  since = 0.0;
+  if (std::regex_search(json, m, kSince)) {
+    try {
+      since = std::stod(m[1].str());
+    } catch (const std::exception &) {
+      return false;
+    }
+  }
+  return !robot.empty();
+}
 
 TaskExecutorNode::TaskExecutorNode(const rclcpp::NodeOptions & options)
 : rclcpp::Node("task_executor_node", options)
@@ -81,6 +138,8 @@ void TaskExecutorNode::declareAndLoadParameters()
     "accept_battery_min_percent", policy.battery_low_percent);
   policy.accept_while_returning = declare_parameter<bool>(
     "accept_while_returning", policy.accept_while_returning);
+  policy.allow_undocked_tasks = declare_parameter<bool>(
+    "allow_undocked_tasks", policy.allow_undocked_tasks);
   ctx_->setAcceptPolicy(policy);
 
   // 물품 표 (config/robot_params.yaml payload.<type>, 명세 8장 표가 기본값)
@@ -117,10 +176,15 @@ void TaskExecutorNode::declareAndLoadParameters()
     d.x = staging[0];
     d.y = staging[1];
     d.yaw = staging[2];
+    const double perceive = declare_parameter<double>(
+      "docks." + id + ".perceive_yaw", std::numeric_limits<double>::quiet_NaN());
+    if (std::isfinite(perceive)) {
+      d.perceive_yaw = perceive;
+    }
     docks.push_back(d);
   }
   ctx_->setDocks(
-    docks, declare_parameter<double>("dock_match_radius", 1.6),
+    docks, declare_parameter<double>("dock_match_radius", 1.8),
     declare_parameter<double>("dock_match_yaw_tolerance", M_PI));
 
   // 트리 설정 키 (TaskTreeConfig, behavior_tree.md 표)
@@ -138,6 +202,7 @@ void TaskExecutorNode::declareAndLoadParameters()
   c.relocalization_timeout_ms = ms("relocalization_timeout_ms", c.relocalization_timeout_ms);
   c.charge_timeout_ms = ms("charge_timeout_ms", c.charge_timeout_ms);
   c.charge_retry_delay_ms = ms("charge_retry_delay_ms", c.charge_retry_delay_ms);
+  c.error_hold_ms = ms("error_hold_ms", c.error_hold_ms);
   c.perception_class = declare_parameter<std::string>("perception_class", c.perception_class);
   c.perception_max_distance = declare_parameter<double>(
     "perception_max_distance", c.perception_max_distance);
@@ -160,20 +225,34 @@ void TaskExecutorNode::declareAndLoadParameters()
   } else {
     RCLCPP_WARN(get_logger(), "waiting_pose 는 [x, y, yaw] 여야 한다 → 복귀 생략");
   }
-  c.charger_dock_id = declare_parameter<std::string>("charger_dock_id", "");
-  if (const auto dock = ctx_->dock(c.charger_dock_id)) {
-    c.charger_goal = makePose(dock->frame_id, dock->x, dock->y, dock->yaw);
-  } else if (!c.charger_dock_id.empty()) {
-    RCLCPP_WARN(
-      get_logger(), "charger_dock_id '%s' 가 docks 표에 없다 → 충전 비활성",
-      c.charger_dock_id.c_str());
-    c.charger_dock_id.clear();
+  // 충전소 후보 (docks 표의 id). 로봇 번호만큼 돌린 순서로 고르고 /fleet/charger_claims 로
+  // 점유를 나눈다
+  std::vector<std::string> chargers;
+  for (const auto & id : declare_parameter<std::vector<std::string>>(
+      "charger_dock_ids", std::vector<std::string>{}))
+  {
+    if (ctx_->dock(id)) {
+      chargers.push_back(id);
+    } else {
+      RCLCPP_WARN(get_logger(), "charger_dock_ids 의 '%s' 가 docks 표에 없다 → 제외", id.c_str());
+    }
   }
-  if (c.charger_dock_id.empty()) {
+  const int robot_index = robotIndexFromId(robot_id_);
+  ctx_->setChargers(
+    chargers, robot_index, declare_parameter<double>("charger_claim_timeout", 3.0));
+  charger_claims_topic_ = declare_parameter<std::string>(
+    "charger_claims_topic", "/fleet/charger_claims");
+  if (chargers.empty()) {
     // 충전소가 없으면 Charge 서브트리가 실패만 반복하므로 자동 충전을 끈다 (수락 정책의 배터리
     // 거절은 유지)
     c.battery_low_percent = -1.0;
-    RCLCPP_INFO(get_logger(), "charger_dock_id 없음 → 자동 충전 비활성");
+    RCLCPP_INFO(get_logger(), "charger_dock_ids 없음 → 자동 충전 비활성");
+  } else {
+    std::string order;
+    for (const auto & id : ctx_->chargerPreference()) {
+      order += (order.empty() ? "" : " > ") + id;
+    }
+    RCLCPP_INFO(get_logger(), "충전소 선호 순서 (로봇 번호 %d): %s", robot_index, order.c_str());
   }
 }
 
@@ -214,6 +293,9 @@ void TaskExecutorNode::createInterfaces()
       msg.data = enable;
       charging_pub_->publish(msg);
     };
+  hooks.publish_charger_claim = [this](const std::string & charger, double since) {
+      publishChargerClaim(charger, since);
+    };
   hooks.log_info = [this](const std::string & text) {
       RCLCPP_INFO(get_logger(), "%s", text.c_str());
     };
@@ -228,7 +310,8 @@ void TaskExecutorNode::createInterfaces()
       ctx_->updateBattery(static_cast<double>(msg->percentage) * 100.0);
     });
   // safety/estop_active, localization/lost 는 latched 로 발행된다 (components.md §5.4,
-  // kidnap_monitor)
+  // kidnap_monitor). estop_active 는 버튼 래치·센서 고장 E-stop 만 (계약 C1) — 근접 정지는
+  // safety/zone STOP 이고 E-stop 이 아니므로 작업을 멈추지 않는다 (safety_node 가 속도만 막는다).
   estop_sub_ = create_subscription<std_msgs::msg::Bool>(
     "safety/estop_active", latchedQos(), [this](const std_msgs::msg::Bool::SharedPtr msg) {
       if (msg->data != ctx_->estopActive()) {
@@ -264,6 +347,62 @@ void TaskExecutorNode::createInterfaces()
       std::shared_ptr<amr_msgs::srv::AssignTask::Response> response) {
       onAssignTask(request, response);
     });
+  clear_payload_srv_ = create_service<std_srvs::srv::Trigger>(
+    "clear_payload",
+    [this](
+      const std::shared_ptr<std_srvs::srv::Trigger::Request>,
+      std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+      if (ctx_->hasTask()) {
+        response->success = false;
+        response->message = "busy:task";
+      } else if (ctx_->attachedPayload().empty()) {
+        response->success = true;
+        response->message = "empty";
+      } else {
+        const std::string item = ctx_->attachedPayload();
+        ctx_->detachPayload();
+        response->success = true;
+        response->message = "cleared:" + item;
+        RCLCPP_WARN(
+          get_logger(), "clear_payload: 작업자가 '%s' 를 내렸다 → 작업 재개", item.c_str());
+      }
+    });
+
+  // 충전소 점유 공유 (전역 토픽, 다중 로봇). 심장박동 1 Hz, charger_claim_timeout 안에 못
+  // 들으면 무효.
+  if (!charger_claims_topic_.empty()) {
+    claim_pub_ = create_publisher<std_msgs::msg::String>(charger_claims_topic_, rclcpp::QoS(10));
+    claim_sub_ = create_subscription<std_msgs::msg::String>(
+      charger_claims_topic_, rclcpp::QoS(10),
+      [this](const std_msgs::msg::String::SharedPtr msg) {onChargerClaim(msg->data);});
+    claim_timer_ = create_wall_timer(
+      std::chrono::seconds(1), [this]() {
+        const std::string claim = ctx_->chargerClaim();
+        if (!claim.empty()) {
+          publishChargerClaim(claim, ctx_->chargerClaimSince());
+        }
+      });
+  }
+}
+
+void TaskExecutorNode::publishChargerClaim(const std::string & charger, double since)
+{
+  if (!claim_pub_) {
+    return;
+  }
+  std_msgs::msg::String msg;
+  msg.data = encodeChargerClaim(robot_id_, charger, since);
+  claim_pub_->publish(msg);
+}
+
+void TaskExecutorNode::onChargerClaim(const std::string & json)
+{
+  std::string robot;
+  std::string charger;
+  double since = 0.0;
+  if (decodeChargerClaim(json, robot, charger, since)) {
+    ctx_->updateChargerClaim(robot, charger, since);
+  }
 }
 
 void TaskExecutorNode::init()

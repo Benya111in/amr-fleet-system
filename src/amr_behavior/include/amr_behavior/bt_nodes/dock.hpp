@@ -1,6 +1,8 @@
 // Action Dock: docking_server_node 의 dock 액션 (amr_msgs/action/Dock) 클라이언트.
 //
-// dock_id 가 비어 있으면(작업 자세가 등록 도크와 맞지 않음) 도킹을 생략하고 SUCCESS.
+// dock_id 가 비어 있으면 도킹을 생략하고 SUCCESS (경고 로그). 등록 도크와 맞지 않는 작업은 실행기가
+// 기본적으로 "invalid:no_dock:*" 로 거절하므로, 여기 오는 것은 allow_undocked_tasks=true 로 명시한
+// 도킹 없는 작업뿐이다.
 // 결과(성공/실패 모두)의 최종 오차·시도 횟수를 출력 포트로 내보낸다 → 로그·실패 사유.
 // max_retries 는 이 goal 한 번에 서버가 수행할 최대 접근 횟수 (0 = 서버 기본값).
 // BT 는 DockAt 서브트리의 RetryUntilSuccessful 로 goal 을 다시 보내므로 기본 1 (단일 재시도
@@ -45,7 +47,8 @@ protected:
     std::string id;
     getInput("dock_id", id);
     if (id.empty()) {
-      RCLCPP_INFO(logger_, "[%s] dock_id 없음 → 도킹 생략", name().c_str());
+      RCLCPP_WARN(
+        logger_, "[%s] dock_id 없음 → 도킹 생략 (allow_undocked_tasks 작업)", name().c_str());
       return true;
     }
     return false;

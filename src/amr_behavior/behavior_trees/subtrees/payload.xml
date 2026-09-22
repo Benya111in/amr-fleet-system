@@ -4,13 +4,18 @@
     인자: item_type (small / medium / large), item_mass [kg] (0 = 물품 표 값)
 
   SimulateLoad 는 물품 표(config/robot_params.yaml payload.<type>)의 load_time 동안 RUNNING 후
-  payload/attach = item_type, payload/mass = 질량 을 발행한다. SimulateUnload 는 "" / 0 을 발행한다.
+  payload/attach = item_type, payload/mass = 질량 을 발행한다 (계약 C5). 출처(적재 도크)를 함께 기록하고,
+  이미 물품이 실려 있으면 싣지 않고 FAILURE. SimulateUnload 는 "" / 0 을 발행한다.
+
+  ReturnPayload: 하역하지 못한 물품을 적재 도크로 되돌려 놓는다 (대체 작업, 메인 트리 ReturnStrandedPayload).
+    인자(루트 키): payload_origin_goal, payload_origin_dock_id, payload_item_type (IsPayloadStranded 출력)
 -->
 <root>
   <BehaviorTree ID="Load">
     <Sequence name="LoadSteps">
       <SetPhase phase="LOADING"/>
-      <SimulateLoad item_type="{item_type}" item_mass="{item_mass}"/>
+      <SimulateLoad item_type="{item_type}" item_mass="{item_mass}"
+                    origin_goal="{pickup_goal}" origin_dock_id="{pickup_dock_id}"/>
     </Sequence>
   </BehaviorTree>
 
@@ -18,6 +23,15 @@
     <Sequence name="UnloadSteps">
       <SetPhase phase="UNLOADING"/>
       <SimulateUnload item_type="{item_type}"/>
+    </Sequence>
+  </BehaviorTree>
+
+  <BehaviorTree ID="ReturnPayload">
+    <Sequence name="ReturnPayloadSteps">
+      <SubTreePlus ID="MoveTo" goal="{payload_origin_goal}" phase="MOVING" __autoremap="true"/>
+      <SubTreePlus ID="DockAt" dock_id="{payload_origin_dock_id}" approach_pose="{payload_origin_goal}" __autoremap="true"/>
+      <SubTreePlus ID="Unload" item_type="{payload_item_type}" __autoremap="true"/>
+      <SubTreePlus ID="Undock" __autoremap="true"/>
     </Sequence>
   </BehaviorTree>
 </root>

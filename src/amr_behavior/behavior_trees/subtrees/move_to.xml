@@ -5,10 +5,10 @@
     설정: nav_attempts, relocalization_timeout_ms
 
   ReactiveSequence 가 매 tick 게이트를 재평가한다.
-    - 교통 hold: Yield 서브트리가 RUNNING 인 동안 주행 goal 은 취소되고, 해제되면 다시 보낸다.
+    - 교통 hold: TrafficGate(Yield) 가 RUNNING 인 동안 주행 goal 은 취소되고, 해제되면 다시 보낸다.
     - 위치 상실: 재위치추정을 relocalization_timeout_ms 까지 기다리고, 넘으면 이 시도는 실패.
-  시도가 실패하면 RecoverNavigation (costmap 비우기 → 제자리 회전 → 대기) 후 재시도,
-  nav_attempts 회 모두 실패하면 FAILURE (→ 메인 트리 nav_failed).
+  시도가 실패하면 RecoverNavigation (costmap 비우기 → 제자리 회전 → 대기, 이것도 교통 hold 를 따른다) 후
+  재시도, nav_attempts 회 모두 실패하면 FAILURE (→ 메인 트리 nav_failed).
 -->
 <root>
   <BehaviorTree ID="MoveTo">
@@ -16,12 +16,7 @@
       <Fallback name="NavigateOrRecover">
         <ReactiveSequence name="GuardedNavigation">
           <SetPhase phase="{phase}"/>
-          <ReactiveFallback name="TrafficGate">
-            <Inverter>
-              <IsTrafficHold yield_pose="{yield_pose}"/>
-            </Inverter>
-            <SubTreePlus ID="Yield" yield_pose="{yield_pose}" __autoremap="true"/>
-          </ReactiveFallback>
+          <SubTreePlus ID="TrafficGate" __autoremap="true"/>
           <ReactiveFallback name="LocalizationGate">
             <IsLocalized/>
             <Timeout msec="{relocalization_timeout_ms}">

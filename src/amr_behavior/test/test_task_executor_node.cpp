@@ -1,5 +1,6 @@
 // task_executor_node 통합 시험: 실제 트리 XML + 프로세스 안 모의 Nav2/도킹 서버로 assign_task →
-// 대기-이동-인식-작업-복귀 → task_status COMPLETED, 실행 중 재할당 거절, Groot 퍼블리셔 기동.
+// 대기-이동-인식-작업-복귀 → task_status COMPLETED, 실행 중 재할당 거절, Groot 퍼블리셔 기동
+// (여는 데 실패해도 실행기는 계속), clear_payload, 도크 없는 작업 거절, 충전소 점유 메시지.
 #include <gtest/gtest.h>
 
 #include <atomic>
@@ -26,6 +27,7 @@
 #include "spin_thread.hpp"
 #include "std_msgs/msg/bool.hpp"
 #include "std_msgs/msg/string.hpp"
+#include "std_srvs/srv/trigger.hpp"
 
 using namespace std::chrono_literals;
 using amr_msgs::msg::Task;
@@ -90,7 +92,8 @@ protected:
       rclcpp::Parameter("docks.dock_1.staging", std::vector<double>{-28.29, 17.0, M_PI}),
       rclcpp::Parameter("docks.dock_a.staging", std::vector<double>{28.29, 17.0, 0.0}),
       rclcpp::Parameter("docks.bad.staging", std::vector<double>{1.0}),
-      rclcpp::Parameter("charger_dock_id", "missing_charger"),
+      rclcpp::Parameter("charger_dock_ids", std::vector<std::string>{"missing_charger"}),
+      rclcpp::Parameter("charger_claims_topic", "fleet_test/charger_claims"),
       rclcpp::Parameter("bt_log_file", "/tmp/amr_behavior_test_executor.fbl"),
     };
     executor_ = std::make_shared<amr_behavior::TaskExecutorNode>(
@@ -227,11 +230,160 @@ TEST_F(ExecutorNodeTest, AssignRunsFullTaskAndRejectsWhileBusy)
       }, 60s));
   std::lock_guard<std::mutex> lock(mutex_);
   const std::vector<std::string> expected = {
-    "IDLE", "MOVING", "DOCKING", "LOADING", "MOVING", "DOCKING", "UNLOADING", "RETURNING", "IDLE"};
+    "IDLE", "MOVING", "PERCEIVING", "DOCKING", "LOADING", "UNDOCKING", "MOVING", "DOCKING",
+    "UNLOADING", "UNDOCKING", "RETURNING", "IDLE"};
   EXPECT_EQ(phases_, expected);
   EXPECT_EQ(statuses_, (std::vector<uint8_t>{Task::STATUS_IN_PROGRESS, Task::STATUS_COMPLETED}));
   EXPECT_EQ(nav_->goals.load(), 3);
   EXPECT_EQ(dock_->goals.load(), 2);
+  EXPECT_EQ(backup_->goals.load(), 2);   // 적재·하역 뒤 이탈
+}
+
+TEST_F(ExecutorNodeTest, RejectsTaskPosesThatMatchNoDock)
+{
+  auto req = std::make_shared<amr_msgs::srv::AssignTask::Request>();
+  req->task.task_id = "T-300";
+  req->task.item_type = "medium";
+  req->task.pickup_pose.header.frame_id = "map";
+  req->task.pickup_pose.pose.position.x = 12.5;   // amr_fleet 예시 좌표 (도크 아님)
+  req->task.pickup_pose.pose.position.y = 8.0;
+  req->task.pickup_pose.pose.orientation.w = 1.0;
+  req->task.dropoff_pose = req->task.pickup_pose;
+  req->task.dropoff_pose.pose.position.x = 27.5;
+  req->task.dropoff_pose.pose.position.y = 17.0;
+  auto future = assign_->async_send_request(req);
+  ASSERT_EQ(future.wait_for(5s), std::future_status::ready);
+  const auto res = future.get();
+  EXPECT_FALSE(res->success);
+  EXPECT_EQ(res->message, "invalid:no_dock:pickup");
+}
+
+TEST_F(ExecutorNodeTest, ClearPayloadServiceUnblocksTheRobot)
+{
+  auto client = world_->create_client<std_srvs::srv::Trigger>("clear_payload");
+  ASSERT_TRUE(client->wait_for_service(5s));
+  auto call = [&client]() {
+      auto f = client->async_send_request(std::make_shared<std_srvs::srv::Trigger::Request>());
+      EXPECT_EQ(f.wait_for(5s), std::future_status::ready);
+      return f.get();
+    };
+  EXPECT_EQ(call()->message, "empty");
+  executor_->context()->attachPayload("large", 25.0);   // 되돌려 놓지 못한 물품
+  auto res = assign("T-400");
+  ASSERT_TRUE(res);
+  EXPECT_EQ(res->message, "blocked:payload");
+  auto cleared = call();
+  EXPECT_TRUE(cleared->success);
+  EXPECT_EQ(cleared->message, "cleared:large");
+  EXPECT_TRUE(executor_->context()->attachedPayload().empty());
+}
+
+TEST_F(ExecutorNodeTest, GrootFailureDoesNotStopTheExecutor)
+{
+  // Groot 퍼블리셔를 열 수 없으면(포트 사용 중, 또는 BT.CPP v3 의 프로세스당 PublisherZMQ
+  // 1 개 제한) 경고 후 시각화 없이 계속한다. 로봇마다 다른 포트가 함께 열리는지는 프로세스를
+  // 나눠야 하므로 test_groot_ports.py 가 실제 실행 파일 3 개로 확인한다.
+  auto make = [](const std::string & ns, int pub, int srv) {
+      const std::vector<rclcpp::Parameter> overrides = {
+        rclcpp::Parameter(
+          "bt_xml", std::string(AMR_BEHAVIOR_SOURCE_DIR) + "/behavior_trees/task_executor.xml"),
+        rclcpp::Parameter("groot.publisher_port", pub),
+        rclcpp::Parameter("groot.server_port", srv),
+        rclcpp::Parameter("charger_claims_topic", ""),
+      };
+      auto node = std::make_shared<amr_behavior::TaskExecutorNode>(
+        rclcpp::NodeOptions().parameter_overrides(overrides).arguments(
+          {"--ros-args", "-r", "__ns:=/" + ns}));
+      node->init();
+      return node;
+    };
+  EXPECT_TRUE(executor_->grootActive());
+  auto clash = make("amr_gr4", 16766, 16767);
+  EXPECT_FALSE(clash->grootActive());
+  EXPECT_NE(clash->tree(), nullptr);
+  clash->tickOnce();
+  EXPECT_EQ(clash->context()->phase(), "IDLE");
+}
+
+TEST(ChargerClaimCodec, RoundTripAndRobotIndex)
+{
+  const std::string json = amr_behavior::encodeChargerClaim("amr_02", "charger_c3", 12.5);
+  std::string robot;
+  std::string charger;
+  double since = 0.0;
+  ASSERT_TRUE(amr_behavior::decodeChargerClaim(json, robot, charger, since));
+  EXPECT_EQ(robot, "amr_02");
+  EXPECT_EQ(charger, "charger_c3");
+  EXPECT_DOUBLE_EQ(since, 12.5);
+  ASSERT_TRUE(
+    amr_behavior::decodeChargerClaim(
+      amr_behavior::encodeChargerClaim("amr_02", "", 0.0), robot, charger, since));
+  EXPECT_TRUE(charger.empty());   // 해제
+  EXPECT_FALSE(amr_behavior::decodeChargerClaim("{\"charger\": \"c1\"}", robot, charger, since));
+  EXPECT_FALSE(amr_behavior::decodeChargerClaim("{\"robot\": \"a\"}", robot, charger, since));
+  EXPECT_FALSE(
+    amr_behavior::decodeChargerClaim(
+      "{\"robot\": \"a\", \"charger\": \"c\", \"since\": 1e999999}", robot, charger, since));
+  // 무손실 왕복: 같은 1 ms 안의 두 점유(에포크 초)도 받는 쪽 비교가 보내는 쪽과 같아야 한다
+  for (const double t : {1790083158.7019653, 1790083158.7016001, 0.1 + 0.2}) {
+    ASSERT_TRUE(
+      amr_behavior::decodeChargerClaim(
+        amr_behavior::encodeChargerClaim("amr_04", "charger_c3", t), robot, charger, since));
+    EXPECT_EQ(since, t);
+  }
+  EXPECT_EQ(amr_behavior::robotIndexFromId("amr_01"), 0);
+  EXPECT_EQ(amr_behavior::robotIndexFromId("amr_05"), 4);
+  EXPECT_EQ(amr_behavior::robotIndexFromId("robot"), 0);
+  EXPECT_EQ(amr_behavior::robotIndexFromId(""), 0);
+  EXPECT_EQ(amr_behavior::robotIndexFromId("amr_1234567"), 0);   // 비정상적으로 긴 번호
+}
+
+TEST_F(ExecutorNodeTest, ChargerClaimsAreSharedBetweenExecutors)
+{
+  // 두 실행기가 전역 점유 토픽으로 충전소를 나눈다: amr_01 이 c1 을 점유하면 amr_04 는 c1 을
+  // 고르지 않는다
+  auto make = [](const std::string & id) {
+      const std::vector<rclcpp::Parameter> overrides = {
+        rclcpp::Parameter(
+          "bt_xml", std::string(AMR_BEHAVIOR_SOURCE_DIR) + "/behavior_trees/task_executor.xml"),
+        rclcpp::Parameter("robot_id", id),
+        rclcpp::Parameter("groot.enabled", false),
+        rclcpp::Parameter("docks.ids", std::vector<std::string>{"charger_c1", "charger_c2"}),
+        rclcpp::Parameter("docks.charger_c1.staging", std::vector<double>{-26.0, -16.64, -1.57}),
+        rclcpp::Parameter("docks.charger_c2.staging", std::vector<double>{-22.0, -16.64, -1.57}),
+        rclcpp::Parameter(
+          "charger_dock_ids", std::vector<std::string>{"charger_c1", "charger_c2"}),
+        rclcpp::Parameter("charger_claims_topic", "/claims_test/charger_claims"),
+      };
+      auto node = std::make_shared<amr_behavior::TaskExecutorNode>(
+        rclcpp::NodeOptions().parameter_overrides(overrides).arguments(
+          {"--ros-args", "-r", "__ns:=/" + id}));
+      return node;
+    };
+  auto a = make("amr_01");
+  auto b = make("amr_04");   // 번호 3 → 충전소 2 개 중 3 mod 2 = 1 → 선호 c2, c1
+  rclcpp::executors::SingleThreadedExecutor exec;
+  exec.add_node(a);
+  exec.add_node(b);
+  amr_behavior_test::SpinThread spinner(exec);
+  EXPECT_EQ(
+    b->context()->chargerPreference(),
+    (std::vector<std::string>{"charger_c2", "charger_c1"}));
+  // c2 는 다른 로봇(amr_09)이 먼저 점유 → amr_04 는 c1 을 원하지만 amr_01 이 점유하면 양보해야 한다
+  ASSERT_TRUE(a->context()->selectCharger().has_value());
+  EXPECT_EQ(a->context()->chargerClaim(), "charger_c1");
+  const auto end = std::chrono::steady_clock::now() + 5s;
+  std::optional<amr_behavior::DockSpec> got;
+  while (std::chrono::steady_clock::now() < end) {
+    b->context()->updateChargerClaim("amr_09", "charger_c2", -100.0);
+    got = b->context()->selectCharger();
+    if (!got) {
+      break;   // amr_01 의 c1 점유를 들었다 → 빈 곳 없음
+    }
+    b->context()->releaseCharger();
+    std::this_thread::sleep_for(50ms);
+  }
+  EXPECT_FALSE(got.has_value());
 }
 
 TEST_F(ExecutorNodeTest, EstopAndBatteryGateAcceptance)

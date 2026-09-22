@@ -22,6 +22,7 @@ find_package(amr_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
@@ -55,12 +56,12 @@ ament_target_dependencies(amr_behavior_bt ${_bt_deps})
 # 노드 구현 (실행 파일과 통합 테스트가 공유)
 add_library(amr_task_executor SHARED src/task_executor_node.cpp)
 target_link_libraries(amr_task_executor amr_behavior_bt)
-ament_target_dependencies(amr_task_executor ${_bt_deps} ament_index_cpp sensor_msgs std_msgs)
+ament_target_dependencies(amr_task_executor ${_bt_deps} ament_index_cpp sensor_msgs std_msgs std_srvs)
 
 add_library(amr_docking_server SHARED src/docking/docking_server_node.cpp)
 target_link_libraries(amr_docking_server amr_behavior_algorithms)
 ament_target_dependencies(amr_docking_server
-  rclcpp rclcpp_action amr_msgs geometry_msgs tf2 tf2_ros tf2_geometry_msgs)
+  rclcpp rclcpp_action amr_msgs geometry_msgs std_msgs std_srvs tf2 tf2_ros tf2_geometry_msgs)
 
 # Nav2 BT 조건 플러그인 (bt_navigator 의 plugin_lib_names 로 로드, BT_REGISTER_NODES)
 add_library(amr_is_ttc_below_threshold_condition_bt_node SHARED
@@ -93,6 +94,8 @@ install(TARGETS
 )
 install(TARGETS task_executor_node docking_server_node bt_tool
   DESTINATION lib/${PROJECT_NAME})
+# 시뮬레이션 배터리 (battery_state 발행, amr_behavior/battery_model_node.py)
+install(PROGRAMS scripts/battery_model_node DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY include/ DESTINATION include)
 
 # --- 리소스 디렉토리 설치 ---
@@ -119,7 +122,11 @@ if(BUILD_TESTING)
   # CONFIGURE_DEPENDS: 테스트 파일을 추가하면 재구성 없이 다음 빌드에 반영된다.
   file(GLOB _pytests CONFIGURE_DEPENDS test/test_*.py)
   if(_pytests)
-    ament_add_pytest_test(amr_behavior_pytest test)
+    # 교차 패키지·다중 프로세스 시험이 빌드된 실행 파일을 직접 띄운다 (설치 전)
+    ament_add_pytest_test(amr_behavior_pytest test TIMEOUT 300
+      ENV
+      "DOCKING_SERVER_EXE=$<TARGET_FILE:docking_server_node>"
+      "TASK_EXECUTOR_EXE=$<TARGET_FILE:task_executor_node>")
   endif()
 
   find_package(ament_cmake_gtest REQUIRED)

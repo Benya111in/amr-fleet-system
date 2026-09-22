@@ -21,9 +21,12 @@
   <depend>geometry_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
   <depend>tf2_geometry_msgs</depend>
+  <!-- battery_model_node (시뮬레이션 배터리): odometry/filtered → battery_state -->
+  <exec_depend>nav_msgs</exec_depend>
 
   <!-- IsTTCBelowThreshold 플러그인은 bt_navigator(nav2_behavior_tree, v3) 프로세스에 로드된다 -->
   <exec_depend>nav2_behavior_tree</exec_depend>
@@ -37,6 +40,8 @@
   <test_depend>python3-pytest</test_depend>
   <test_depend>python3-pytest-cov</test_depend>
   <test_depend>python3-yaml</test_depend>
+  <!-- 계약 C3 시험: 검출기(aruco.py)가 만든 마커 자세를 docking_server_node 에 넣는다 -->
+  <test_depend>amr_perception</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

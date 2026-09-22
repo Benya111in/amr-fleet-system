@@ -17,6 +17,7 @@ void writeConfig(const TaskTreeConfig & c, BT::Blackboard & bb)
   bb.set<unsigned>("relocalization_timeout_ms", c.relocalization_timeout_ms);
   bb.set<unsigned>("charge_timeout_ms", c.charge_timeout_ms);
   bb.set<unsigned>("charge_retry_delay_ms", c.charge_retry_delay_ms);
+  bb.set<unsigned>("error_hold_ms", c.error_hold_ms);
   bb.set<std::string>("perception_class", c.perception_class);
   bb.set<double>("perception_max_distance", c.perception_max_distance);
   bb.set<double>("battery_low_percent", c.battery_low_percent);
@@ -29,9 +30,11 @@ void writeConfig(const TaskTreeConfig & c, BT::Blackboard & bb)
   bb.set<double>("marker_max_age", c.marker_max_age);
   bb.set<double>("undock_dist", c.undock_dist);
   bb.set<geometry_msgs::msg::PoseStamped>("waiting_pose", c.waiting_pose);
-  bb.set<geometry_msgs::msg::PoseStamped>("charger_goal", c.charger_goal);
-  bb.set<std::string>("charger_dock_id", c.charger_dock_id);
   // 실행기 상태 키 (타입 고정용 초기값)
+  bb.set<geometry_msgs::msg::PoseStamped>("charger_goal", geometry_msgs::msg::PoseStamped{});
+  bb.set<std::string>("charger_dock_id", "");
+  bb.set<int>("charge_step", 0);
+  bb.set<double>("pickup_perceive_turn", 0.0);
   bb.set<unsigned>("last_dock_attempts", 0U);
   bb.set<double>("last_dock_position_error", 0.0);
   bb.set<double>("last_dock_angle_error", 0.0);
@@ -43,12 +46,12 @@ const std::vector<std::string> & globalKeys()
   static const std::vector<std::string> kKeys = {
     "nav_attempts", "perception_attempts", "dock_attempts", "dock_max_retries",
     "perception_timeout_ms", "relocalization_timeout_ms", "charge_timeout_ms",
-    "charge_retry_delay_ms", "perception_class", "perception_max_distance",
+    "charge_retry_delay_ms", "error_hold_ms", "perception_class", "perception_max_distance",
     "battery_low_percent", "battery_resume_percent", "recovery_spin_angle", "recovery_wait_s",
     "recovery_backup_dist", "perception_spin_angle", "dock_backup_dist", "marker_max_age",
-    "undock_dist", "waiting_pose", "charger_goal", "charger_dock_id",
-    "last_dock_attempts", "last_dock_position_error", "last_dock_angle_error",
-    "task_step", "fail_reason"};
+    "undock_dist", "waiting_pose", "charger_goal", "charger_dock_id", "charge_step",
+    "pickup_perceive_turn", "last_dock_attempts", "last_dock_position_error",
+    "last_dock_angle_error", "task_step", "fail_reason"};
   return kKeys;
 }
 

@@ -4,11 +4,15 @@
 // 내보낸다. 도크 id 는 Task.msg 에 없으므로 작업 자세를 behavior.yaml 도크 표의 staging 자세와
 // 대조해 찾는다.
 //   - 도크를 찾으면: 주행 목표 = 그 도크의 staging 자세 (마커 정면, 도킹 시작 위치),
-//                    dock_id = 도크 id
-//   - 못 찾으면:     주행 목표 = 작업 자세 그대로, dock_id = "" (DockAt 이 도킹을 생략)
+//                    dock_id = 도크 id, 인식 회전 = perceive_yaw − staging yaw (없으면 0)
+//   - 못 찾으면:     실행기가 수락 단계에서 "invalid:no_dock:*" 로 거절한다.
+//                    allow_undocked_tasks=true 로 받은 작업만 여기 온다 → 주행 목표 = 작업 자세
+//                    그대로, dock_id = "" (경고 로그, DockAt 이 도킹을 생략)
 #ifndef AMR_BEHAVIOR__BT_NODES__IS_TASK_ASSIGNED_HPP_
 #define AMR_BEHAVIOR__BT_NODES__IS_TASK_ASSIGNED_HPP_
 
+#include <cmath>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -37,6 +41,8 @@ public:
       BT::OutputPort<geometry_msgs::msg::PoseStamped>("dropoff_goal", "하역 주행 목표 (map)"),
       BT::OutputPort<std::string>("pickup_dock_id", "적재 도크 id (\"\" = 도킹 생략)"),
       BT::OutputPort<std::string>("dropoff_dock_id", "하역 도크 id (\"\" = 도킹 생략)"),
+      BT::OutputPort<double>(
+        "pickup_perceive_turn", "staging 에서 물품 쪽으로 돌 각 [rad] (0 = 그대로 인식)"),
     };
   }
 
@@ -46,8 +52,18 @@ public:
     if (!task) {
       return BT::NodeStatus::FAILURE;
     }
-    expand(task->pickup_pose, "pickup_goal", "pickup_dock_id");
-    expand(task->dropoff_pose, "dropoff_goal", "dropoff_dock_id");
+    const auto pickup = expand(task->pickup_pose, "pickup_goal", "pickup_dock_id");
+    const auto dropoff = expand(task->dropoff_pose, "dropoff_goal", "dropoff_dock_id");
+    double turn = 0.0;
+    if (pickup && pickup->perceive_yaw) {
+      const double d = *pickup->perceive_yaw - pickup->yaw;
+      turn = std::atan2(std::sin(d), std::cos(d));
+    }
+    setOutput("pickup_perceive_turn", turn);
+    if ((!pickup || !dropoff) && warned_task_ != task->task_id) {
+      warned_task_ = task->task_id;
+      ctx_->logWarn("작업 " + task->task_id + ": 등록 도크와 맞지 않는 자세 → 도킹 없이 적재/하역");
+    }
     setOutput("task_id", task->task_id);
     setOutput("item_type", task->item_type);
     setOutput("item_mass", static_cast<double>(task->item_mass));
@@ -55,7 +71,7 @@ public:
   }
 
 private:
-  void expand(
+  std::optional<DockSpec> expand(
     const geometry_msgs::msg::PoseStamped & pose, const std::string & goal_key,
     const std::string & dock_key)
   {
@@ -67,9 +83,11 @@ private:
       setOutput(goal_key, pose);
     }
     setOutput(dock_key, dock ? dock->id : std::string());
+    return dock;
   }
 
   ContextPtr ctx_;
+  std::string warned_task_;   ///< 도크 없는 작업 경고를 작업마다 한 번만
 };
 
 }  // namespace amr_behavior

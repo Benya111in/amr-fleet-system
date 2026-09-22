@@ -4,9 +4,14 @@
 
   - 대기: 작업이 없으면 Idle (배터리 부족이면 Charge 서브트리) → executor/phase IDLE
   - 이동: MoveTo (Nav2 navigate_to_pose, 교통 hold·위치 상실 게이트, 주행 복구 포함)
-  - 인식: Perceive (perception/detected_objects 에서 물품 확인, 인식 복구 포함)
-  - 작업: DockAt (정밀 도킹, 3회 재시도) → Load / Unload (가상 적재·하역)
+  - 인식: Perceive (staging 에서 물품 쪽으로 돌아 perception/detected_objects 확인, 인식 복구 포함)
+  - 작업: DockAt (정밀 도킹, 3회 재시도) → Load / Unload (가상 적재·하역) → Undock (후진 이탈)
   - 복귀: 성공·실패 모두 대기 구역(waiting_pose)으로 이동 (실패 시 대체 작업)
+
+  실패(FailTask): ERROR 를 error_hold_ms 동안 유지(플릿 2 Hz 샘플이 보도록) + task_status FAILED.
+  물품을 실은 채 실패하면(하역 도킹 3회 실패 등) ReturnStrandedPayload 가 적재 도크로 되돌려 놓고,
+  그것도 실패하면 물품을 실은 채 ERROR 로 머물며 작업을 거절한다(blocked:payload, clear_payload 로 해제).
+  작업 종료 뒤 복귀는 컨텍스트의 return pending 으로 남겨 E-stop 으로 끊겨도 재개 후 이어 한다.
 
   서브트리는 SubTreePlus 로 호출하고 호출별 인자만 {키}/리터럴로 넘긴다 (BT.CPP v3.8).
   __autoremap="true" (반드시 마지막 속성: 리터럴 인자가 부모로 새지 않도록) 로 나머지 {키} 는 부모 블랙보드의
@@ -26,7 +31,8 @@
     <KeepRunningUntilFailure name="MainLoop">
       <ForceSuccess name="AbsorbCycleResult">
         <ReactiveSequence name="SafetyGuard">
-          <!-- E-stop 활성 동안 RUNNING → 뒤 형제(작업) 전체 halt, 액션 goal 취소. 해제되면 중단 단계부터 재개 -->
+          <!-- E-stop(버튼·센서 고장, 계약 C1) 동안 RUNNING → 뒤 형제(작업) 전체 halt, 액션 goal 취소.
+               해제되면 중단 단계부터 재개. 근접 정지(safety/zone STOP)는 E-stop 이 아니다 -->
           <ReactiveFallback name="EstopGate">
             <IsEstopClear/>
             <KeepRunningUntilFailure name="HoldWhileEstop">
@@ -39,7 +45,8 @@
             <Sequence name="RunTask">
               <IsTaskAssigned task_id="{task_id}" item_type="{item_type}" item_mass="{item_mass}"
                               pickup_goal="{pickup_goal}" dropoff_goal="{dropoff_goal}"
-                              pickup_dock_id="{pickup_dock_id}" dropoff_dock_id="{dropoff_dock_id}"/>
+                              pickup_dock_id="{pickup_dock_id}" dropoff_dock_id="{dropoff_dock_id}"
+                              pickup_perceive_turn="{pickup_perceive_turn}"/>
               <Fallback name="TaskOrFail">
                 <!-- 진행 단계를 task_step 에 저장: E-stop halt 후 끝낸 단계(적재 등)를 반복하지 않는다 -->
                 <ResumableSequence name="PickAndPlace" progress_key="task_step">
@@ -47,12 +54,15 @@
                     <SubTreePlus ID="MoveTo" goal="{pickup_goal}" phase="MOVING" __autoremap="true"/>
                   </SetFailReason>
                   <SetFailReason reason="perception_failed" fail_reason="{fail_reason}">
-                    <SubTreePlus ID="Perceive" __autoremap="true"/>
+                    <SubTreePlus ID="Perceive" perceive_turn="{pickup_perceive_turn}" __autoremap="true"/>
                   </SetFailReason>
                   <SetFailReason reason="dock_failed" fail_reason="{fail_reason}">
                     <SubTreePlus ID="DockAt" dock_id="{pickup_dock_id}" approach_pose="{pickup_goal}" __autoremap="true"/>
                   </SetFailReason>
-                  <SubTreePlus ID="Load" item_type="{item_type}" item_mass="{item_mass}" __autoremap="true"/>
+                  <SetFailReason reason="load_failed" fail_reason="{fail_reason}">
+                    <SubTreePlus ID="Load" item_type="{item_type}" item_mass="{item_mass}" __autoremap="true"/>
+                  </SetFailReason>
+                  <SubTreePlus ID="Undock" __autoremap="true"/>
                   <SetFailReason reason="nav_failed" fail_reason="{fail_reason}">
                     <SubTreePlus ID="MoveTo" goal="{dropoff_goal}" phase="MOVING" __autoremap="true"/>
                   </SetFailReason>
@@ -60,30 +70,60 @@
                     <SubTreePlus ID="DockAt" dock_id="{dropoff_dock_id}" approach_pose="{dropoff_goal}" __autoremap="true"/>
                   </SetFailReason>
                   <SubTreePlus ID="Unload" item_type="{item_type}" __autoremap="true"/>
+                  <SubTreePlus ID="Undock" __autoremap="true"/>
                   <ReportTaskStatus status="COMPLETED"/>
                 </ResumableSequence>
-                <!-- 주행 불가 · 인식 실패 · 도킹 3회 실패: 에러 보고 후 대체 작업(대기 구역 복귀) -->
+                <!-- 주행 불가 · 인식 실패 · 도킹 3회 실패: 에러 보고 후 대체 작업(물품 되돌려 놓기 · 대기 구역 복귀) -->
                 <Sequence name="FailTask">
                   <SetPhase phase="ERROR"/>
                   <ReportTaskStatus status="FAILED" reason="{fail_reason}"/>
+                  <Delay name="HoldErrorForFleet" delay_msec="{error_hold_ms}">
+                    <AlwaysSuccess/>
+                  </Delay>
                 </Sequence>
               </Fallback>
+            </Sequence>
+            <!-- 대체 작업 1: 하역하지 못한 물품을 적재 도크에 되돌려 놓는다 (한 번 시도) -->
+            <Sequence name="ReturnStrandedPayload">
+              <IsPayloadStranded origin_goal="{payload_origin_goal}" origin_dock_id="{payload_origin_dock_id}"
+                                 item_type="{payload_item_type}"/>
               <ForceSuccess name="ReturnIsBestEffort">
+                <SubTreePlus ID="ReturnPayload" __autoremap="true"/>
+              </ForceSuccess>
+              <MarkPayloadReturnAttempted/>
+            </Sequence>
+            <!-- 대체 작업 2 / 정상 종료: 대기 구역 복귀 (E-stop 뒤에도 이어 한다) -->
+            <Sequence name="ReturnToWaiting">
+              <IsReturnPending/>
+              <ForceSuccess name="WaitingReturnIsBestEffort">
                 <SubTreePlus ID="MoveTo" goal="{waiting_pose}" phase="RETURNING" __autoremap="true"/>
               </ForceSuccess>
+              <ClearReturnPending/>
             </Sequence>
             <Sequence name="Idle">
               <Fallback name="BatteryCheck">
-                <IsBatteryOk min_percent="{battery_low_percent}"/>
+                <!-- 충전 도중(charge_step > 0) halt 됐으면 잔량과 무관하게 Charge 를 이어 한다 (이탈까지) -->
+                <BlackboardCheckInt name="NoChargeInProgress" value_A="{charge_step}" value_B="0"
+                                    return_on_mismatch="FAILURE">
+                  <IsBatteryOk min_percent="{battery_low_percent}"/>
+                </BlackboardCheckInt>
                 <SubTreePlus ID="Charge" __autoremap="true"/>
                 <Sequence name="ChargeFailedCooldown">
+                  <ReleaseCharger/>
                   <SetPhase phase="ERROR"/>
                   <Delay delay_msec="{charge_retry_delay_ms}">
                     <AlwaysSuccess/>
                   </Delay>
                 </Sequence>
               </Fallback>
-              <SetPhase phase="IDLE"/>
+              <Fallback name="IdleOrBlocked">
+                <Sequence name="ReadyForTask">
+                  <IsPayloadEmpty/>
+                  <SetPhase phase="IDLE"/>
+                </Sequence>
+                <!-- 되돌려 놓지 못한 물품이 실려 있다: 작업 거절(blocked:payload) + ERROR 유지 -->
+                <SetPhase name="PayloadBlocked" phase="ERROR"/>
+              </Fallback>
             </Sequence>
           </Fallback>
         </ReactiveSequence>
