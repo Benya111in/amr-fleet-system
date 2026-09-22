@@ -6,6 +6,8 @@ xacro 전개 + URDF 파싱/정합 검사 (colcon test).
 - 자기 차체 가시성 비트: 모든 링크 시각체에 같은 flags, LiDAR/카메라 mask 는 그 비트만 뺀 값, 로봇마다 다른 비트
 - (도구가 있으면) check_urdf 통과, `ign sdf -p` 변환 후 병합된 모든 시각체에 visibility_flags 가 남는지
   (sdformat 이 <gazebo reference> 시각체 확장을 이름으로 짝짓는 동작에 기대므로 회귀를 잡는다)
+- 런타임 적재 DetachableJoint: 부모 링크가 SDF 변환 뒤에도 실제로 있는 병합 링크이고, 이름·토픽이 규칙대로인지
+  (틀리면 플러그인이 설정 실패로 조용히 꺼져 화물이 붙지 않는다)
 """
 
 import math
@@ -143,6 +145,34 @@ def test_payload_box(kw, kind, mass):
     assert deck == pytest.approx(ROBOT["robot"]["height"] / 2.0)
 
 
+DJ = "ignition::gazebo::systems::DetachableJoint"
+
+
+@pytest.mark.parametrize("name,prefix", [("amr_01", ""), ("amr_02", "amr_02/")])
+def test_runtime_payload_detachable_joint(name, prefix):
+    """부모 = 병합 링크 base_footprint, 자식 = <robot_name>_cargo/link, 토픽 /<robot_name>/cargo/*."""
+    root = _parse(_xacro(robot_name=name, prefix=prefix))
+    plugins = root.findall(f".//plugin[@name='{DJ}']")
+    assert len(plugins) == 1
+    dj = plugins[0]
+    assert dj.get("filename") == "ignition-gazebo-detachable-joint-system"
+    assert dj.find("parent_link").text == f"{prefix}base_footprint"
+    assert root.find(f"link[@name='{prefix}base_footprint']") is not None
+    assert dj.find("child_model").text == f"{name}_cargo"
+    assert dj.find("child_link").text == "link"
+    for tag, topic in (("attach_topic", "attach"), ("detach_topic", "detach"),
+                       ("output_topic", "state")):
+        assert dj.find(tag).text == f"/{name}/cargo/{topic}"
+    # 자식이 없을 때 스텝마다 경고 2줄(1 kHz)을 막는다 (Fortress 6.18 실측)
+    assert dj.find("suppress_child_warning").text == "true"
+
+
+def test_runtime_payload_can_be_disabled():
+    for off in ("false", "0"):
+        root = _parse(_xacro(runtime_payload=off))
+        assert root.find(f".//plugin[@name='{DJ}']") is None
+
+
 def _visibility(root: ET.Element):
     flags = {int(e.text) for e in root.iter("visibility_flags")}
     masks = {int(e.text) for e in root.iter("visibility_mask")}
@@ -221,6 +251,11 @@ def test_sdf_conversion_keeps_visibility_flags():
     r0 = ROBOT["robot"]
     expected = r0["base_mass"] + 2 * r0["caster_mass"] + 25.0
     assert math.isclose(lumped, expected, rel_tol=1e-6)
+    # DetachableJoint 가 모델 플러그인으로 남고, 부모 링크가 병합 뒤 실제 링크 이름과 같다
+    model = sdf.find("model")
+    dj = model.find(f"plugin[@name='{DJ}']")
+    assert dj is not None
+    assert model.find(f"link[@name='{dj.find('parent_link').text}']") is not None
     # 바퀴 조인트 한계가 SDF 로 넘어간다
     for j in sdf.iter("joint"):
         if j.get("name").endswith("wheel_joint"):
