@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Perceive: 적재 위치에서 물품 인식 확인 (복구 ② 인식 실패).
+    설정: perception_attempts, perception_timeout_ms, perception_class, perception_max_distance
+
+  perception/detected_objects 에 perception_class 이고 거리 ≤ perception_max_distance 인 객체가
+  perception_timeout_ms 안에 나타나면 SUCCESS. 아니면 RecoverPerception (후진 → 회전으로 시야 변경) 후 재확인,
+  perception_attempts 회 모두 실패하면 FAILURE (→ 메인 트리 perception_failed).
+  Timeout 아래에는 조건 노드만 둔다 (v3 Timeout 은 타이머 스레드에서 자식을 halt 한다).
+-->
+<root>
+  <BehaviorTree ID="Perceive">
+    <RetryUntilSuccessful name="PerceptionAttempts" num_attempts="{perception_attempts}">
+      <Fallback name="DetectOrRecover">
+        <Timeout name="DetectionWindow" msec="{perception_timeout_ms}">
+          <KeepRunningUntilSuccess name="WaitForObject">
+            <IsObjectDetected class_name="{perception_class}" max_distance="{perception_max_distance}"/>
+          </KeepRunningUntilSuccess>
+        </Timeout>
+        <ForceFailure name="CountAttempt">
+          <SubTreePlus ID="RecoverPerception" __autoremap="true"/>
+        </ForceFailure>
+      </Fallback>
+    </RetryUntilSuccessful>
+  </BehaviorTree>
+</root>

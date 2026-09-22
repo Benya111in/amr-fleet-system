@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  task_executor_node 메인 트리 (BehaviorTree.CPP v3, 명세 4.8 "대기-이동-인식-작업-복귀").
+
+  - 대기: 작업이 없으면 Idle (배터리 부족이면 Charge 서브트리) → executor/phase IDLE
+  - 이동: MoveTo (Nav2 navigate_to_pose, 교통 hold·위치 상실 게이트, 주행 복구 포함)
+  - 인식: Perceive (perception/detected_objects 에서 물품 확인, 인식 복구 포함)
+  - 작업: DockAt (정밀 도킹, 3회 재시도) → Load / Unload (가상 적재·하역)
+  - 복귀: 성공·실패 모두 대기 구역(waiting_pose)으로 이동 (실패 시 대체 작업)
+
+  서브트리는 SubTreePlus 로 호출하고 호출별 인자만 {키}/리터럴로 넘긴다 (BT.CPP v3.8).
+  __autoremap="true" (반드시 마지막 속성: 리터럴 인자가 부모로 새지 않도록) 로 나머지 {키} 는 부모 블랙보드의
+  같은 이름 키를 공유한다 → 루트에 실행기가 써 둔 설정 키(behavior.yaml, docs/algorithms/behavior_tree.md 표)가
+  중첩 서브트리까지 그대로 보인다.
+-->
+<root main_tree_to_execute="TaskExecutor">
+  <include path="subtrees/move_to.xml"/>
+  <include path="subtrees/perceive.xml"/>
+  <include path="subtrees/dock_at.xml"/>
+  <include path="subtrees/payload.xml"/>
+  <include path="subtrees/recovery.xml"/>
+  <include path="subtrees/charge.xml"/>
+  <include path="subtrees/yield.xml"/>
+
+  <BehaviorTree ID="TaskExecutor">
+    <KeepRunningUntilFailure name="MainLoop">
+      <ForceSuccess name="AbsorbCycleResult">
+        <ReactiveSequence name="SafetyGuard">
+          <!-- E-stop 활성 동안 RUNNING → 뒤 형제(작업) 전체 halt, 액션 goal 취소. 해제되면 중단 단계부터 재개 -->
+          <ReactiveFallback name="EstopGate">
+            <IsEstopClear/>
+            <KeepRunningUntilFailure name="HoldWhileEstop">
+              <Inverter>
+                <IsEstopClear/>
+              </Inverter>
+            </KeepRunningUntilFailure>
+          </ReactiveFallback>
+          <Fallback name="WorkOrIdle">
+            <Sequence name="RunTask">
+              <IsTaskAssigned task_id="{task_id}" item_type="{item_type}" item_mass="{item_mass}"
+                              pickup_goal="{pickup_goal}" dropoff_goal="{dropoff_goal}"
+                              pickup_dock_id="{pickup_dock_id}" dropoff_dock_id="{dropoff_dock_id}"/>
+              <Fallback name="TaskOrFail">
+                <!-- 진행 단계를 task_step 에 저장: E-stop halt 후 끝낸 단계(적재 등)를 반복하지 않는다 -->
+                <ResumableSequence name="PickAndPlace" progress_key="task_step">
+                  <SetFailReason reason="nav_failed" fail_reason="{fail_reason}">
+                    <SubTreePlus ID="MoveTo" goal="{pickup_goal}" phase="MOVING" __autoremap="true"/>
+                  </SetFailReason>
+                  <SetFailReason reason="perception_failed" fail_reason="{fail_reason}">
+                    <SubTreePlus ID="Perceive" __autoremap="true"/>
+                  </SetFailReason>
+                  <SetFailReason reason="dock_failed" fail_reason="{fail_reason}">
+                    <SubTreePlus ID="DockAt" dock_id="{pickup_dock_id}" approach_pose="{pickup_goal}" __autoremap="true"/>
+                  </SetFailReason>
+                  <SubTreePlus ID="Load" item_type="{item_type}" item_mass="{item_mass}" __autoremap="true"/>
+                  <SetFailReason reason="nav_failed" fail_reason="{fail_reason}">
+                    <SubTreePlus ID="MoveTo" goal="{dropoff_goal}" phase="MOVING" __autoremap="true"/>
+                  </SetFailReason>
+                  <SetFailReason reason="dock_failed" fail_reason="{fail_reason}">
+                    <SubTreePlus ID="DockAt" dock_id="{dropoff_dock_id}" approach_pose="{dropoff_goal}" __autoremap="true"/>
+                  </SetFailReason>
+                  <SubTreePlus ID="Unload" item_type="{item_type}" __autoremap="true"/>
+                  <ReportTaskStatus status="COMPLETED"/>
+                </ResumableSequence>
+                <!-- 주행 불가 · 인식 실패 · 도킹 3회 실패: 에러 보고 후 대체 작업(대기 구역 복귀) -->
+                <Sequence name="FailTask">
+                  <SetPhase phase="ERROR"/>
+                  <ReportTaskStatus status="FAILED" reason="{fail_reason}"/>
+                </Sequence>
+              </Fallback>
+              <ForceSuccess name="ReturnIsBestEffort">
+                <SubTreePlus ID="MoveTo" goal="{waiting_pose}" phase="RETURNING" __autoremap="true"/>
+              </ForceSuccess>
+            </Sequence>
+            <Sequence name="Idle">
+              <Fallback name="BatteryCheck">
+                <IsBatteryOk min_percent="{battery_low_percent}"/>
+                <SubTreePlus ID="Charge" __autoremap="true"/>
+                <Sequence name="ChargeFailedCooldown">
+                  <SetPhase phase="ERROR"/>
+                  <Delay delay_msec="{charge_retry_delay_ms}">
+                    <AlwaysSuccess/>
+                  </Delay>
+                </Sequence>
+              </Fallback>
+              <SetPhase phase="IDLE"/>
+            </Sequence>
+          </Fallback>
+        </ReactiveSequence>
+      </ForceSuccess>
+    </KeepRunningUntilFailure>
+  </BehaviorTree>
+</root>

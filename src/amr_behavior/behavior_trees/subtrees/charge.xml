@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Charge: 배터리 < battery_low_percent 이고 작업이 없을 때 충전소로 이동·도킹 후 충전.
+    설정: charger_goal (staging 자세), charger_dock_id, battery_resume_percent, charge_timeout_ms, undock_dist
+
+  충전 중(executor/phase CHARGING)에는 assign_task 를 거절한다. 배터리가 battery_resume_percent 에 닿거나
+  charge_timeout_ms 가 지나면 charging/enable=false, 후진으로 이탈한 뒤 Idle 로 돌아간다.
+-->
+<root>
+  <BehaviorTree ID="Charge">
+    <Sequence name="ChargeSteps">
+      <SubTreePlus ID="MoveTo" goal="{charger_goal}" phase="MOVING" __autoremap="true"/>
+      <SubTreePlus ID="DockAt" dock_id="{charger_dock_id}" approach_pose="{charger_goal}" __autoremap="true"/>
+      <SetPhase phase="CHARGING"/>
+      <SetCharging enable="true"/>
+      <ForceSuccess>
+        <Timeout name="ChargeWindow" msec="{charge_timeout_ms}">
+          <KeepRunningUntilSuccess name="WaitCharged">
+            <IsBatteryOk min_percent="{battery_resume_percent}"/>
+          </KeepRunningUntilSuccess>
+        </Timeout>
+      </ForceSuccess>
+      <SetCharging enable="false"/>
+      <ForceSuccess>
+        <BackUp name="Undock" backup_dist="{undock_dist}" backup_speed="0.1"/>
+      </ForceSuccess>
+    </Sequence>
+  </BehaviorTree>
+</root>

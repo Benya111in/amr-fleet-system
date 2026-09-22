@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Load / Unload: 도킹 완료 후 가상 적재·하역 이벤트 (명세 7장 제약, 8장 물품 표).
+    인자: item_type (small / medium / large), item_mass [kg] (0 = 물품 표 값)
+
+  SimulateLoad 는 물품 표(config/robot_params.yaml payload.<type>)의 load_time 동안 RUNNING 후
+  payload/attach = item_type, payload/mass = 질량 을 발행한다. SimulateUnload 는 "" / 0 을 발행한다.
+-->
+<root>
+  <BehaviorTree ID="Load">
+    <Sequence name="LoadSteps">
+      <SetPhase phase="LOADING"/>
+      <SimulateLoad item_type="{item_type}" item_mass="{item_mass}"/>
+    </Sequence>
+  </BehaviorTree>
+
+  <BehaviorTree ID="Unload">
+    <Sequence name="UnloadSteps">
+      <SetPhase phase="UNLOADING"/>
+      <SimulateUnload item_type="{item_type}"/>
+    </Sequence>
+  </BehaviorTree>
+</root>
