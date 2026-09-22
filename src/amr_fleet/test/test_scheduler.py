@@ -118,3 +118,36 @@ def test_sort_key_is_deterministic():
     s = TaskScheduler(no_boost())
     a, b = task('a', priority=5, deadline=50.0), task('b', priority=5, deadline=50.0)
     assert s.sort_key(a, 0.0) < s.sort_key(b, 0.0)
+
+
+def test_far_deadline_still_before_no_deadline_in_same_band():
+    # 예전 1e6 s 대체값: 11.6 일보다 먼 마감은 "마감 없음" 뒤로 밀렸다
+    s = TaskScheduler(no_boost())
+    s.push(task('none', priority=5, created=0.0))
+    s.push(task('far', priority=5, deadline=20 * 86400.0, created=1.0))
+    assert ids(s.ordered(0.0)) == ['far', 'none']
+
+
+def test_deadline_ignored_when_deadline_weight_is_zero():
+    cfg = SchedulerConfig(age_boost_rate=0.0, deadline_weight=0.0, fifo_weight=1.0)
+    s = TaskScheduler(cfg)
+    s.push(task('old_none', created=0.0))
+    s.push(task('new_soon', created=5.0, deadline=6.0))
+    assert ids(s.ordered(6.0)) == ['old_none', 'new_soon']      # 순수 FIFO — 마감 플래그 없음
+
+
+def test_mixed_weights_combine_slack_and_age():
+    cfg = SchedulerConfig(age_boost_rate=0.0, deadline_weight=1.0, fifo_weight=1.0)
+    s = TaskScheduler(cfg)
+    s.push(task('a', created=0.0, deadline=40.0))    # 30 + (0 - 10) = 20
+    s.push(task('b', created=9.0, deadline=25.0))    # 15 + (9 - 10) = 14
+    s.push(task('c', created=0.0, deadline=26.0))    # 16 + (0 - 10) = 6 → EDF 라면 b 뒤
+    s.push(task('n', created=0.0))                   # 마감 없음 → 밴드 안에서 마지막
+    assert ids(s.ordered(10.0)) == ['c', 'b', 'a', 'n']
+
+
+def test_negative_weights_rejected():
+    with pytest.raises(ValueError):
+        SchedulerConfig(deadline_weight=-1.0)
+    with pytest.raises(ValueError):
+        SchedulerConfig(fifo_weight=-0.5)

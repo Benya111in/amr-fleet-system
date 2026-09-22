@@ -19,18 +19,27 @@ from amr_fleet.task_schema import (
     DEFAULT_ITEM_MASSES, Pose2D, TaskSpec, generate_task_id,
 )
 
+_MAX_TIME_SEC = 2 ** 31 - 1   # builtin_interfaces/Time.sec 는 int32
+
 
 def float_to_time(t: Optional[float]) -> Time:
-    """에포크 초(float) → builtin_interfaces/Time. None 또는 음수 → (0, 0)."""
+    """
+    초(float) → builtin_interfaces/Time. None·음수·NaN → (0, 0).
+
+    int32 sec 범위를 넘는 값(+inf 포함)은 최댓값으로 자른다 — 발행 경로에서 예외가 나지 않게 한다
+    (접수 검증이 마감 지평선을 막으므로 정상 입력에서는 일어나지 않는다).
+    """
     msg = Time()
-    if t is None or t <= 0.0:
+    if t is None or math.isnan(t) or t <= 0.0:
+        return msg
+    if t >= _MAX_TIME_SEC:
+        msg.sec, msg.nanosec = _MAX_TIME_SEC, 999_999_999
         return msg
     sec = int(t)
     msg.sec = sec
     msg.nanosec = int(round((t - sec) * 1e9))
     if msg.nanosec >= 1_000_000_000:
-        msg.sec += 1
-        msg.nanosec -= 1_000_000_000
+        msg.sec, msg.nanosec = sec + 1, msg.nanosec - 1_000_000_000
     return msg
 
 

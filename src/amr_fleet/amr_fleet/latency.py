@@ -9,10 +9,11 @@
 
 from __future__ import annotations
 
+import collections
 import heapq
 import itertools
 import random
-from typing import Any, Dict, Hashable, List, Optional, Sequence, Tuple, Union
+from typing import Any, Deque, Dict, Hashable, List, Optional, Sequence, Tuple, Union
 
 SPEC_MAX_LATENCY_MS = 100.0   # 명세 4.9 상한
 
@@ -57,7 +58,7 @@ class LatencyModel:
 
     def __init__(self, simulate: bool = True,
                  comm_latency_ms: Union[float, Sequence[float]] = (0.0, SPEC_MAX_LATENCY_MS),
-                 drop_rate: float = 0.0, seed: int = 0):
+                 drop_rate: float = 0.0, seed: int = 0, history: int = 1000):
         self.min_ms, self.max_ms = parse_latency_range(comm_latency_ms)
         if not 0.0 <= drop_rate < 1.0:
             raise ValueError(f'drop_rate 는 [0, 1) 이어야 한다: {drop_rate}')
@@ -67,6 +68,8 @@ class LatencyModel:
         self.rng = random.Random(self.seed or None)   # 0 = 무작위
         self.sent = 0
         self.dropped = 0
+        # 최근에 주입한 지연 [s] (유실 제외). 시험·진단용: 주입값이 설정 범위 안인지 확인한다
+        self.history: Deque[float] = collections.deque(maxlen=history)
 
     @property
     def enabled(self) -> bool:
@@ -86,7 +89,9 @@ class LatencyModel:
             self.dropped += 1
             return None
         self.sent += 1
-        return sample_latency_s(self.max_ms, self.rng, self.min_ms)
+        delay = sample_latency_s(self.max_ms, self.rng, self.min_ms)
+        self.history.append(delay)
+        return delay
 
     def describe(self) -> str:
         """로그용 한 줄 요약."""

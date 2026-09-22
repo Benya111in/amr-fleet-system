@@ -209,3 +209,29 @@ def test_evaluate_assignment_direct():
     assert m['total_travel_distance_m'] == pytest.approx(7.0)
     assert m['makespan_s'] == pytest.approx(14.0)
     assert math.isclose(m['n_assigned'], 1.0)
+
+
+# ---------- select_batch (head-of-line blocking 방지) ----------
+
+def test_select_batch_skips_pinned_tasks_of_busy_or_unknown_robots():
+    robots = [robot('amr_t1', 0, 0)]                    # amr_t2 는 바쁨(후보 아님)
+    ordered = [task('next_t2', 1, 1, robot_id='amr_t2'), task('typo', 1, 1, robot_id='amr_5'),
+               task('auto', 2, 2)]
+    batch = al.select_batch(ordered, robots)
+    assert [t.task_id for t in batch] == ['auto']
+    assert al.allocate(al.NearestStrategy(), batch, robots).assignments == {'auto': 'amr_t1'}
+
+
+def test_select_batch_keeps_order_and_one_pinned_task_per_robot():
+    robots = [robot('a', 0, 0), robot('b', 5, 0), robot('c', 9, 0, available=False)]
+    ordered = [task('p_a1', 0, 0, robot_id='a'), task('p_a2', 0, 0, robot_id='a'),
+               task('p_c', 0, 0, robot_id='c'), task('u1', 1, 0), task('u2', 2, 0)]
+    assert [t.task_id for t in al.select_batch(ordered, robots)] == ['p_a1', 'u1']
+    assert [t.task_id for t in al.select_batch(ordered, robots, k=3)] == ['p_a1', 'u1', 'u2']
+    assert [t.task_id for t in al.select_batch(ordered, robots, k=1)] == ['p_a1']
+
+
+def test_select_batch_without_robots_or_tasks():
+    assert al.select_batch([task('t', 0, 0)], []) == []
+    assert al.select_batch([task('t', 0, 0)], [robot('r', 0, 0, available=False)]) == []
+    assert al.select_batch([], [robot('r', 0, 0)]) == []

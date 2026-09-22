@@ -14,6 +14,10 @@ fleet_manager 의 allocation_strategy 파라미터로 고를 수 있다 (알고�
 등 정밀한 ETA 로 바꾸려면 이 함수만 교체한다.
 
 최적성 지표(명세 "총 이동 거리, 작업 완료 시간")는 allocate() 가 매 라운드 dict 로 돌려준다.
+
+라운드 입력은 select_batch() 로 고른다: 고정 지정(robot_id) 작업은 그 로봇이 이번 라운드에 비어 있을
+때만 넣고, 남은 자리는 스케줄러 순서의 미지정 작업으로 채운다. 바쁜 로봇에 고정된 작업이 상위를
+차지해도 빈 로봇이 놀지 않는다 (head-of-line blocking 방지).
 """
 
 from __future__ import annotations
@@ -262,6 +266,33 @@ def brute_force_assignment(cost: Sequence[Sequence[float]]) -> Tuple[float, List
     return best_cost, best
 
 
+def select_batch(tasks: Sequence[TaskSpec], robots: Sequence[RobotInfo],
+                 k: int = 0) -> List[TaskSpec]:
+    """
+    이번 라운드에 실제로 배정할 수 있는 작업만 스케줄러 순서대로 최대 k 개 고른다.
+
+    - 고정 작업: 그 로봇이 available 이고 이 배치에서 아직 다른 고정 작업이 차지하지 않았을 때만.
+    - 미지정 작업: 순서대로 남은 자리를 채운다.
+    k <= 0 이면 available 로봇 수. 로봇이 없으면 빈 목록.
+    """
+    free = {r.robot_id for r in robots if r.available}
+    limit = k if k > 0 else len(free)
+    if not free or limit <= 0:
+        return []
+    batch: List[TaskSpec] = []
+    pinned_taken = set()
+    for task in tasks:
+        if len(batch) >= limit:
+            break
+        if task.robot_id:
+            if task.robot_id in free and task.robot_id not in pinned_taken:
+                pinned_taken.add(task.robot_id)
+                batch.append(task)
+        else:
+            batch.append(task)
+    return batch
+
+
 def allocate(strategy: AllocationStrategy, tasks: Sequence[TaskSpec],
              robots: Sequence[RobotInfo]) -> AllocationResult:
     """
@@ -327,6 +358,6 @@ def evaluate_assignment(assignments: Dict[str, str], tasks: Sequence[TaskSpec],
 __all__ = [
     'AllocationResult', 'AllocationStrategy', 'HungarianStrategy', 'LoadBalanceStrategy',
     'NearestStrategy', 'RobotInfo', 'allocate', 'available_strategies', 'brute_force_assignment',
-    'create_strategy', 'evaluate_assignment', 'hungarian', 'register_strategy',
+    'create_strategy', 'evaluate_assignment', 'hungarian', 'register_strategy', 'select_batch',
     'solve_assignment', 'travel_time',
 ]

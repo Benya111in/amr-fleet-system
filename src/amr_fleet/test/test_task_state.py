@@ -94,7 +94,8 @@ def test_distance_integration_ignores_idle_robot_and_jumps():
 def test_retry_within_limit_restores_pin_and_resets():
     sm = TaskStateMachine(max_retries=1)
     sm.add(spec('p', robot_id='amr_05'), 0.0)
-    sm.start('p', 'amr_05', 1.0)
+    sm.start('p', 'amr_05', 1.0, command_time=0.9)
+    assert sm.get('p').command_time == 0.9
     sm.update_pose('amr_05', 0, 0)
     sm.update_pose('amr_05', 1, 0)
     sm.fail('p', 2.0, 'nav_failed')
@@ -104,10 +105,29 @@ def test_retry_within_limit_restores_pin_and_resets():
     rec = sm.get('p')
     assert rec.robot_id == 'amr_05' and rec.spec.robot_id == 'amr_05'
     assert rec.start_time is None and rec.distance_m == 0.0 and rec.result == ''
+    assert rec.command_time is None
     sm.start('p', 'amr_05', 4.0)
     sm.fail('p', 5.0)
-    assert rec.attempts == 2
+    assert rec.attempts == 2 and rec.failures == 2
     assert not sm.can_retry('p') and sm.retry('p', 6.0) is None
+
+
+def test_fail_from_pending_counts_as_failure():
+    # 기본 max_retries=0 이면 시작 전 실패도 재시도하지 않는다 (예전: attempts=0 이라 무한 재시도)
+    sm = TaskStateMachine()
+    sm.add(spec('a'), 0.0)
+    sm.fail('a', 1.0, 'robot_reported')
+    assert sm.get('a').failures == 1 and sm.get('a').attempts == 0
+    assert not sm.can_retry('a') and sm.retry('a', 2.0) is None
+    # max_retries=1: 시작 전 실패 → 한 번만 재시도, 두 번째 실패는 끝
+    sm1 = TaskStateMachine(max_retries=1)
+    sm1.add(spec('b'), 0.0)
+    sm1.fail('b', 1.0)
+    assert sm1.retry('b', 1.5).new_status == STATUS_PENDING
+    sm1.fail('b', 2.0)
+    assert sm1.get('b').failures == 2 and not sm1.can_retry('b')
+    assert sm1.retry('b', 3.0) is None and sm1.get('b').status == STATUS_FAILED
+    assert not sm1.can_retry('nope')
 
 
 def test_retry_not_allowed_by_default_or_for_other_states():
@@ -135,9 +155,10 @@ def test_check_deadlines_flags_once():
 
 
 def test_log_writer_format_and_rollover(tmp_path):
-    log = TaskLogWriter(tmp_path / 'logs', time_format='iso')
-    sm = TaskStateMachine(log_writer=log)
     t0 = dt.datetime(2026, 9, 22, 9, 0, 0).timestamp()
+    wall = [t0]
+    log = TaskLogWriter(tmp_path / 'logs', time_format='iso', wall_clock=lambda: wall[0])
+    sm = TaskStateMachine(log_writer=log)
     sm.add(spec('done'), t0)
     sm.start('done', 'amr_01', t0 + 1.0)
     sm.update_pose('amr_01', 0, 0)
@@ -155,27 +176,48 @@ def test_log_writer_format_and_rollover(tmp_path):
                        '2.500', '3.500', 'completed']
     assert rows[2] == ['never_started', '', '', '2026-09-22T09:00:05.000', '0.000', '',
                        'failed:deadline']
-    # 다음 날 종료 → 새 파일 + 헤더
+    # 다음 날(벽시계) 기록 → 새 파일 + 헤더
     sm.add(spec('next_day'), t0)
     sm.start('next_day', 'amr_02', t0 + 10.0)
+    wall[0] = t0 + 86400.0
     sm.complete('next_day', t0 + 86400.0)
     assert (tmp_path / 'logs' / 'tasks_20260923.csv').read_text(encoding='utf-8').startswith(
         'task_id,robot_id')
 
 
 def test_log_writer_epoch_format_and_validation(tmp_path):
-    log = TaskLogWriter(tmp_path, time_format='epoch')
+    wall = dt.datetime(2026, 9, 22, 12, 0, 0).timestamp()
+    log = TaskLogWriter(tmp_path, time_format='epoch', wall_clock=lambda: wall)
     rec = TaskRecord(spec=spec(), robot_id='amr_01', start_time=1.0, end_time=2.25,
                      distance_m=1.23456, result='completed', status=STATUS_COMPLETED)
     assert log.row_for(rec) == ['t1', 'amr_01', '1.000', '2.250', '1.235', '1.250', 'completed']
     log.write(rec)
     log.write(rec)
-    assert log.path_for(2.25).read_text(encoding='utf-8').count('\n') == 3
+    # use_sim_time(노드 시계 1~2 s)이어도 파일 날짜는 벽시계 → tasks_19700101.csv 가 생기지 않는다
+    assert log.path_for().name == 'tasks_20260922.csv' == log.path_for(wall).name
+    assert log.path_for().read_text(encoding='utf-8').count('\n') == 3
+    assert not list(tmp_path.glob('tasks_1970*.csv'))
     with pytest.raises(ValueError):
         log.write(TaskRecord(spec=spec()))
     with pytest.raises(ValueError):
         TaskLogWriter(tmp_path, time_format='unix')
     assert log.format_time(None) == ''
+
+
+def test_log_write_failure_does_not_undo_transition(tmp_path):
+    blocker = tmp_path / 'not_a_dir'
+    blocker.write_text('x', encoding='utf-8')
+    errors = []
+    sm = TaskStateMachine(log_writer=TaskLogWriter(blocker / 'logs'),
+                          on_log_error=lambda rec, exc: errors.append((rec.task_id, exc)))
+    sm.add(spec(), 0.0)
+    sm.start('t1', 'amr_01', 1.0)
+    sm.complete('t1', 2.0)
+    assert sm.get('t1').status == STATUS_COMPLETED and errors and errors[0][0] == 't1'
+    strict = TaskStateMachine(log_writer=TaskLogWriter(blocker / 'logs'))
+    strict.add(spec('t2'), 0.0)
+    with pytest.raises(OSError):
+        strict.fail('t2', 1.0)
 
 
 def test_task_event_dataclass():

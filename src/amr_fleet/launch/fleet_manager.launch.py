@@ -4,11 +4,16 @@ Fleet Manager + 로봇별 어댑터 런치 (docker-compose `fleet` 서비스가 
     ros2 launch amr_fleet fleet_manager.launch.py
     ros2 launch amr_fleet fleet_manager.launch.py robot_ids:=amr_01,amr_02 \
         allocation_strategy:=hungarian comm_latency_ms:='[0.0, 100.0]'
-    ros2 launch amr_fleet fleet_manager.launch.py auto_complete_after_s:=3.0   # 실행기 없이 모의 완료
+    # 시뮬레이터(/clock)·실행기 없이 단독 모의 시험
+    ros2 launch amr_fleet fleet_manager.launch.py use_sim_time:=false auto_complete_after_s:=3.0
 
 - fleet_manager_node 는 /fleet, fleet_adapter_node 는 /<robot_id> 네임스페이스.
 - 기본값은 config/fleet.yaml (params_file) 한 곳에 둔다. 아래 인자는 비어 있지 않을 때만 덮어쓴다.
 - comm_latency_ms, simulate_latency 는 manager(assign_task 호출)와 adapter(robot_state) 양쪽에 준다.
+- use_sim_time 기본 true: 전 노드가 /clock 을 쓴다 (multi_robot.md §6, dashboard·evaluation 런치와 같다).
+  /clock 없이 단독으로 띄우면 노드 시계가 0 에 멈추므로 use_sim_time:=false 를 준다.
+- serve_assign_task: 비우면 auto_complete_after_s > 0 (모의 시험)일 때만 true, 그 외에는 fleet.yaml(false).
+  실제 assign_task 서버는 task_executor_node 이므로 통합 실행에서 어댑터가 서버를 띄우지 않는다.
 """
 
 from launch import LaunchDescription
@@ -65,6 +70,9 @@ def _launch_setup(context):
     actions = [manager]
     if _typed('launch_adapters', LaunchConfiguration('launch_adapters').perform(context)):
         adapter_overrides = _overrides(context, _ADAPTER_ARGS)
+        if ('serve_assign_task' not in adapter_overrides
+                and adapter_overrides.get('auto_complete_after_s', 0.0) > 0.0):
+            adapter_overrides['serve_assign_task'] = True   # 모의 완료는 어댑터 서버와 짝
         actions += [
             Node(package='amr_fleet', executable='fleet_adapter_node', name='fleet_adapter_node',
                  namespace=rid, output='screen',
@@ -88,9 +96,10 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('auto_complete_after_s', default_value='',
                               description='> 0 이면 어댑터가 N s 뒤 완료를 흉내 (실행기 없는 테스트)'),
         DeclareLaunchArgument('serve_assign_task', default_value='',
-                              description="어댑터가 assign_task 제공 여부 (실행기가 제공하면 false)"),
+                              description="어댑터 모의 assign_task 서버 ('' = 모의 완료 시에만 true)"),
         DeclareLaunchArgument('launch_adapters', default_value='true'),
-        DeclareLaunchArgument('use_sim_time', default_value='false'),
+        DeclareLaunchArgument('use_sim_time', default_value='true',
+                              description='/clock 사용 (시뮬레이터 없이 단독 실행이면 false)'),
         DeclareLaunchArgument('log_dir', default_value='',
                               description="로그 디렉토리 ('' = fleet.yaml, 그것도 비면 $ROS_WS/logs)"),
         DeclareLaunchArgument('params_file', default_value=default_params),

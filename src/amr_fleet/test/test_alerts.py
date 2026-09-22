@@ -16,8 +16,8 @@ def test_is_deadlock_event(name, expected):
 
 def test_alert_names_follow_fleet_prefix():
     names = [v for k, v in vars(alerts).items() if k.startswith('ALERT_')]
-    assert len(names) == 6 and all(n.startswith('fleet/') and n.split('/')[1].isupper()
-                                   for n in names)
+    assert len(names) == 11 and len(set(names)) == 11
+    assert all(n.startswith('fleet/') and n.split('/')[1].isupper() for n in names)
     assert alerts.TRAFFIC_DEADLOCK == 'traffic/DEADLOCK'
     assert alerts.TRAFFIC_RESOLVED == 'traffic/RESOLVED'
 
@@ -28,3 +28,5 @@ def test_alert_values_drop_empty_and_stringify():
     assert alerts.alert_values('t2', attempts=2, status=1, note='', extra=None) == {
         'task_id': 't2', 'attempts': '2', 'status': '1'}
     assert alerts.alert_values() == {}
+    # 외부 입력이 섞인 값은 마크업 문자를 지운다 (대시보드 이스케이프와 별개의 방어)
+    assert alerts.alert_values('t<1>', owner='a&b') == {'task_id': 't?1?', 'owner': 'a?b'}

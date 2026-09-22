@@ -107,3 +107,15 @@ def test_pose_to_msg_stamp_and_default_frame():
     msg = tm.pose_to_msg(Pose2D(1, 2, 0, ''), stamp=Time(sec=3))
     assert msg.header.stamp.sec == 3
     assert tm.pose_from_msg(msg).frame_id == 'map'
+
+
+def test_float_to_time_never_overflows_int32():
+    # 발행 경로(task_events)에서 예외가 나면 노드가 죽는다 → 잘라낸다
+    top = tm.float_to_time(3.0e9)
+    assert (top.sec, top.nanosec) == (2 ** 31 - 1, 999_999_999)
+    assert tm.float_to_time(float('inf')).sec == 2 ** 31 - 1
+    nan = tm.float_to_time(float('nan'))
+    assert (nan.sec, nan.nanosec) == (0, 0)
+    edge = tm.float_to_time(2 ** 31 - 1.0000000001)
+    assert edge.sec <= 2 ** 31 - 1
+    assert tm.spec_to_msg(make_spec(deadline=1e12)).deadline.sec == 2 ** 31 - 1

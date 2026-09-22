@@ -37,7 +37,8 @@ if(BUILD_TESTING)
   # CONFIGURE_DEPENDS: 테스트 파일을 추가하면 재구성 없이 다음 빌드에 반영된다.
   file(GLOB _pytests CONFIGURE_DEPENDS test/test_*.py)
   if(_pytests)
-    ament_add_pytest_test(amr_fleet_pytest test)
+    # 노드 시험(test_nodes*, 가짜 로봇 시간 초과·재할당 경로)이 부하에서 수십 초 걸린다 → 기본 60 s 대신 600 s
+    ament_add_pytest_test(amr_fleet_pytest test TIMEOUT 600)
   endif()
 endif()
 

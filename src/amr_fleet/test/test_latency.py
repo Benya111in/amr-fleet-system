@@ -46,6 +46,7 @@ def test_latency_model_uniform_range_and_counts():
     m = LatencyModel(simulate=True, comm_latency_ms=[0.0, 100.0], seed=11)
     assert m.enabled and not m.exceeds_spec()
     samples = [m.sample() for _ in range(3000)]
+    assert list(m.history) == samples[-1000:]      # 주입한 지연 기록 (최근 1000 개)
     assert all(s is not None and 0.0 <= s <= 0.1 for s in samples)
     assert abs(sum(samples) / len(samples) - 0.05) < 0.004     # 설계 평균 ≈ 50 ms
     assert m.sent == 3000 and m.dropped == 0

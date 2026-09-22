@@ -5,11 +5,15 @@
 1. 유효 우선순위 = priority + 나이 가산(starvation guard). 가산은 age_boost_rate [1/s] 로
    선형 증가하고 age_boost_max 에서 멈춘다 → 낮은 우선순위 작업도 언젠가는 상위 밴드로 올라간다.
 2. 유효 우선순위를 band_width 로 나눈 밴드(높을수록 먼저).
-3. 같은 밴드 안에서는 가중 점수가 작은 순:
+3. 같은 밴드 안에서 deadline_weight > 0 이면 마감 있는 작업이 마감 없는 작업보다 먼저다
+   (명시적 플래그 — 마감이 아무리 멀어도 "마감 없음" 뒤로 밀리지 않는다).
+4. 그다음 가중 점수가 작은 순:
        score = deadline_weight * slack + fifo_weight * (created - now)
-   slack = deadline - now (마감 없음 = no_deadline_slack). deadline_weight=1, fifo_weight=0 이면
-   순수 EDF, deadline_weight=0, fifo_weight=1 이면 FIFO 다.
-4. 동점은 생성 시각, task_id 순 (결정론).
+   slack = deadline - now (마감 없는 작업은 slack 항 없이 fifo 항만). deadline_weight=1,
+   fifo_weight=0 이면 순수 EDF, deadline_weight=0, fifo_weight=1 이면 FIFO 다 (마감 무시).
+5. 동점은 생성 시각, task_id 순 (결정론).
+
+deadline · created · now 는 모두 노드 시계 초다 (task_schema 가 접수 시 ISO 마감을 옮긴다).
 
 큐 크기가 작고(수십) 키가 시간에 따라 변하므로 힙 대신 요청 시점에 정렬한다.
 """
@@ -31,13 +35,14 @@ class SchedulerConfig:
     fifo_weight: float = 0.0          # 밴드 내 도착순 가중치
     age_boost_rate: float = 0.5       # [priority/s] 대기 1초당 유효 우선순위 가산
     age_boost_max: float = 64.0       # 가산 상한 (= 2 밴드)
-    no_deadline_slack: float = 1.0e6  # [s] 마감 없는 작업의 slack 대체값
 
     def __post_init__(self):
         if self.band_width < 1:
             raise ValueError('band_width 는 1 이상이어야 한다')
         if self.age_boost_rate < 0 or self.age_boost_max < 0:
             raise ValueError('age_boost_* 는 음수일 수 없다')
+        if self.deadline_weight < 0 or self.fifo_weight < 0:
+            raise ValueError('deadline_weight · fifo_weight 는 음수일 수 없다')
 
 
 class TaskScheduler:
@@ -87,12 +92,17 @@ class TaskScheduler:
         """유효 우선순위 밴드 (클수록 먼저)."""
         return int(self.effective_priority(task, now) // self.config.band_width)
 
-    def sort_key(self, task: TaskSpec, now: float) -> Tuple[int, float, float, str]:
-        """오름차순 정렬 키: (-밴드, 가중 점수, 생성 시각, task_id)."""
+    def sort_key(self, task: TaskSpec, now: float) -> Tuple[int, int, float, float, str]:
+        """오름차순 정렬 키: (-밴드, 마감 없음 플래그, 가중 점수, 생성 시각, task_id)."""
         cfg = self.config
-        slack = task.deadline - now if task.deadline is not None else cfg.no_deadline_slack
-        score = cfg.deadline_weight * slack + cfg.fifo_weight * (task.created - now)
-        return (-self.band(task, now), score, task.created, task.task_id)
+        score = cfg.fifo_weight * (task.created - now)
+        no_deadline = 0
+        if cfg.deadline_weight > 0.0:
+            if task.deadline is None:
+                no_deadline = 1
+            else:
+                score += cfg.deadline_weight * (task.deadline - now)
+        return (-self.band(task, now), no_deadline, score, task.created, task.task_id)
 
     def ordered(self, now: float) -> List[TaskSpec]:
         """현재 시각 기준 실행 순서."""

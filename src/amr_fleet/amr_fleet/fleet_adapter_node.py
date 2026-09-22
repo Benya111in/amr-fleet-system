@@ -2,14 +2,18 @@
 fleet_adapter_node — 로봇별 상태 취합기 (components.md §3.6 / §5.6). 로봇 네임스페이스에서 뜬다.
 
 - Sub  odometry/filtered_map (Odometry), battery_state (BatteryState), task_status (Task),
-       executor/phase (String), safety/estop_active (Bool), safety/zone (String)
-- Pub  robot_state (RobotState, 2 Hz; 송신 지연 큐 U(comm_latency_ms) ms, drop_rate 유실, 링크 FIFO)
-- SrvS assign_task (AssignTask; serve_assign_task=true 일 때): IDLE 이면 수락하고 현재 작업으로 저장.
-       통합 시스템에서 task_executor_node 가 이 서비스를 직접 제공하면 serve_assign_task=false 로 끈다.
+       executor/phase (String), safety/estop_active (Bool, latched = reliable·transient_local·1),
+       safety/zone (UInt8, 0 CLEAR · 1 WARNING · 2 CRITICAL · 3 STOP — 로그용)
+- Pub  robot_state (RobotState, 2 Hz; 송신 지연 큐 U(comm_latency_ms) ms, drop_rate 유실, 링크 FIFO).
+       E-stop 이 바뀌면 주기를 기다리지 않고 한 번 더 보낸다.
+- SrvS assign_task (AssignTask) — serve_assign_task=true 일 때만 (기본 false). 실제 서버는 amr_behavior 의
+       task_executor_node 다 (components.md §5.5). 둘 다 켜면 한 네임스페이스에 서버가 둘이 되어
+       먼저 온 응답이 이기므로, 실행기 없이 모의 시험할 때(auto_complete_after_s > 0)만 켠다.
+       켜면 IDLE 이고 작업이 없을 때 수락하고 현재 작업으로 저장한다.
 - auto_complete_after_s > 0: 실행기 없이 IN_PROGRESS → (N s) → COMPLETED 를 task_status 로 흉내 낸다.
 - 로그 logs/comm_latency_<robot>_YYYYmmdd.csv [cmd_time, response_time, latency_ms] (명세 4.10 포맷):
        cmd_time = fleet 이 찍은 요청 stamp, response_time = assign_task 수신 (multi_robot.md §6 측정).
-       명령 → 첫 움직임 응답 시간은 amr_evaluation 의 response_time_logger 가 잰다.
+       명령 → 첫 움직임 응답 시간은 amr_evaluation 의 response_time_logger 가 잰다. 파일 날짜는 벽시계.
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ import csv
 import datetime as _dt
 import os
 import pathlib
+import time
 from typing import Optional
 import zlib
 
@@ -35,10 +40,15 @@ from nav_msgs.msg import Odometry
 from rcl_interfaces.msg import ParameterDescriptor
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import BatteryState
-from std_msgs.msg import Bool, String
+from std_msgs.msg import Bool, String, UInt8
 
 LATENCY_LOG_HEADER = ['cmd_time', 'response_time', 'latency_ms']
+# components.md §5 의 latched: safety_node 가 래치한 E-stop 을 어댑터가 나중에 떠도 받는다.
+# (transient_local 구독은 volatile 발행자와 짝이 맺어지지 않으므로 발행자도 latched 여야 한다)
+LATCHED_QOS = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                         durability=DurabilityPolicy.TRANSIENT_LOCAL)
 
 
 class FleetAdapterNode(Node):
@@ -54,7 +64,7 @@ class FleetAdapterNode(Node):
             'drop_rate': 0.0,                # robot_state 유실 확률
             'seed': 0,                       # 0 = 무작위. 0 이 아니면 robot_id 별로 달리 섞는다
             'auto_complete_after_s': 0.0,    # > 0 이면 수락 N s 뒤 COMPLETED 를 흉내 (테스트용)
-            'serve_assign_task': True,
+            'serve_assign_task': False,      # true = 모의 assign_task 서버 (실제 서버는 task_executor)
             'initial_battery': 100.0,        # battery_state 가 없을 때 보고할 잔량 [%]
             'log_dir': '',                   # '' = $ROS_WS/logs
         }
@@ -78,7 +88,7 @@ class FleetAdapterNode(Node):
         self._battery = float(p('initial_battery'))
         self._phase = ''
         self._estop = False
-        self._zone = ''
+        self._zone = 0
         self._current: Optional[Task] = None
         self._state_queue = TimerQueue(self, self._pub_state_now)       # robot_state 송신 지연
         self._auto_queue = TimerQueue(self, self._auto_complete)         # 모의 완료 (task_id)
@@ -92,10 +102,15 @@ class FleetAdapterNode(Node):
         self.create_subscription(BatteryState, 'battery_state', self._on_battery, 10)
         self.create_subscription(Task, 'task_status', self._on_task_status, 10)
         self.create_subscription(String, 'executor/phase', self._on_phase, 10)
-        self.create_subscription(Bool, 'safety/estop_active', self._on_estop, 10)
-        self.create_subscription(String, 'safety/zone', self._on_zone, 10)
-        if bool(p('serve_assign_task')):
+        self.create_subscription(Bool, 'safety/estop_active', self._on_estop, LATCHED_QOS)
+        # volatile 구독은 volatile·transient_local 발행자 모두와 맞는다 (zone 은 변화 시 발행)
+        self.create_subscription(UInt8, 'safety/zone', self._on_zone, 10)
+        self._serving = bool(p('serve_assign_task'))
+        if self._serving:
             self.create_service(AssignTask, 'assign_task', self._on_assign_task)
+        elif self._auto_complete_s > 0.0:
+            self.get_logger().warn('auto_complete_after_s > 0 이지만 serve_assign_task=false — '
+                                   '모의 완료는 어댑터가 수락한 작업에만 걸린다')
 
         self.create_timer(1.0 / max(float(p('publish_rate_hz')), 0.1), self._on_publish_timer)
         self.get_logger().info(
@@ -120,12 +135,16 @@ class FleetAdapterNode(Node):
         self._phase = msg.data
 
     def _on_estop(self, msg: Bool) -> None:
-        if msg.data != self._estop:
-            self.get_logger().warn(f'{self.robot_id}: estop {"활성" if msg.data else "해제"}')
+        changed = bool(msg.data) != self._estop
         self._estop = bool(msg.data)
+        if changed:
+            self.get_logger().warn(f'{self.robot_id}: estop {"활성" if msg.data else "해제"}')
+            self._on_publish_timer()    # 2 Hz 주기를 기다리지 않고 바로 알린다 (지연 큐는 그대로 거친다)
 
-    def _on_zone(self, msg: String) -> None:
-        self._zone = msg.data
+    def _on_zone(self, msg: UInt8) -> None:
+        if int(msg.data) != self._zone:
+            self.get_logger().info(f'{self.robot_id}: safety zone {self._zone} → {int(msg.data)}')
+        self._zone = int(msg.data)
 
     def _on_task_status(self, msg: Task) -> None:
         if msg.status == STATUS_IN_PROGRESS:
@@ -139,6 +158,14 @@ class FleetAdapterNode(Node):
 
     # ------------------------------------------------------------------ assign_task
     def _on_assign_task(self, req: AssignTask.Request, resp: AssignTask.Response):
+        try:
+            return self._handle_assign_task(req, resp)
+        except Exception as exc:  # noqa: B902 — 서비스는 항상 응답을 돌려준다
+            self.get_logger().error(f'{self.robot_id}: assign_task 처리 예외 {exc!r}')
+            resp.success, resp.robot_id, resp.message = False, self.robot_id, 'internal error'
+            return resp
+
+    def _handle_assign_task(self, req: AssignTask.Request, resp: AssignTask.Response):
         now = self._now()
         cmd_time = time_to_float(req.task.header.stamp)
         if cmd_time is not None:
@@ -218,7 +245,7 @@ class FleetAdapterNode(Node):
     def _append_csv(self, prefix: str, header, row) -> None:
         try:
             self._log_dir.mkdir(parents=True, exist_ok=True)
-            day = _dt.datetime.fromtimestamp(self._now()).strftime('%Y%m%d')
+            day = _dt.datetime.fromtimestamp(time.time()).strftime('%Y%m%d')   # 파일 날짜는 벽시계
             path = self._log_dir / f'{prefix}_{day}.csv'
             new_file = not path.exists() or path.stat().st_size == 0
             with open(path, 'a', newline='', encoding='utf-8') as f:

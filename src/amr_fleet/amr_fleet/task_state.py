@@ -3,12 +3,14 @@
 
     PENDING ──start──▶ IN_PROGRESS ──complete──▶ COMPLETED
        │                   │
-       └──fail──▶ FAILED ◀─fail┘        (FAILED ──retry──▶ PENDING, max_retries 안에서만)
+       └──fail──▶ FAILED ◀─fail┘        (FAILED ──retry──▶ PENDING, 실패 횟수 ≤ max_retries 일 때만)
 
 - 전이마다 TaskEvent 를 콜백으로 알린다 (노드가 /fleet/task_events 로 발행).
 - 이동 거리는 로봇 자세를 적분한다 (update_pose): 진행 중 작업을 가진 로봇의 연속 자세 간 거리 합.
 - 종료(COMPLETED/FAILED) 시 TaskLogWriter 가 logs/tasks_YYYYmmdd.csv 에 한 줄 쓴다:
       task_id, robot_id, start_time, end_time, distance_m, duration_s, result
+  시각 칸은 노드 시계(use_sim_time 이면 sim 초), 파일 날짜는 기록 시점의 벽시계 날짜다.
+- max_retries = 허용하는 재시도 횟수. 실패(fail) 횟수로 센다 (start 없이 PENDING 에서 실패해도 센다).
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ import datetime as _dt
 import math
 import os
 import pathlib
+import time
 from typing import Callable, Dict, List, Optional, Tuple
 
 from amr_fleet.task_schema import (
@@ -68,9 +71,11 @@ class TaskRecord:
     distance_m: float = 0.0
     result: str = ''
     attempts: int = 0                 # start 횟수
+    failures: int = 0                 # fail 횟수 (재시도 한도 판정)
     deadline_missed: bool = False
     last_pose: Optional[Tuple[float, float]] = None
     pinned_robot_id: str = ''         # 요청에 지정된 로봇 (retry 시 복원)
+    command_time: Optional[float] = None   # 수락된 assign_task 요청의 stamp (명령 시각)
 
     @property
     def task_id(self) -> str:
@@ -90,21 +95,29 @@ class TaskRecord:
 
 
 class TaskLogWriter:
-    """logs/<prefix>_YYYYmmdd.csv 에 종료된 작업을 한 줄씩 추가한다 (날짜별 파일)."""
+    """
+    logs/<prefix>_YYYYmmdd.csv 에 종료된 작업을 한 줄씩 추가한다 (날짜별 파일).
+
+    파일 날짜는 기록 시점의 벽시계(wall_clock)로 정한다 — use_sim_time 이면 노드 시계가 수백 초
+    부근이라 19700101 파일이 생기므로. 시각 칸은 노드 시계 값 그대로다.
+    """
 
     HEADER = ['task_id', 'robot_id', 'start_time', 'end_time', 'distance_m', 'duration_s',
               'result']
 
-    def __init__(self, log_dir: os.PathLike, prefix: str = 'tasks', time_format: str = 'iso'):
+    def __init__(self, log_dir: os.PathLike, prefix: str = 'tasks', time_format: str = 'iso',
+                 wall_clock: Callable[[], float] = time.time):
         if time_format not in ('iso', 'epoch'):
             raise ValueError("time_format 은 'iso' 또는 'epoch'")
         self.log_dir = pathlib.Path(log_dir)
         self.prefix = prefix
         self.time_format = time_format
+        self.wall_clock = wall_clock
         self.rows_written = 0
 
-    def path_for(self, t: float) -> pathlib.Path:
-        """종료 시각 t(epoch) 가 속한 날짜의 파일 경로."""
+    def path_for(self, wall_t: Optional[float] = None) -> pathlib.Path:
+        """벽시계 시각 wall_t(기본 지금)가 속한 날짜의 파일 경로."""
+        t = self.wall_clock() if wall_t is None else wall_t
         day = _dt.datetime.fromtimestamp(t).strftime('%Y%m%d')
         return self.log_dir / f'{self.prefix}_{day}.csv'
 
@@ -129,7 +142,7 @@ class TaskLogWriter:
         """종료 레코드를 추가한다. 파일이 새로 생기면 헤더를 먼저 쓴다."""
         if rec.end_time is None:
             raise ValueError('종료되지 않은 작업은 기록하지 않는다')
-        path = self.path_for(rec.end_time)
+        path = self.path_for()
         self.log_dir.mkdir(parents=True, exist_ok=True)
         new_file = not path.exists() or path.stat().st_size == 0
         with open(path, 'a', newline='', encoding='utf-8') as f:
@@ -146,10 +159,13 @@ class TaskStateMachine:
 
     def __init__(self, on_event: Optional[Callable[[TaskEvent], None]] = None,
                  log_writer: Optional[TaskLogWriter] = None, max_retries: int = 0,
-                 max_pose_step_m: float = 5.0):
+                 max_pose_step_m: float = 5.0,
+                 on_log_error: Optional[Callable[[TaskRecord, OSError], None]] = None):
         self._records: Dict[str, TaskRecord] = {}
         self._on_event = on_event
         self._log = log_writer
+        # 로그 쓰기 실패(OSError)는 전이를 되돌리지 않는다: 콜백이 있으면 알리고, 없으면 다시 던진다
+        self._on_log_error = on_log_error
         self.max_retries = max(0, int(max_retries))
         # 위치 추정 점프(재초기화 등)로 인한 거짓 거리 누적을 막는 한 스텝 상한
         self.max_pose_step_m = float(max_pose_step_m)
@@ -200,9 +216,10 @@ class TaskStateMachine:
         self._emit(rec, STATUS_PENDING, STATUS_PENDING, now, 'created')
         return rec
 
-    def start(self, task_id: str, robot_id: str, now: float) -> Optional[TaskEvent]:
+    def start(self, task_id: str, robot_id: str, now: float,
+              command_time: Optional[float] = None) -> Optional[TaskEvent]:
         """
-        PENDING → IN_PROGRESS.
+        PENDING → IN_PROGRESS. command_time = 수락된 assign_task 요청의 stamp (없으면 None).
 
         이미 같은 로봇으로 진행 중이면 None (멱등: 서비스 응답과 task_status 가 둘 다 알릴 수 있다).
         """
@@ -213,6 +230,7 @@ class TaskStateMachine:
         rec.robot_id = robot_id
         rec.spec.robot_id = robot_id
         rec.start_time = now
+        rec.command_time = command_time
         rec.attempts += 1
         rec.last_pose = None
         return self._transition(rec, STATUS_IN_PROGRESS, now, 'assigned')
@@ -232,27 +250,33 @@ class TaskStateMachine:
         rec = self._require(task_id)
         self._check(rec, STATUS_FAILED)
         rec.end_time = now
+        rec.failures += 1
         rec.result = f'failed:{reason}' if reason and reason != 'failed' else 'failed'
         ev = self._transition(rec, STATUS_FAILED, now, reason)
         self._write_log(rec)
         return ev
 
     def retry(self, task_id: str, now: float) -> Optional[TaskEvent]:
-        """FAILED → PENDING (attempts <= max_retries 일 때만). 불가하면 None."""
-        rec = self._require(task_id)
-        if rec.status != STATUS_FAILED or rec.attempts > self.max_retries:
+        """FAILED → PENDING (실패 횟수 <= max_retries 일 때만). 불가하면 None."""
+        if not self.can_retry(task_id):
             return None
+        rec = self._records[task_id]
         rec.robot_id = rec.spec.robot_id = rec.pinned_robot_id
-        rec.start_time = rec.end_time = None
+        rec.start_time = rec.end_time = rec.command_time = None
         rec.distance_m = 0.0
         rec.result = ''
         rec.last_pose = None
         return self._transition(rec, STATUS_PENDING, now, 'retry')
 
     def can_retry(self, task_id: str) -> bool:
-        """`retry` 가 가능한 상태인지."""
+        """
+        `retry` 가 가능한 상태인지: FAILED 이고 실패 횟수가 max_retries 이하.
+
+        max_retries=0 이면 재시도하지 않는다. 1 이면 첫 실패 뒤 한 번만 다시 큐에 넣는다.
+        """
         rec = self._records.get(task_id)
-        return rec is not None and rec.status == STATUS_FAILED and rec.attempts <= self.max_retries
+        return (rec is not None and rec.status == STATUS_FAILED
+                and 0 < rec.failures <= self.max_retries)
 
     # --- 거리 적분 / 마감 ---
     def update_pose(self, robot_id: str, x: float, y: float) -> float:
@@ -307,5 +331,11 @@ class TaskStateMachine:
         return ev
 
     def _write_log(self, rec: TaskRecord) -> None:
-        if self._log is not None:
+        if self._log is None:
+            return
+        try:
             self._log.write(rec)
+        except OSError as exc:
+            if self._on_log_error is None:
+                raise
+            self._on_log_error(rec, exc)
