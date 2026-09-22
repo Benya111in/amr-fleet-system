@@ -1,0 +1,47 @@
+# wheel_odometry_node 파라미터 (명세 4.2 "순기구학 직접 구현 / 휠 엔코더 오도메트리")
+# 알고리즘·공분산 유도: docs/algorithms/kinematics.md
+#
+# [공유] 표시 값은 localization.launch.py 가 최상위 config/robot_params.yaml, config/sensors.yaml 에서
+# 읽어 덮어쓴다 (단일 출처). 여기 값은 단독 실행(ros2 run ... --params-file) 기본값이다.
+/**/wheel_odometry_node:
+  ros__parameters:
+    # --- 기하 [공유: robot_params.yaml robot.*] ---
+    wheel_radius: 0.0825          # [m] 공칭 반지름 r. URDF 와 같아야 한다 (다르면 거리 스케일 오차 = 비율)
+    left_wheel_radius: 0.0        # [m] >0 이면 좌 바퀴만 덮어씀 (UMBmark 보정 결과 E_d 반영용), 0 = wheel_radius
+    right_wheel_radius: 0.0       # [m] 위와 같음 (우)
+    wheel_separation: 0.36        # [m] 바퀴 중심 간 거리 b. 오차 δb/b 는 회전각 스케일 오차가 된다
+    # [무차원] 유효 간격 = b × 배율 (launch 가 덮어쓰지 않는 보정값). Gazebo 드리프트 실험(제자리 2π × 3 회,
+    #   부하 평균 < 20)에서 wheel_odom 회전이 GT 보다 0.565 % 크게 나왔다 (Θ_odom/Θ_gt = 1.00565 ± 0.0003,
+    #   접지 패치·캐스터 마찰로 실제 회전 중심 간격이 기하값보다 큼) → b_eff = 0.36202 m. 실기는 UMBmark
+    #   으로 다시 식별한다 (docs/algorithms/kinematics.md §7.3). 1.0 = 기하값 그대로
+    wheel_separation_multiplier: 1.00565
+
+    # --- 인코더 모델 [공유: sensors.yaml wheel_encoder.*] ---
+    ticks_per_revolution: 4096    # [tick/rev] 명세 하한. 1 틱 = 2πr/N = 0.127 mm
+    slip_noise_stddev: 0.01       # [무차원] 주기마다 바퀴 변위에 곱하는 (1 + N(0, σ)) 의 σ
+    publish_rate: 50.0            # [Hz] 인코더 샘플 = 발행 주기. joint_states(최대 1 kHz)는 이 주기로 솎는다.
+                                  #      EKF(50 Hz)와 같게 두어 지연 최소. 올리면 슬립 잡음이 주기당 적용되므로
+                                  #      같은 거리의 누적 잡음이 커진다(σ_s 는 "주기당" 정의)
+    enable_quantization: true     # false: 양자화 끔 (분석/비교용)
+    enable_slip_noise: true       # false: 슬립 잡음 끔 (분석/비교용)
+    noise_seed: 0                 # 0 = 매 실행 무작위, >0 = 재현 가능한 고정 seed
+
+    # --- 공분산 모델 (kinematics.md §3) ---
+    slip_distance_coeff: 0.0      # [m] 물리 슬립 분산 계수 k: Var(Δs) += k|Δs|. 사전값 0,
+                                  #     드리프트 실험(odom_drift_experiment)의 σ 대비 실측 비로 식별
+    wheel_param_rel_stddev: 0.0   # [무차원] r/b 의 상대 불확실성 (캘리브레이션 잔여). 0 = 공칭 신뢰.
+                                  #     켜면 자세 공분산이 체계 오차 몫(Var θ ∝ L²)을 함께 키운다
+    lateral_velocity_stddev: 0.02 # [m/s] v_y ≡ 0 구속의 σ. EKF 가 vy 를 융합해 횡 드리프트를 억제하는 강도
+                                  #     (작을수록 강함; 0.02 = 0.5 m/s 선회 시 횡미끄럼 수준)
+    lateral_skid_coeff: 0.0       # [s] 선회 시 Var(v_y) += (κ v ω)² (고속 선회 횡미끄럼 반영, 기본 끔)
+    unfused_variance: 0.001       # 평면 밖 성분(z, roll, pitch 및 그 속도) 분산. EKF two_d_mode 에서 무시됨
+    integration: exact_arc        # exact_arc(등속 원호 정확해, 기본) | midpoint | euler (비교용)
+
+    # --- 이름 ---
+    left_wheel_joint: left_wheel_joint     # joint_states 이름. frame_prefix 를 붙인 이름도 받는다
+    right_wheel_joint: right_wheel_joint
+    frame_prefix: ''              # 다중 로봇: 'amr_01/' (launch 가 robot_name 으로 주입)
+    odom_frame: odom              # → <prefix>odom
+    base_frame: base_footprint    # → <prefix>base_footprint (EKF base_link_frame 과 같아야 함)
+    publish_tf: false             # odom→base_footprint 는 ekf_filter_node_odom 담당. true 는 EKF 없이 디버그할 때만
+    publish_ticks: true           # wheel_odom/ticks (JointState: position=누적 틱, velocity=틱/s) 디버그 토픽

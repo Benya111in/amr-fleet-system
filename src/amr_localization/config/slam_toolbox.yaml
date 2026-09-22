@@ -1,0 +1,72 @@
+# slam_toolbox (online async, 매핑 모드) 파라미터 (명세 4.3 "2D LiDAR SLAM, 주요 파라미터 의미·튜닝 근거")
+# Karto 스캔 매칭 + 포즈 그래프(Ceres) 최적화. 의미·근거·루프 폐합 설명: docs/algorithms/slam.md §2.
+# 프레임은 localization.launch.py 가 접두어를 주입한다 (map 은 공용).
+/**/slam_toolbox:
+  ros__parameters:
+    # --- 솔버 (포즈 그래프 최적화) ---
+    solver_plugin: solver_plugins::CeresSolver
+    ceres_linear_solver: SPARSE_NORMAL_CHOLESKY   # 희소 정규방정식 (간선 수에 선형)
+    ceres_preconditioner: SCHUR_JACOBI
+    ceres_trust_strategy: LEVENBERG_MARQUARDT
+    ceres_dogleg_type: TRADITIONAL_DOGLEG
+    ceres_loss_function: HuberLoss   # 잘못 수락된 루프 간선의 영향을 선형 벌점으로 제한 (a = 0.7 고정)
+
+    # --- ROS ---
+    odom_frame: odom
+    map_frame: map
+    base_frame: base_footprint
+    scan_topic: scan_filtered     # 상대 이름 (필터 후 스캔)
+    use_map_saver: true
+    mode: mapping
+    debug_logging: false
+    throttle_scans: 1
+    transform_publish_period: 0.02   # [s] map→odom TF 50 Hz (매핑 모드에서는 EKF map 노드를 띄우지 않음)
+    map_update_interval: 2.0         # [s] /map 재발행 주기 (5 → 2: 매핑 중 커버리지 확인 편의)
+    resolution: 0.05                 # [m] 명세 ≤ 0.05 m
+    min_laser_range: 0.1             # [m]
+    max_laser_range: 25.0            # [m] LiDAR 사양 (기본 20 → 25: 60 m 창고 긴 통로 끝 벽까지 래스터화)
+    minimum_time_interval: 0.5       # [s] 노드(스캔) 추가 최소 간격
+    transform_timeout: 0.2
+    tf_buffer_duration: 30.0
+    stack_size_to_use: 40000000
+    enable_interactive_mode: false
+
+    # --- 스캔 매칭·그래프 밀도 ---
+    use_scan_matching: true
+    use_scan_barycenter: true
+    minimum_travel_distance: 0.3     # [m] 0.5 → 0.3: 노드 밀도 ↑ → 루프 후보·국소 정합 ↑ (좁은 랙 통로)
+    minimum_travel_heading: 0.3      # [rad] 0.5 → 0.3: 회전 중에도 노드 추가
+    scan_buffer_size: 10
+    scan_buffer_maximum_scan_distance: 10.0
+    link_match_minimum_response_fine: 0.1
+    link_scan_maximum_distance: 1.5
+
+    # --- 루프 폐합 ---
+    do_loop_closing: true
+    loop_search_maximum_distance: 5.0      # [m] 3 → 5: 100 m 루프에서 0.05~1 % 드리프트(≤ 1 m) 를 넉넉히 포함
+    loop_match_minimum_chain_size: 15      # 10 → 15: 반복 랙 통로의 aliasing(겉보기 같은 곳) 오수락 억제
+    loop_match_maximum_variance_coarse: 3.0
+    loop_match_minimum_response_coarse: 0.35
+    loop_match_minimum_response_fine: 0.55 # 0.45 → 0.55: 동일 이유 (정밀 매칭 응답 하한 ↑)
+
+    # --- 상관 탐색 (국소 스캔 매칭) ---
+    correlation_search_space_dimension: 0.5     # [m] ±0.25 m 창. 0.3 m 이동 간 odom 오차(≪ 0.25 m)를 포함
+    correlation_search_space_resolution: 0.01   # [m]
+    correlation_search_space_smear_deviation: 0.05  # [m] 0.1 → 0.05 ≈ σ_lidar + res. 크면 벽이 두꺼워짐
+
+    # --- 루프 폐합 탐색 ---
+    loop_search_space_dimension: 8.0
+    loop_search_space_resolution: 0.05
+    loop_search_space_smear_deviation: 0.03
+
+    # --- 스캔 매처 벌점 (odom 예측에서 멀어질수록 응답에 곱하는 벌점) ---
+    distance_variance_penalty: 0.5
+    angle_variance_penalty: 1.0
+    fine_search_angle_offset: 0.00349
+    coarse_search_angle_offset: 0.349
+    coarse_angle_resolution: 0.0349
+    minimum_angle_penalty: 0.9
+    minimum_distance_penalty: 0.5
+    use_response_expansion: true
+    min_pass_through: 2
+    occupancy_threshold: 0.1

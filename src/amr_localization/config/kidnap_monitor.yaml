@@ -1,0 +1,57 @@
+# kidnap_monitor_node 파라미터 (명세 4.3 "납치 시 제자리 회전 등으로 스스로 위치 복구")
+# 감지·복구 설계와 측정: docs/algorithms/slam.md §5
+/**/kidnap_monitor_node:
+  ros__parameters:
+    # --- 감지 ---
+    cov_thresh: 0.5               # [m²] AMCL var(x)+var(y) 상한. 추적 중 1e-3 수준, 발산 시 수 m² → 0.5 (σ≈0.5 m)
+    yaw_cov_thresh: 0.5           # [rad²] AMCL var(yaw) 상한 (σ ≈ 40°)
+    jump_thresh: 1.0              # [m] 연속 AMCL 갱신 사이 AMCL 상대 이동 − odom 상대 이동. 정상 보정은 수 cm
+    jump_yaw_thresh: 0.5          # [rad]
+    match_thresh: 0.5             # 스캔-맵 인라이어 비율 하한. 정상 0.85~0.98 (동적 장애물 가림만큼 감소)
+    match_window: 5               # 연속 저하 판정 수 (match_rate 2 Hz → 2.5 s). 지나가는 작업자 가림 오경보 억제
+    min_match_beams: 30           # 유효 빔이 이보다 적으면 판정 보류 (빈 공간)
+    inlier_dist: 0.2              # [m] 인라이어 거리 (σ_lidar 0.03 + 맵 오차 + 보간 오차 여유)
+    max_beams: 180                # 일치도 계산 빔 수 (AMCL 과 같게)
+    occupied_thresh: 65           # OccupancyGrid 점유 판정 값 (map_server 0.65)
+    suspect_time: 1.0             # [s] 경보가 이만큼 지속되면 LOST 확정
+    match_rate: 2.0               # [Hz]
+    tick_rate: 5.0                # [Hz]
+
+    # --- 복구 ---
+    seed_attempts: 3              # 전역 가설 탐색 상위 3 개를 차례로 initialpose 로 시도, 그 뒤 AMCL 전역 재초기화
+    seed_cov_xy: 0.0625           # [m²] 시드 initialpose 분산 (σ 0.25 m = coarse 격자 반폭)
+    seed_var_yaw: 0.01            # [rad²] (σ ≈ 5.7°, coarse 헤딩 격자 5°)
+    reinit_retry: 4               # 재초기화 시도 총 횟수 (시드 3 + 전역 1)
+    spin_retry: 1                 # 시도당 회전 횟수
+    spin_angle: 6.283185307       # [rad] 한 바퀴: 360° LiDAR 라도 회전은 AMCL 갱신·리샘플(update_min_a)을 구동한다
+    spin_time_allowance: 30.0     # [s]
+    converge_cov: 0.1             # [m²] 수렴: AMCL var(x)+var(y) < 0.1 (σ ≈ 0.22 m) 이고
+    converge_match: 0.7           #       인라이어 비율 ≥ 0.7 이
+    converge_count: 5             #       5 회 연속 (≈ 2.5 s)
+    recovery_timeout: 120.0       # [s] 이 안에 수렴 못 하면 FAILED (lost 유지, 수렴하면 언제든 복귀)
+    cooldown: 3.0                 # [s] 복구 직후 재감지 유예
+
+    # --- 정지 직후 AMCL 무이동 갱신 (정지 정확도 3 cm) ---
+    # AMCL 은 움직일 때만 갱신 → 정지하면 마지막 갱신 오차(주행 중 2~6 cm)가 굳는다. 정지 0.5 s 후
+    # request_nomotion_update 를 1 s 간격 3 회 호출해 같은 자세 스캔으로 파티클을 다시 모은다.
+    # 횟수를 늘리면 운동 잡음 없는 리샘플이 반복되어 파티클이 고갈되므로 3 회로 제한 (brief §2.4).
+    nomotion_updates_on_stop: 3   # 0 = 끔
+    nomotion_period: 1.0          # [s]
+    nomotion_service: request_nomotion_update
+
+    # --- 인터페이스 ---
+    amcl_pose_topic: amcl_pose
+    odom_topic: odometry/filtered
+    scan_topic: scan_filtered
+    map_topic: /map
+    lost_topic: localization/lost
+    status_topic: localization/kidnap_status
+    initial_pose_topic: initialpose
+    map_frame: map
+    reinit_service: reinitialize_global_localization
+    spin_action: spin
+    ekf_set_pose_service: ''      # launch 가 map EKF 의 set_pose 서비스 이름을 넣는다 ('' = 사용 안 함)
+    fallback_cmd_vel_topic: ''    # spin 서버 없는 단독 시험에서만 'cmd_vel' (운용 시 cmd_vel 발행자는 safety_node 하나)
+    fallback_angular_speed: 0.5   # [rad/s]
+    lidar_offset: [0.15, 0.0, 0.0]  # [m, m, rad] base_footprint→lidar_link (launch 가 sensors.yaml extrinsic 으로 덮어씀)
+    event_log: ''                 # 이벤트 CSV 경로 ('' = 기록 안 함)
