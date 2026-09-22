@@ -180,7 +180,7 @@ BT 노드 목록 (≥15, 명세 8장): Control `Sequence` `Fallback` `ReactiveSe
 
 | 노드 | 언어 | 형태 | 역할 | 언어 근거 |
 | --- | --- | --- | --- | --- |
-| `dashboard_node` | Python | own | Flask 3.1.3 + SSE 웹 대시보드 `:8080`. 로봇 위치/상태/배터리/작업, KPI, 알림(긴급 정지/작업 실패/교착). 작업 투입, E-stop 버튼 | 웹 스택 |
+| `dashboard_node` | Python | own | Flask 3.1.3 + SSE 웹 대시보드 `:8080`. 로봇 위치/상태/배터리/작업, KPI, 알림(긴급 정지/작업 실패/교착). 작업 투입, E-stop 버튼 (해제는 `safety/reset_estop` 성공 확인). Host 허용 목록·선택적 조작 토큰 | 웹 스택 |
 
 ---
 
@@ -543,13 +543,32 @@ Nav2 서버 (ext, 액션·토픽 이름은 Nav2 Humble 기본값)
 
 | 방향 | 이름 | 타입 | 비고 |
 | --- | --- | --- | --- |
-| Sub | `/fleet/status` | `amr_msgs/msg/FleetStatus` | 로봇 위치/상태/배터리/작업 + KPI 는 이 한 토픽으로 충분 (`robots[]` 포함) |
+| Sub | `/fleet/status` | `amr_msgs/msg/FleetStatus` | 로봇 위치/상태/배터리/작업 + KPI 는 이 한 토픽으로 충분 (`robots[]` 포함). `robots[].robot_id` 중 토픽 이름으로 쓸 수 없는 id 는 E-stop 대상에서 뺀다 |
 | Sub | `/fleet/alerts` | `diagnostic_msgs/msg/DiagnosticArray` | 알림 배너 |
 | Sub | `/fleet/task_events` | `amr_msgs/msg/Task` | 작업 타임라인 |
-| Sub | `/map` | `nav_msgs/msg/OccupancyGrid` | 배경 지도 |
-| Pub | `/fleet/task_request` | `std_msgs/msg/String` | 작업 투입 폼 (JSON) |
-| Pub | `/amr_XX/estop`, `/fleet/estop` | `std_msgs/msg/Bool` | latched. E-stop 버튼 |
-| HTTP | `:8080` | SSE `/events`, REST `/api/tasks` | Flask 3.1.3 (Dockerfile 고정). Flask-SocketIO 5.6.1 도 이미지에 있으나 **SSE 를 택했다**: SocketIO 의 eventlet 워커는 monkey-patch 로 `rclpy` 스핀 스레드를 막고, SSE 는 브라우저 `EventSource` 만으로 되어 클라이언트 라이브러리가 필요 없다 (단방향 푸시 + REST 로 충분) |
+| Sub | `/map` | `nav_msgs/msg/OccupancyGrid` | 배경 지도 (latched) |
+| Pub | `/fleet/task_request` | `std_msgs/msg/String` | 작업 투입 폼 (JSON). 구독자(`fleet_manager_node`)가 없으면 발행하지 않고 HTTP 503 |
+| Pub | `/amr_XX/estop`, `/fleet/estop` | `std_msgs/msg/Bool` | latched. E-stop 버튼. 전체 해제는 로봇별 토픽에도 false |
+| SrvC | `/amr_XX/safety/reset_estop` | `std_srvs/srv/Trigger` | E-stop 해제 때: false 발행 → ack 대기(`reset_ack_timeout` 0.2 s) → 호출 → 응답을 `reset_timeout`(2 s) 까지 기다린다. 성공한 로봇만 해제로 표시하고 거부·서버 없음·무응답은 정지로 남겨 HTTP 502 로 알린다 (`require_reset_ack`) |
+| HTTP | `:8080` | 아래 표 | Flask 3.1.3 (Dockerfile 고정). Flask-SocketIO 5.6.1 도 이미지에 있으나 **SSE 를 택했다**: SocketIO 의 eventlet 워커는 monkey-patch 로 `rclpy` 스핀 스레드를 막고, SSE 는 브라우저 `EventSource` 만으로 되어 클라이언트 라이브러리가 필요 없다 (단방향 푸시 + REST 로 충분) |
+
+HTTP 경로 (`web_app.py` 모듈 설명이 원본):
+
+| 메서드 · 경로 | 응답 | 비고 |
+| --- | --- | --- |
+| `GET /` · `/static/<file>` | 단일 페이지 앱 (`web/`) | |
+| `GET /events` | SSE: `snapshot`(id = seq) → `status` / `alerts` / `task_event` / `map_updated` / `estop` / `task_request`, 없으면 `heartbeat` | 구독과 스냅샷을 한 잠금에서 잡아 중복이 없다. 이벤트 id 가 건너뛰면(느린 연결에서 버려짐) 클라이언트가 `/api/state` 로 다시 맞춘다 |
+| `GET /api/state` | 전체 상태 JSON (`seq`, 이력 한도 `limits` 포함) | |
+| `GET /api/map?format=png\|json` | 지도 PNG / 런렝스 JSON | 없으면 404 |
+| `GET /api/health` | `{ok, sse_clients, uptime_sec, has_status, has_map, auth_required}` | |
+| `POST /api/tasks` | 202 발행 · 400 검증 실패 · 503 구독자 없음 | 마감(`deadline_sec`)은 선택, 주면 0 초과 |
+| `POST /api/estop` `{robot_id, active}` | 200 · 400 입력 오류 · 409 전체 E-stop 중 로봇별 해제 또는 뒤이은 조작에 밀림 · 502 발행·리셋 실패 | 조작 하나(발행 + 표시 + SSE)를 잠금 하나로 직렬화 — 발행 순서 = 표시 순서 |
+
+요청 검사: 모든 요청의 `Host` 가 허용 목록(루프백 + `host` 파라미터 + `allowed_hosts`)에 없으면 400 (DNS rebinding 방어).
+POST 는 `Origin` 이 있으면 `Host` 와 같아야 하고(403), `api_token` 파라미터나 `AMR_DASHBOARD_TOKEN` 이 설정되면
+조작 API 에 `X-Dashboard-Token` 헤더가 필요하다(401, 페이지가 처음 조작할 때 입력받아 세션에 둔다).
+**`safety_node` 계약**: 로봇별 `estop` 과 `/fleet/estop` 중 하나라도 true 면 정지를 유지하고, `reset_estop` 은 두 값이
+모두 false 일 때만 래치를 푼다 (대시보드는 전체 E-stop 중 로봇별 해제를 409 로 막지만 다른 발행자는 막지 못한다).
 
 ---
 
