@@ -21,10 +21,21 @@ import uuid
 import numpy as np
 import pytest
 
-aruco = pytest.importorskip('amr_perception.aruco')
-detector = pytest.importorskip('amr_perception.aruco_detector_node')
-transforms = pytest.importorskip('amr_perception.transforms')
-pinhole = pytest.importorskip('amr_perception.pinhole')
+# amr_perception 이 없는 단독 체크아웃에서는 이 모듈만 건너뛴다. pytest 8.3 은 모듈 수준
+# importorskip 이 실제로 skip 을 내면 그 디렉터리의 나머지 시험까지 수집하지 않는다 (실측) —
+# 그래서 import 를 직접 감싸고 pytestmark 로 건너뛴다.
+try:
+    from amr_perception import aruco
+    from amr_perception import aruco_detector_node as detector
+    from amr_perception import pinhole
+    from amr_perception import transforms
+except ImportError as exc:                       # pragma: no cover - 병합 트리에서는 항상 있다
+    aruco = detector = transforms = pinhole = None
+    _IMPORT_ERROR = str(exc)
+else:
+    _IMPORT_ERROR = ''
+
+pytestmark = pytest.mark.skipif(aruco is None, reason=f'amr_perception 없음: {_IMPORT_ERROR}')
 
 from amr_msgs.action import Dock  # noqa: E402
 from geometry_msgs.msg import PolygonStamped, PoseStamped  # noqa: E402
@@ -37,7 +48,8 @@ STANDOFF = 0.65
 # config/sensors.yaml: camera_link (0.29, 0, 0.07) rpy 0 → optical: rpy (−π/2, 0, −π/2)
 CAM_POS = np.array([0.29, 0.0, 0.07])
 R_BASE_OPT = np.array([[0.0, 0.0, 1.0], [-1.0, 0.0, 0.0], [0.0, -1.0, 0.0]])
-K = pinhole.CameraIntrinsics.from_fov(640, 480, 1.518436).matrix()   # hfov 87°
+# hfov 87° (amr_perception 이 없으면 이 모듈 전체가 skip 이므로 None)
+K = pinhole.CameraIntrinsics.from_fov(640, 480, 1.518436).matrix() if pinhole else None
 
 
 def marker_pose_from_detector(dist, lateral, yaw_offset_deg):

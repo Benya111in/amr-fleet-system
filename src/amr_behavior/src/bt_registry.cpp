@@ -26,6 +26,7 @@
 #include "amr_behavior/bt_nodes/resumable_sequence.hpp"
 #include "amr_behavior/bt_nodes/return_pending.hpp"
 #include "amr_behavior/bt_nodes/set_fail_reason.hpp"
+#include "amr_behavior/bt_nodes/task_deadline.hpp"
 #include "amr_behavior/bt_nodes/set_phase.hpp"
 #include "amr_behavior/bt_nodes/simulate_payload.hpp"
 #include "behaviortree_cpp_v3/xml_parsing.h"
@@ -59,6 +60,7 @@ void registerCoreNodes(BT::BehaviorTreeFactory & factory, const ContextPtr & ctx
   factory.registerNodeType<ResumableSequence>("ResumableSequence");
   factory.registerNodeType<KeepRunningUntilSuccess>("KeepRunningUntilSuccess");
   factory.registerNodeType<SetFailReason>("SetFailReason");
+  registerWithArg<TaskDeadline>(factory, "TaskDeadline", ctx);
   registerWithArg<ChargingSession>(factory, "ChargingSession", ctx);
 }
 

@@ -106,15 +106,47 @@ def compose(a: Tuple[float, float, float],
 def match_ratio(field: DistanceField, base_pose: Tuple[float, float, float],
                 sensor_offset: Tuple[float, float, float], ranges: Sequence[float],
                 angle_min: float, angle_increment: float, range_max: float,
-                inlier_dist: float = 0.2, max_beams: int = 180) -> Tuple[float, int]:
+                inlier_dist: float = 0.2, max_beams: int = 180,
+                explain_unmapped: bool = True) -> Tuple[float, int]:
     """
-    인라이어 비율 ρ 와 유효 빔 수.
+    인라이어 비율 ρ 와 **판정에 쓴** 빔 수.
 
     base_pose: map 프레임 base_footprint 자세, sensor_offset: base_footprint → lidar 2D 변환.
+
+    explain_unmapped 면 "지도에 없는 물체에 막혀 일찍 끝난 빔"(끝점이 점유에서 멀고, 센서→끝점 사이 지도에
+    막는 것이 없다)은 분자·분모에서 모두 뺀다. 지도에 있는 벽을 **뚫고** 지나간 빔만 불일치로 센다.
+    이렇게 하지 않으면 통로를 가로막은 큰 미지 장애물(6 × 0.5 m 벽) 앞에서 올바르게 위치 추정한 로봇의 ρ 가
+    0.5 아래로 떨어져 거짓 LOST → 엉뚱한 전역 재초기화가 났다 (통합 시나리오 11 실측).
     """
     xs, ys = scan_endpoints(ranges, angle_min, angle_increment, range_max, max_beams)
     if xs.size == 0:
         return 0.0, 0
-    mx, my = transform_points(xs, ys, compose(base_pose, sensor_offset))
+    sensor = compose(base_pose, sensor_offset)
+    mx, my = transform_points(xs, ys, sensor)
     d = field.lookup(mx, my)
-    return float(np.count_nonzero(d <= inlier_dist)) / xs.size, int(xs.size)
+    inlier = d <= inlier_dist
+    if not explain_unmapped:
+        return float(np.count_nonzero(inlier)) / xs.size, int(xs.size)
+    counted = inlier | _blocked_by_map(field, sensor, mx, my)
+    n = int(np.count_nonzero(counted))
+    if n == 0:
+        return 0.0, 0
+    return float(np.count_nonzero(inlier)) / n, n
+
+
+def _blocked_by_map(field: DistanceField, sensor: Tuple[float, float, float],
+                    mx: np.ndarray, my: np.ndarray, margin_cells: float = 1.5) -> np.ndarray:
+    """빔마다 센서~끝점 사이에 지도의 점유 셀이 있으면 True (= 벽을 뚫고 간 빔)."""
+    res = field.spec.resolution
+    dx, dy = mx - sensor[0], my - sensor[1]
+    length = np.hypot(dx, dy)
+    stop = np.maximum(length - margin_cells * res, 0.0)          # 끝점 바로 앞까지만 본다
+    steps = int(np.ceil(float(np.max(stop, initial=0.0)) / res)) + 1
+    steps = max(1, min(steps, 400))                              # 20 m / 0.05 m 상한
+    t = np.linspace(0.0, 1.0, steps)[None, :]                    # (1, steps)
+    with np.errstate(invalid='ignore', divide='ignore'):
+        frac = np.where(length > 0.0, stop / np.maximum(length, 1e-9), 0.0)[:, None]
+    sx = sensor[0] + dx[:, None] * frac * t
+    sy = sensor[1] + dy[:, None] * frac * t
+    hit = field.lookup(sx.ravel(), sy.ravel()).reshape(sx.shape) <= 0.5 * res
+    return np.any(hit, axis=1)

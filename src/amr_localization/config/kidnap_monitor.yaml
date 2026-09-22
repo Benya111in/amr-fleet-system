@@ -7,9 +7,13 @@
     yaw_cov_thresh: 0.5           # [rad²] AMCL var(yaw) 상한 (σ ≈ 40°)
     jump_thresh: 1.0              # [m] 연속 AMCL 갱신 사이 AMCL 상대 이동 − odom 상대 이동. 정상 보정은 수 cm
     jump_yaw_thresh: 0.5          # [rad]
-    match_thresh: 0.5             # 스캔-맵 인라이어 비율 하한. 정상 0.85~0.98 (동적 장애물 가림만큼 감소)
+    match_thresh: 0.5             # 스캔-맵 인라이어 비율 하한. 정상 0.85~0.98 (동적 장애물 가림만큼 감소).
+                                  # 비율은 "지도를 뚫고 간 빔" 만 불일치로 세므로 미지 장애물에는 떨어지지
+                                  # 않는다 (통합 시나리오 11: 통로를 막은 6 m 벽에서 거짓 LOST 가 났다)
     match_window: 5               # 연속 저하 판정 수 (match_rate 2 Hz → 2.5 s). 지나가는 작업자 가림 오경보 억제
-    min_match_beams: 30           # 유효 빔이 이보다 적으면 판정 보류 (빈 공간)
+    min_match_beams: 30           # 판정에 쓴 빔이 이보다 적으면 판정 보류 (빈 공간, 또는 미지 장애물이
+                                  # 시야를 거의 다 막은 경우 — scan_map_match.match_ratio 는 지도에 없는
+                                  # 물체에 막혀 일찍 끝난 빔을 분자·분모에서 뺀다)
     inlier_dist: 0.2              # [m] 인라이어 거리 (σ_lidar 0.03 + 맵 오차 + 보간 오차 여유)
     max_beams: 180                # 일치도 계산 빔 수 (AMCL 과 같게)
     occupied_thresh: 65           # OccupancyGrid 점유 판정 값 (map_server 0.65)

@@ -72,6 +72,30 @@ def test_match_ratio_true_vs_kidnapped_pose(room):
     assert (empty, n) == (0.0, 0)
 
 
+def test_match_ratio_explains_unmapped_obstacle_but_not_a_wrong_pose(room):
+    """회귀 (통합 시나리오 11): 통로를 가로막은 미지 장애물 앞에서 거짓 LOST 가 났다."""
+    grid, field = room
+    true_pose = (6.0, 6.0, 0.3)
+    offset = (0.15, 0.0, 0.0)
+    sensor = compose(true_pose, offset)
+    # 지도에 없는 6 × 0.5 m 벽을 로봇 앞 2 m 에 세운 "실제" 격자로 스캔을 만든다
+    blocked = grid.copy()
+    res = 0.05
+    c0, c1 = int((sensor[0] + 1.8) / res), int((sensor[0] + 2.3) / res)
+    r0, r1 = int((sensor[1] - 3.0) / res), int((sensor[1] + 3.0) / res)
+    blocked[r0:r1, c0:c1] = 100
+    ranges, amin, inc = raycast(blocked, res, sensor, noise=0.03, seed=3)
+    ratio, counted = match_ratio(field, true_pose, offset, ranges, amin, inc, 25.0)
+    assert ratio > 0.9, ratio            # 막힌 빔은 판정에서 빠진다
+    assert counted > 80                  # 남은 빔으로도 충분히 판정한다
+    naive, n_all = match_ratio(
+        field, true_pose, offset, ranges, amin, inc, 25.0, explain_unmapped=False)
+    assert naive < ratio and n_all > counted        # 이전 방식은 같은 스캔에서 더 낮다
+    # 같은 스캔이라도 자세가 틀리면 벽을 뚫는 빔이 생겨 여전히 낮다
+    wrong, _ = match_ratio(field, (14.0, 5.0, 2.0), offset, ranges, amin, inc, 25.0)
+    assert wrong < 0.5, wrong
+
+
 def test_global_seed_finds_true_pose(room):
     grid, field = room
     true_pose = (10.3, 5.2, -2.1)

@@ -276,6 +276,11 @@ $$v_\max(D) = -at + \sqrt{(at)^2 + 2a(D - 0.30)}$$
 안에서 로봇을 세웠다 (navigation 통합 시험 0/3 → 수정 뒤 10/10, costmap.md §6.2). Nav2 BT 의 `IsTTCBelowThreshold
 only_dynamic="true"` 와 같은 규칙이다.
 
+**정지 해제와 원인 센서**: STOP 은 원인이 된 센서가 다시 "치웠다" 고 보여 줄 때만 푼다. 깊이 점군이 끊기면 그 채널 거리는
++inf 라 합친 거리로는 장애물이 사라진 것처럼 보이는데, 실제로는 평면 아래 물체가 그대로 있다 — 이전 판은 그 사이 STOP 을
+풀고(그리고 탈출 판정도 LiDAR 빔만 보므로 통과시켜) 다시 움직였다 (통합 시나리오 09 실측). 지금은 깊이가 원인인 STOP 은
+점군이 돌아와 `stop_release_distance` 밖을 보여 줄 때까지 유지하고, 그동안은 탈출도 막는다.
+
 ### 6.6 도킹 예외 다각형 (계약 C2)
 
 `safety/dock_exclusion` (PolygonStamped, TF 로 풀리는 아무 프레임 — 예: map; docking_server_node 가 도킹 중 ≥ 10 Hz). 수신하면

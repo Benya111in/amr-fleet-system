@@ -72,6 +72,10 @@
     perception_timeout_ms: 5000     # 인식 대기 (sequences.md: timeout 5 s)
     relocalization_timeout_ms: 30000  # 위치 상실 시 재위치추정 대기 → 넘으면 주행 시도 실패 (복구 회전)
     charge_timeout_ms: 3600000      # 충전 상한 1 h
+    task_timeout_ms: 900000         # 작업 하나의 상한 15 분 — 넘으면 task_timeout 으로 실패 보고 후 복귀.
+                                    # 통합 시나리오 11 실측: 위치 상실로 Nav2 가 취소되면 실행기가 MOVING 에
+                                    # 1340 s 동안 머물러 작업이 끝나지도 실패하지도 않았다 (플릿은 로봇을 계속
+                                    # 점유로 본다). 정상 작업은 sim 290 s·복구 포함 400 s 대
     charge_retry_delay_ms: 10000    # 충전 실패 후 재시도 간격
     error_hold_ms: 1500             # 실패 보고 뒤 ERROR 유지 — fleet_adapter 2 Hz 샘플(0.5 s) + 지연 100 ms 보다 길게
 
@@ -162,7 +166,10 @@
     backup_speed: 0.1               # [m/s]
     max_overshoot: 0.05             # [m]
     filter_coef: 1.0                # 관측 저역통과 (1 = 끔, 0.1 = opennav_docking 기본)
-    marker_id_max_age: 0.2          # [s] perception/dock_marker_id 가 이보다 오래되면 id 확인 생략
+    marker_id_max_age: 0.5          # [s] perception/dock_marker_id 가 이보다 오래되면 id 확인을 생략하고
+                                    # 자세만 쓴다 (경고 로그). 이전 판은 오래된 id 를 "다른 마커" 로 보고 관측을
+                                    # 전부 버려, 검출기 부하로 id 가 잠깐 늦은 시도에서 도킹이 통째로 실패했다
+                                    # (통합 시나리오 10, 10 회 중 1 회 3 시도 소진 → GT 11 cm / 30°)
 
 # ---------------------------------------------------------------- 시뮬레이션 배터리 (amr_behavior/battery_model.py)
 # Gazebo 로봇에는 배터리가 없다 → battery_state 를 이 모델이 낸다 (실기에서는 BMS 드라이버, start_battery_model:=false).

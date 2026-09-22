@@ -201,6 +201,7 @@ void TaskExecutorNode::declareAndLoadParameters()
   c.perception_timeout_ms = ms("perception_timeout_ms", c.perception_timeout_ms);
   c.relocalization_timeout_ms = ms("relocalization_timeout_ms", c.relocalization_timeout_ms);
   c.charge_timeout_ms = ms("charge_timeout_ms", c.charge_timeout_ms);
+  c.task_timeout_ms = ms("task_timeout_ms", c.task_timeout_ms);
   c.charge_retry_delay_ms = ms("charge_retry_delay_ms", c.charge_retry_delay_ms);
   c.error_hold_ms = ms("error_hold_ms", c.error_hold_ms);
   c.perception_class = declare_parameter<std::string>("perception_class", c.perception_class);

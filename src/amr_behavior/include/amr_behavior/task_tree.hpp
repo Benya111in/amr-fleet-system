@@ -29,6 +29,7 @@ struct TaskTreeConfig
   unsigned perception_timeout_ms{5000};
   unsigned relocalization_timeout_ms{30000};
   unsigned charge_timeout_ms{3600000};
+  unsigned task_timeout_ms{900000};        ///< 작업 하나의 상한 (넘으면 실패 처리)
   unsigned charge_retry_delay_ms{10000};
   /// 실패 보고 뒤 ERROR 유지 [ms]: fleet_adapter 가 2 Hz 로 샘플해도 RobotState ERROR 가 보이게
   unsigned error_hold_ms{1500};

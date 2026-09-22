@@ -441,6 +441,24 @@ TEST_F(DockingServerTest, IgnoresTheNeighbourDocksMarker)
   EXPECT_LE(sim_->positionError(), 0.02);
 }
 
+TEST_F(DockingServerTest, StaleMarkerIdSkipsTheIdCheckInsteadOfDroppingObservations)
+{
+  // 회귀 (통합 시나리오 10): id 가 marker_id_max_age 보다 오래되면 "다른 마커" 로 보고
+  // 관측을 전부 버려 도킹이 3 시도를 소진했다. 오래된 id 는 확인만 생략하고 자세는 쓴다.
+  start(
+    -0.35, 0.0, 0.0, {rclcpp::Parameter("docks.dock_1.marker_id", 0),
+      rclcpp::Parameter("marker_id_max_age", 0.2)});
+  sim_->marker_id = 0;
+  std::this_thread::sleep_for(300ms);
+  auto handle = send(1);
+  ASSERT_TRUE(handle);
+  std::this_thread::sleep_for(400ms);
+  sim_->marker_id = -1;   // 검출기가 id 발행을 멈춘다 (자세는 계속 온다)
+  const auto res = result(handle, 60s);
+  EXPECT_EQ(res.code, rclcpp_action::ResultCode::SUCCEEDED);
+  EXPECT_LE(sim_->positionError(), 0.02);
+}
+
 TEST_F(DockingServerTest, CanceledGoalIsPreemptedByTheNextGoal)
 {
   // BT 가 hold 로 Dock 을 halt(취소)한 직후 다시 보낸 goal 은 거절되지 않아야 한다

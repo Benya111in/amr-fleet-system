@@ -201,12 +201,35 @@ TEST_F(TaskTreeTest, SubtreesAreDefinedAndFlattenedTreeLoads)
   EXPECT_NO_THROW(factory_.createTreeFromText(flat, bb));
   EXPECT_NE(
     amr_behavior::treeNodesModelXml(factory_).find("ID=\"IsTaskAssigned\""), std::string::npos);
-  EXPECT_EQ(amr_behavior::globalKeys().size(), 30U);
+  EXPECT_EQ(amr_behavior::globalKeys().size(), 31U);   // + task_timeout_ms
   for (const auto & key : amr_behavior::globalKeys()) {
     EXPECT_NE(tree_->rootBlackboard()->getAny(key), nullptr) << key;
   }
   // 리터럴 서브트리 인자(phase)는 부모로 새지 않는다 (__autoremap 이 마지막 속성)
   EXPECT_EQ(tree_->rootBlackboard()->getAny("phase"), nullptr);
+}
+
+TEST_F(TaskTreeTest, TaskDeadlineFailsTheTaskInsteadOfHangingForever)
+{
+  // 회귀 (통합 시나리오 11): 위치 상실로 Nav2 가 취소되자 실행기가 MOVING 에 1340 s 머물러
+  // 작업이 끝나지도 실패하지도 않았다. 상한을 넘으면 task_timeout 으로 실패 보고 후 복귀한다.
+  config_.task_timeout_ms = 2000;                 // tick 0.1 s → 20 tick
+  tree_ = std::make_unique<BT::Tree>(amr_behavior::createTaskTree(factory_, kMainXml, config_));
+  stub("NavigateToPose").running_ticks = 100000;  // 끝나지 않는 주행
+  tick();
+  assign();
+  ASSERT_TRUE(
+    runUntil(
+      [this]() {
+        return !statuses_.empty() && statuses_.back() == Task::STATUS_FAILED;
+      }));
+  EXPECT_EQ(ctx_->lastFailureReason(), "task_timeout");
+  EXPECT_GE(stub("NavigateToPose").halts, 1);     // 주행을 실제로 멈췄다
+  stub("NavigateToPose").running_ticks = 1;       // 복귀 주행은 정상
+  ASSERT_TRUE(runUntil([this]() {return finishedTask();}));
+  const auto err = std::find(phases_.begin(), phases_.end(), "ERROR");
+  ASSERT_NE(err, phases_.end());
+  EXPECT_EQ(phases_.back(), "IDLE");
 }
 
 TEST_F(TaskTreeTest, NominalScenarioPhaseSequence)
