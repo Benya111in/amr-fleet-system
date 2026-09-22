@@ -3,13 +3,19 @@ dashboard_node: Flask + SSE 웹 모니터링 대시보드 (components.md §5.7, 
 
 구독  /fleet/status (amr_msgs/FleetStatus) · /fleet/alerts (diagnostic_msgs/DiagnosticArray)
       /fleet/task_events (amr_msgs/Task) · /map (nav_msgs/OccupancyGrid, transient_local)
-발행  /fleet/task_request (std_msgs/String, JSON Task Description)
+발행  /fleet/task_request (std_msgs/String, JSON Task Description) — 구독자가 없으면 보내지 않고 503
       /fleet/estop, /<robot_id>/estop (std_msgs/Bool, transient_local "latched")
-HTTP  :8080 — 경로 목록은 web_app 모듈 docstring 참고.
+서비스 클라이언트  /<robot_id>/safety/reset_estop (std_srvs/Trigger) — E-stop 해제 때
+HTTP  :8080 — 경로 목록·보안 규칙은 web_app / security 모듈 docstring 참고.
+
+E-stop 해제 순서: false 발행 → 구독자 확인 응답(ack)을 reset_ack_timeout 까지 기다림 → reset_estop 호출.
+reset_estop 응답(성공/거부/서버 없음/무응답)은 EstopOutcome 에 모여 HTTP 응답과 표시 상태가 된다 —
+리셋이 확인되지 않은 로봇은 계속 정지로 표시한다 (require_reset_ack, estop 모듈).
 
 스레드 모델: rclpy 실행기는 백그라운드 스레드에서 돌고, Flask 는 메인 스레드의 werkzeug 스레드
 서버가 서비스한다. 둘은 StateStore(스레드 안전)로만 만난다. eventlet/flask-socketio 는 rclpy 를
-막으므로 쓰지 않는다.
+막으므로 쓰지 않는다. 실행기 스레드는 spin_guarded 로 돈다 — 콜백 예외 하나에 스핀이 끝나 HTTP 만 살아
+있는 "멈춘 대시보드" 가 되지 않게 예외를 기록하고 계속 돈다.
 실행기는 기본 SingleThreadedExecutor (executor_threads: 1): 콜백이 모두 짧아(변환 + 큐 넣기) 병렬이
 필요 없고, 측정에서 rclpy MultiThreadedExecutor 는 발행 → SSE 지연을 4~5배(평균 ~21 → ~100 ms),
 CPU 를 8배 늘렸다. executor_threads >= 2 로 MultiThreadedExecutor 를 고를 수 있다.
@@ -24,8 +30,11 @@ from ament_index_python.packages import get_package_share_directory
 from amr_msgs.msg import FleetStatus, Task
 from diagnostic_msgs.msg import DiagnosticArray
 from nav_msgs.msg import OccupancyGrid
+from rcl_interfaces.msg import ParameterDescriptor
 import rclpy
-from rclpy.executors import MultiThreadedExecutor, SingleThreadedExecutor
+from rclpy.duration import Duration
+from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor, \
+    ShutdownException, SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.signals import SignalHandlerOptions
@@ -33,11 +42,22 @@ from std_msgs.msg import Bool, String
 from std_srvs.srv import Trigger
 from werkzeug.serving import make_server
 
+from amr_dashboard import estop as es
+from amr_dashboard import security
 from amr_dashboard.action_log import ActionLog, default_log_dir
-from amr_dashboard.state_store import DEFAULT_WORLD, StateStore
+from amr_dashboard.state_store import DEFAULT_WORLD, StateStore, valid_robot_id
 from amr_dashboard.web_app import create_app
 
 DEFAULT_ROBOT_IDS = ['amr_01', 'amr_02', 'amr_03', 'amr_04', 'amr_05']
+
+
+def parse_robot_ids(value) -> list:
+    """robot_ids: 문자열 배열 또는 쉼표 구분 문자열("amr_01,amr_02") — fleet_manager 와 같은 두 형식."""
+    if isinstance(value, str):
+        items = value.split(',')
+    else:
+        items = list(value or [])
+    return [str(v).strip() for v in items if str(v).strip()]
 
 
 def qos_reliable(depth=10, transient_local=False) -> QoSProfile:
@@ -62,7 +82,13 @@ class DashboardNode(Node):
         self.declare_parameter('log_dir', '')
         self.declare_parameter('heartbeat_period', 5.0)
         self.declare_parameter('executor_threads', 1)
-        self.declare_parameter('robot_ids', DEFAULT_ROBOT_IDS)
+        self.declare_parameter('robot_ids', DEFAULT_ROBOT_IDS,
+                               ParameterDescriptor(dynamic_typing=True))
+        self.declare_parameter('allowed_hosts', [''])       # Host 허용 추가분 ('*' 는 검사 끔)
+        self.declare_parameter('api_token', '')             # '' → $AMR_DASHBOARD_TOKEN → 없음
+        self.declare_parameter('require_reset_ack', True)   # 리셋 서버가 없으면 해제 실패로
+        self.declare_parameter('reset_timeout', 2.0)        # [s] reset_estop 응답 대기
+        self.declare_parameter('reset_ack_timeout', 0.2)    # [s] false 발행 ack 대기 (리셋 전)
         self.declare_parameter('task_events_transient_local', False)
         self.declare_parameter('max_alerts', 100)
         self.declare_parameter('max_task_events', 50)
@@ -77,7 +103,10 @@ class DashboardNode(Node):
         for key, value in DEFAULT_WORLD.items():
             self.declare_parameter(f'world.{key}', value)
 
-        self.robot_ids = list(self.get_parameter('robot_ids').value)
+        ids = parse_robot_ids(self.get_parameter('robot_ids').value)
+        self.robot_ids = [r for r in ids if valid_robot_id(r)]
+        for bad in sorted(set(ids) - set(self.robot_ids)):
+            self.get_logger().error(f'robot_ids 의 "{bad}" 는 토픽 이름으로 쓸 수 없어 뺀다')
         world = {key: self.get_parameter(f'world.{key}').value for key in DEFAULT_WORLD}
         self.store = store if store is not None else StateStore(
             max_alerts=self.get_parameter('max_alerts').value,
@@ -156,35 +185,85 @@ class DashboardNode(Node):
 
     # ----- HTTP 조작 → ROS (Flask 스레드) -----
 
-    def publish_task_request(self, json_str: str, task: dict) -> None:
-        """/fleet/task_request 에 JSON Task Description 을 발행한다."""
+    @property
+    def allowed_hosts(self) -> list:
+        """HTTP Host 허용 목록: 루프백 + host 파라미터(특정 주소면) + allowed_hosts 파라미터."""
+        extra = [h for h in self.get_parameter('allowed_hosts').value if h]
+        return security.allowed_hosts(self.get_parameter('host').value, extra)
+
+    @property
+    def api_token(self) -> str:
+        return security.resolve_token(self.get_parameter('api_token').value, os.environ)
+
+    def publish_task_request(self, json_str: str, task: dict) -> int:
+        """
+        /fleet/task_request 에 JSON Task Description 을 발행하고 구독자 수를 돌려준다.
+
+        구독자가 0 이면(fleet_manager 미기동·미발견) 발행하지 않고 0 — 휘발성 토픽이라 그대로 유실되기
+        때문이다. web_app 이 503 으로 알린다.
+        """
+        count = self._task_pub.get_subscription_count()
+        if count == 0:
+            self.get_logger().warn(
+                f'작업 {task["task_id"]} 거부: {self._topic("task_request")} 구독자 없음 (fleet_manager?)')
+            return 0
         self._task_pub.publish(String(data=json_str))
         self.get_logger().info(
-            f'작업 투입 {task["task_id"]} (priority={task["priority"]}, item={task["item_type"]})')
+            f'작업 투입 {task["task_id"]} (priority={task["priority"]}, item={task["item_type"]}, '
+            f'구독자 {count})')
+        return count
 
-    def publish_estop(self, target: str, active: bool) -> None:
+    def publish_estop(self, target: str, active: bool) -> es.EstopOutcome:
         """
         E-stop 발행. target 'all' → /fleet/estop, 아니면 /<robot_id>/estop (둘 다 latched).
 
         전체 해제는 로봇별 토픽에도 false 를 발행한다: 래치된 /<robot_id>/estop=true 가 남아
         있으면 safety_node 가 계속 정지하기 때문이다 (StateStore.set_estop 의 표시 규칙과 같다).
-        해제(active=False)는 값 발행에 더해 safety/reset_estop(Trigger) 를 호출한다:
-        safety_node 의 대시보드 E-stop 래치는 서비스로만 풀리기 때문이다 (sequences.md).
+        해제(active=False)는 false 발행 → ack 대기(reset_ack_timeout) → safety/reset_estop(Trigger)
+        비동기 호출 순서다: safety_node 의 대시보드 E-stop 래치는 서비스로만 풀리고(sequences.md),
+        false 보다 리셋이 먼저 닿으면 거절될 수 있기 때문이다. 로봇 하나의 실패(토픽 이름 불가 등)는
+        그 로봇만 publish_failed 로 남기고 나머지는 계속한다. 리셋 응답은 결과 객체에 비동기로 채워진다.
         """
+        outcome = es.EstopOutcome(target, active, self.get_parameter('require_reset_ack').value)
         msg = Bool(data=bool(active))
+        pubs = []
         if target == 'all':
             self._fleet_estop_pub.publish(msg)
-            targets = self.store.known_robot_ids()
-            if not active:
-                for rid in targets:
-                    self._estop_publisher(rid).publish(msg)
+            outcome.add_published(self._topic('fleet_estop'))
+            pubs.append(self._fleet_estop_pub)
+            targets = self.store.known_robot_ids() if not active else []
         else:
-            self._estop_publisher(target).publish(msg)
             targets = [target]
+        released = []
+        for rid in targets:
+            try:
+                pub = self._estop_publisher(rid)
+                pub.publish(msg)
+            except Exception as exc:  # noqa: B902 — 잘못된 id 하나로 나머지 로봇을 멈추지 않는다
+                outcome.fail_publish(rid, f'{type(exc).__name__}: {exc}')
+                self.get_logger().error(f'{rid}: E-stop 발행 실패: {exc}')
+                continue
+            outcome.add_published(self.robot_topic(rid, self._topic('robot_estop')))
+            pubs.append(pub)
+            released.append(rid)
         self.get_logger().warn(f'E-stop {"활성" if active else "해제"} → {target}')
         if not active:
-            for rid in targets:
-                self._call_reset_estop(rid)
+            self._wait_acked(pubs)
+            for rid in released:
+                self._call_reset_estop(rid, outcome)
+        return outcome
+
+    def _wait_acked(self, pubs) -> None:
+        """E-stop 값을 reliable 구독자가 받았다는 확인(ack)을 짧게 기다린다 (리셋보다 값이 먼저 닿게)."""
+        timeout = float(self.get_parameter('reset_ack_timeout').value)
+        if timeout <= 0.0:
+            return
+        deadline = Duration(seconds=timeout)
+        for pub in pubs:
+            try:
+                pub.wait_for_all_acked(deadline)
+            except Exception as exc:  # noqa: B902 — ack 대기 실패는 순서 보장만 약해진다
+                self.get_logger().debug(f'wait_for_all_acked 실패: {exc}')
 
     def _estop_publisher(self, robot_id: str):
         with self._entity_lock:
@@ -207,25 +286,62 @@ class DashboardNode(Node):
                 self._reset_clients[robot_id] = client
             return client
 
-    def _call_reset_estop(self, robot_id: str) -> bool:
-        """safety/reset_estop 를 비동기로 호출한다 (서버가 없으면 건너뛴다)."""
-        client = self._reset_client(robot_id)
-        if client is None or not client.service_is_ready():
-            self.get_logger().info(f'{robot_id}: reset_estop 서비스 없음 — 값 발행만 한다')
-            return False
+    def _call_reset_estop(self, robot_id: str, outcome: es.EstopOutcome = None) -> str:
+        """safety/reset_estop 를 비동기로 호출하고 결과를 outcome 에 채운다. 돌려주는 값은 즉시 상태."""
+        outcome = outcome if outcome is not None else es.EstopOutcome(robot_id, False)
+        try:
+            client = self._reset_client(robot_id)
+        except Exception as exc:  # noqa: B902 — 서비스 이름 불가 등
+            outcome.set_reset(robot_id, es.ERROR, str(exc))
+            return es.ERROR
+        if client is None:
+            outcome.set_reset(robot_id, es.NOT_CONFIGURED)
+            return es.NOT_CONFIGURED
+        if not client.service_is_ready():
+            self.get_logger().warn(
+                f'{robot_id}: reset_estop 서비스 없음 — false 만 발행했고 safety_node 래치는 그대로다')
+            outcome.set_reset(robot_id, es.NO_SERVER, 'service not available')
+            return es.NO_SERVER
+        outcome.set_reset(robot_id, es.PENDING)
         future = client.call_async(Trigger.Request())
         future.add_done_callback(
-            lambda f, rid=robot_id: self._on_reset_done(rid, f))
-        return True
+            lambda f, rid=robot_id: self._on_reset_done(rid, f, outcome))
+        return es.PENDING
 
-    def _on_reset_done(self, robot_id: str, future) -> None:
+    def _on_reset_done(self, robot_id: str, future, outcome: es.EstopOutcome = None) -> None:
         try:
-            result = future.result()
-        except Exception as exc:  # 서비스 실패는 로그만 남긴다
+            status, message = es.reset_status_from_result(future.result())
+        except Exception as exc:  # noqa: B902 — 서비스 실패는 결과로 남긴다
+            status, message = es.reset_status_from_result(None, exc)
             self.get_logger().error(f'{robot_id}: reset_estop 실패: {exc}')
-            return
-        level = self.get_logger().info if result.success else self.get_logger().warn
-        level(f'{robot_id}: reset_estop → success={result.success} {result.message}')
+        else:
+            # rclpy 로거는 호출 위치마다 심각도가 고정이다 — 한 줄에서 info/warn 을 번갈아 부르면 ValueError 로
+            # 실행기 스레드가 죽는다 (기능 실행에서 재현). 심각도마다 호출 위치를 나눈다.
+            if status == es.OK:
+                self.get_logger().info(f'{robot_id}: reset_estop → {status} {message}')
+            else:
+                self.get_logger().warn(f'{robot_id}: reset_estop → {status} {message}')
+        if outcome is not None:
+            outcome.set_reset(robot_id, status, message)
+
+
+def spin_guarded(executor, logger, running) -> int:
+    """
+    실행기를 running() 이 참인 동안 spin_once 로 돌린다. 콜백 예외는 기록하고 계속 돈다 → 잡은 예외 수.
+
+    executor.spin() 은 콜백 예외 하나에 스핀 스레드째 끝나고, 그 뒤로는 HTTP 만 살아 상태가 멈춘
+    대시보드가 된다 (구독·reset_estop 응답이 끊겨 해제가 모두 timeout). 그래서 예외를 격리한다.
+    """
+    errors = 0
+    while running():
+        try:
+            executor.spin_once(timeout_sec=0.2)
+        except (ExternalShutdownException, ShutdownException):
+            break
+        except Exception as exc:  # noqa: B902 — 콜백 하나의 오류로 대시보드 전체를 멈추지 않는다
+            errors += 1
+            logger.error(f'콜백 예외 (실행기는 계속 돈다): {type(exc).__name__}: {exc}')
+    return errors
 
 
 def main(args=None) -> int:
@@ -237,7 +353,8 @@ def main(args=None) -> int:
         node.store, web_dir=node.web_dir,
         on_task_request=node.publish_task_request, on_estop=node.publish_estop,
         heartbeat_period=node.get_parameter('heartbeat_period').value,
-        action_log=action_log)
+        action_log=action_log, allowed_hosts=node.allowed_hosts, api_token=node.api_token,
+        reset_timeout=float(node.get_parameter('reset_timeout').value))
     logging.getLogger('werkzeug').setLevel(logging.WARNING)
 
     # 포트 바인드를 실행기 스레드보다 먼저: 실패하면(werkzeug 는 sys.exit(1)) 스핀 스레드가 살아 있는
@@ -260,7 +377,11 @@ def main(args=None) -> int:
     executor = (SingleThreadedExecutor() if threads <= 1
                 else MultiThreadedExecutor(num_threads=threads))
     executor.add_node(node)
-    spin_thread = threading.Thread(target=executor.spin, name='rclpy-spin', daemon=True)
+    stop = threading.Event()
+    spin_thread = threading.Thread(
+        target=spin_guarded, args=(executor, node.get_logger(),
+                                   lambda: rclpy.ok() and not stop.is_set()),
+        name='rclpy-spin', daemon=True)
     spin_thread.start()
 
     def request_shutdown(signum, frame):
@@ -271,12 +392,14 @@ def main(args=None) -> int:
     signal.signal(signal.SIGTERM, request_shutdown)
 
     node.get_logger().info(
-        f'대시보드 http://{host}:{port}/ (web={node.web_dir}, logs={node.log_dir})')
+        f'대시보드 http://{host}:{port}/ (web={node.web_dir}, logs={node.log_dir}, '
+        f'Host 허용 {node.allowed_hosts}, 조작 토큰 {"있음" if node.api_token else "없음"})')
     try:
         server.serve_forever()
     finally:
-        executor.shutdown(timeout_sec=2.0)
+        stop.set()
         spin_thread.join(timeout=2.0)
+        executor.shutdown(timeout_sec=2.0)
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

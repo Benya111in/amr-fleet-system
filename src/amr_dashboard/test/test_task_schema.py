@@ -93,6 +93,8 @@ def test_deadline_iso_normalised_with_timezone():
     (full_payload(priority=True), 'priority'),
     (full_payload(priority='high'), 'priority'),
     (full_payload(deadline_sec=-5), 'deadline'),
+    (full_payload(deadline_sec=0), '0 보다 크고'),
+    (full_payload(deadline_sec=None, deadline=0.0), '0 보다 크고'),
     (full_payload(deadline_sec=1e9), 'deadline'),
     (full_payload(deadline_sec='soon'), 'deadline_sec 는 숫자'),
     (full_payload(deadline_sec=float('inf')), 'deadline'),

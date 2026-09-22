@@ -188,6 +188,7 @@ legend { color: var(--muted); font-size: 12px; padding: 0 4px; }
 .btn.danger.active { background: #7f1d1d; border-color: #fecaca; }
 .btn.release { background: #14532d; border-color: var(--ok); color: #bbf7d0; }
 .btn.big { font-size: 15px; padding: 10px 16px; }
+.btn[disabled] { opacity: 0.45; cursor: not-allowed; }
 
 .estop-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
 .estop-row { display: flex; gap: 6px; align-items: center; }

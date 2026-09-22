@@ -4,6 +4,7 @@ import json
 import math
 import queue
 import threading
+import time
 
 import fakes
 import pytest
@@ -195,9 +196,10 @@ def test_store_estop_and_task_request_events():
     store = ss.StateStore(robot_ids=['amr_01', 'amr_02'])
     q = store.subscribe()
     data = store.set_estop('amr_01', True)
-    assert data['estops'] == {'all': False, 'amr_01': True}
+    assert data['estops'] == {'all': False, 'amr_01': True} and 'detail' not in data
     store.set_estop('all', True)
     assert store.snapshot()['estops'] == {'all': True, 'amr_01': True}
+    assert store.estop_active('all') and not store.estop_active('amr_02')
     store.set_estop('all', False)
     assert store.snapshot()['estops'] == {'all': False, 'amr_01': False}
     task = {'task_id': 'T-x'}
@@ -205,6 +207,78 @@ def test_store_estop_and_task_request_events():
     assert store.snapshot()['last_task_request'] == task
     names = [q.get_nowait()[0] for _ in range(4)]
     assert names == ['estop', 'estop', 'estop', 'task_request']
+
+
+def test_store_estop_release_keeps_unconfirmed_robots_latched():
+    store = ss.StateStore(robot_ids=['amr_01', 'amr_02', 'amr_03'])
+    store.set_estop('amr_01', True)
+    store.set_estop('all', True)
+    detail = {'reset': {'amr_01': 'ok', 'amr_02': 'no_server', 'amr_03': 'rejected'}}
+    data = store.set_estop('all', False, still_latched=['amr_02', 'amr_03'], detail=detail)
+    # 전체 해제: /fleet/estop 은 풀리지만 리셋이 확인되지 않은 로봇은 계속 정지로 보인다
+    assert data['estops'] == {'all': False, 'amr_01': False, 'amr_02': True, 'amr_03': True}
+    assert data['detail'] == detail
+    data = store.set_estop('amr_02', False, still_latched=['amr_02'])
+    assert data['estops']['amr_02'] is True
+    data = store.set_estop('amr_02', False)
+    assert data['estops']['amr_02'] is False
+
+
+def test_store_rejects_robot_ids_that_are_not_topic_names():
+    store = ss.StateStore(robot_ids=['amr_01', 'bad-id', '1amr'])
+    robots = [fakes.fake_robot_state(rid) for rid in ('rv-bad', 'rv_10', '', 'a/b', 'amr_01')]
+    store.update_status(fakes.fake_fleet_status(robots=robots))
+    snap = store.snapshot()
+    assert store.known_robot_ids() == ['amr_01', 'rv_10'] == snap['robot_ids']
+    assert snap['invalid_robot_ids'] == ['a/b', 'rv-bad']
+    assert ss.valid_robot_id('AMR_1') and not ss.valid_robot_id(5) and not ss.valid_robot_id('')
+
+
+def test_snapshot_carries_seq_and_limits():
+    store = ss.StateStore(max_alerts=7, max_task_events=8, max_tasks=9)
+    assert store.snapshot()['seq'] == 0
+    store.add_alerts(fakes.fake_diag_array())
+    snap = store.snapshot()
+    assert snap['seq'] == 1
+    assert snap['limits'] == {'max_alerts': 7, 'max_task_events': 8, 'max_tasks': 9}
+
+
+def test_subscribe_with_snapshot_has_no_duplicates_or_gaps():
+    """리뷰 nit: 구독 → 스냅샷 사이에 들어온 알림이 두 번 보이면 안 된다 (동시 생산자로 경합 유도)."""
+    store = ss.StateStore(max_alerts=100_000, queue_size=100_000)
+    stop = threading.Event()
+    produced = []
+
+    def producer():
+        i = 0
+        while not stop.is_set() and i < 3000:
+            store.add_alerts(fakes.fake_diag_array(name=f'a{i}'))
+            produced.append(i)
+            i += 1
+
+    t = threading.Thread(target=producer)
+    t.start()
+    checks = 0
+    while t.is_alive() and checks < 50:
+        q, snap = store.subscribe_with_snapshot()
+        seen = [a['name'] for a in snap['alerts']]
+        last = snap['seq']
+        time.sleep(0.002)
+        while True:
+            try:
+                _, data, seq = q.get_nowait()
+            except queue.Empty:
+                break
+            assert seq == last + 1              # 빠짐 없이 이어진다
+            last = seq
+            seen += [a['name'] for a in data]
+        store.unsubscribe(q)
+        assert len(seen) == len(set(seen))     # 스냅샷과 큐에 같은 알림이 없다
+        assert seen == [f'a{i}' for i in range(len(seen))]
+        checks += 1
+    stop.set()
+    t.join()
+    assert checks > 0
 
 
 def test_broadcast_drops_oldest_for_slow_subscriber():

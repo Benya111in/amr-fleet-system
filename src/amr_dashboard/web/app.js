@@ -1,8 +1,12 @@
 /* amr_dashboard 단일 페이지 앱 (vanilla JS, 외부 의존 없음)
  *
- * 데이터 흐름: EventSource('/events') → snapshot(전체) → status / alerts / task_event / map_updated /
+ * 데이터 흐름: EventSource('/events') → snapshot(전체, id = seq) → status / alerts / task_event / map_updated /
  * estop / task_request / heartbeat 이벤트로 state 갱신 → 해당 영역만 다시 그린다.
- * 조작: POST /api/tasks (작업 투입), POST /api/estop (긴급 정지). 지도 이미지는 GET /api/map?format=png.
+ * 이벤트 id 는 서버 전역 순번: 스냅샷 seq 이하는 이미 반영된 것이라 버리고, 번호가 건너뛰면(느린 연결에서
+ * 서버 큐가 넘쳐 버려진 이벤트) GET /api/state 로 다시 맞춘다 — 그동안 온 이벤트는 모았다가 새 스냅샷보다
+ * 새것만 적용한다. 이력 한도(limits)는 서버 값을 따른다.
+ * 조작: POST /api/tasks (작업 투입), POST /api/estop (긴급 정지). 서버가 401 이면 조작 토큰을 물어
+ * sessionStorage 에 두고 X-Dashboard-Token 헤더로 보낸다. 지도 이미지는 GET /api/map?format=png.
  */
 'use strict';
 
@@ -18,6 +22,11 @@
   var LEVEL_LABELS = { OK: '정상', WARN: '경고', ERROR: '오류', STALE: '끊김', UNKNOWN: '?' };
   var BANNER_TTL_SEC = 60;
   var STALE_AFTER_SEC = 12;
+  var TASK_TTL_SEC = 600;          // 끝난(완료/실패) 작업은 이만큼 지나면 지도·목록에서 뺀다
+  var TOKEN_KEY = 'amr_dashboard_token';
+  var DEFAULT_LIMITS = { max_alerts: 100, max_task_events: 50, max_tasks: 200 };
+  // E-stop·배정 대상 robot_id: 토픽 이름 토큰 (서버 state_store.ROBOT_NAME_RE 와 같다)
+  var ROBOT_NAME_RE = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
 
   var state = {
     world: { origin_x: 0, origin_y: 0, width: 60, height: 40 },
@@ -28,6 +37,11 @@
     tasks: {},
     map: null,
     estops: { all: false },
+    estopDetail: null,
+    limits: DEFAULT_LIMITS,
+    lastSeq: 0,
+    resyncing: false,
+    pending: [],
     lastEventAt: 0,
     connected: false,
     dismissedAlertKey: null
@@ -79,15 +93,74 @@
 
   // ----- SSE -----
 
+  // 순번 검사: 'apply' = 적용, 'skip' = 이미 스냅샷에 있음(버림), 'gap' = 번호가 건너뜀(스냅샷을 다시 받는다).
+  function acceptSeq(id) {
+    if (isNaN(id)) { return 'apply'; }
+    if (id <= state.lastSeq) { return 'skip'; }
+    if (state.lastSeq && id > state.lastSeq + 1) { return 'gap'; }
+    state.lastSeq = id;
+    return 'apply';
+  }
+
+  // 재동기화 중 도착한 이벤트는 모아 두었다가, 받은 스냅샷(seq)보다 새것만 순서대로 적용한다
+  // (스냅샷을 요청한 뒤·응답 전에 생긴 이벤트가 사라지거나 두 번 들어가지 않게).
+  function replayPending() {
+    var pending = state.pending;
+    state.pending = [];
+    pending.sort(function (a, b) { return (a.id || 0) - (b.id || 0); });
+    pending.forEach(function (p) {
+      if (isNaN(p.id)) { p.fn(p.data); return; }
+      if (p.id > state.lastSeq) { state.lastSeq = p.id; p.fn(p.data); }
+    });
+  }
+
+  function resync() {
+    if (state.resyncing) { return; }
+    state.resyncing = true;
+    fetch('/api/state').then(function (r) { return r.json(); }).then(function (s) {
+      applySnapshot(s);
+      state.resyncing = false;
+      replayPending();
+    }).catch(function () {
+      // 스냅샷을 못 받으면 모은 이벤트라도 적용한다 (다음 건너뜀에서 다시 시도)
+      state.resyncing = false;
+      var pending = state.pending;
+      state.pending = [];
+      pending.forEach(function (p) {
+        if (!isNaN(p.id)) { state.lastSeq = Math.max(state.lastSeq, p.id); }
+        p.fn(p.data);
+      });
+    });
+  }
+
+  function on(es, name, fn) {
+    es.addEventListener(name, function (e) {
+      touch();
+      var item = { id: parseInt(e.lastEventId, 10), fn: fn, data: JSON.parse(e.data) };
+      if (state.resyncing) { state.pending.push(item); return; }
+      var verdict = acceptSeq(item.id);
+      if (verdict === 'gap') {
+        state.pending.push(item);
+        resync();
+      } else if (verdict === 'apply') {
+        fn(item.data);
+      }
+    });
+  }
+
   function connect() {
     var es = new EventSource('/events');
-    es.addEventListener('snapshot', function (e) { touch(); applySnapshot(JSON.parse(e.data)); });
-    es.addEventListener('status', function (e) { touch(); applyStatus(JSON.parse(e.data)); });
-    es.addEventListener('alerts', function (e) { touch(); applyAlerts(JSON.parse(e.data)); });
-    es.addEventListener('task_event', function (e) { touch(); applyTaskEvent(JSON.parse(e.data)); });
-    es.addEventListener('map_updated', function (e) { touch(); applyMapMeta(JSON.parse(e.data)); });
-    es.addEventListener('estop', function (e) { touch(); applyEstop(JSON.parse(e.data)); });
-    es.addEventListener('task_request', function (e) { touch(); });
+    es.addEventListener('snapshot', function (e) {
+      touch();
+      state.pending = [];              // 새 스트림: 이전 연결에서 모은 이벤트는 스냅샷에 들어 있다
+      applySnapshot(JSON.parse(e.data), true);
+    });
+    on(es, 'status', applyStatus);
+    on(es, 'alerts', applyAlerts);
+    on(es, 'task_event', applyTaskEvent);
+    on(es, 'map_updated', applyMapMeta);
+    on(es, 'estop', applyEstop);
+    on(es, 'task_request', function () {});
     es.addEventListener('heartbeat', function (e) {
       touch();
       $('server-time').textContent = fmtTime(JSON.parse(e.data).ts);
@@ -100,12 +173,17 @@
 
   // ----- 상태 적용 -----
 
-  function applySnapshot(s) {
+  // newStream: SSE 연결마다 오는 스냅샷 (서버가 다시 떴으면 순번이 처음부터라 그대로 받는다).
+  // resync(GET /api/state) 는 같은 스트림 안이므로 순번을 되돌리지 않는다.
+  function applySnapshot(s, newStream) {
     if (s.world) { state.world = s.world; }
+    if (typeof s.seq === 'number' && (newStream || s.seq >= state.lastSeq)) { state.lastSeq = s.seq; }
+    state.limits = s.limits || DEFAULT_LIMITS;
     state.robotIds = s.robot_ids || [];
     state.alerts = s.alerts || [];
     state.taskEvents = s.task_events || [];
     state.tasks = s.tasks || {};
+    pruneTasks();
     state.estops = s.estops || { all: false };
     $('server-time').textContent = fmtTime(s.server_time);
     if (s.map) { applyMapMeta(s.map); } else { renderMapMeta(); }
@@ -122,7 +200,8 @@
     state.status = status;
     var changed = false;
     (status.robots || []).forEach(function (r) {
-      if (r.robot_id && state.robotIds.indexOf(r.robot_id) < 0) {
+      // 토픽 이름으로 쓸 수 없는 id 는 표에만 보이고 E-stop 버튼·배정 목록에는 넣지 않는다 (서버가 400)
+      if (r.robot_id && ROBOT_NAME_RE.test(r.robot_id) && state.robotIds.indexOf(r.robot_id) < 0) {
         state.robotIds.push(r.robot_id);
         changed = true;
       }
@@ -134,16 +213,32 @@
   }
 
   function applyAlerts(alerts) {
-    state.alerts = state.alerts.concat(alerts).slice(-100);
+    state.alerts = state.alerts.concat(alerts).slice(-state.limits.max_alerts);
     renderAlerts();
   }
 
   function applyTaskEvent(ev) {
     state.taskEvents.push(ev);
-    if (state.taskEvents.length > 50) { state.taskEvents.shift(); }
+    while (state.taskEvents.length > state.limits.max_task_events) { state.taskEvents.shift(); }
+    delete state.tasks[ev.task_id];     // 삽입 순서 = 최근 순서 (서버 OrderedDict 와 같게)
     state.tasks[ev.task_id] = ev;
+    pruneTasks();
     renderTimeline();
     draw();
+  }
+
+  // 끝난 작업은 TASK_TTL_SEC 뒤 빼고, 전체는 서버 한도(max_tasks)로 자른다 (4 시간 연속 운용 대비)
+  function pruneTasks(nowSec) {
+    var now = nowSec === undefined ? Date.now() / 1000 : nowSec;
+    var ids = Object.keys(state.tasks);
+    ids.forEach(function (id) {
+      var t = state.tasks[id];
+      var done = t.status_name === 'COMPLETED' || t.status_name === 'FAILED';
+      if (done && now - (t.received_at || 0) > TASK_TTL_SEC) { delete state.tasks[id]; }
+    });
+    ids = Object.keys(state.tasks);
+    var extra = ids.length - state.limits.max_tasks;
+    for (var i = 0; i < extra; i++) { delete state.tasks[ids[i]]; }
   }
 
   function applyMapMeta(meta) {
@@ -159,11 +254,18 @@
     loadMapImage(meta);
   }
 
+  function latchedText(detail) {
+    var latched = (detail && detail.still_latched) || [];
+    return latched.length ? ' — 해제 안 됨(래치 유지): ' + latched.join(', ') : '';
+  }
+
   function applyEstop(data) {
     state.estops = data.estops || state.estops;
+    state.estopDetail = data.detail || null;
     renderEstops();
+    var latched = latchedText(data.detail);
     $('estop-result').textContent = fmtTime(data.ts) + ' ' + data.target + ' → '
-      + (data.active ? '긴급 정지 활성' : '해제');
+      + (data.active ? '긴급 정지 활성' : (latched ? '해제 요청' : '해제')) + latched;
   }
 
   // ----- 지도 -----
@@ -418,13 +520,42 @@
     sel.value = current;
   }
 
-  function postJson(url, body) {
+  function storedToken() {
+    try { return window.sessionStorage.getItem(TOKEN_KEY) || ''; } catch (err) { return ''; }
+  }
+
+  function storeToken(token) {
+    try { window.sessionStorage.setItem(TOKEN_KEY, token); } catch (err) { /* 저장 불가: 이번만 */ }
+  }
+
+  function readJson(resp) {
+    // 서버 오류 페이지(HTML) 도 {errors} 형태로 돌려준다 — resp.json() 예외로 UI 가 멈추지 않게
+    return resp.text().then(function (text) {
+      var data;
+      try { data = JSON.parse(text); } catch (err) {
+        data = { ok: false, errors: ['HTTP ' + resp.status + ' (JSON 아님)'] };
+      }
+      return { status: resp.status, data: data };
+    });
+  }
+
+  function postJson(url, body, retried) {
+    var headers = { 'Content-Type': 'application/json' };
+    var token = storedToken();
+    if (token) { headers['X-Dashboard-Token'] = token; }
     return fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: headers,
       body: JSON.stringify(body)
-    }).then(function (resp) {
-      return resp.json().then(function (data) { return { status: resp.status, data: data }; });
+    }).then(readJson).then(function (r) {
+      if (r.status === 401 && !retried) {
+        var entered = window.prompt('조작 토큰 (X-Dashboard-Token) 을 입력한다', '');
+        if (entered) {
+          storeToken(entered.trim());
+          return postJson(url, body, true);
+        }
+      }
+      return r;
     });
   }
 
@@ -432,11 +563,13 @@
     e.preventDefault();
     var f = e.target;
     // 서버가 /fleet/task_request 와이어 형식(pickup/dropoff, deadline = 지금부터 초)으로 정규화한다
+    // 마감은 선택: 비우면 키를 빼서 "마감 없음" 으로 보낸다 (0 이하는 서버가 거부한다)
+    var deadline = String(f.deadline_sec.value || '').trim();
     var body = {
       task_id: f.task_id.value.trim() || undefined,
       robot_id: f.robot_id.value || undefined,
       priority: parseInt(f.priority.value, 10),
-      deadline_sec: parseFloat(f.deadline_sec.value),
+      deadline_sec: deadline === '' ? undefined : parseFloat(deadline),
       pickup: { x: parseFloat(f.pickup_x.value), y: parseFloat(f.pickup_y.value), yaw: parseFloat(f.pickup_yaw.value) },
       dropoff: { x: parseFloat(f.dropoff_x.value), y: parseFloat(f.dropoff_y.value), yaw: parseFloat(f.dropoff_yaw.value) },
       item_type: f.item_type.value
@@ -465,8 +598,11 @@
     var active = !!state.estops[target];
     var cls = active ? 'btn release' : 'btn danger' + (target === 'all' ? ' big' : '');
     var text = active ? label + ' 해제' : label + ' 정지';
+    // 전체 E-stop 중에는 로봇별 해제를 막는다 (서버도 409) — 전체를 먼저 푼다
+    var blocked = active && target !== 'all' && !!state.estops.all;
     return '<button type="button" class="' + cls + '" data-target="' + esc(target) + '" data-active="'
-      + (active ? '0' : '1') + '">' + esc(text) + '</button>';
+      + (active ? '0' : '1') + '"' + (blocked ? ' disabled title="전체 E-stop 해제 후 가능"' : '')
+      + '>' + esc(text) + '</button>';
   }
 
   function renderEstops() {
@@ -479,7 +615,7 @@
 
   $('estop-buttons').addEventListener('click', function (e) {
     var btn = e.target.closest('button[data-target]');
-    if (!btn) { return; }
+    if (!btn || btn.disabled) { return; }
     var target = btn.getAttribute('data-target');
     var active = btn.getAttribute('data-active') === '1';
     var name = target === 'all' ? '전체 로봇' : target;
@@ -490,12 +626,16 @@
     var out = $('estop-result');
     out.textContent = '전송 중…';
     postJson('/api/estop', { robot_id: target, active: active }).then(function (r) {
-      if (r.data.ok) {
-        state.estops = r.data.estops || state.estops;
+      // 502(리셋 실패)·409(밀림) 도 서버의 실제 표시 상태(estops)를 싣는다 — 그대로 반영한다
+      if (r.data.estops) {
+        state.estops = r.data.estops;
         renderEstops();
-        out.textContent = name + ' → ' + (active ? '긴급 정지 활성' : '해제 요청됨');
+      }
+      if (r.data.ok) {
+        out.textContent = name + ' → ' + (active ? '긴급 정지 활성' : '해제됨 (reset_estop 확인)');
       } else {
-        out.textContent = '거부 (' + r.status + '): ' + (r.data.errors || []).join(', ');
+        out.textContent = (r.status === 502 ? '해제 실패' : '거부') + ' (' + r.status + '): '
+          + (r.data.errors || []).join(', ');
       }
     }).catch(function (err) { out.textContent = '요청 실패: ' + err; });
   });
@@ -506,4 +646,7 @@
   resizeCanvas();
   draw();
   connect();
+
+  // 헤드리스 검사용 훅 (브라우저 동작에는 영향 없음)
+  window.__amrDashboard = { state: state, esc: esc, pruneTasks: pruneTasks, acceptSeq: acceptSeq };
 })();

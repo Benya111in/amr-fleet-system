@@ -7,11 +7,16 @@ SSE 구독자 큐에 이벤트를 배포한다. 메시지 변환은 속성 접�
 
 rclpy 실행기 스레드가 갱신하고 Flask 요청 스레드가 조회한다. 배포(broadcast)는 절대 막히지 않는다:
 느린 구독자의 큐가 가득 차면 가장 오래된 항목을 버린다.
+
+순서 보장: 상태 변경 · 이벤트 번호(seq) 부여 · 구독자 큐 넣기를 한 잠금 구간에서 한다. 그래서
+subscribe_with_snapshot() 이 돌려준 스냅샷(seq = S)에 반영된 이벤트는 그 큐에 들어가지 않고(중복 없음),
+S 뒤의 이벤트는 모두 들어간다(유실 없음; 큐가 넘쳐 버린 경우만 번호가 건너뛴다 → 클라이언트가 다시 받는다).
 """
 
 import collections
 import math
 import queue
+import re
 import threading
 import time
 
@@ -46,6 +51,14 @@ ALERT_LEVEL_NAMES = {
 
 # 지도가 없을 때 캔버스가 그릴 기본 월드 (명세 4.1: 물류센터 60 m x 40 m)
 DEFAULT_WORLD = {'origin_x': 0.0, 'origin_y': 0.0, 'width': 60.0, 'height': 40.0}
+
+# E-stop 대상으로 받아들이는 robot_id: ROS 이름 토큰 (/<robot_id>/estop 토픽을 만들 수 있어야 한다)
+ROBOT_NAME_RE = re.compile(r'^[A-Za-z][A-Za-z0-9_]{0,63}$')
+
+
+def valid_robot_id(robot_id) -> bool:
+    """토픽 이름 토큰으로 쓸 수 있는 robot_id 인가 (빈 문자열·'-'·숫자 시작·'/' 포함 등은 거부)."""
+    return isinstance(robot_id, str) and bool(ROBOT_NAME_RE.match(robot_id))
 
 
 def finite(value, default=None):
@@ -197,8 +210,11 @@ class StateStore:
         self._estops = {'all': False}
         self._last_task_request = None
         self._world = dict(DEFAULT_WORLD if world is None else world)
-        self._configured_robots = list(robot_ids)
+        self._configured_robots = [r for r in robot_ids if valid_robot_id(r)]
         self._seen_robots = []
+        self._invalid_robots = set()
+        self._limits = {'max_alerts': max_alerts, 'max_task_events': max_task_events,
+                        'max_tasks': max_tasks}
         self._queue_size = queue_size
         self._subscribers = []
         self._seq = 0
@@ -214,9 +230,13 @@ class StateStore:
             self._status = data
             for robot in data['robots']:
                 rid = robot['robot_id']
-                if rid and rid not in self._seen_robots:
+                if not rid or rid in self._seen_robots:
+                    continue
+                if valid_robot_id(rid):
                     self._seen_robots.append(rid)
-        self.broadcast('status', data)
+                else:
+                    self._invalid_robots.add(rid)   # E-stop 대상에서 뺀다 (토픽 이름 불가)
+            self._publish_locked('status', data)
         return data
 
     def add_alerts(self, msg) -> list:
@@ -226,7 +246,7 @@ class StateStore:
             return alerts
         with self._lock:
             self._alerts.extend(alerts)
-        self.broadcast('alerts', alerts)
+            self._publish_locked('alerts', alerts)
         return alerts
 
     def add_task_event(self, msg) -> dict:
@@ -238,7 +258,7 @@ class StateStore:
             self._tasks.move_to_end(event['task_id'])
             while len(self._tasks) > self._max_tasks:
                 self._tasks.popitem(last=False)
-        self.broadcast('task_event', event)
+            self._publish_locked('task_event', event)
         return event
 
     def update_map(self, msg) -> dict:
@@ -256,60 +276,88 @@ class StateStore:
                     'width': meta['width'] * meta['resolution'],
                     'height': meta['height'] * meta['resolution'],
                 }
-        self.broadcast('map_updated', meta)
+            self._publish_locked('map_updated', meta)
         return meta
 
     # ----- 조작 (HTTP 핸들러에서 호출) -----
 
-    def set_estop(self, target: str, active: bool) -> dict:
-        """E-stop 상태를 기록하고 'estop' 이벤트를 배포한다. target 은 robot_id 또는 'all'."""
+    def set_estop(self, target: str, active: bool, still_latched=(), detail=None) -> dict:
+        """
+        E-stop 상태를 기록하고 'estop' 이벤트를 배포한다. target 은 robot_id 또는 'all'.
+
+        해제(active=False)는 reset_estop 이 확인된 로봇만 푼다: still_latched 의 로봇은 safety_node 래치가
+        남아 있으므로 계속 정지로 표시한다. 전체 해제는 /fleet/estop 과 개별 표시를 함께 풀고,
+        still_latched 만 다시 정지로 둔다. detail(리셋 결과 등)은 이벤트에 그대로 싣는다.
+        """
+        latched = set(still_latched)
         with self._lock:
-            self._estops[target] = bool(active)
-            if target == 'all' and not active:
-                # 전체 해제는 개별 래치도 함께 푼다 (버튼 표시 일관성)
+            if active:
+                self._estops[target] = True
+            elif target == 'all':
                 for key in list(self._estops):
                     self._estops[key] = False
+                for rid in latched:
+                    self._estops[rid] = True
+            else:
+                self._estops[target] = target in latched
             estops = dict(self._estops)
-        data = {'target': target, 'active': bool(active), 'estops': estops, 'ts': time.time()}
-        self.broadcast('estop', data)
+            data = {'target': target, 'active': bool(active), 'estops': estops,
+                    'ts': time.time()}
+            if detail is not None:
+                data['detail'] = detail
+            self._publish_locked('estop', data)
         return data
+
+    def estop_active(self, target: str) -> bool:
+        """target('all' 또는 robot_id)의 E-stop 표시가 활성인가."""
+        with self._lock:
+            return bool(self._estops.get(target, False))
 
     def record_task_request(self, task: dict) -> dict:
         """웹 폼에서 투입한 작업 요청을 기록하고 'task_request' 이벤트를 배포한다."""
         with self._lock:
             self._last_task_request = task
-        self.broadcast('task_request', task)
+            self._publish_locked('task_request', task)
         return task
 
     # ----- 조회 -----
 
     def snapshot(self) -> dict:
-        """전체 상태의 JSON 직렬화 가능한 복사본 (지도 셀 데이터는 제외)."""
+        """전체 상태의 JSON 직렬화 가능한 복사본 (지도 셀 데이터는 제외). seq = 반영된 마지막 이벤트 번호."""
         with self._lock:
-            return {
-                'server_time': time.time(),
-                'uptime_sec': time.time() - self._started_at,
-                'world': dict(self._world),
-                'robot_ids': self.known_robot_ids(),
-                'status': self._status,
-                'alerts': list(self._alerts),
-                'task_events': list(self._task_events),
-                'tasks': dict(self._tasks),
-                'map': self._map_meta,
-                'estops': dict(self._estops),
-                'last_task_request': self._last_task_request,
-                'sse_clients': len(self._subscribers),
-                'events_dropped': self._dropped,
-            }
+            return self._snapshot_locked()
+
+    def _snapshot_locked(self) -> dict:
+        return {
+            'server_time': time.time(),
+            'uptime_sec': time.time() - self._started_at,
+            'seq': self._seq,
+            'limits': dict(self._limits),
+            'world': dict(self._world),
+            'robot_ids': self._known_locked(),
+            'invalid_robot_ids': sorted(self._invalid_robots),
+            'status': self._status,
+            'alerts': list(self._alerts),
+            'task_events': list(self._task_events),
+            'tasks': dict(self._tasks),
+            'map': self._map_meta,
+            'estops': dict(self._estops),
+            'last_task_request': self._last_task_request,
+            'sse_clients': len(self._subscribers),
+            'events_dropped': self._dropped,
+        }
 
     def known_robot_ids(self) -> list:
-        """E-stop 대상으로 허용하는 robot_id: 설정값 ∪ FleetStatus 에서 본 것 (순서 유지)."""
+        """E-stop 대상으로 허용하는 robot_id: 설정값 ∪ FleetStatus 에서 본 것 (순서 유지, 유효한 이름만)."""
         with self._lock:
-            ids = list(self._configured_robots)
-            for rid in self._seen_robots:
-                if rid not in ids:
-                    ids.append(rid)
-            return ids
+            return self._known_locked()
+
+    def _known_locked(self) -> list:
+        ids = list(self._configured_robots)
+        for rid in self._seen_robots:
+            if rid not in ids:
+                ids.append(rid)
+        return ids
 
     def map_meta(self):
         """지도 메타데이터 dict, 지도가 없으면 None."""
@@ -348,10 +396,19 @@ class StateStore:
 
     def subscribe(self) -> queue.Queue:
         """새 구독자 큐를 만들어 등록한다. 큐 항목은 (event, data, seq)."""
+        return self.subscribe_with_snapshot()[0]
+
+    def subscribe_with_snapshot(self):
+        """
+        구독 등록과 스냅샷을 한 잠금 구간에서 → (큐, 스냅샷).
+
+        스냅샷의 seq 이하 이벤트는 큐에 들어오지 않고, 그 뒤의 이벤트는 모두 들어온다 (모듈 docstring).
+        """
         q = queue.Queue(maxsize=self._queue_size)
         with self._lock:
             self._subscribers.append(q)
-        return q
+            snap = self._snapshot_locked()
+        return q, snap
 
     def unsubscribe(self, q: queue.Queue) -> None:
         """구독자 큐를 제거한다 (이미 없으면 무시)."""
@@ -368,18 +425,24 @@ class StateStore:
 
     def broadcast(self, event: str, data) -> int:
         """
-        모든 구독자 큐에 (event, data, seq) 를 넣는다.
+        모든 구독자 큐에 (event, data, seq) 를 넣는다 (상태 변경 없는 이벤트용).
 
         큐가 가득 찬 느린 구독자는 가장 오래된 항목을 버리고 넣는다 (생산자는 절대 막히지 않는다).
         돌려주는 값은 전달한 구독자 수.
         """
         with self._lock:
-            self._seq += 1
-            seq = self._seq
-            subscribers = list(self._subscribers)
+            return self._publish_locked(event, data)
+
+    def _publish_locked(self, event: str, data) -> int:
+        """
+        (잠금 안에서) 이벤트 번호를 매기고 모든 구독자 큐에 넣는다.
+
+        put_nowait 는 막히지 않으므로 잠금 안에서 넣어도 된다 — 번호 순서 = 큐 순서가 보장된다.
+        """
+        self._seq += 1
+        item = (event, data, self._seq)
         delivered = 0
-        for q in subscribers:
-            item = (event, data, seq)
+        for q in self._subscribers:
             try:
                 q.put_nowait(item)
             except queue.Full:
@@ -387,8 +450,7 @@ class StateStore:
                     q.get_nowait()
                 except queue.Empty:
                     pass
-                with self._lock:
-                    self._dropped += 1
+                self._dropped += 1
                 try:
                     q.put_nowait(item)
                 except queue.Full:

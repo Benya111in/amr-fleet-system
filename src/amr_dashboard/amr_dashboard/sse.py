@@ -67,14 +67,15 @@ def event_stream(store, heartbeat_period=5.0, initial_snapshot=True, max_events=
     SSE 문자열을 내는 생성기. 구독자 하나 = 연결 하나.
 
     첫 이벤트로 전체 스냅샷을 보내 늦게 접속한 클라이언트도 상태를 갖추게 하고, 이후에는
-    저장소가 배포하는 이벤트를 그대로 전달한다. heartbeat_period 동안 이벤트가 없으면
-    heartbeat 를 보낸다. max_events 는 테스트용 (해당 개수 뒤 종료).
+    저장소가 배포하는 이벤트를 그대로 전달한다. 구독과 스냅샷은 저장소 잠금 안에서 함께 잡으므로
+    스냅샷에 이미 반영된 이벤트는 다시 오지 않는다 (스냅샷의 id = seq, 이후 이벤트 id 는 그보다 크다).
+    heartbeat_period 동안 이벤트가 없으면 heartbeat 를 보낸다. max_events 는 테스트용 (해당 개수 뒤 종료).
     """
-    q = store.subscribe()
+    q, snap = store.subscribe_with_snapshot()
     sent = 0
     try:
         if initial_snapshot:
-            yield format_sse('snapshot', store.snapshot(), retry_ms=RETRY_MS)
+            yield format_sse('snapshot', snap, event_id=snap['seq'], retry_ms=RETRY_MS)
             sent += 1
         while max_events is None or sent < max_events:
             try:
@@ -82,6 +83,8 @@ def event_stream(store, heartbeat_period=5.0, initial_snapshot=True, max_events=
             except queue.Empty:
                 yield heartbeat()
             else:
+                if seq <= snap['seq']:
+                    continue          # 방어: 스냅샷에 반영된 이벤트 (구조상 오지 않는다)
                 yield format_sse(event, data, event_id=seq)
             sent += 1
     finally:

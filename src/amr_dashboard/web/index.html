@@ -88,7 +88,7 @@
         </div>
         <div class="form-row">
           <label>우선순위 (0~255) <input type="number" name="priority" min="0" max="255" step="1" value="128" required></label>
-          <label>마감 (지금부터 초) <input type="number" name="deadline_sec" min="0" step="1" value="600" required></label>
+          <label>마감 (지금부터 초, 비우면 없음) <input type="number" name="deadline_sec" min="1" step="1" value="600" placeholder="없음"></label>
           <label>물품 유형
             <select name="item_type" required>
               <option value="small">소형 (2 kg)</option>
@@ -122,7 +122,7 @@
     </section>
   </main>
 
-  <footer class="muted small">amr_dashboard · SSE /events · REST /api/state /api/map /api/tasks /api/estop</footer>
+  <footer class="muted small">amr_dashboard · SSE /events · REST /api/state /api/map /api/health /api/tasks /api/estop</footer>
   <script src="/static/app.js"></script>
 </body>
 </html>

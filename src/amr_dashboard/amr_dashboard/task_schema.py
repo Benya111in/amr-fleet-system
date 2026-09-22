@@ -7,8 +7,8 @@ additionalProperties: false 이므로 아래 키만 싣는다:
     {
       "task_id": "T-20260922-101500-3f2a",   # 생략 시 자동 생성
       "priority": 128,                       # 0(낮음) ~ 255(높음), 생략 시 0
-      "deadline": 600.0,                     # 지금부터 초(숫자) 또는 ISO 8601 절대 시각(문자열)
-                                             #   생략 시 키 없음 = 마감 없음
+      "deadline": 600.0,                     # 지금부터 초(> 0 숫자) 또는 ISO 8601 절대 시각(문자열)
+                                             #   생략·null·빈 문자열 = 키 없음 = 마감 없음
       "pickup":  {"x": 5.0,  "y": 3.0,  "yaw": 0.0,  "frame_id": "map"},
       "dropoff": {"x": 50.0, "y": 30.0, "yaw": 1.57, "frame_id": "map"},
       "item_type": "medium",                 # small | medium | large (질량은 플릿 매니저가 물품 표로)
@@ -93,8 +93,9 @@ def parse_deadline(payload: dict):
             dt = dt.astimezone()
         return dt.isoformat(), None
     sec = _finite_number(raw)
-    if sec is None or sec < 0 or sec > MAX_DEADLINE_SEC:
-        return None, f'deadline(지금부터 초)은 0~{int(MAX_DEADLINE_SEC)} 사이의 숫자여야 한다'
+    if sec is None or sec <= 0 or sec > MAX_DEADLINE_SEC:
+        # 0 은 "지금 = 마감" 이라 접수 즉시 DEADLINE_MISSED 가 된다 → 마감 없음은 키를 빼고 보낸다
+        return None, f'deadline(지금부터 초)은 0 보다 크고 {int(MAX_DEADLINE_SEC)} 이하인 숫자여야 한다'
     return sec, None
 
 

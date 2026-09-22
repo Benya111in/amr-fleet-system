@@ -41,7 +41,7 @@ def test_event_stream_snapshot_then_events_then_heartbeat():
     store.set_estop('all', True)  # 구독 전 이벤트는 스냅샷에만 반영된다
     gen = sse.event_stream(store, heartbeat_period=0.05, max_events=3)
     first = sse.parse_sse(next(gen))[0]
-    assert first['event'] == 'snapshot'
+    assert first['event'] == 'snapshot' and first['id'] == '1'      # 스냅샷 id = 반영된 seq
     assert json.loads(first['data'])['estops'] == {'all': True}
     assert store.subscriber_count() == 1
     store.broadcast('status', {'k': 1})
@@ -59,5 +59,28 @@ def test_event_stream_without_snapshot_unsubscribes_on_close():
     gen = sse.event_stream(store, heartbeat_period=0.01, initial_snapshot=False)
     assert sse.parse_sse(next(gen))[0]['event'] == 'heartbeat'
     assert store.subscriber_count() == 1
+    gen.close()
+    assert store.subscriber_count() == 0
+
+
+def test_event_stream_skips_events_already_in_snapshot():
+    """방어 경로: 스냅샷 seq 이하 이벤트가 큐에 있어도 내보내지 않는다."""
+    store = StateStore()
+
+    class Store:
+        def subscribe_with_snapshot(self):
+            q, snap = store.subscribe_with_snapshot()
+            snap['seq'] = 5
+            q.put(('old', {}, 5))
+            q.put(('new', {'k': 1}, 6))
+            return q, snap
+
+        def unsubscribe(self, q):
+            store.unsubscribe(q)
+
+    gen = sse.event_stream(Store(), heartbeat_period=0.05, max_events=2)
+    assert sse.parse_sse(next(gen))[0]['event'] == 'snapshot'
+    ev = sse.parse_sse(next(gen))[0]
+    assert ev['event'] == 'new' and ev['id'] == '6'
     gen.close()
     assert store.subscriber_count() == 0
