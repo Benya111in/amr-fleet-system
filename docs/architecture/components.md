@@ -520,10 +520,10 @@ Nav2 서버 (ext, 액션·토픽 이름은 Nav2 Humble 기본값)
 | Sub | `/map` | `nav_msgs/msg/OccupancyGrid` | 통로/교차로 토폴로지 추출 |
 | Sub | `/amr_XX/plan`, `/amr_XX/odometry/filtered_map`, `/amr_XX/robot_state` | `nav_msgs/msg/Path`, `nav_msgs/msg/Odometry`, `amr_msgs/msg/RobotState` | 2 Hz 평가 |
 | Pub | `/amr_XX/traffic/hold` | `std_msgs/msg/Bool` | latched. 우선순위 양보 · 교차로 대기 |
-| Pub | `/amr_XX/traffic/yield_pose` | `geometry_msgs/msg/PoseStamped` | 가장 가까운 대기 포켓 |
+| Pub | `/amr_XX/traffic/yield_pose` | `geometry_msgs/msg/PoseStamped` | latched. 가장 가까운 대기 포켓 — hold=true 보다 한 주기 먼저, 양보가 끝나면 hold 뒤에 `frame_id` 가 빈 메시지(= 포켓 없음) |
 | Pub | `/amr_XX/keepout_mask` | `nav_msgs/msg/OccupancyGrid` | latched. 대체 경로 유도 (분쟁 구간 lethal) |
 | Pub | `/amr_XX/costmap_filter_info` | `nav2_msgs/msg/CostmapFilterInfo` | latched. `type=0`, `filter_mask_topic=keepout_mask` |
-| Pub | `/fleet/alerts`, `/fleet/traffic_events` | `diagnostic_msgs/msg/DiagnosticArray` | 교착 탐지/해소 이벤트 |
+| Pub | `/fleet/alerts`, `/fleet/traffic_events` | `diagnostic_msgs/msg/DiagnosticArray` | 교착 탐지/해소 이벤트, 토큰 보유 로봇의 관측 끊김(`fleet/TRAFFIC_STALE`) — [deadlock.md](../algorithms/deadlock.md) 1.1 |
 
 `fleet_adapter_node` (로봇별)
 

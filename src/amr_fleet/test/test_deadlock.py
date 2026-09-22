@@ -30,6 +30,17 @@ def test_wait_for_graph_edges_and_reasons():
         g.add('a', 'b', 'nope')
 
 
+def test_predecessors_closure_follows_only_given_reason():
+    g = WaitForGraph()
+    g.add('b', 'a', EDGE_BLOCK)          # b 가 a 뒤에 줄 섰다
+    g.add('c', 'b', EDGE_BLOCK)
+    g.add('d', 'c', EDGE_TOKEN)          # 토큰 간선은 따라가지 않는다
+    g.add('a', 'x', EDGE_TOKEN)
+    assert g.predecessors_closure({'a'}, EDGE_BLOCK) == {'b', 'c'}
+    assert g.predecessors_closure({'a'}) == {'b', 'c', 'd'}
+    assert g.predecessors_closure({'x'}, EDGE_BLOCK) == set()
+
+
 def _reach(adj, s):
     seen, stack = {s}, [s]
     while stack:

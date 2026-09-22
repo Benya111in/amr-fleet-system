@@ -4,8 +4,9 @@ traffic_manager_node ROS 배선 시험 (한 프로세스).
 가짜 로봇 2대가 plan · odometry/filtered_map · robot_state 를
 내고, 1차선 통로에서 마주 서면 교착 탐지 → 우선순위 낮은 로봇에 yield_pose + latched hold →
 /fleet/traffic_events(traffic/DEADLOCK) 를 fleet_manager_node 가 deadlock_count 로 센다 →
-비키면 RESOLVED + hold=false. latched 토픽(hold · keepout_mask · costmap_filter_info)은 늦게 뜬
-구독자가 받는지 본다. rclpy·amr_msgs·nav2_msgs 가 없는 환경에서는 건너뛴다.
+비키면 RESOLVED + hold=false. latched 토픽(hold · yield_pose · keepout_mask · costmap_filter_info)은
+늦게 뜬 구독자가 받는지, yield_pose 가 hold=true 보다 먼저 나가고 양보가 끝나면 비워지는지 본다.
+rclpy·amr_msgs·nav2_msgs 가 없는 환경에서는 건너뛴다.
 """
 
 import math
@@ -207,6 +208,8 @@ def test_latched_initial_state(ros):
     assert max(mask.data) == 0
     hold = _late_value(ros, Bool, f'/{ROBOTS[0]}/traffic/hold')
     assert hold is not None and hold.data is False
+    pose = _late_value(ros, PoseStamped, f'/{ROBOTS[0]}/traffic/yield_pose')
+    assert pose is not None and pose.header.frame_id == ''          # 포켓 없음
 
 
 def test_deadlock_detected_counted_and_resolved(ros):
@@ -220,6 +223,7 @@ def test_deadlock_detected_counted_and_resolved(ros):
     # 우선순위 낮은 로봇(task_events 의 priority 100)에 포켓 + latched hold
     assert ros['spin'](lambda: bool(got['yield']))
     assert (got['yield'][-1].pose.position.x, got['yield'][-1].pose.position.y) == (18.0, 8.0)
+    assert ros['spin'](lambda: traffic._robots[ROBOTS[1]].hold is True, 5.0)   # 포켓 다음 주기
     assert _late_value(ros, Bool, f'/{ROBOTS[1]}/traffic/hold').data is True
     assert _late_value(ros, Bool, f'/{ROBOTS[0]}/traffic/hold').data is False
     # fleet_manager 가 traffic/DEADLOCK 만 센다
@@ -239,6 +243,33 @@ def test_deadlock_detected_counted_and_resolved(ros):
     ros['spin'](lambda: False, 0.6)
     assert manager._kpi.deadlock_count == 1                 # RESOLVED 는 세지 않는다
     assert traffic.event_counts['traffic/DEADLOCK'] == 1 and len(traffic.tick_ms) > 0
+
+
+def test_yield_pose_before_hold_and_cleared_after(ros):
+    """새 포켓은 hold=true 보다 한 주기 먼저 (latched), 양보가 끝나면 hold=false 뒤에 빈 포켓."""
+    from amr_fleet.traffic_manager import RobotCommand
+    traffic = ros['traffic']
+    traffic._add_robot('amr_x9')
+    r = traffic._robots['amr_x9']
+    calls = []
+    pose_pub, hold_pub = r.pub_yield.publish, r.pub_hold.publish
+    r.pub_yield.publish = lambda m: (calls.append(('pose', m.header.frame_id)), pose_pub(m))
+    r.pub_hold.publish = lambda m: (calls.append(('hold', m.data)), hold_pub(m))
+    yield_cmd = RobotCommand(True, 'yield:incident9', (2.0, 8.0, 0.0), None, 9)
+    traffic._apply(r, yield_cmd)
+    assert calls == [('pose', 'map')] and r.hold is False            # 이번 주기는 포켓만
+    late = _late_value(ros, PoseStamped, '/amr_x9/traffic/yield_pose')
+    assert late.header.frame_id == 'map' and late.pose.position.y == 8.0
+    traffic._apply(r, yield_cmd)
+    assert calls[-1] == ('hold', True) and len(calls) == 2           # 다음 주기에 hold=true
+    traffic._apply(r, RobotCommand(True, 'zone:corr'))                # 토큰 대기로 바뀜: hold 유지, 포켓 해제
+    assert calls[2:] == [('pose', '')]
+    traffic._apply(r, RobotCommand(True, 'yield:incident10', (18.0, 8.0, 0.0), None, 10))
+    traffic._apply(r, RobotCommand())
+    # 이미 hold → 포켓만, 끝나면 hold=false → 포켓 해제
+    assert calls[3:] == [('pose', 'map'), ('hold', False), ('pose', '')]
+    assert _late_value(ros, PoseStamped, '/amr_x9/traffic/yield_pose').header.frame_id == ''
+    assert _late_value(ros, Bool, '/amr_x9/traffic/hold').data is False
 
 
 def test_keepout_strategy_publishes_and_clears_mask(ros, tmp_path):

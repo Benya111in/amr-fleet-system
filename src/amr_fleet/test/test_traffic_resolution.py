@@ -337,3 +337,70 @@ def test_keepout_mask_type():
     assert (s.width, s.height, s.origin_x, s.origin_y) == (51, 21, -1.0, -2.0)
     f32 = mask_spec_for(GridSpec(float(np.float32(0.1)), 0.0, 0.0, 200, 100), 0.05)
     assert (f32.width, f32.height) == (400, 200)          # OccupancyGrid 해상도는 float32
+
+
+# ---------------------------------------------------------------------- 보유 구역 우회 · 움직일 수 없는 로봇
+CORR = ZoneMap(zones_from_config([{'id': 'c', 'kind': 'corridor',
+                                   'polygon': [[4, 4.5], [16, 4.5], [16, 5.5], [4, 5.5]]}]))
+
+
+def test_pocket_route_avoids_blocked_zone_cells():
+    w = make_world([], zone_map=CORR, c=cfg(auto_pockets=False))
+    tg = w.tgrid
+    assert tg.zone_ids == ['c'] and tg.zones_mask(['c']).sum() > 0
+    assert not tg.zones_mask(['x']).any()
+    c = cfg(auto_pockets=False, pocket_search_radius_m=30.0)
+    east = [Pocket('pe_n', 18.0, 8.0)]
+    p = find_yield_pocket(tg, (3.0, 5.0), [], [], c, east)
+    assert p is not None and p.route[0] == (3.0, 5.0) and p.route[-1] == (18.0, 8.0)
+    assert 'c' in CORR.zones_at(np.array(p.route))                      # 가장 짧은 길 = 통로
+    q = find_yield_pocket(tg, (3.0, 5.0), [], [], c, east, blocked=tg.zones_mask(['c']))
+    assert q is not None and 'c' not in CORR.zones_at(np.array(q.route))  # 보유 구역을 피해 남쪽 도로로
+    assert q.cost_m > p.cost_m
+    closed = make_world([], bypass=False, zone_map=CORR).tgrid
+    assert find_yield_pocket(closed, (3.0, 5.0), [], [], c, east,
+                             blocked=closed.zones_mask(['c'])) is None
+    auto = find_yield_pocket(tg, (3.0, 5.0), [], [], cfg(), [])
+    assert auto is not None and auto.pocket_id == 'auto' and len(auto.route) >= 2
+
+
+def test_keepout_mask_paints_block_zones():
+    v = view('W', 2.0, 5.0, (18.0, 5.0), 100)
+    spec = mask_spec_for(world_map()[1], 0.1)
+    plain = build_keepout_mask(v, [(10.0, 5.0)], cfg(), CORR, (), spec)
+    assert not plain.blocks(np.array([[15.5, 5.0]]))[0]                 # 띠는 상대 투영점 + 1.5 m 까지
+    m = build_keepout_mask(v, [(10.0, 5.0)], cfg(), CORR, (), spec, block_zones={'c'})
+    assert m is not None and m.blocks(np.array([[15.5, 5.0]]))[0]      # 막힌 구역은 끝까지 전부
+    inside_goal = view('W', 2.0, 5.0, (12.0, 5.0), 100)
+    assert build_keepout_mask(inside_goal, [], cfg(), CORR, (), spec, block_zones={'c'}) is None
+
+
+def test_immobile_members_are_never_victims_and_failures_are_not_repeated():
+    im = IncidentManager(cfg())
+    mover = view('W', 2.5, 5.0, (18.0, 5.0), 200)                       # 통로 서쪽 입구 앞에서 대기
+    estop = RobotView('E', 10.0, 5.0, 0.0, 0.0, None, False, False, 10, None, frozenset({'c'}),
+                      None, mobile=False)
+    w = make_world([mover, estop], zone_map=CORR)
+    evs = im.open(0.0, ['W', 'E'], 'BLOCKED', w, {'c'})
+    # E 의 우선순위가 더 낮아도 E 는 비킬 수 없다 → W 가 희생 로봇, 상대가 모두 못 움직이니 곧바로 전략 2
+    assert evs[0].values['victim'] == 'W' and evs[0].values['immobile'] == 'E'
+    inc = im.active()[0]
+    assert inc.strategy == ALT_PATH and inc.mask.blocks(np.array([[15.5, 5.0]]))[0]
+    # 우회 경로가 마스크를 피하면 해소
+    detour = line((2.5, 5.0), (3.0, 2.0), (17.0, 2.0), (18.0, 5.0))
+    w2 = make_world([RobotView('W', 3.0, 2.0, 0.0, 1.0, detour[1:], True, False, 200, None,
+                               frozenset(), detour[1:]), estop], zone_map=CORR)
+    assert _names(im.step(1.0, w2)) == [EV_RESOLVED]
+    # 모두 못 움직이면 열자마자 UNRESOLVED, E 가 다시 움직일 수 있을 때까지 같은 집합을 다시 열지 않는다
+    other = RobotView('F', 8.0, 5.0, 0.0, 0.0, None, False, False, 5, None, frozenset({'c'}),
+                      None, mobile=False)
+    w3 = make_world([estop, other], zone_map=CORR)
+    evs = im.open(2.0, ['E', 'F'], 'BLOCKED', w3)
+    assert _names(evs) == [EV_DEADLOCK, EV_UNRESOLVED]
+    assert evs[1].values['reason'] == 'no_mobile_victim' and evs[1].values['immobile'] == 'E,F'
+    assert im.in_cooldown(['E', 'F'], 1e6) and im.suppressed() == {'E', 'F'}
+    im.step(3.0, w3)
+    assert im.in_cooldown(['E', 'F'], 1e6)
+    estop.mobile = True
+    im.step(4.0, w3)                                                    # E 복구 → 다시 시도 가능
+    assert not im.in_cooldown(['E', 'F'], 4.0) and im.suppressed() == set()

@@ -128,6 +128,29 @@ def polygon_area(polygon: np.ndarray) -> float:
     return 0.5 * abs(float(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1))))
 
 
+def _segments_cross(a: np.ndarray, b: np.ndarray) -> bool:
+    """닫힌 다각형 a, b 의 변끼리 교차하는지 (끝점 접촉 포함)."""
+    p, r = a, np.roll(a, -1, axis=0) - a
+    q, s = b, np.roll(b, -1, axis=0) - b
+    rxs = r[:, None, 0] * s[None, :, 1] - r[:, None, 1] * s[None, :, 0]
+    qp = q[None, :, :] - p[:, None, :]
+    with np.errstate(divide='ignore', invalid='ignore'):
+        t = (qp[..., 0] * s[None, :, 1] - qp[..., 1] * s[None, :, 0]) / rxs
+        u = (qp[..., 0] * r[:, None, 1] - qp[..., 1] * r[:, None, 0]) / rxs
+    ok = (np.abs(rxs) > 1e-12) & (t >= 0.0) & (t <= 1.0) & (u >= 0.0) & (u <= 1.0)
+    return bool(ok.any())
+
+
+def polygon_distance(a: np.ndarray, b: np.ndarray) -> float:
+    """두 다각형 사이 최단 거리 [m] (겹치거나 닿으면 0)."""
+    a = np.asarray(a, dtype=float).reshape(-1, 2)
+    b = np.asarray(b, dtype=float).reshape(-1, 2)
+    if points_in_polygon(a, b).any() or points_in_polygon(b, a).any() or _segments_cross(a, b):
+        return 0.0
+    ca, cb = np.vstack([a, a[:1]]), np.vstack([b, b[:1]])
+    return float(min(distance_to_path(a, cb).min(), distance_to_path(b, ca).min()))
+
+
 @dataclasses.dataclass(frozen=True)
 class GridSpec:
     """점유 격자 기하: 셀 (ix, iy) 의 중심 = origin + (i + 0.5) * resolution (회전 없음)."""

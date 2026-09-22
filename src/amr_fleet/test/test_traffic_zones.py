@@ -14,10 +14,13 @@ import pytest
 from amr_fleet.traffic_geometry import GridSpec, points_in_polygon
 from amr_fleet.traffic_zones import (
     CORRIDOR, INTERSECTION, TokenRequest, ZoneMap, ZoneTokenManager, ZoneVisit, clearance_map,
-    derive_zones_from_grid, load_layout, request_chain, zone_visits, zones_from_config,
+    derive_zones_from_grid, grid_spacing_conflicts, load_layout, request_chain,
+    spacing_conflicts, zone_visits, zones_from_config,
 )
+import yaml
 
 CONFIG = pathlib.Path(__file__).resolve().parents[1] / 'config' / 'traffic_zones.yaml'
+PARAMS = pathlib.Path(__file__).resolve().parents[1] / 'config' / 'traffic.yaml'
 
 
 def sq(x0, y0, x1, y1):
@@ -140,6 +143,75 @@ def test_zone_visits_and_request_chain():
     assert [c.zone_id for c in request_chain(back, 2.5, 5.0)] == ['x']   # 재방문은 한 번만
 
 
+def test_request_chain_does_not_wait_inside_a_zone():
+    """몸체가 구역 k 에 걸친 로봇은 k 와 묶이지 않은 다음 구역을 k 를 빠져나온 뒤에 요청한다."""
+    zm = ZoneMap(zones_from_config([
+        {'id': 'a', 'kind': 'intersection', 'polygon': sq(0, -1, 4, 1)},
+        {'id': 'b', 'kind': 'intersection', 'polygon': sq(6, -1, 10, 1)},     # a 와 2 m 간격
+        {'id': 'c', 'kind': 'intersection', 'polygon': sq(11, -1, 13, 1)},    # b 와 1 m (묶음)
+    ]))
+    inside = zone_visits(np.array([[3.0, 0.0], [20.0, 0.0]]), zm, step=0.1)   # 중심이 a 안, b 입구 3 m 앞
+    assert [c.zone_id for c in request_chain(inside, 3.5, 1.5)] == ['b', 'c']  # 몸체 정보 없음 = 예전 동작
+    assert request_chain(inside, 3.5, 1.5, occupied={'a'}) == []             # a 안에서 b 를 기다리지 않는다
+    chained = request_chain(inside, 3.5, 2.5, occupied={'a'})              # 묶음이면 요청
+    assert [c.zone_id for c in chained] == ['b', 'c']
+    # 중심은 a 를 나왔고 몸 뒤쪽만 걸침: b 입구까지 거리가 chain_gap 보다 멀면 기다린다, 가까우면 요청
+    rear = zone_visits(np.array([[4.2, 0.0], [20.0, 0.0]]), zm, step=0.1)
+    assert request_chain(rear, 2.5, 1.5, occupied={'a'}) == []
+    assert [c.zone_id for c in request_chain(rear, 2.5, 2.0, occupied={'a'})] == ['b', 'c']
+    # 첫 방문 구역 자체에 몸 앞쪽이 걸친 것은 막지 않는다 (들어가는 중)
+    entering = zone_visits(np.array([[5.8, 0.0], [20.0, 0.0]]), zm, step=0.1)
+    assert [c.zone_id for c in request_chain(entering, 2.5, 1.5, occupied={'b'})] == ['b', 'c']
+    # 구역별 요청 거리
+    ahead = zone_visits(np.array([[4.5, 0.0], [20.0, 0.0]]), zm, step=0.1)     # b 입구 1.5 m 앞
+    assert request_chain(ahead, {'a': 3.0, 'b': 1.0, 'c': 3.0}, 1.5) == []
+    assert [c.zone_id for c in request_chain(ahead, {'a': 1.0, 'b': 2.0, 'c': 1.0}, 1.5)] == \
+        ['b', 'c']
+
+
+def test_spacing_conflicts_polygons_and_grid():
+    zones = zones_from_config([
+        {'id': 'a', 'kind': 'intersection', 'polygon': sq(0, 0, 4, 5)},
+        {'id': 'b', 'kind': 'intersection', 'polygon': sq(6, 0, 10, 5)},      # 간격 2
+        {'id': 'c', 'kind': 'intersection', 'polygon': sq(0, 6, 4, 8)},       # a 와 1 (묶음)
+        {'id': 'd', 'kind': 'intersection', 'polygon': sq(14, 0, 16, 5)},     # b 와 4
+    ])
+    got = spacing_conflicts(zones, approach_m=2.5, chain_gap_m=1.5, robot_radius=0.36)
+    assert [(a, b) for a, b, _ in got] == [('a', 'b'), ('b', 'c')]           # b-c 대각선 2.24
+    assert got[0][2] == pytest.approx(2.0)
+    assert spacing_conflicts(zones, approach_m=1.5, chain_gap_m=1.5, robot_radius=0.36) == []
+    assert spacing_conflicts(zones, approach_m=2.5, chain_gap_m=2.5, robot_radius=0.36) == []
+    per_zone = {'a': 1.0, 'b': 2.0, 'c': 1.0, 'd': 1.0}                     # 큰 쪽(b 2.0)으로 본다
+    assert [(a, b) for a, b, _ in spacing_conflicts(zones, per_zone, 1.5, 0.36)] == [
+        ('a', 'b'), ('b', 'c')]
+    # 격자판: 1 m 셀, a · b 사이와 b · c 사이 2칸 비움 → 간격 ≈ 2 m ('gone' 은 셀 없음)
+    labels = np.full((3, 12), -1, dtype=np.int32)
+    labels[:, 0:3], labels[:, 5:8], labels[:, 10:] = 0, 1, 2
+    got = grid_spacing_conflicts(labels, ['a', 'b', 'c', 'gone'], 1.0, 2.5, 1.5, 0.36)
+    assert [(a, b) for a, b, _ in got] == [('a', 'b'), ('b', 'c')]
+    assert grid_spacing_conflicts(labels, ['a', 'b', 'c', 'gone'], 1.0, 2.5, 1.5, 0.36,
+                                  only={'c'}) == [('b', 'c', pytest.approx(2.0))]
+
+
+def test_shipped_layout_has_no_waiting_spot_inside_zones():
+    """배포 배치 + traffic.yaml 값: 묶이지 않은 이웃 구역 사이에 로봇이 설 자리(approach + 반경)가 있다."""
+    params = yaml.safe_load(PARAMS.read_text())['/fleet/traffic_manager_node']['ros__parameters']
+    z = params['zones']
+    zones, _ = load_layout(str(CONFIG), True)
+    approach = {zz.zone_id: z['corridor_approach_m'] if zz.kind == CORRIDOR
+                else z['approach_distance_m'] for zz in zones}
+    assert spacing_conflicts(zones, approach, z['chain_gap_m'], params['robot_radius']) == []
+    # 리뷰 finding 1 의 원래 배치(교차로 = 틈 폭 4 m, approach 2.5)는 통로를 따라 2 m 간격이라 거절된다
+
+    def widened(zz):
+        cx, y0, y1 = zz.centroid[0], zz.polygon[:, 1].min(), zz.polygon[:, 1].max()
+        return [[cx - 2.0, y0], [cx + 2.0, y0], [cx + 2.0, y1], [cx - 2.0, y1]]
+    wide = [dict(id=zz.zone_id, kind=zz.kind, polygon=widened(zz))
+            for zz in zones if zz.kind == INTERSECTION]
+    bad = spacing_conflicts(zones_from_config(wide), 2.5, 1.5, 0.36)
+    assert ('x_ab_1', 'x_ab_2', pytest.approx(2.0)) in bad
+
+
 # ---------------------------------------------------------------------- 진입 토큰
 def _req(rid, zones, prio=100, deadline=None, direction=(1.0, 0.0)):
     return TokenRequest(rid, tuple(zones), {z: direction for z in zones}, prio, deadline)
@@ -225,6 +297,26 @@ def test_token_occupancy_registration_forget_and_set_zones():
     assert tm.holders('x') == [] and tm.holders('y') == []
     with pytest.raises(ValueError):
         ZoneTokenManager({}, max_bypass=-1)
+
+
+def test_token_frozen_reserve_entered_and_holdings():
+    tm = ZoneTokenManager({'x': False, 'y': False, 'c': True})
+    tm.update(0.0, {'s': _req('s', 'xy')}, {}, _up(s='xy'))
+    tm.update(0.5, {}, _up(s='x'), _up(s='xy'))                       # s 가 x 에 들어감
+    assert tm.entered_by('s') == ['x'] and tm.holdings() == {'s': ('x', 'y')}
+    # 관측이 끊긴(frozen) 로봇은 경로 · 점유 정보가 없어도 반납하지 않는다
+    tm.update(1.0, {}, {}, {}, frozen={'s'})
+    assert tm.held_by('s') == ['x', 'y']
+    tm.update(1.5, {}, _up(s='x'), {})                                # frozen 해제(lost): 몸체 구역만 남는다
+    assert tm.held_by('s') == ['x']
+    # reserve: 묶음 전체가 호환될 때만 원자 부여, 이미 보유 · 모르는 구역은 건너뛴다
+    assert not tm.reserve(2.0, 'v', ['y', 'x'])
+    assert tm.held_by('v') == []
+    assert tm.reserve(2.0, 'v', ['y', 'c', 'nope'], {'c': (1.0, 0.0)})
+    assert tm.held_by('v') == ['c', 'y'] and tm.grant_log[-1] == (2.0, 'v', ('y', 'c'))
+    assert tm.reserve(2.5, 'v', ['y'])                                # 이미 보유
+    assert tm.reserve(3.0, 'w', ['c'], {'c': (1.0, 0.0)})              # 같은 방향 추종 통로
+    assert not tm.reserve(3.0, 'u', ['c'], {'c': (-1.0, 0.0)})
 
 
 def test_token_wait_survives_small_route_change():
