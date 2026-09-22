@@ -15,6 +15,21 @@
   <depend>nav2_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>amr_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>diagnostic_msgs</depend>
+  <depend>builtin_interfaces</depend>
+  <depend>rcl_interfaces</depend>
+
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <!-- jammy apt 3.2.0 (rosdep, CI) 과 이미지의 pip 4.x 모두: 스키마는 draft-07, Draft7Validator 만 쓴다 -->
+  <exec_depend>python3-jsonschema</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-scipy</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

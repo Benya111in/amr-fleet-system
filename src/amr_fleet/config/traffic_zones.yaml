@@ -1,0 +1,95 @@
+# 교통 구역 · 대기 포켓 (map 프레임 [m], 원점 = 창고 중심). traffic_manager_node 가 읽는다.
+# 유도 근거: feature/simulation-world 의 src/amr_simulation/worlds/gen_warehouse_world.py 상수
+#   랙 2.0 x 1.0 m, 열 A/B/C 의 y = 9 / 3 / -3, 베이 x = -18 .. 18 (6 m 간격) → 이웃 랙 사이 틈 4 m
+#   통로 AB y 3.5 ~ 8.5, BC y -2.5 ~ 2.5 (폭 5 m), 좁은 통로 (0, -10): 순폭 0.60 m, y -12 ~ -8
+#   기둥 0.52 m (±10, ±12), (±25, ±6), 외벽 안쪽 면 x = ±29.8, y = ±19.8
+# 구역
+#   narrow_aisle        1차선 통로 (용량 1, 같은 방향 추종만 허용). 몸체 판정이 중심 + 외접 반경 네 점이라
+#                       랙 사이 틈보다 넓게(x ±0.5) 잡는다
+#   x_<통로>_<k>        통로 AB/BC 와 열 틈(k = 1..6, 서→동) 이 만나는 교차로 4 x 5 m (용량 1).
+#                       통로 AB→틈→BC 처럼 1 m 틈을 사이에 둔 두 교차로는 chain_gap_m(1.5) 안이라
+#                       한 번에 받는다 (틈에서 서지 않기). 교차로 사이 랙 앞 2 m 구간이 대기 자리다
+#   메인 통로(y > 9.5) · 남쪽 홀(y < -3.5) 은 트인 공간이라 구역을 두지 않는다 (교차 예측 · 교착 탐지가 맡는다)
+# 포켓 (전략 1 양보 목적지): 교차로 밖 랙 앞면에서 0.6 m (통로 중앙선에서 1.9 m — pocket_clearance_m 1.0 밖),
+#   좁은 통로 양 끝 옆 (중앙선 x=0 에서 2.3 m), 북 · 남 벽 앞. 모두 장애물에서 외접 반경 0.36 m 이상
+#   (test_traffic_zones.py 가 같은 상수로 그린 지도에서 확인한다)
+frame_id: map
+zones:
+  - id: narrow_aisle
+    kind: corridor
+    same_direction: true
+    polygon: [[-0.5, -12.0], [0.5, -12.0], [0.5, -8.0], [-0.5, -8.0]]
+  - id: x_ab_1
+    kind: intersection
+    polygon: [[-17.0, 3.5], [-13.0, 3.5], [-13.0, 8.5], [-17.0, 8.5]]
+  - id: x_ab_2
+    kind: intersection
+    polygon: [[-11.0, 3.5], [-7.0, 3.5], [-7.0, 8.5], [-11.0, 8.5]]
+  - id: x_ab_3
+    kind: intersection
+    polygon: [[-5.0, 3.5], [-1.0, 3.5], [-1.0, 8.5], [-5.0, 8.5]]
+  - id: x_ab_4
+    kind: intersection
+    polygon: [[1.0, 3.5], [5.0, 3.5], [5.0, 8.5], [1.0, 8.5]]
+  - id: x_ab_5
+    kind: intersection
+    polygon: [[7.0, 3.5], [11.0, 3.5], [11.0, 8.5], [7.0, 8.5]]
+  - id: x_ab_6
+    kind: intersection
+    polygon: [[13.0, 3.5], [17.0, 3.5], [17.0, 8.5], [13.0, 8.5]]
+  - id: x_bc_1
+    kind: intersection
+    polygon: [[-17.0, -2.5], [-13.0, -2.5], [-13.0, 2.5], [-17.0, 2.5]]
+  - id: x_bc_2
+    kind: intersection
+    polygon: [[-11.0, -2.5], [-7.0, -2.5], [-7.0, 2.5], [-11.0, 2.5]]
+  - id: x_bc_3
+    kind: intersection
+    polygon: [[-5.0, -2.5], [-1.0, -2.5], [-1.0, 2.5], [-5.0, 2.5]]
+  - id: x_bc_4
+    kind: intersection
+    polygon: [[1.0, -2.5], [5.0, -2.5], [5.0, 2.5], [1.0, 2.5]]
+  - id: x_bc_5
+    kind: intersection
+    polygon: [[7.0, -2.5], [11.0, -2.5], [11.0, 2.5], [7.0, 2.5]]
+  - id: x_bc_6
+    kind: intersection
+    polygon: [[13.0, -2.5], [17.0, -2.5], [17.0, 2.5], [13.0, 2.5]]
+pockets:
+  - {id: p_ab_-18_s, x: -18.0, y: 4.1, yaw: 0.0}
+  - {id: p_ab_-18_n, x: -18.0, y: 7.9, yaw: 0.0}
+  - {id: p_ab_-12_s, x: -12.0, y: 4.1, yaw: 0.0}
+  - {id: p_ab_-12_n, x: -12.0, y: 7.9, yaw: 0.0}
+  - {id: p_ab_-6_s, x: -6.0, y: 4.1, yaw: 0.0}
+  - {id: p_ab_-6_n, x: -6.0, y: 7.9, yaw: 0.0}
+  - {id: p_ab_0_s, x: 0.0, y: 4.1, yaw: 0.0}
+  - {id: p_ab_0_n, x: 0.0, y: 7.9, yaw: 0.0}
+  - {id: p_ab_6_s, x: 6.0, y: 4.1, yaw: 0.0}
+  - {id: p_ab_6_n, x: 6.0, y: 7.9, yaw: 0.0}
+  - {id: p_ab_12_s, x: 12.0, y: 4.1, yaw: 0.0}
+  - {id: p_ab_12_n, x: 12.0, y: 7.9, yaw: 0.0}
+  - {id: p_ab_18_s, x: 18.0, y: 4.1, yaw: 0.0}
+  - {id: p_ab_18_n, x: 18.0, y: 7.9, yaw: 0.0}
+  - {id: p_bc_-18_s, x: -18.0, y: -1.9, yaw: 0.0}
+  - {id: p_bc_-18_n, x: -18.0, y: 1.9, yaw: 0.0}
+  - {id: p_bc_-12_s, x: -12.0, y: -1.9, yaw: 0.0}
+  - {id: p_bc_-12_n, x: -12.0, y: 1.9, yaw: 0.0}
+  - {id: p_bc_-6_s, x: -6.0, y: -1.9, yaw: 0.0}
+  - {id: p_bc_-6_n, x: -6.0, y: 1.9, yaw: 0.0}
+  - {id: p_bc_0_s, x: 0.0, y: -1.9, yaw: 0.0}
+  - {id: p_bc_0_n, x: 0.0, y: 1.9, yaw: 0.0}
+  - {id: p_bc_6_s, x: 6.0, y: -1.9, yaw: 0.0}
+  - {id: p_bc_6_n, x: 6.0, y: 1.9, yaw: 0.0}
+  - {id: p_bc_12_s, x: 12.0, y: -1.9, yaw: 0.0}
+  - {id: p_bc_12_n, x: 12.0, y: 1.9, yaw: 0.0}
+  - {id: p_bc_18_s, x: 18.0, y: -1.9, yaw: 0.0}
+  - {id: p_bc_18_n, x: 18.0, y: 1.9, yaw: 0.0}
+  - {id: p_narrow_n_w, x: -2.3, y: -7.4, yaw: 0.0}
+  - {id: p_narrow_s_w, x: -2.3, y: -12.6, yaw: 0.0}
+  - {id: p_narrow_n_e, x: 2.3, y: -7.4, yaw: 0.0}
+  - {id: p_narrow_s_e, x: 2.3, y: -12.6, yaw: 0.0}
+  - {id: p_north_-15, x: -15.0, y: 19.0, yaw: 0.0}
+  - {id: p_north_0, x: 0.0, y: 19.0, yaw: 0.0}
+  - {id: p_north_15, x: 15.0, y: 19.0, yaw: 0.0}
+  - {id: p_south_-10, x: -10.0, y: -19.0, yaw: 0.0}
+  - {id: p_south_10, x: 10.0, y: -19.0, yaw: 0.0}

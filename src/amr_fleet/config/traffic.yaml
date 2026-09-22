@@ -1,0 +1,78 @@
+# traffic_manager_node 파라미터 (명세 4.9 Traffic Management, docs/algorithms/deadlock.md)
+# launch/fleet_manager.launch.py 가 traffic_manager:=true(기본)일 때 이 파일로 띄운다 (robot_ids 는 런치 인자).
+# 값은 모두 시작할 때 한 번 읽는다 (실행 중 변경 없음). 시각 [s], 거리 [m], 각도 [deg].
+# 실수 파라미터는 반드시 소수점을 붙인다 (ROS 파라미터 타입이 기본값 타입과 같아야 한다).
+
+/fleet/traffic_manager_node:
+  ros__parameters:
+    update_rate_hz: 2.0            # 평가 주기 (components.md §3.6, robot_state 2 Hz 와 같다)
+    map_topic: /map                # latched OccupancyGrid (map_server)
+    frame_id: map                  # plan · 자세 · keepout 마스크 프레임
+    mode: active                   # active = 토큰 · 교차 양보 · 해소 명령 | observe = 탐지·보고만 (기준선 측정)
+    robot_radius: 0.36             # 풋프린트 0.60 x 0.40 m 외접 반경 (충돌 예측 · 포켓 간격)
+    passage_radius: 0.22           # 로봇 중심이 지날 수 있는 벽까지 거리 (반폭 0.20 + 여유). 좁은 통로 0.60 m 보존
+    nominal_speed: 1.0             # [m/s] 예측 속도 (fleet.yaml nominal_speed 와 같은 값)
+    goal_tolerance_m: 0.3          # 남은 경로가 이보다 짧으면 도착 (주행 중 아님)
+    obs_timeout_s: 3.0             # 오도메트리가 이보다 오래되면 이번 주기에서 뺀다
+    max_path_m: 60.0               # 남은 경로를 이만큼만 본다
+    zones_file: ""                 # "" = share/amr_fleet/config/traffic_zones.yaml (구역 · 대기 포켓)
+    prediction:                    # 경로 충돌 예측 (traffic_prediction)
+      horizon_s: 10.0              # plan 을 nominal_speed 로 따라가는 시공간 표본 길이
+      dt_s: 0.25                   # 표본 간격
+      safety_margin_m: 0.3         # 충돌 거리 = 2 x robot_radius + margin (= 1.02 m, safety_node 0.30 m 와 같은 여유)
+      time_window_s: 2.0           # 같은 자리를 이 시간 안에 번갈아 지나가도 충돌로 본다
+      head_on_angle_deg: 135.0     # 진행 방향 차 ≥ → HEAD_ON
+      following_angle_deg: 45.0    # 진행 방향 차 ≤ → FOLLOWING (그 사이 CROSSING)
+      crossing_hold: true          # 구역 밖 CROSSING 예측 → 우선순위 낮은 쪽 hold
+      crossing_act_s: 4.0          # 양보 로봇의 충돌 지점 도착 예측이 이보다 가까우면 hold
+      crossing_min_s: 0.8          # 이보다 가까우면 세우지 못한다 → 상대가 양보
+      crossing_max_hold_s: 15.0    # 교차 양보 hold 상한 (넘으면 풀고, 막히면 교착 탐지가 잡는다)
+    zones:                         # 교차로 · 병목(1차선 통로) 진입 토큰 (traffic_zones)
+      source: yaml                 # yaml | map (/map 에서 자동 유도) | both | none
+      tokens: true                 # false = 토큰 끔 (예측 · 교착 해소만)
+      approach_distance_m: 2.5     # 구역 입구 이 거리 앞에서 토큰 요청 (못 받으면 hold)
+      chain_gap_m: 1.5             # 출구-다음 입구가 이보다 가까운 구역은 묶어 한 번에 받는다 (교차로 안에서 서지 않기)
+      max_bypass: 2                # 먼저 기다린 로봇을 나중 요청이 이만큼 추월하면 그 구역을 기아 로봇에 예약
+      corridor_same_direction: true  # 1차선 통로에 같은 방향 추종 진입 허용 (yaml 항목별 same_direction 우선)
+      narrow_width_m: 1.5          # map 유도: 이 폭보다 좁은 통과 가능 영역 = 1차선 통로
+      min_corridor_area_m2: 0.2    # map 유도: 통과 가능 띠(중심이 지날 수 있는 셀) 넓이 하한 — 폭 0.6 m 통로의 띠 폭은 ~0.2 m
+      intersection_arm_m: 4.0      # map 유도: 네 축 중 3개 이상이 이 길이 이상 뚫린 셀 = 교차로
+      intersection_min_area_m2: 1.0
+      intersection_max_area_m2: 36.0  # 이보다 넓으면 광장 (교차로 아님)
+      auto_margin_m: 0.3
+      occupied_threshold: 50       # OccupancyGrid 값 ≥ 이면 점유 (미지 -1 도 점유)
+    deadlock:                      # wait-for 그래프 · 교착 확정 · 정체 (deadlock)
+      block_lookahead_m: 2.0       # block 간선: 정지한 상대 몸체가 내 남은 경로 이 거리 안
+      block_lateral_margin_m: 0.3  # block 간선: 경로에서 2 x robot_radius + 이 값 안
+      stationary_speed: 0.05       # [m/s] 이하면 정지
+      stationary_time_s: 2.0       # 이만큼 서 있어야 block 간선 (통신 지연 · 재계획 순간 오탐 방지)
+      confirm_s: 1.0               # 같은 사이클이 이만큼 이어지면 교착 확정 (탐지 지연 ≈ 2 + 1 + 0.5 s)
+      clear_s: 3.0                 # observe: 보고한 교착이 이만큼 연속으로 안 보이고 모두 진전해야 풀림
+      stall_time_s: 15.0           # 남은 경로가 이 시간 동안 stall_progress_m 이상 줄지 않으면 정체
+      stall_progress_m: 0.5
+      detour_reset_m: 2.0          # 남은 길이가 이만큼 늘면(큰 우회 재계획) 정체 기준을 새로 잡는다
+      idle_block_s: 5.0            # 유휴(주차) 로봇 때문에 이만큼 서 있으면 BLOCKED
+      livelock_radius_m: 3.0       # 이 거리 안에 모인 정체 로봇 ≥ 2 → LIVELOCK
+    resolution:                    # 해소 전략 (traffic_resolution)
+      auto_pockets: true           # 지정 포켓이 모두 불가하면 자동 포켓 (구역 밖 · 경로 밖 빈 셀)
+      pocket_search_radius_m: 12.0  # 포켓까지 경로 길이 상한 (다른 로봇 몸체를 지나지 않는 격자 Dijkstra)
+      pocket_clearance_m: 1.0      # 포켓은 다른 주행 로봇의 남은 경로에서 이만큼 떨어진다
+      pocket_path_horizon_m: 12.0  # 그 경로를 이만큼만 본다
+      search_resolution_m: 0.25    # 포켓 탐색 · 길 존재 확인 격자
+      escalate_after_s: 10.0       # 전략 1 중 상대가 전혀 못 움직이면(사이클 지속) 전략 2 로
+      yield_timeout_s: 30.0        # 전략 1 상한 (sequences.md §3 t_yield)
+      replan_grace_s: 5.0          # 전략 2: 이 안에 마스크를 피하는 plan 이 없으면 희생 로봇 교체
+      alt_path_timeout_s: 45.0     # 전략 2 상한
+      deadlock_max_s: 120.0        # 사건 상한 → UNRESOLVED (sequences.md §3 t_deadlock_max)
+      max_attempts_per_robot: 3    # 진전 없이 사건에 걸린 횟수 상한 → UNRESOLVED (라이브락 차단)
+      keepout_half_width_m: 0.6    # 분쟁 구간 lethal 띠 반폭
+      keepout_extend_m: 1.5        # 분쟁 구간 끝(상대 투영점 · 분쟁 구역 출구) 너머로 더 칠하는 길이
+      keepout_margin_m: 0.2        # 상대 몸체 원 = robot_radius + 이 값
+      keepout_resolution_m: 0.05   # keepout_mask 해상도 (지도 전체 크기, 원점 = /map 원점)
+      contested_radius_m: 1.2      # 분쟁 영역 = 탐지 때 로봇 위치에서 이 반경 + 걸쳐 있던 구역
+      pass_check_m: 6.0            # 상대가 남은 경로 이 거리 안에서 분쟁 영역에 다시 들어오지 않아야 해소
+      move_eps_m: 0.5              # 상대가 이만큼 움직였으면 "사이클 지속" 이 아니다
+      cooldown_s: 30.0             # UNRESOLVED 뒤 같은 로봇 집합을 다시 시도하기까지
+      progress_reset_m: 2.0        # 목표 경로가 이만큼 줄면 그 로봇의 무진전 시도 수를 0 으로
+      release_check: true          # 풀기 전 희생 로봇 원래 경로 ↔ 상대 경로 정면·교차 충돌 예측
+      release_horizon_s: 10.0

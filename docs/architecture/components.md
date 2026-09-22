@@ -172,9 +172,9 @@ BT 노드 목록 (≥15, 명세 8장): Control `Sequence` `Fallback` `ReactiveSe
 
 | 노드 | 언어 | 형태 | 역할 | 언어 근거 |
 | --- | --- | --- | --- | --- |
-| `fleet_manager_node` (중앙, 1개) | Python | own | JSON Task 수신 → 우선순위/마감 큐 → **할당(최소 거리 / 부하 균형 / Hungarian, `allocation_strategy` 파라미터)** → 로봇 `assign_task` 호출. 작업 상태 이벤트, KPI(`FleetStatus`), 작업 로그(`logs/`) | scipy `linear_sum_assignment`, 저주기 |
+| `fleet_manager_node` (중앙, 1개) | Python | own | JSON Task 수신·검증(스키마 draft-07 + 의미 규칙, 위반은 알림 후 버림) → 우선순위/마감 큐 → **할당(최소 거리 / 부하 균형 / Hungarian, `allocation_strategy` 파라미터)** → 로봇 `assign_task` 호출. 결과가 불확실한 호출은 보류·조정(중복 실행 방지), 작업 소유권 검사, 로봇 생존 감시. 작업 상태 이벤트, KPI(`FleetStatus`), 작업 로그(`logs/`) | scipy `linear_sum_assignment`, 저주기 |
 | `traffic_manager_node` (중앙, 1개) | Python | own | 로봇별 `plan`/자세로 경로 충돌 예측, 교차로 우선순위, **교착 탐지(wait-for 그래프 사이클)**, 해소 전략 ① 우선순위 양보(`traffic/hold`, `traffic/yield_pose`) ② 대체 경로(`keepout_mask`) | networkx, 2 Hz |
-| `fleet_adapter_node` (로봇별) | Python | own | 로봇 상태 취합 → `robot_state` 2 Hz. 통신 지연(0~100 ms) 시뮬레이션 지연 큐 | 경량 취합 |
+| `fleet_adapter_node` (로봇별) | Python | own | 로봇 상태 취합 → `robot_state` 2 Hz (E-stop 변화 시 즉시). 통신 지연(0~100 ms) 시뮬레이션 지연 큐. 모의 `assign_task` 서버·모의 완료는 실행기 없는 시험 전용(기본 꺼짐) | 경량 취합 |
 
 ### 3.7 amr_dashboard
 
@@ -501,16 +501,17 @@ Nav2 서버 (ext, 액션·토픽 이름은 Nav2 Humble 기본값)
 
 | 방향 | 이름 | 타입 | 비고 |
 | --- | --- | --- | --- |
-| Sub | `/fleet/task_request` | `std_msgs/msg/String` | JSON Task Description (명세 8장). `Task` 로 파싱 |
-| SrvS | `/fleet/assign_task` | `amr_msgs/srv/AssignTask` | 프로그램 클라이언트용. `robot_id` 비우면 자동 할당 |
-| Sub | `/amr_XX/robot_state` | `amr_msgs/msg/RobotState` | 로봇 5대, 2 Hz |
-| Sub | `/amr_XX/task_status` | `amr_msgs/msg/Task` | 완료/실패 집계 |
-| SrvC | `/amr_XX/assign_task` | `amr_msgs/srv/AssignTask` | 할당 결과 전달 (통신 지연 0~100 ms 주입) |
-| Pub | `/fleet/task_events` | `amr_msgs/msg/Task` | 상태 전이 이벤트 |
-| Pub | `/fleet/status` | `amr_msgs/msg/FleetStatus` | 1 Hz. `robots[]`, 작업 카운트, throughput, avg_task_duration, robot_utilization, deadlock_count |
-| Pub | `/fleet/alerts` | `diagnostic_msgs/msg/DiagnosticArray` | `level` WARN/ERROR, `hardware_id`=robot_id: 작업 실패, E-stop |
-| Sub | `/fleet/traffic_events` | `diagnostic_msgs/msg/DiagnosticArray` | 교통 관리자의 교착 카운트 반영 |
-| 로그 | `logs/tasks_YYYYmmdd.csv` | — | 시작/종료/이동 거리/소요 시간/결과 |
+| Sub | `/fleet/task_request` | `std_msgs/msg/String` | JSON Task Description (명세 8장, `config/task_schema.json`, draft-07 — apt `python3-jsonschema` 3.2.0 과 pip 4.x 공통). NaN/Infinity·비유한 수·깊은 중첩·16 KiB 초과·범위 밖 좌표(±10 km)·마감 지평선(±30일) 밖·등록되지 않은 `robot_id`·중복 `task_id` 는 `fleet/INVALID_TASK`(WARN) 알림 후 버린다 (노드는 계속 돈다). `Task` 로 파싱, 도착 후 `allocation_batch_window_s`(10 ms) 동안 모아 한 라운드로 할당 |
+| SrvS | `/fleet/assign_task` | `amr_msgs/srv/AssignTask` | 프로그램 클라이언트용. `robot_id` 비우면 자동 할당. JSON 경로와 같은 검증(스키마 + 의미 규칙 + 등록 로봇), 위반은 `success=false` + `fleet/INVALID_TASK`. 배치 창 없이 바로 할당해 응답에 `robot_id` 를 준다 |
+| Sub | `/amr_XX/robot_state` | `amr_msgs/msg/RobotState` | 로봇 5대, 2 Hz. `robot_state_timeout_s`(5 s) 동안 없으면 오프라인: `fleet/ROBOT_LOST`(ERROR), 호출 중 작업 재할당, 진행 중 작업 FAILED(`robot_lost`) → `max_task_retries` 안에서 재시도. 재수신 시 `fleet/ROBOT_RECOVERED`(OK). `current_task_id` 는 응답이 늦은 호출의 수락 확인에도 쓴다 |
+| Sub | `/amr_XX/task_status` | `amr_msgs/msg/Task` | 완료/실패 집계. 소유 로봇(진행 중), 지금 호출 대상·보낸 적 있는 로봇·고정 로봇(대기 중)의 보고만 반영, 그 밖은 `fleet/TASK_CONFLICT` 알림 후 무시 |
+| SrvC | `/amr_XX/assign_task` | `amr_msgs/srv/AssignTask` | 할당 결과 전달 (통신 지연 0~100 ms 주입). 요청 `task.header.stamp` = 명령 시각(할당을 송신 큐에 넣은 시각). 유실·서비스 없음은 곧바로 다음 후보로. 보냈는데 `assign_timeout_s`(3 s) 안에 응답이 없으면 `fleet/ASSIGN_TIMEOUT`(WARN) 후 그 로봇에 예약한 채 기다리고, 늦은 수락·`task_status`·`robot_state` 로 확인하거나 `assign_reconcile_s`(2 s) 뒤 `robot_state` 에도 작업이 없을 때만 재할당 (취소 서비스가 없으므로 중복 실행을 만들지 않는 쪽으로). 예약을 푼 뒤 다른 로봇이 가진 작업의 늦은 수락은 `fleet/TASK_CONFLICT`(ERROR) |
+| Pub | `/fleet/task_events` | `amr_msgs/msg/Task` | 상태 전이 이벤트. 스탬프(모두 노드 시계): `header.stamp` = 전이 시각, `pickup_pose.header.stamp` = 명령 시각(수락된 `assign_task` 요청 stamp, 명령 전이면 0), `dropoff_pose.header.stamp` = 접수 시각. 명령 → 첫 움직임(명세 4.10 응답 시간)은 IN_PROGRESS 이벤트의 `pickup_pose.header.stamp` 를 명령 시각으로 잰다 (0 이면 `header.stamp` 로 대체 — 기존 소비자 호환) |
+| Pub | `/fleet/status` | `amr_msgs/msg/FleetStatus` | 1 Hz. `robots[]`(오프라인 로봇은 마지막 자세, `status=ERROR`), 작업 카운트, throughput, avg_task_duration, robot_utilization, deadlock_count |
+| Pub | `/fleet/alerts` | `diagnostic_msgs/msg/DiagnosticArray` | `name` = `fleet/<TYPE>`, `hardware_id`=robot_id, `values` 에 `task_id`·`robots`. ERROR: `ESTOP`(진입), `TASK_FAILED`, `ROBOT_LOST`, `TASK_CONFLICT`(중복 실행), `INTERNAL_ERROR`(콜백 예외, 노드는 계속) / WARN: `ROBOT_ERROR`, `TASK_REQUEUED`, `DEADLINE_MISSED`, `INVALID_TASK`, `ASSIGN_TIMEOUT`, `TASK_CONFLICT`(오래된 보고) / OK: `ESTOP`(해제), `ROBOT_RECOVERED`. 외부 입력이 섞인 문자열의 `<`, `>`, `&`, 백틱, 제어 문자는 `?` 로 바꾼다 (대시보드도 따로 이스케이프한다) |
+| Sub | `/fleet/traffic_events` | `diagnostic_msgs/msg/DiagnosticArray` | 교통 관리자의 `traffic/DEADLOCK`(탐지)만 `deadlock_count` 에 센다 (`traffic/RESOLVED` 는 세지 않는다). 교착 알림 자체는 `traffic_manager_node` 가 낸다 |
+| 로그 | `logs/tasks_YYYYmmdd.csv`, `logs/allocation_YYYYmmdd.csv` | — | 작업: 시작/종료/이동 거리/소요 시간/결과. 할당: 전략·총 이동 거리·makespan·계산 시간. 파일 날짜는 벽시계, 시각 칸은 노드 시계(`log_time_format`) |
+| 시계 | — | — | 마감·접수·이벤트 stamp 는 모두 노드 시계(`use_sim_time` 이면 `/clock`, 런치 기본 true). ISO-8601 마감은 벽시계 절대 시각으로 받아 접수 때 `now_node + (iso − wall_now)` 로 옮긴다. 파라미터 중 `[시작 전용]`(fleet.yaml 표시)은 실행 중 변경을 거절한다 |
 
 `traffic_manager_node`
 
@@ -528,8 +529,13 @@ Nav2 서버 (ext, 액션·토픽 이름은 Nav2 Humble 기본값)
 
 | 방향 | 이름 | 타입 | 비고 |
 | --- | --- | --- | --- |
-| Sub | `odometry/filtered_map`, `battery_state`, `task_status`, `executor/phase`, `safety/estop_active`, `safety/zone` | | |
-| Pub | `robot_state` | `amr_msgs/msg/RobotState` | 2 Hz. `status` 매핑: estop→ESTOP, phase→MOVING/DOCKING/LOADING/CHARGING, lost/error→ERROR, 그 외 IDLE. 송신 지연 큐: `comm_latency_ms: [0, 100]` 균등 분포에서 메시지마다 추출 ([multi_robot.md](multi_robot.md) §6) |
+| Sub | `odometry/filtered_map`, `battery_state`, `task_status`, `executor/phase` | `nav_msgs/msg/Odometry`, `sensor_msgs/msg/BatteryState`, `amr_msgs/msg/Task`, `std_msgs/msg/String` | reliable |
+| Sub | `safety/estop_active` | `std_msgs/msg/Bool` | latched (transient_local 구독 — 어댑터가 나중에 떠도 래치된 E-stop 을 받는다. 발행자도 latched 여야 짝이 맺어진다) |
+| Sub | `safety/zone` | `std_msgs/msg/UInt8` | 변화 시 (로그용) |
+| Pub | `robot_state` | `amr_msgs/msg/RobotState` | 2 Hz + E-stop 변화 시 즉시. `status` 매핑: estop→ESTOP, phase→MOVING/DOCKING/LOADING/CHARGING, lost/error→ERROR, 그 외 IDLE. 송신 지연 큐: `comm_latency_ms: [0, 100]` 균등 분포에서 메시지마다 추출 ([multi_robot.md](multi_robot.md) §6) |
+| SrvS | `assign_task` | `amr_msgs/srv/AssignTask` | **모의 전용, 기본 꺼짐**(`serve_assign_task: false`). 실제 서버는 `task_executor_node`(§5.5). 실행기 없는 시험에서 `auto_complete_after_s > 0` 과 함께 켠다 (런치가 자동으로 켠다). IDLE 이고 작업이 없을 때만 수락 |
+| Pub | `task_status` | `amr_msgs/msg/Task` | 모의 완료(`auto_complete_after_s > 0`) 때만: 수락 시 IN_PROGRESS, N s 뒤 COMPLETED |
+| 로그 | `logs/comm_latency_<robot>_YYYYmmdd.csv` | — | `[cmd_time, response_time, latency_ms]` — 요청 stamp → 어댑터 수신 (모의 서버일 때) |
 
 ### 5.7 amr_dashboard
 
