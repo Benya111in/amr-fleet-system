@@ -36,7 +36,7 @@
     active_phases: [moving]
     min_speed: 0.02                   # [m/s]  |v| 미만이고 |ω| < min_angular 면 정지 → 제외
     min_angular: 0.02                 # [rad/s]
-    plan_timeout: 3.0                 # [s] 경로 수신 후 이 시간이 지나면 제외 (0 끔; 1 Hz 재계획 주기보다 길게)
+    plan_timeout: 3.0                 # [s] 경로 수신 후 이 시간이 지나면 제외 (0 끔; 항법 상태가 없을 때만 적용)
     skip_endpoint: true               # 최근접점이 경로 시작점 앞/끝점 너머면 제외 (종방향 거리)
     curvature_threshold: 0.1          # [1/m] 초과 시 곡선 (곡률 반경 10 m 미만)
     curvature_window: 1.0             # [m] 곡률 현(chord) 창 (앞뒤 0.5 m)
