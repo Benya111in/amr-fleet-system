@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Yield: 교통 관리자의 traffic/hold 동안 양보 (MoveTo 의 TrafficGate 가 호출).
+    인자: yield_pose (traffic/yield_pose, frame_id 가 비면 제자리 대기)
+
+  양보 자세가 있으면 그곳으로 이동한 뒤, hold 가 풀릴 때까지 RUNNING.
+  해제 판정은 호출한 ReactiveFallback 이 매 tick IsTrafficHold 로 하므로 이 서브트리는 끝나지 않아도 된다.
+-->
+<root>
+  <BehaviorTree ID="Yield">
+    <Sequence name="YieldSteps">
+      <ForceSuccess>
+        <NavigateToPose name="MoveToYieldPose" goal="{yield_pose}" skip_if_empty="true"/>
+      </ForceSuccess>
+      <KeepRunningUntilFailure name="HoldUntilReleased">
+        <IsTrafficHold yield_pose="{yield_pose}"/>
+      </KeepRunningUntilFailure>
+    </Sequence>
+  </BehaviorTree>
+</root>

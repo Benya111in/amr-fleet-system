@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  DockAt: docking_server_node 의 dock 액션으로 정밀 도킹 (복구 ③ 도킹 실패, 명세: 최대 3회).
+    인자: dock_id ("" = 도킹 생략), approach_pose (staging 자세)
+    설정: dock_attempts (= 3), dock_max_retries (goal 당 서버 접근 횟수, 기본 1)
+
+  재시도 카운터는 BT 의 RetryUntilSuccessful 하나뿐이다 (goal 당 서버 접근 1회 → 물리적 접근 ≤ dock_attempts).
+  실패한 시도마다 RecoverDocking (0.3 m 후진 → 마커가 안 보이면 staging 재접근) 후 다시 도킹한다.
+  dock_attempts 회 모두 실패하면 FAILURE (→ 메인 트리 dock_failed: 에러 보고 + 대기 구역 복귀).
+-->
+<root>
+  <BehaviorTree ID="DockAt">
+    <RetryUntilSuccessful name="DockingAttempts" num_attempts="{dock_attempts}">
+      <Fallback name="DockOrRecover">
+        <Sequence name="DockOnce">
+          <SetPhase phase="DOCKING"/>
+          <Dock dock_id="{dock_id}" approach_pose="{approach_pose}" max_retries="{dock_max_retries}"
+                attempts_used="{last_dock_attempts}" final_position_error="{last_dock_position_error}"
+                final_angle_error="{last_dock_angle_error}"/>
+        </Sequence>
+        <ForceFailure name="CountAttempt">
+          <SubTreePlus ID="RecoverDocking" approach_pose="{approach_pose}" __autoremap="true"/>
+        </ForceFailure>
+      </Fallback>
+    </RetryUntilSuccessful>
+  </BehaviorTree>
+</root>
