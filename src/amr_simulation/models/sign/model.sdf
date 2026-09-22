@@ -1,0 +1,32 @@
+<?xml version="1.0" ?>
+<!--
+  표지판 판 예시 (비상구). 모델 원점 = 판 아래 기준점(바닥), 판 법선 = +x (보는 쪽).
+  - 두께 0.02 m 판에 materials/textures/sign_<이름>.png 를 albedo_map 으로 붙인다. 크기(가로 x 세로)는
+    gen_sign_textures.py SIGNS 의 size 와 같아야 글자 비율이 맞다 (비상구 0.80 x 0.30 m, 판 중심 높이 2.4 m).
+  - 월드에서는 이 파일을 include 하지 않고 같은 구조의 판을 이름별 텍스처로 인라인 생성한다
+    (worlds/gen_warehouse_world.py SIGN_POSES — 도크·구역·충전·대기·랙 열·주의·비상구 25개).
+  - 벽·랙 끝면·기둥에 붙는 판이라 충돌체가 없다 (면에서 1.2 cm 앞, 스캔 평면보다 높다).
+-->
+<sdf version="1.8">
+  <model name="sign">
+    <static>true</static>
+    <link name="link">
+      <visual name="plate">
+        <pose>0 0 2.4 0 0 0</pose>
+        <geometry><box><size>0.02 0.80 0.30</size></box></geometry>
+        <material>
+          <ambient>1 1 1 1</ambient>
+          <diffuse>1 1 1 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+          <pbr>
+            <metal>
+              <albedo_map>model://sign/materials/textures/sign_exit.png</albedo_map>
+              <metalness>0.0</metalness>
+              <roughness>0.9</roughness>
+            </metal>
+          </pbr>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>

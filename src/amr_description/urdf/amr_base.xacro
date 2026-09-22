@@ -4,16 +4,19 @@
 
   base_footprint  지면 투영 가상 프레임 (URDF 루트, 형상/관성 없음). odom → base_footprint 는 EKF 가 발행
   base_link       차체 박스의 기하 중심 (지면 위 robot.base_link_height). 센서 extrinsic 의 기준점
-  *_wheel_link    구동 바퀴 (continuous, y 축). 조인트 원점 (0, ±separation/2, wheel_radius - base_link_height)
+  *_wheel_link    구동 바퀴 (continuous, y 축). 조인트 원점 (0, ±separation/2, wheel_radius - base_link_height).
+                  <limit effort velocity> = robot_params.yaml drive.* (모터·감속기 모델) → 적재 질량에 따라 가속·제동이 달라진다
   *_caster_link   앞/뒤 구형 캐스터 (fixed). 조인트 원점 (±caster_x_offset, 0, caster_radius - base_link_height)
-  cargo_link      적재함 (fixed, 차체 상면). 질량 = payload_mass 인자
+  cargo_link      데크(차체 상면) 중앙. 적재물이 있으면 실제 크기 박스(시각·충돌·균질 관성)를 단다
 
   모든 치수/질량/관성은 amr.urdf.xacro 가 config/robot_params.yaml 에서 읽어 둔 프로퍼티를 쓴다.
   바퀴 상단(지면 +0.165)이 차체 바닥(+0.03) 안으로 들어오지만 같은 모델 링크끼리는 충돌하지 않는다
   (SDF model <self_collide> 기본 false, urdf→sdf 변환도 링크별 selfCollide 를 켜지 않는다).
   base_link·캐스터·센서·적재함은 모두 fixed 조인트라 sdformat 이 URDF 루트 링크 base_footprint 로
   병합(lumping)한다 — Gazebo 모델에는 base_footprint(차체 전체) + 바퀴 2개만 존재하고(모델 원점 = 지면 투영),
-  ROS TF 에는 URDF 대로 모든 프레임이 있다. 적재함 박스 높이는 LiDAR 스캔 평면 아래로 제한한다 (amr.urdf.xacro).
+  ROS TF 에는 URDF 대로 모든 프레임이 있다.
+  시각체에는 이름을 붙이지 않는다: 자기 차체 가시성 비트(amr_gazebo.xacro)를 sdformat 이 링크 단위
+  <gazebo reference> 확장으로 넣을 때 "<링크>_visual*" 이름으로 짝을 찾기 때문이다 (이름을 주면 빠진다 — 실측).
 -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
@@ -23,6 +26,8 @@
       <child link="${prefix}${side}_wheel_link"/>
       <origin xyz="0 ${reflect * wheel_separation / 2.0} ${wheel_z}" rpy="0 0 0"/>
       <axis xyz="0 1 0"/>
+      <!-- 모터·감속기 한계 (robot_params.yaml drive). DiffDrive 의 바퀴 속도 서보가 이 토크 이상을 못 낸다 -->
+      <limit effort="${wheel_effort_limit}" velocity="${wheel_velocity_limit}"/>
     </joint>
     <link name="${prefix}${side}_wheel_link">
       <visual>
@@ -91,6 +96,17 @@
         </geometry>
         <material name="amr_body"/>
       </visual>
+      <!--
+        LiDAR 창(슬롯) 띠: 스캔 평면 ±3 cm 높이로 차체를 두르는 어두운 창 (외관 표시). 차체보다 2 mm 크게 둬
+        면이 겹쳐 깜박이지 않게 한다. 다른 로봇의 LiDAR 에는 차체 외곽으로 보인다 (자기 LiDAR 는 가시성 비트로 제외).
+      -->
+      <visual>
+        <origin xyz="0 0 ${lidar['extrinsic']['z']}" rpy="0 0 0"/>
+        <geometry>
+          <box size="${body_length + 0.002} ${body_width + 0.002} 0.06"/>
+        </geometry>
+        <material name="amr_sensor_window"/>
+      </visual>
       <collision>
         <origin xyz="0 0 0" rpy="0 0 0"/>
         <geometry>
@@ -109,12 +125,13 @@
     <xacro:caster prefix="${prefix}" position="rear" reflect="-1"/>
 
     <!--
-      적재함. payload_mass 는 스폰 시점에 xacro 인자로 반영된다 (small/medium/large 값은
-      robot_params.yaml payload.<type>.mass). fixed 조인트라 sdformat 이 URDF 루트 링크(base_footprint)에
-      질량·관성을 합산하므로 Gazebo 동역학(가속 응답, 관성)에 그대로 들어간다 (실측: payload 25 kg →
-      lumped 70.6 kg). payload_mass = 0 이면 형상 없는 빈 링크만 남는다.
-      주행 중 적재/하역에 따른 질량 변경은 향후 과제: 물품을 별도 모델(amr_simulation/models/*)로 스폰하고
-      모델에 ignition-gazebo-detachable-joint-system 을 넣어 attach/detach 하면 Gazebo 가 질량을 동적으로 합산한다.
+      적재물. 스폰 시점의 xacro 인자(payload / payload_mass)로 정해진다 — 크기·질량은 robot_params.yaml payload.<종류>.
+      명세 8장 물품 표의 실제 크기 박스를 데크 중앙(x = 0, 구동축 위)에 올리고 균질 박스 관성을 준다. fixed 조인트라
+      sdformat 이 URDF 루트 링크(base_footprint)에 질량·관성·무게중심을 합산해 Gazebo 동역학에 그대로 들어간다.
+      바퀴 토크 한계(drive.wheel_effort_limit)가 있으므로 합산 질량이 가속·제동 응답을 바꾼다 (robot_params.yaml drive 실측).
+      적재물이 없으면 형상·관성 없는 빈 프레임만 남는다 (TF 의 cargo_link 는 항상 있다).
+      주행 중 적재/하역에 따른 질량 변경(재스폰 없이)은 향후 과제: 물품을 별도 모델(amr_simulation/models/box_*)로 두고
+      ignition-gazebo-detachable-joint-system 으로 attach/detach 하면 Gazebo 가 질량을 동적으로 합산한다.
         <parent_link>(prefix)base_footprint</parent_link>  (병합된 실제 링크. cargo_link 는 Gazebo 에 없다)
         <child_model>box_small</child_model> <child_link>link</child_link>
         <attach_topic>/<robot_name>/cargo/attach</attach_topic> <detach_topic>/<robot_name>/cargo/detach</detach_topic>
@@ -128,22 +145,22 @@
     <link name="${prefix}cargo_link">
       <xacro:if value="${payload_mass > 0.0}">
         <visual>
-          <origin xyz="0 0 ${cargo_height / 2.0}" rpy="0 0 0"/>
+          <origin xyz="0 0 ${cargo_size[2] / 2.0}" rpy="0 0 0"/>
           <geometry>
-            <box size="${cargo_length} ${cargo_width} ${cargo_height}"/>
+            <box size="${cargo_size[0]} ${cargo_size[1]} ${cargo_size[2]}"/>
           </geometry>
           <material name="amr_cargo"/>
         </visual>
         <collision>
-          <origin xyz="0 0 ${cargo_height / 2.0}" rpy="0 0 0"/>
+          <origin xyz="0 0 ${cargo_size[2] / 2.0}" rpy="0 0 0"/>
           <geometry>
-            <box size="${cargo_length} ${cargo_width} ${cargo_height}"/>
+            <box size="${cargo_size[0]} ${cargo_size[1]} ${cargo_size[2]}"/>
           </geometry>
         </collision>
+        <xacro:inertial_box mass="${payload_mass}" x="${cargo_size[0]}" y="${cargo_size[1]}" z="${cargo_size[2]}">
+          <origin xyz="0 0 ${cargo_size[2] / 2.0}" rpy="0 0 0"/>
+        </xacro:inertial_box>
       </xacro:if>
-      <xacro:inertial_box mass="${payload_mass}" x="${cargo_length}" y="${cargo_width}" z="${cargo_height}">
-        <origin xyz="0 0 ${cargo_height / 2.0}" rpy="0 0 0"/>
-      </xacro:inertial_box>
     </link>
 
   </xacro:macro>

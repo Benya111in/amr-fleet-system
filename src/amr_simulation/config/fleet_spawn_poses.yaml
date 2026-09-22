@@ -1,0 +1,10 @@
+# 다중 로봇 스폰 자세 (명세 4.9, docs/architecture/multi_robot.md §5). 월드 = worlds/warehouse.sdf.
+# 대기 구역 패드(중심 (22, -16), 10 x 4 m, 남동쪽) 안에 2 m 간격으로 북쪽(+y, yaw π/2)을 보고 선다.
+# test/test_world.py 가 랙·기둥·사람 경로·지게차/셔틀 경로와 겹치지 않는지 검사한다.
+# 형식: 로봇 이름 → [x, y, yaw] (m, m, rad). multi_robot.launch.py 가 spawn.launch.py 의 x, y, yaw 로 넘긴다.
+fleet_spawn_poses:
+  amr_01: [18.0, -16.0, 1.5708]
+  amr_02: [20.0, -16.0, 1.5708]
+  amr_03: [22.0, -16.0, 1.5708]
+  amr_04: [24.0, -16.0, 1.5708]
+  amr_05: [26.0, -16.0, 1.5708]

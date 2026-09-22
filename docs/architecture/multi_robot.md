@@ -29,7 +29,7 @@
 | --- | --- | --- |
 | `map → amr_01/odom` | `ekf_filter_node_map` (robot_localization, `world_frame: map`, 입력 `amcl_pose`) | AMCL 은 `tf_broadcast: false` |
 | `amr_01/odom → amr_01/base_footprint` | `ekf_filter_node_odom` (`world_frame: odom`, 입력 `wheel_odom`, `imu/data`) | Gazebo DiffDrive 의 `<tf_topic>` 은 브리지하지 않는다 |
-| `amr_01/base_footprint → …` (정적) | `robot_state_publisher` (`frame_prefix: amr_01/`) | 바퀴 조인트는 `joint_states` 로 동적 |
+| `amr_01/base_footprint → …` (정적) | `robot_state_publisher` (xacro `prefix:=amr_01/` 로 이름이 이미 접두어를 가짐, `frame_prefix` 미사용) | 바퀴 조인트는 `joint_states` 로 동적 |
 
 ```mermaid
 graph TD
@@ -59,13 +59,15 @@ graph TD
 ```
 
 접두어가 만들어지는 경로
-- **robot_state_publisher**: 파라미터 `frame_prefix: amr_01/` 하나로 URDF 의 모든 링크 이름에 접두어가 붙는다 (확인: `/tf_static` 에 `amr_01/base_footprint → amr_01/base_link` 등으로 발행). `robot_description` 자체는 접두어 없이 그대로이므로 xacro 하나를 모든 로봇이 공유한다.
-- **Gazebo 센서**: SDF 센서 요소의 `<ignition_frame_id>amr_01/lidar_link</ignition_frame_id>` 가 메시지 `header.frame_id` 가 된다 (확인: imu, gpu_lidar, camera / camera_info). xacro 인자 `prefix` 로 주입한다. Depth 카메라는 같은 기반 클래스 구현이라 동일하게 동작할 것으로 보나 직접 확인하지는 않았다.
-- **ros_gz_bridge**: frame_id 를 바꾸지 않고 그대로 넘긴다 (확인). 따라서 프레임 접두어는 URDF(`frame_prefix`)와 SDF(`ignition_frame_id`) 두 곳에서만 결정된다.
+- **URDF / robot_state_publisher (구현)**: xacro 인자 `prefix:=amr_01/` 하나로 모든 링크·조인트 이름, Gazebo 센서 `<ignition_frame_id>`, DiffDrive·OdometryPublisher 프레임에 접두어가 함께 들어간다 (`src/amr_description/urdf/amr.urdf.xacro`). 그래서 `robot_state_publisher` 의 `frame_prefix` 는 **쓰지 않는다** — 같이 쓰면 `amr_01/amr_01/base_link` 로 이중 접두어가 된다. `joint_states` 의 관절 이름도 `amr_01/left_wheel_joint` 로 와서 URDF 와 그대로 맞는다 (확인: 5대 45개 정적 프레임 모두 접두어, 리뷰 실측). 대가로 `robot_description` 이 로봇마다 다르다 (로봇마다 xacro 를 따로 전개).
+- **Gazebo 센서**: SDF 센서 요소의 `<ignition_frame_id>amr_01/lidar_link</ignition_frame_id>` 가 메시지 `header.frame_id` 가 된다 (확인: imu, gpu_lidar, camera / camera_info, depth camera_info).
+- **ros_gz_bridge**: frame_id 를 바꾸지 않고 그대로 넘긴다 (확인). 따라서 프레임 접두어는 xacro `prefix` 한 곳에서 결정된다.
+- **자기 차체 가시성 비트**: 차체 안 LiDAR 가 자기 차체를 보지 않도록 로봇마다 다른 가시성 비트를 쓴다 (xacro `self_visibility_bit`, 기본 = 이름 끝 숫자 n → 4 + (n − 1) mod 20). 동시에 뜨는 로봇의 비트가 같으면 **서로의 LiDAR 에 보이지 않는다** — 이름 끝 숫자가 20 차이 나는 로봇(amr_01 과 amr_21)을 함께 띄우지 말 것 ([sensor_calibration.md](sensor_calibration.md) §1.1).
 - **EKF (`config/ekf.yaml`)**: 파일에는 접두어 없는 `map`, `odom`, `base_footprint` 와 상대 토픽(`wheel_odom`, `imu/data`, `amcl_pose`)만 적고, 노드 이름 키는 네임스페이스에 무관하게 매칭되도록 작성한다. 런치가 `parameters=[ekf_yaml, {"odom_frame": "amr_01/odom", "base_link_frame": "amr_01/base_footprint"}]` 처럼 **파일 뒤에 오버라이드**를 붙여 접두어를 주입한다(뒤 항목이 앞을 덮어쓴다). 이유: 파일 하나로 N 대를 돌리고, 단일 로봇(`system.launch.py`)에서는 오버라이드 없이 그대로 쓰며, 접두어는 필터 튜닝이 아니라 배치(런치)의 관심사이기 때문이다.
 - **Nav2 파라미터**: 프레임 이름을 파라미터로 받으므로 템플릿에 자리표시자를 두고 `nav2_common.launch.ReplaceString` 으로 치환한다 (Nav2 자체는 `<robot_namespace>` → `/amr_01` 치환을 쓴다; 프레임에는 `amr_01/` 이 필요하므로 별도 자리표시자를 쓴다). 4장 참조.
 
-공유 `/tf` 의 비용 (추정치): 로봇당 EKF 2개 × 50 Hz + `joint_states` 50 Hz ≈ 150 msg/s, 5대 ≈ 750 msg/s, 메시지 100 B 남짓이므로 100 kB/s 미만. 모든 TF 리스너가 다른 로봇 프레임까지 버퍼링하지만 5대에서는 문제되지 않는다. 10대를 넘기면 Nav2 기본 방식(네임스페이스별 `tf`)을 재검토한다.
+공유 `/tf` 의 비용: 로봇당 EKF 2개 × 50 Hz + `robot_state_publisher` 바퀴 TF ≤ 20 Hz(`publish_frequency` 기본값이 상한 — 실측: 6대에서 /tf 합계 sim 기준 ≈ 20 Hz × 6) ≈ 120 msg/s, 5대 ≈ 600 msg/s, 메시지 100 B 남짓이라 100 kB/s 미만. 모든 TF 리스너가 다른 로봇 프레임까지 버퍼링하지만 5대에서는 문제되지 않는다. 10대를 넘기면 Nav2 기본 방식(네임스페이스별 `tf`)을 재검토한다.
+단, `joint_states` 자체는 Fortress JointStatePublisher 가 **물리 스텝마다(1 kHz)** 낸다 (주기 옵션 없음, 실측 sim 1 kHz). 로봇마다 브리지 → `robot_state_publisher`·`wheel_odometry_node` 로 1 kHz 가 흐르며, 실측 CPU 는 로봇당 `parameter_bridge` ≈ 7 %, `robot_state_publisher` ≈ 5 % (한 코어 기준, RTF ≈ 0.9). `wheel_odometry_node` 는 50 Hz 로 서브샘플한다.
 
 ## 3. 토픽 배치
 
@@ -121,19 +123,27 @@ graph TD
 ## 5. Gazebo 다중 스폰
 
 - 월드는 하나(`amr_simulation` `warehouse.launch.py`). 물리·센서·IMU·SceneBroadcaster 시스템 플러그인은 월드에 한 번만 둔다.
-- 로봇 xacro 는 `prefix:=amr_01/`, `ns:=/amr_01` 두 인자를 받아 SDF 플러그인·센서에 다음을 넣는다.
+- 로봇 xacro 는 `robot_name:=amr_01`(gz 토픽 접두어, 모델 이름), `prefix:=amr_01/`(프레임), `payload`/`payload_mass`(적재), `self_visibility_bit`(선택) 인자를 받아 SDF 플러그인·센서에 다음을 넣는다 (`description.launch.py` 가 전달).
   - 센서 `<topic>`: `/amr_01/scan`, `/amr_01/camera/image_raw`(→ `camera_info` 자동), `/amr_01/camera/depth/image_raw`, `/amr_01/imu/data_raw`
   - DiffDrive `<topic>/amr_01/cmd_vel</topic>`, `<frame_id>amr_01/odom</frame_id>`, `<child_frame_id>amr_01/base_footprint</child_frame_id>` (확인; 오도메트리/TF 출력은 디버그용, 브리지하지 않음)
   - JointStatePublisher `<topic>/amr_01/joint_states</topic>`, OdometryPublisher `<odom_frame>world</odom_frame>`, `<robot_base_frame>amr_01/base_footprint</robot_base_frame>`, `<odom_topic>/amr_01/ground_truth/odom</odom_topic>` (확인)
   - `<topic>` 을 생략하면 gz 기본 이름은 `/world/warehouse/model/amr_01/link/base_link/sensor/imu/imu` 처럼 모델 이름이 들어가 충돌은 없지만(확인) 길다. **gz 토픽 이름을 ROS 절대 이름과 같게** 지으면 브리지에 리맵이 필요 없다.
-- 스폰: `ros2 run ros_gz_sim create -world warehouse -name amr_01 -topic /amr_01/robot_description -x X -y Y -Y YAW` (옵션 확인). 기본값 `-allow_renaming false` 에서는 이름이 겹쳐도 자동 개명되지 않으므로(옵션 설명 기준) 이름 중복이 바로 드러난다.
+- 스폰 (구현): `spawn.launch.py` → `ros2 run amr_description gz_world.py spawn --world warehouse --name amr_01 --x X --y Y --yaw YAW`. create 서비스가 뜰 때까지 기다리고(최대 900 s), 같은 이름이 이미 있으면 실패하고, 생성 후 `/world/warehouse/scene/info` 에서 모델을 확인한다. 어느 단계든 실패하면 ERROR 와 함께 런치를 내린다. (`ros_gz_sim create` 0.244.26 은 응답 5 s 시간 초과에도 종료 코드 0 이라 쓰지 않는다 — 확인.)
+- **기동 순서 (일시정지 스폰, 결정)**: Fortress 센서는 sim 0 부터 한 주기씩 갱신 시각을 늘리므로 sim T 에 스폰된 로봇은 T × 주기 만큼 몰아서 갱신한다(폭주, 실측 T ≈ 92 s → ~1 kHz). 다중 로봇 런치(`multi_robot.launch.py`)는
+  1. `amr_simulation warehouse.launch.py spawn_robot:=false paused:=true monitor_robots:=amr_01,amr_02,...` — 월드가 sim 0 에 멈춘 채 뜬다 (지면 진실·충돌 판정 노드 포함)
+  2. 로봇마다 `amr_description description.launch.py robot_name:=amr_0N prefix:=amr_0N/` + `spawn.launch.py robot_name:=amr_0N x:=… y:=… yaw:=…` (자세는 아래 표 = `amr_simulation/config/fleet_spawn_poses.yaml`)
+  3. `amr_simulation unpause.launch.py robots:=amr_01,amr_02,...` — 모든 모델이 월드에 보이면 일시정지를 푼다 (하나라도 300 s 안에 안 보이면 ERROR, 월드는 멈춘 채)
+
+  순서로 띄운다. 실측: 2대·6대 모두 첫 scan 이 sim 0.0 s, 간격 0.100 s (폭주 없음), 해제까지 월드 기동 후 7~10 s. 운용 중(sim T > 0) 재스폰은 여전히 폭주를 일으키므로 피한다 (적재 변경도 재스폰 대신 향후 DetachableJoint).
 - 브리지: 로봇당 `parameter_bridge` 1개. 인자 나열(`/amr_01/scan@sensor_msgs/msg/LaserScan[ignition.msgs.LaserScan …`) 또는 `config_file` YAML(0.244.26 에서 지원 확인)을 쓰고, 이름을 바꿔야 할 때만 `--ros-args -r __ns:=/amr_01 -r <gz>:=<ros>` 를 쓴다 (확인). `/clock` 브리지는 루트에 1개.
 - `IGN_PARTITION`: gz-transport 디스커버리 범위. 서버·모든 브리지·`ign topic` CLI 가 같은 값을 가져야 하며, 다른 파티션에서는 토픽이 전혀 보이지 않는다 (확인: 0개). `docker-compose.yml` 은 `.env` 의 `IGN_PARTITION`(`.env.example`: `IGN_PARTITION=amr_<이름>`, 사람마다 다르게)을 모든 서비스에 주입하므로 한 사람의 서버·브리지·CLI 컨테이너는 같은 파티션을 쓰고, 같은 호스트의 다른 사용자와는 격리된다. 호스트에서 직접 `ign topic` 을 쓸 때는 같은 값을 export 한다.
-- 스폰 좌표 (충전 구역, 월드 확정 후 갱신):
+- 스폰 좌표 (대기 구역 패드, `src/amr_simulation/config/fleet_spawn_poses.yaml` — `test_world.py` 가 랙·기둥·사람 경로·차량 경로와 겹치지 않는지 검사):
 
 | 로봇 | x | y | yaw |
 | --- | --- | --- | --- |
-| amr_01 … amr_05 | 4.0 + 1.5·(i−1) | 3.0 | 0 |
+| amr_01 … amr_05 | 18.0 + 2.0·(i−1) | −16.0 | π/2 (북쪽) |
+
+  이전 표(4.0 + 1.5·(i−1), 3.0)는 랙 B5(x 5..7, y 2.5..3.5)와 겹쳤다 (리뷰).
 
 ## 6. 통신 지연 시뮬레이션 (≤ 100 ms)
 
@@ -158,7 +168,8 @@ graph TD
 
 | 항목 | 예산 (코어) | 근거 / 조정 수단 |
 | --- | --- | --- |
-| Gazebo 서버 (물리 1 kHz + 렌더링 센서 15개) | 6 | GPU 렌더링이지만 센서 업데이트는 서버 스레드. 센서 주기는 명세 최소값(10/15/30/100 Hz)으로 고정 |
+| Gazebo 서버 (물리 1 kHz + 렌더링 센서 15개) | 6 | GPU 렌더링이지만 센서 업데이트는 서버 스레드. 센서 주기는 명세 최소값(10/15/30/100 Hz)으로 고정. 실측: 전체 월드(사람 6 + 차량 2 + 표지판) + 2대 ≈ 1.8~2.1 코어, RTF 0.85~1.0 (호스트 부하 14~23/32) |
+| 시뮬레이션 평가 노드 (`obstacle_truth_node`, `collision_monitor_node`) | 0.5 | 실측 각 ≈ 22 % (50 Hz, 2대). 평가·시험에서만 켠다 (`warehouse.launch.py obstacle_truth:=false collision_monitor:=false`) |
 | 로봇 1대: Nav2(컴포지션) 1.2, AMCL 0.3, EKF×2 0.3, 브리지 0.4, 오도메트리·IMU 필터·추적·프로파일러·안전 0.5, YOLO 전/후처리 0.6 | 3.3 × 5 = 16.5 | YOLO 추론은 GPU, 로봇당 ≤ 10 FPS 로 프레임 드롭; `points` 토픽은 브리지 안 함 |
 | `fleet_manager_node` + `traffic_manager_node` + `fleet_adapter_node` ×5 + `dashboard_node` | 1.0 | |
 | 합계 | ≈ 23.5 (73 %) | 초과 시: costmap `update_frequency` 5 Hz/`publish_frequency` 2 Hz, `taskset` 으로 Gazebo 코어 고정(이미지에 있음) |
@@ -169,8 +180,7 @@ graph TD
 ## 8. 미확정 / 검증 필요
 
 - 접두어 프레임 + 공유 `/tf` 로 Nav2 5대를 실제로 띄워 본 적은 아직 없다. 프레임 이름은 Nav2 에 불투명한 문자열이므로 동작에는 문제가 없을 것으로 보나, 첫 통합 시 `view_frames` 로 트리를 확인한다.
-- Depth 카메라의 `<ignition_frame_id>` 는 미확인(2장).
-- 스폰 좌표는 월드 레이아웃 확정 후 갱신한다.
+- 로봇 이름 끝 숫자로 정하는 가시성 비트는 20대까지 고유하다 (2장). 그 이상은 `self_visibility_bit` 를 명시한다.
 
 ## 9. 구현 현황 (amr_bringup)
 
