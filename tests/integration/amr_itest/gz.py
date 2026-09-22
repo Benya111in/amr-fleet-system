@@ -16,11 +16,12 @@ def pose_request(model: str, x: float, y: float, z: float, yaw: float) -> str:
             f'orientation: {{x: 0, y: 0, z: {math.sin(yaw / 2):.6f}, w: {math.cos(yaw / 2):.6f}}}')
 
 
-def box_sdf(name: str, x: float, y: float, sx: float, sy: float, sz: float) -> str:
+def box_sdf(name: str, x: float, y: float, sx: float, sy: float, sz: float,
+            yaw: float = 0.0) -> str:
     """정적 박스 모델 SDF (작은따옴표만 써서 ign --req 문자열에 그대로 넣는다)."""
     geom = f'<geometry><box><size>{sx} {sy} {sz}</size></box></geometry>'
     return (f"<sdf version='1.8'><model name='{name}'><static>true</static>"
-            f"<pose>{x} {y} {sz / 2} 0 0 0</pose><link name='link'>"
+            f"<pose>{x} {y} {sz / 2} 0 0 {yaw}</pose><link name='link'>"
             f"<collision name='collision'>{geom}</collision>"
             f"<visual name='visual'>{geom}</visual></link></model></sdf>")
 
@@ -33,10 +34,10 @@ def set_pose(world: str, model: str, x: float, y: float, yaw: float, z: float = 
 
 
 def spawn_box(world: str, name: str, x: float, y: float, sx: float = 1.0, sy: float = 1.0,
-              sz: float = 1.0, timeout_ms: int = 5000) -> Tuple[bool, str]:
-    """정적 박스 장애물 생성 (/world/<world>/create) — 경로 차단 복구 시험."""
+              sz: float = 1.0, timeout_ms: int = 5000, yaw: float = 0.0) -> Tuple[bool, str]:
+    """정적 박스 장애물 생성 (/world/<world>/create) — 경로 차단·근접 정지·벽 접근 시험."""
     return _service(world, 'create', 'ignition.msgs.EntityFactory',
-                    f'sdf: "{box_sdf(name, x, y, sx, sy, sz)}"', timeout_ms)
+                    f'sdf: "{box_sdf(name, x, y, sx, sy, sz, yaw)}"', timeout_ms)
 
 
 def remove(world: str, name: str, timeout_ms: int = 5000) -> Tuple[bool, str]:

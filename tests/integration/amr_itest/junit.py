@@ -15,6 +15,7 @@ PASSED = 'passed'
 FAILED = 'failed'
 ERROR = 'error'
 SKIPPED = 'skipped'
+PARTIAL = 'partial'     # 실패 없이 일부 테스트만 skip — 통과가 아니다 (report.skip_is_failure)
 MISSING = 'missing'     # JUnit 파일이 없음 (타임아웃·크래시로 launch_test 가 쓰지 못함)
 
 
@@ -42,7 +43,7 @@ class SuiteResult:
 
     @property
     def status(self) -> str:
-        """스위트 상태: 실패/에러가 하나라도 있으면 그것, 전부 skip 이면 skipped."""
+        """스위트 상태: 실패/에러가 하나라도 있으면 그것, 전부 skip 이면 skipped, 일부 skip 이면 partial."""
         if not self.cases:
             return ERROR
         if self.count(ERROR):
@@ -51,6 +52,8 @@ class SuiteResult:
             return FAILED
         if self.count(SKIPPED) == len(self.cases):
             return SKIPPED
+        if self.count(SKIPPED):
+            return PARTIAL
         return PASSED
 
 
@@ -95,7 +98,26 @@ def status_of(path: Optional[Path]) -> str:
             return st
     if all(st == SKIPPED for st in statuses):
         return SKIPPED
+    if any(st in (SKIPPED, PARTIAL) for st in statuses):
+        return PARTIAL
     return PASSED
+
+
+def case_counts(path: Optional[Path]) -> dict:
+    """시나리오 JUnit 의 테스트 케이스 수 {total, executed, passed, failed, error, skipped}."""
+    out = {'total': 0, 'executed': 0, PASSED: 0, FAILED: 0, ERROR: 0, SKIPPED: 0}
+    if path is None or not Path(path).is_file():
+        return out
+    try:
+        suites = parse(Path(path))
+    except ET.ParseError:
+        return out
+    for suite in suites:
+        for c in suite.cases:
+            out['total'] += 1
+            out[c.status] += 1
+    out['executed'] = out['total'] - out[SKIPPED]
+    return out
 
 
 def skip_message(path: Path) -> str:

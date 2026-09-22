@@ -198,3 +198,84 @@ def latency_summary(latencies_ms: Sequence[float]) -> Dict[str, float]:
             'max': round(float(np.max(arr)), 2),
             'p95': round(float(np.percentile(arr, 95)), 2),
             'min': round(float(np.min(arr)), 2)}
+
+
+def ttc_circle(px: float, py: float, vx: float, vy: float, radius: float) -> float:
+    """
+    등속 가정 접촉 시간 [s]: 상대 위치 p(장애물 − 로봇), 상대 속도 v 에서 |p + v·t| = radius 인 가장 이른 t ≥ 0.
+
+    이미 radius 안이면 0, 다가오지 않거나 스치지 않으면 inf (명세 4.7 TTC — 시나리오 08 의 조우 기록).
+    """
+    c = px * px + py * py - radius * radius
+    if c <= 0.0:
+        return 0.0
+    a = vx * vx + vy * vy
+    b = 2.0 * (px * vx + py * vy)
+    if a <= 1e-12 or b >= 0.0:
+        return math.inf
+    disc = b * b - 4.0 * a * c
+    if disc < 0.0:
+        return math.inf
+    return (-b - math.sqrt(disc)) / (2.0 * a)
+
+
+@dataclass(frozen=True)
+class DeviationEpisode:
+    """계획 경로 이탈 구간: 이탈 > out_thr 로 나갔다가 ≤ back_thr 로 돌아올 때까지."""
+
+    t_start: float
+    t_peak: float
+    peak: float
+    t_end: Optional[float]      # None = 시행 끝까지 돌아오지 않음
+
+    @property
+    def returned(self) -> bool:
+        return self.t_end is not None
+
+    def return_time(self, t_last: float) -> float:
+        """최대 이탈 시각 → 복귀 시각 [s] (돌아오지 않았으면 t_last 까지 — 판정은 returned 로)."""
+        return (self.t_end if self.t_end is not None else t_last) - self.t_peak
+
+
+def deviation_episodes(times: Sequence[float], devs: Sequence[float], out_thr: float = 0.3,
+                       back_thr: float = 0.15) -> List[DeviationEpisode]:
+    """
+    시간순 (t, 이탈) 에서 이탈 구간 목록 (명세 4.7 "원래 경로로 5 s 이내 복귀" 판정 입력).
+
+    이탈 > out_thr 이면 구간 시작, 최대점을 따라가다 이탈 ≤ back_thr 이면 끝 (히스테리시스).
+    """
+    out: List[DeviationEpisode] = []
+    cur = None
+    for t, d in zip(times, devs):
+        if not math.isfinite(d):
+            continue
+        if cur is None:
+            if d > out_thr:
+                cur = [t, t, d]
+            continue
+        if d > cur[2]:
+            cur[1], cur[2] = t, d
+        if d <= back_thr:
+            out.append(DeviationEpisode(cur[0], cur[1], cur[2], t))
+            cur = None
+    if cur is not None:
+        out.append(DeviationEpisode(cur[0], cur[1], cur[2], None))
+    return out
+
+
+CONTACT_MOVING_V = 0.05     # [m/s] 접촉 순간 로봇이 움직이고 있었다고 보는 GT 속도
+
+
+def speeds_at(track: Sequence[Sample], times: Sequence[float],
+              max_gap: float = 0.2) -> List[float]:
+    """
+    시각마다 GT 평면 속도 |v| (보간, 표본이 없거나 간격이 max_gap 초과면 NaN).
+
+    08 접촉 분류용: 접촉 = 로봇이 움직이며 부딪침(|v| > CONTACT_MOVING_V) 인지, 정지한 로봇에 장애물이
+    와서 닿음인지. 판정(접촉 0)은 바꾸지 않고 원인 귀속 근거로만 남긴다.
+    """
+    out = []
+    for t in times:
+        s = interpolate(track, t, max_gap)
+        out.append(abs(s.v) if s is not None else math.nan)
+    return out

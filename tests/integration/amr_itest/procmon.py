@@ -4,7 +4,8 @@
   ros_processes()   --ros-args 를 가진 프로세스(= ROS 2 노드) 목록 {pid: 이름}
   rss_mb()          /proc/<pid>/status VmRSS [MB]
   CpuSampler        /proc/stat 두 시점 차이로 전체 CPU 사용률 [%]
-  slope_per_hour()  최소제곱 기울기 (메모리 누수 판정: MB/h)
+  slope_per_hour()  최소제곱 기울기 [단위/h]
+  leak_verdict()    누수 판정 (기울기 + 요동 폭 초과 증가량, 표본 부족은 판정 불가)
 /proc 경로는 인자로 받아 단위 테스트에서 가짜 트리를 쓸 수 있게 했다.
 """
 
@@ -41,6 +42,30 @@ def ros_processes(proc: Path = PROC) -> Dict[int, str]:
         args = _cmdline(d)
         if '--ros-args' in args:
             out[int(d.name)] = node_name(args)
+    return out
+
+
+def is_simulator(args: Sequence[str]) -> bool:
+    """Gazebo 서버 명령줄인가 (Fortress: ruby /usr/bin/ign gazebo … — 서버가 ruby 프로세스 안에서 돈다)."""
+    words = [Path(a).name for a in args[:3]]
+    return ('gazebo' in args[:4] and ('ign' in words or 'gz' in words)) \
+        or any(w.startswith(('ign-gazebo', 'gz-sim')) for w in words)
+
+
+def system_processes(proc: Path = PROC) -> Dict[int, str]:
+    """
+    시스템 프로세스 = ROS 노드(--ros-args) + 시뮬레이터 서버 {pid: 이름}.
+
+    명세 4.10 "5대 운용 시 CPU 80 %" 의 분자: 시뮬레이터도 시스템의 일부로 센다 (시뮬레이터를 빼면
+    Gazebo 가 쓰는 몇 코어가 사라져 기준이 헐거워진다). 하네스 러너(launch_testing)는 뺀다.
+    """
+    out = ros_processes(proc)
+    for d in proc.iterdir():
+        if not d.name.isdigit() or int(d.name) in out:
+            continue
+        args = _cmdline(d)
+        if args and is_simulator(args):
+            out[int(d.name)] = 'gazebo_server'
     return out
 
 
@@ -88,19 +113,35 @@ def process_jiffies(pid: int, proc: Path = PROC) -> Optional[float]:
     return float(fields[11]) + float(fields[12])
 
 
+def cpu_count(proc: Path = PROC) -> int:
+    """/proc/stat 의 cpuN 줄 수 (호스트 코어 = CPU 사용률 분모의 코어 수)."""
+    lines = (proc / 'stat').read_text().splitlines()
+    return max(1, sum(1 for ln in lines if ln.startswith('cpu') and ln[3:4].isdigit()))
+
+
 class ProcessCpuSampler:
     """
     지정한 프로세스들의 CPU 사용률 합 [% of 전체 코어] — 공유 호스트에서 외부 부하를 뺀 값.
 
     /proc/stat 전체 사용률(amr_evaluation cpu_sampler)은 같은 호스트의 다른 작업까지 포함하므로,
-    시스템 자신의 몫은 프로세스별 utime+stime 증분 / 전체 jiffies 증분으로 따로 잰다.
+    시스템 자신의 몫은 프로세스별 utime+stime 증분 / 전체 jiffies 증분으로 따로 잰다 (분모 = 호스트 전체 코어).
+    cores_used() 는 같은 값을 "코어 몇 개 분" 으로 (% × 코어 수 / 100). update_pids() 로 새로 뜬 노드를 더한다.
     """
 
     def __init__(self, pids: Sequence[int], proc: Path = PROC):
         self.proc = proc
         self.pids = list(pids)
+        self.cores = cpu_count(proc)
         self._last_total = read_cpu_times(proc)[0]
         self._last = {p: process_jiffies(p, proc) for p in self.pids}
+        self.last_percent = 0.0
+
+    def update_pids(self, pids: Sequence[int]) -> None:
+        """감시 대상을 바꾼다 (새 pid 는 다음 sample 부터 증분을 센다)."""
+        for p in pids:
+            if p not in self._last:
+                self._last[p] = process_jiffies(p, self.proc)
+        self.pids = list(pids)
 
     def sample(self) -> float:
         total = read_cpu_times(self.proc)[0]
@@ -113,7 +154,12 @@ class ProcessCpuSampler:
             self._last[p] = now
         dt = total - self._last_total
         self._last_total = total
-        return 100.0 * used / dt if dt > 0 else 0.0
+        self.last_percent = 100.0 * used / dt if dt > 0 else 0.0
+        return self.last_percent
+
+    def cores_used(self) -> float:
+        """마지막 sample 의 사용량 [코어 수]."""
+        return self.last_percent * self.cores / 100.0
 
 
 def slope_per_hour(times_s: Sequence[float], values: Sequence[float]) -> float:
@@ -125,3 +171,31 @@ def slope_per_hour(times_s: Sequence[float], values: Sequence[float]) -> float:
         return float('nan')
     slope, _ = np.polyfit(t[ok], v[ok], 1)
     return float(slope * 3600.0)
+
+
+RSS_NOISE_MB = 2.0          # 할당기 청크 단위 RSS 요동 (14 실측: gz_image_bridge 142.6↔144.1 MB 왕복)
+LEAK_MIN_POINTS = 5
+
+
+def leak_verdict(times_s: Sequence[float], values: Sequence[float], max_mb_h: float,
+                 noise_mb: float = RSS_NOISE_MB,
+                 min_points: int = LEAK_MIN_POINTS) -> Tuple[str, float, float]:
+    """
+    메모리 누수 판정 → (상태, 기울기 MB/h, 창 동안 적합 증가량 MB).
+
+    상태: 'leak' = 기울기 > max_mb_h 이고 적합 증가량(기울기 × 창 길이) > noise_mb,
+    'ok', 'insufficient' = 유효 표본 < min_points (판정 불가 — 통과로 세지 않는다).
+    짧은 창에서 1~2 MB 왕복 요동을 h 당으로 외삽하면 수십 MB/h 가 되므로 (0.25 h 스모크, 창 4 분에서
+    gz_image_bridge 18 MB/h) 증가량이 요동 폭을 넘을 때만 누수로 본다. 4 h 캠페인에서는 5 MB/h × 3.8 h
+    = 19 MB ≫ noise_mb 라 기준이 느슨해지지 않는다.
+    """
+    t = np.asarray(times_s, dtype=float)
+    v = np.asarray(values, dtype=float)
+    ok = np.isfinite(t) & np.isfinite(v)
+    if np.sum(ok) < max(min_points, 3):
+        return 'insufficient', float('nan'), float('nan')
+    slope = slope_per_hour(t[ok], v[ok])
+    growth = slope * float(np.max(t[ok]) - np.min(t[ok])) / 3600.0
+    if slope > max_mb_h and growth > noise_mb:
+        return 'leak', slope, growth
+    return 'ok', slope, growth

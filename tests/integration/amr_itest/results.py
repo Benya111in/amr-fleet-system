@@ -137,6 +137,10 @@ class ScenarioRecord:
         self.data['duration_s'] = round(time.monotonic() - self._t0, 1)
         self.write()
 
+    def elapsed(self) -> float:
+        """기록 시작(시나리오 로드) 이후 wall 시간 [s]."""
+        return time.monotonic() - self._t0
+
     def failed_checks(self) -> List[Dict[str, Any]]:
         return [c for c in self.data['checks'] if not c['passed']]
 

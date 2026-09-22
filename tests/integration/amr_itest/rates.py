@@ -6,8 +6,10 @@
 때문이다 (명세의 "10 Hz 이상" 은 시뮬레이션 시간 기준 센서 주기). wall 주기는 참고로 함께 남긴다.
 
 판정 두 가지
-  mean_rate   = (n − 1) / (마지막 스탬프 − 첫 스탬프)   — 실제 전달률 (드롭 포함)
-  median_rate = 1 / median(연속 스탬프 간격)            — 설정된 센서 주기 (간헐 드롭에 강건)
+  median_rate = 1 / median(연속 스탬프 간격)            — 센서 주기 (간헐 드롭에 강건). 명세 "N Hz 이상" 을
+                                                      이것으로 본다: 지터만 허용(≥ 0.98×)
+  mean_rate   = (n − 1) / (마지막 스탬프 − 첫 스탬프)   — 구독자 쪽 전달률 (전송 드롭 포함, ≥ 0.9×)
+규정 주기는 명세 하한과 설정(sensors.yaml) 중 큰 값이다 (nominal_rate) — 설정을 낮춰 기준이 내려가지 않게.
 """
 
 from dataclasses import dataclass
@@ -15,6 +17,15 @@ import math
 from typing import Iterable, List, Sequence
 
 import numpy as np
+
+
+MEDIAN_TOL = 0.98     # 센서 주기: 스탬프 양자화·지터만 허용
+MEAN_TOL = 0.9        # 전달률: 구독자 쪽 드롭 허용
+
+
+def nominal_rate(config_hz: float, spec_min_hz: float = 0.0) -> float:
+    """판정 기준 주기 [Hz] = max(설정, 명세 하한). 설정만 낮춰서 기준이 내려가지 않게 한다."""
+    return max(float(config_hz), float(spec_min_hz))
 
 
 @dataclass(frozen=True)
@@ -28,7 +39,8 @@ class RateStats:
     max_gap: float = 0.0         # [s] 가장 긴 간격
     duplicates: int = 0          # 역행/중복 스탬프 수 (버림)
 
-    def meets(self, nominal: float, mean_tol: float = 0.9, median_tol: float = 0.95) -> bool:
+    def meets(self, nominal: float, mean_tol: float = MEAN_TOL,
+              median_tol: float = MEDIAN_TOL) -> bool:
         """규정 주기 nominal [Hz] 에 대해 두 판정을 모두 통과하면 True."""
         if self.count < 2 or nominal <= 0.0:
             return False
@@ -86,6 +98,32 @@ def sample_std(values: Sequence[float]) -> float:
     if arr.size < 2:
         return float('nan')
     return float(np.std(arr, ddof=1))
+
+
+def per_pixel_noise(frames: Sequence[np.ndarray], range_max: float) -> float:
+    """
+    정지 상태 깊이 영상 여러 장에서 화소별 표준편차의 중앙값 [m] (per_beam_noise 의 영상판).
+
+    모든 장에서 유한하고 (0, range_max) 안인 화소만 쓴다. 쓸 화소가 없으면 NaN.
+    """
+    if len(frames) < 2:
+        return float('nan')
+    arr = np.stack([np.asarray(f, dtype=float).reshape(-1) for f in frames])
+    valid = np.all(np.isfinite(arr) & (arr > 0.0) & (arr < range_max * 0.999), axis=0)
+    if not np.any(valid):
+        return float('nan')
+    return float(np.median(np.std(arr[:, valid], axis=0, ddof=1)))
+
+
+def finite_max(frames: Sequence[np.ndarray]) -> float:
+    """깊이 영상들의 유한 양수 값 최댓값 [m] (없으면 NaN) — 최대 측정 거리 판정."""
+    best = float('nan')
+    for f in frames:
+        a = np.asarray(f, dtype=float)
+        a = a[np.isfinite(a) & (a > 0.0)]
+        if a.size:
+            best = float(a.max()) if not math.isfinite(best) else max(best, float(a.max()))
+    return best
 
 
 def per_beam_noise(scans: Sequence[Sequence[float]], range_max: float) -> float:

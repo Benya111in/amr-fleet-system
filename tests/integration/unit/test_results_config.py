@@ -44,15 +44,33 @@ def test_record_lifecycle(tmp_path):
     assert load['cpus'] >= 1 and len(load['loadavg']) == 3
 
 
-def test_latency_gate(monkeypatch):
-    from amr_itest import cases
-    summary = {'count': 20, 'mean': 20.0, 'p95': 60.0, 'max': 130.0}
-    monkeypatch.setattr(results, 'host_load', lambda: {'provisional_under_load': False})
-    assert cases.latency_gate(summary, 100.0) == ('max', 130.0, False)
-    monkeypatch.setattr(results, 'host_load', lambda: {'provisional_under_load': True})
-    assert cases.latency_gate(summary, 100.0) == ('p95 (provisional_under_load)', 60.0, True)
+def test_latency_gate_always_max(monkeypatch):
+    """부하 중에도 최댓값으로 판정한다 (예전: p95 로 바꿔 20회 중 1회 2 s 정지도 통과)."""
+    import numpy as np
+    from amr_itest import cases, metrics
+    one_bad = metrics.latency_summary([0.3] * 19 + [1990.0])
+    assert np.percentile([0.3] * 19 + [1990.0], 95) < 100.0        # p95 였다면 통과
+    for loaded in (False, True):
+        monkeypatch.setattr(results, 'host_load', lambda loaded=loaded: {
+            'provisional_under_load': loaded})
+        assert cases.latency_gate(one_bad, 100.0) == ('max', 1990.0, False)
     assert not cases.latency_gate({'count': 0, 'p95': float('nan'), 'max': float('nan')},
                                   100.0)[2]
+    assert cases.latency_gate(metrics.latency_summary([-0.05, 5.0]), 20.0)[2]   # 음수 그대로
+
+
+def test_retry_under_load():
+    """실패 + 부하일 때만 한 번 다시 재고, 두 시도를 모두 돌려준다."""
+    from amr_itest import cases
+    runs = iter([{'count': 1, 'max': 150.0, 'mean': 150.0}, {'count': 1, 'max': 5.0, 'mean': 5.0}])
+    summary, ok, attempts = cases.retry_under_load(lambda: next(runs), 20.0, lambda: True)
+    assert ok and summary['max'] == 5.0 and len(attempts) == 2
+    runs = iter([{'count': 1, 'max': 150.0, 'mean': 150.0}])
+    summary, ok, attempts = cases.retry_under_load(lambda: next(runs), 20.0, lambda: False)
+    assert not ok and len(attempts) == 1                            # 부하 없으면 재측정 없이 실패
+    runs = iter([{'count': 1, 'max': 150.0, 'mean': 1.0}, {'count': 1, 'max': 160.0, 'mean': 1.0}])
+    summary, ok, attempts = cases.retry_under_load(lambda: next(runs), 20.0, lambda: True)
+    assert not ok and summary['max'] == 160.0
 
 
 def test_settings_from_env(itest_env, monkeypatch):
@@ -78,6 +96,13 @@ def test_config_loading(tmp_path, monkeypatch):
     assert (config.config_dir() / 'robot_params.yaml').is_file()
     assert config.get(config.robot_params(), 'limits.max_linear_velocity') == 2.0
     assert config.get(config.sensors(), 'lidar.missing.key', 'd') == 'd'
+    with pytest.raises(KeyError):          # 기본값 없이 읽는 키는 필수 (옛 기본값으로 조용히 재지 않는다)
+        config.get(config.sensors(), 'lidar.missing.key')
+    # LiDAR 평면 = base_link_height + lidar.extrinsic.z (차체 안 0.20 m, 예전 기본값 0.38 m 가 아니다)
+    assert config.scan_plane_height() == pytest.approx(
+        config.robot_params()['robot']['base_link_height']
+        + config.sensors()['lidar']['extrinsic']['z'])
+    assert config.scan_plane_height() < 0.3
     assert config.ekf_params('ekf_filter_node_odom')['world_frame'] == 'odom'
     y = tmp_path / 'p.yaml'
     y.write_text('node_a:\n  ros__parameters:\n    k: 1\n')
@@ -97,8 +122,10 @@ def test_requirements():
     assert req.has_python_module('json') and not req.has_python_module('no_such_mod_xyz')
     reqs = [req.package('no_such_pkg_xyz', 'why'), req.executable('rclpy', 'nope'),
             req.launch('rclpy', 'nope.launch.py'), req.module('json'),
-            req.file(Path(__file__)), req.file(Path('/nonexistent'), 'f'), req.gpu()]
+            req.file(Path(__file__)), req.file(Path('/nonexistent'), 'f'), req.gpu(),
+            req.config('rclpy', 'nope.yaml')]
     missing = req.missing(reqs)
+    assert any(m.startswith('config file rclpy/config/nope.yaml') for m in missing)
     assert 'package no_such_pkg_xyz not found (why)' in missing
     assert any(m.startswith('executable rclpy/nope') for m in missing)
     assert any(m.startswith('launch file rclpy/launch/nope.launch.py') for m in missing)
@@ -116,14 +143,25 @@ def test_catalog():
         assert catalog.by_id(key).number == 9
     with pytest.raises(KeyError):
         catalog.by_id('nope')
-    implemented = {s.number for s in catalog.SCENARIOS if s.implemented}
-    assert implemented == {1, 2, 4, 9, 13}
+    # 모든 패키지가 머지됐다: 전부 구현 (skip 은 needs 가 설치돼 있으면 실패로 센다)
+    assert all(s.implemented for s in catalog.SCENARIOS)
+    assert all(s.needs for s in catalog.SCENARIOS)
+    workspace = {p.name for p in (Path(__file__).parents[3] / 'src').iterdir() if p.is_dir()}
+    for s in catalog.SCENARIOS:
+        assert set(s.needs) <= workspace, (s.id, set(s.needs) - workspace)
     assert all(Path(__file__).parents[1].joinpath(f'test_{s.id}.py').is_file()
                for s in catalog.SCENARIOS)
     table = catalog.table_markdown()
     assert table.count('\n') == 16 and '장시간' in table
+    # README 표는 catalog 에서 생성한다 — 손으로 고친 표가 판정 기준과 어긋나지 않게
+    readme = (Path(__file__).parents[1] / 'README.md').read_text(encoding='utf-8')
+    stale = [row[:40] for row in table.splitlines() if row.startswith('|') and row not in readme]
+    assert not stale, f'README 표가 catalog 와 다름 (table_markdown 으로 재생성): {stale}'
     meta = catalog.get(4).meta()
-    assert meta['id'] == '04_ekf_accuracy' and meta['backends'] == [KINEMATIC, GAZEBO]
+    assert meta['id'] == '04_ekf_accuracy' and meta['backends'] == [GAZEBO, KINEMATIC]
+    # 명세 판정 구성이 먼저 (auto): 04 실제 AMCL, 13 실제 실행기 체인
+    assert catalog.get(4).profiles[0] == 'system' and catalog.get(13).profiles[0] == 'system'
+    assert 'amr_fleet' in catalog.get(12).needs
 
 
 def test_context_backend_selection(itest_env, monkeypatch):
@@ -147,6 +185,18 @@ def test_context_backend_selection(itest_env, monkeypatch):
     monkeypatch.setenv('ITEST_PROFILE', 'system')
     with pytest.raises(unittest.SkipTest):
         Context(catalog.get(9)).select_profile()
+    # system 구성은 Gazebo 만: GPU 가 없으면 운동학으로 조용히 바뀌지 않고 건너뛴다
+    monkeypatch.setenv('ITEST_PROFILE', 'auto')
+    ctx4 = Context(catalog.get(4))
+    with pytest.raises(unittest.SkipTest) as exc:
+        ctx4.select()
+    assert ctx4.profile == 'system' and 'gazebo' in str(exc.value)
+    monkeypatch.setenv('ITEST_SIM', 'kinematic')
+    with pytest.raises(unittest.SkipTest) as exc:
+        Context(catalog.get(13)).select()
+    assert "backend 'kinematic' not supported" in str(exc.value)
+    monkeypatch.setenv('ITEST_PROFILE', 'component')
+    assert Context(catalog.get(13)).select() == (KINEMATIC, 'component')
     ctx3 = Context(catalog.get(3))
     with pytest.raises(unittest.SkipTest):
         ctx3.require([req.package('no_such_pkg_xyz')], 'slam')
@@ -165,7 +215,47 @@ def _scenario_dir(root, sid, status, checks=(), skip=''):
     (d / results.RESULT_FILE).write_text(json.dumps(data))
 
 
-def test_report_collect_write_and_exit(tmp_path, capsys):
+def test_report_skip_policy(tmp_path, monkeypatch, capsys):
+    """필요 패키지(needs)가 설치된 구현 시나리오의 skip·partial 은 실패다 (GPU 없음도 통과가 아니다)."""
+    installed = {'amr_simulation', 'amr_description'}
+    monkeypatch.setattr(req, 'has_package', lambda p: p in installed)
+    _scenario_dir(tmp_path, '01_sensor_topics', junit.SKIPPED, skip='GPU device not found')
+    _scenario_dir(tmp_path, '03_slam_map', junit.SKIPPED, skip='package amr_bringup not found')
+    d = tmp_path / '09_emergency_stop'
+    d.mkdir()
+    (d / 'junit.xml').write_text(
+        '<testsuites><testsuite name="s"><testcase name="a"/>'
+        '<testcase name="b"><skipped message="gazebo only"/></testcase></testsuite></testsuites>')
+    summary = report.collect(tmp_path)
+    by = {e['id']: e for e in summary['scenarios']}
+    assert by['09_emergency_stop']['status'] == junit.PARTIAL
+    assert by['09_emergency_stop']['cases'] == {'total': 2, 'executed': 1, 'passed': 1,
+                                                'failed': 0, 'error': 0, 'skipped': 1}
+    assert by['01_sensor_topics']['missing_needs'] == []
+    assert by['03_slam_map']['missing_needs'] == ['amr_bringup', 'amr_localization']
+    assert report.skip_is_failure(by['01_sensor_topics'])          # 설치됐는데 skip
+    assert not report.skip_is_failure(by['03_slam_map'])           # 패키지가 없어서 skip
+    assert report.skip_is_failure(by['09_emergency_stop']) is False  # needs 일부 미설치
+    installed.update({'amr_localization', 'amr_navigation', 'amr_perception'})
+    assert report.skip_is_failure(report.collect(tmp_path, ['9'])['scenarios'][0])
+    assert report.exit_code(summary) == 1
+    assert report.exit_code(summary, report.FAIL_ON_SKIP_NONE) == 0
+    only_missing = report.collect(tmp_path, ['3'])
+    assert report.exit_code(only_missing) == 0
+    assert report.exit_code(only_missing, report.FAIL_ON_SKIP_ALL) == 1
+    line = report.counts_line(summary)
+    assert '실패로 센 skip 1' in line and '테스트 케이스 4: 실행 1, skip 3' in line
+    assert report.main(['--log-dir', str(tmp_path), '--scenarios', '3']) == 0
+    assert report.main(['--log-dir', str(tmp_path), '--scenarios', '1']) == 1
+    assert 'skipped (실패로 셈)' in (tmp_path / report.SUMMARY_MD).read_text()
+    assert report.main(['--log-dir', str(tmp_path), '--scenarios', '1', '--allow-skip']) == 0
+    assert '실패로 셈)' not in (tmp_path / report.SUMMARY_MD).read_text()
+    assert report.main(['--log-dir', str(tmp_path), '--fail-on-skip', '--allow-skip']) == 2
+    capsys.readouterr()
+
+
+def test_report_collect_write_and_exit(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(req, 'has_package', lambda p: False)       # needs 미설치 → skip 은 skip
     _scenario_dir(tmp_path, '09_emergency_stop', junit.PASSED,
                   [{'name': 'latency', 'value': 5.0, 'passed': True}])
     _scenario_dir(tmp_path, '03_slam_map', junit.SKIPPED, skip='package x not found')
@@ -183,7 +273,7 @@ def test_report_collect_write_and_exit(tmp_path, capsys):
     assert 'FAIL rmse=0.1' in md and 'package x not found' in md
     assert report.exit_code(summary) == 1
     ok = report.collect(tmp_path, ['9', '3'])
-    assert report.exit_code(ok) == 0 and report.exit_code(ok, fail_on_skip=True) == 1
+    assert report.exit_code(ok) == 0 and report.exit_code(ok, report.FAIL_ON_SKIP_ALL) == 1
     assert report.collect(tmp_path, [])['scenarios'] == []
     assert report.main(['--log-dir', str(tmp_path), '--scenarios', '9']) == 0
     assert report.main(['--list']) == 0 and '14_soak' in capsys.readouterr().out

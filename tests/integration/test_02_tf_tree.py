@@ -33,7 +33,7 @@ EKF_RATE_HZ = 50.0        # config/ekf.yaml frequency
 @launch_testing.markers.keep_alive
 def generate_test_description():
     CTX.begin()
-    stack = Stack(CTX, CTX.select_backend(), CTX.select_profile())
+    stack = Stack(CTX, *CTX.select())
     stack.simulator()
     stack.description()
     stack.localization(amcl=True, ekf=True)

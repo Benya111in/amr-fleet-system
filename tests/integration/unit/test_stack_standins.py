@@ -61,8 +61,15 @@ def test_choose_policies_and_real_nodes(itest_env, monkeypatch):
     assert st.choose('x', [req.package('rclpy')]) == stack_mod.REAL
     assert st.choose('y', [req.package('no_such_pkg_xyz')]) == stack_mod.STANDIN
     st.real_node('amr_localization', 'wheel_odometry_node', params=[{'a': 1}])
+    original = req.has_executable
+    monkeypatch.setattr(req, 'has_executable', lambda p, e: True)
     st.velocity_chain(profiler=False, safety=True)
     assert st.drive_topic == 'cmd_vel_smoothed'
+    # 운동학 대역에는 깊이 카메라가 없다: 실제 safety_node 의 깊이 점군 입력을 끄고 기록한다
+    # (켜 두면 점군 없음 → 전진 0.2 m/s 상한으로 09 가 0.3 m/s 주행을 못 했다)
+    assert st.components['safety'] == stack_mod.REAL
+    assert st.components['depth_cloud'].startswith('off')
+    monkeypatch.setattr(req, 'has_executable', original)
     monkeypatch.setenv('ITEST_STANDINS', 'never')
     strict = stack_mod.Stack(Context(catalog.get(13)), KINEMATIC)
     with pytest.raises(unittest.SkipTest):
@@ -74,22 +81,41 @@ def test_choose_policies_and_real_nodes(itest_env, monkeypatch):
 
 
 def test_gazebo_and_system_profiles(itest_env, monkeypatch, fake_launch):
+    # 설치 여부를 고정한다 (예전: 설치된 워크스페이스에 따라 결과가 달라 통합 트리에서 실패했다)
+    monkeypatch.setattr(req, 'has_executable', lambda p, e: p != 'amr_localization')
     ctx = Context(catalog.get(2))
     st = stack_mod.Stack(ctx, GAZEBO)
     st.simulator()
     st.description()                   # Gazebo 는 스폰 런치가 포함 — 추가 없음
     assert st.use_sim_time and st.components['simulator'] == stack_mod.REAL
-    assert st.components['imu_filter'] == stack_mod.STANDIN      # imu/data_raw → 대역 필터
+    # imu/data_raw → 필터: amr_localization 이 없으면 대역, 있으면 실제 노드
+    assert st.components['imu_filter'] == stack_mod.STANDIN
     assert isinstance(st.entities[0], IncludeLaunchDescription)
+    monkeypatch.setattr(req, 'has_executable', lambda p, e: True)
+    real = stack_mod.Stack(Context(catalog.get(2)), GAZEBO)
+    real.simulator()
+    assert real.components['imu_filter'] == stack_mod.REAL
+    real.velocity_chain()              # Gazebo: 실제 safety_node + 실제 깊이 점군 필터
+    assert real.components['pointcloud_filter'] == stack_mod.REAL
+    assert 'depth_cloud' not in real.components
     monkeypatch.setattr(req, 'has_executable', lambda p, e: True)
     assert st.eval_logger('response_time_logger', {'x': 1}) is True
     assert st.components['evaluation'] == stack_mod.REAL
     sysctx = Context(catalog.get(7))
     sys_stack = stack_mod.Stack(sysctx, GAZEBO, 'system')
-    sys_stack.system(use_behavior=True, extra_args={'mode': 'localization'})
+    sys_stack.system(use_behavior=True, use_perception=False,
+                     extra_args={'localization_mode': 'localization'})
     assert sys_stack.components['navigation'] == stack_mod.REAL
     assert sys_stack.components['behavior'] == stack_mod.REAL
+    assert sys_stack.components['perception'] == 'off'
     assert sys_stack.drive_topic == 'cmd_vel_nav'
+    # system.launch.py 의 스위치는 with_<스택> (use_* 는 선언되지 않아 무시된다), 스폰은 월드 원점
+    args = dict(sys_stack.entities[-1].launch_arguments)
+    assert {k: args[k] for k in ('with_localization', 'with_navigation', 'with_perception',
+                                 'with_behavior', 'with_fleet', 'x', 'y', 'yaw')} == {
+        'with_localization': 'true', 'with_navigation': 'true', 'with_perception': 'false',
+        'with_behavior': 'true', 'with_fleet': 'false', 'x': '0.0', 'y': '0.0', 'yaw': '0.0'}
+    assert not any(k.startswith('use_') and k != 'use_sim_time' for k in args)
     reqs = stack_mod.system_requirements(use_navigation=False, use_perception=False)
     assert [r.package for r in reqs] == ['amr_bringup', 'amr_simulation', 'amr_localization']
 

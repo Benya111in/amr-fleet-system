@@ -90,7 +90,14 @@ def test_junit_status_and_aggregate(tmp_path):
     fail = _write(tmp_path / 'fail.xml', [('a', 'failure'), ('b', None)])
     err = _write(tmp_path / 'err.xml', [('a', 'error')])
     skip = _write(tmp_path / 'skip.xml', [('a', 'skipped'), ('b', 'skipped')])
-    assert junit.status_of(ok) == junit.PASSED
+    # 일부 skip 은 통과가 아니다: partial (report 가 needs 설치 여부로 실패로 셀지 정한다)
+    assert junit.status_of(ok) == junit.PARTIAL
+    full = _write(tmp_path / 'full.xml', [('a', None), ('b', None)])
+    assert junit.status_of(full) == junit.PASSED
+    assert junit.case_counts(ok) == {'total': 2, 'executed': 1, 'passed': 1, 'failed': 0,
+                                     'error': 0, 'skipped': 1}
+    assert junit.case_counts(None)['total'] == 0
+    assert junit.case_counts(tmp_path / 'none.xml')['executed'] == 0
     assert junit.status_of(fail) == junit.FAILED
     assert junit.status_of(err) == junit.ERROR
     assert junit.status_of(skip) == junit.SKIPPED
@@ -98,6 +105,7 @@ def test_junit_status_and_aggregate(tmp_path):
     assert junit.status_of(None) == junit.MISSING
     (tmp_path / 'bad.xml').write_text('<testsuites')
     assert junit.status_of(tmp_path / 'bad.xml') == junit.ERROR
+    assert junit.case_counts(tmp_path / 'bad.xml')['total'] == 0
     (tmp_path / 'empty.xml').write_text('<testsuites/>')
     assert junit.status_of(tmp_path / 'empty.xml') == junit.ERROR
     assert junit.skip_message(skip) == 'a skipped'

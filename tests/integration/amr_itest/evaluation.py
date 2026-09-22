@@ -32,8 +32,10 @@ def _num(v: Any) -> Any:
 def analyze(run_dir: Path, pose_thresholds=(0.03, 0.05, 0.08), response_ms: float = 200.0,
             cpu_percent: float = 80.0) -> Dict[str, Any]:
     """
-    analyze_run() 결과를 dict 로: {'rows': [...], 'warnings': [...], 'passed': bool, 'markdown'}.
+    analyze_run() 결과를 dict 로: {'rows', 'warnings', 'insufficient', 'passed', 'markdown'}.
 
+    passed 는 런 전체 판정이라 시나리오가 만들지 않는 지표 계열(예: 04 에는 CTE·CPU 로그가 없다)을
+    데이터 부족(insufficient)으로 보고 거짓이 된다 — 시나리오는 자기 지표의 판정 행(gated_rows)으로 판정한다.
     report.md 도 run_dir 에 남긴다 (그림은 생략 — 컨테이너 폰트/시간 절약).
     """
     from amr_evaluation import analyze as an
@@ -54,8 +56,9 @@ def analyze(run_dir: Path, pose_thresholds=(0.03, 0.05, 0.08), response_ms: floa
                      'extras': {k: _num(v) for k, v in r.extras.items()}})
     md = report.to_markdown()
     eio.write_text(Path(run_dir) / eio.REPORT_FILE, md)
-    return {'rows': rows, 'warnings': list(report.warnings), 'passed': report.passed(),
-            'markdown': md}
+    return {'rows': rows, 'warnings': list(report.warnings),
+            'insufficient': list(getattr(report, 'insufficient', [])),
+            'passed': report.passed(), 'markdown': md}
 
 
 def gated_rows(result: Dict[str, Any], metric_prefix: str) -> List[Dict[str, Any]]:

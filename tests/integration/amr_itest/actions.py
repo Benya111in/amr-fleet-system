@@ -34,6 +34,58 @@ def pose_stamped(x: float, y: float, yaw: float = 0.0, frame: str = 'map'):
     return msg
 
 
+EKF_SET_POSE = 'ekf_filter_node_map/set_pose'   # amr_localization localization.launch.py 리맵 이름
+AMCL_NOMOTION = 'request_nomotion_update'        # nav2_amcl 서비스 (std_srvs/Empty)
+
+
+def initial_pose(x: float, y: float, yaw: float, sigma_xy: float = 0.05,
+                 sigma_yaw_deg: float = 3.0, frame: str = 'map'):
+    """geometry_msgs/PoseWithCovarianceStamped (initialpose · EKF set_pose 공용)."""
+    from geometry_msgs.msg import PoseWithCovarianceStamped
+    msg = PoseWithCovarianceStamped()
+    msg.header.frame_id = frame
+    msg.pose.pose = pose_stamped(x, y, yaw, frame).pose
+    msg.pose.covariance[0] = msg.pose.covariance[7] = sigma_xy ** 2
+    msg.pose.covariance[35] = math.radians(sigma_yaw_deg) ** 2
+    return msg
+
+
+def seed_pose(probe: GraphProbe, ns: str, x: float, y: float, yaw: float,
+              timeout: float = 5.0, repeats: int = 3) -> dict:
+    """
+    배치 단계: 알려진 자세를 AMCL(initialpose) 과 map EKF(set_pose) 에 함께 준다.
+
+    kidnap_monitor 가 복구할 때 하는 것과 같은 묶음(initialpose + map EKF set_pose + AMCL 무이동 갱신)이다.
+    initialpose 만 주면 정지한 로봇에서 odometry/filtered_map 이 옛 자리에 남을 수 있다 (12 스모크 실측:
+    AMCL 은 (0.8, 5) 로 설정됐는데 filtered_map 오차가 240 s 동안 0.1 m 를 넘었고, scan_matcher 는 보정 과다로
+    거절했다). 판정 대상이 아닌 준비 단계에서만 쓴다.
+    ns: 로봇 이름공간 ('' = 프로브 기준 상대 이름). 반환 {'initialpose': 발행 수, 'ekf_set_pose': 성공,
+    'amcl_nomotion_updates': 성공한 무이동 갱신 요청 수}.
+    """
+    prefix = f'/{ns.strip("/")}/' if ns else ''
+    for _ in range(repeats):
+        msg = initial_pose(x, y, yaw)
+        msg.header.stamp = probe.node.get_clock().now().to_msg()
+        probe.publish(f'{prefix}initialpose', msg)
+        time.sleep(0.2)
+    ok = False
+    try:
+        from robot_localization.srv import SetPose
+    except ImportError:          # robot_localization 없는 환경
+        SetPose = None
+    if SetPose is not None:
+        req = SetPose.Request()
+        req.pose = initial_pose(x, y, yaw)
+        req.pose.header.stamp = probe.node.get_clock().now().to_msg()
+        ok = probe.call(SetPose, f'{prefix}{EKF_SET_POSE}', req, timeout) is not None
+    # 정지한 로봇의 AMCL 은 움직임 문턱 전에는 갱신·발행하지 않는다 → 무이동 갱신 요청 (kidnap_monitor 와 같다)
+    from std_srvs.srv import Empty
+    nomotion = sum(1 for _ in range(2)
+                   if probe.call(Empty, f'{prefix}{AMCL_NOMOTION}', Empty.Request(),
+                                 min(timeout, 2.0)) is not None)
+    return {'initialpose': repeats, 'ekf_set_pose': ok, 'amcl_nomotion_updates': nomotion}
+
+
 def is_zero(msg: Twist, tol: float = 1e-3) -> bool:
     """정지 명령인가 (선속도·각속도 모두 tol 이하)."""
     return abs(msg.linear.x) <= tol and abs(msg.linear.y) <= tol and abs(msg.angular.z) <= tol
@@ -162,18 +214,23 @@ def obstacles_json(world_circles: Iterable = (), world_boxes: Iterable = (),
 def follow_waypoints(probe: GraphProbe, gt: TopicRecord, topic: str,
                      waypoints: Sequence[Tuple[float, float]], v: float = 0.5,
                      tol: float = 0.3, timeout_per_wp: float = 120.0, k_heading: float = 1.5,
-                     w_max: float = 1.0, rate: float = 20.0) -> List[bool]:
+                     w_max: float = 1.0, rate: float = 20.0,
+                     wall_factor: float = 10.0) -> List[bool]:
     """
     GT 자세를 되먹임해 웨이포인트를 차례로 지난다 (Nav2 없이 지도 작성·장시간 주행용).
 
     헤딩 오차 e 에 대해 ω = clip(k·e, ±w_max), v_cmd = v·max(0, cos e) (제자리 회전 후 전진).
+    timeout_per_wp 는 ROS 시각(Gazebo 면 sim time) — 부하로 RTF 가 떨어져도 구간이 잘리지 않게 (03 실측:
+    loadavg 85, RTF ≈ 0.3 에서 wall 상한으로 19 m 구간이 끝나기 전에 넘어갔다). sim time 이 멈추면
+    wall 상한 timeout_per_wp × wall_factor 에서 포기한다.
     반환: 웨이포인트별 도달 여부 (시간 초과면 False, 다음 점으로 넘어간다).
     """
     reached = []
     for wx, wy in waypoints:
-        deadline = time.monotonic() + timeout_per_wp
+        wall_deadline = time.monotonic() + timeout_per_wp * wall_factor
+        t0 = probe.now()
         ok = False
-        while time.monotonic() < deadline:
+        while probe.now() - t0 < timeout_per_wp and time.monotonic() < wall_deadline:
             msg = gt.last()
             if msg is None:
                 time.sleep(0.05)
