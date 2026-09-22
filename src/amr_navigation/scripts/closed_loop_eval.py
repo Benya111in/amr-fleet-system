@@ -261,7 +261,14 @@ def follow_run(ev: Evaluator, name: str, pts: list, controller: str, out: str) -
         w.writerows([['gt', *g] for g in window(ev.gt, t_acc, t_end + 3.0)])
     # 저크: 프로파일 기준(PID 전) / 최종 명령(PID 후, 노드 내부 dt) / 참값 속도(발행 시각, 0.2 s 평활)
     jerk_ref = float(np.max(np.abs(prof[:, 10]))) if len(prof) else float('nan')
-    jerk_out = (np.abs(prof[:, 12]) if len(prof) and prof.shape[1] > 12 else np.zeros(0))
+    jerk_out = np.zeros(0)
+    resyncs = 0
+    if len(prof) and prof.shape[1] > 12:
+        # 재동기화 주기와 그 다음 주기(2차 차분이 재동기화 계단을 포함)는 실행되지 않는 명령이라 뺀다
+        rs = prof[:, 11] > 0.5
+        keep = ~(rs | np.concatenate([[False], rs[:-1]]))
+        jerk_out = np.abs(prof[keep, 12])
+        resyncs = int(rs.sum())
     jerk_gt = (path_metrics.jerk_from_velocity(gt[:, 6], gt[:, 4], smooth=10)
                if len(gt) > 20 else np.zeros(0))
     cyc = np.array([c[1] for c in ctrl])
@@ -279,6 +286,7 @@ def follow_run(ev: Evaluator, name: str, pts: list, controller: str, out: str) -
         'jerk_ref_max': jerk_ref,
         'jerk_out_max': float(np.max(jerk_out)) if len(jerk_out) else None,
         'jerk_out_p99': float(np.percentile(jerk_out, 99)) if len(jerk_out) else None,
+        'profiler_resyncs': resyncs,
         'jerk_gt_p99': float(np.percentile(np.abs(jerk_gt), 99)) if len(jerk_gt) else None,
         'goal_overshoot_m': overshoot, 'final_pos_err_m': final_err,
         't_actual': t_act, 't_pred': t_pred, 't_naive': t_naive,

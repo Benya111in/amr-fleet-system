@@ -1,6 +1,11 @@
 // Dynamic Window Approach — ROS 비의존 코어 (명세 4.4 "DWA 핵심 로직 직접 구현").
 //
 // 한 제어 주기(Δt_c = 1/20 s)의 절차 (Fox, Burgard & Thrun 1997; docs/algorithms/dwa.md):
+//   0) 좁은 곳 경로 재중심(옵션): 기준 경로 점의 비용이 recenter_min_cost 이상이고
+//      법선 ±recenter_max_shift 안 비용이 양쪽 끝보다 낮은 골(valley)이면 그 골 바닥으로 옮긴다
+//      (이동량 이동평균). 지역 코스트맵은 로봇과 같은 odom 프레임이라 위치추정 오차(전역 경로가
+//      0.60 m 통로 중심에서 2–4 cm 비낌, dwa.md §1.7)와 무관하게 실제 통로 중심을 따른다.
+//      한쪽만 막힌 곳(골 아님)과 목표 근처는 옮기지 않는다.
 //   1) 동적 창  V_d = [v_c − a_dec·Δt_c, v_c + a_acc·Δt_c] × [ω_c − α·Δt_c, ω_c + α·Δt_c]  ∩  V_s
 //      창 중심 (v_c, ω_c) = 직전 명령 (측정값과 reset 임계
 //      이상 벌어지면 측정값). 측정값 중심이면 하류
@@ -12,6 +17,7 @@
 //      T_sim(v)·v ≥ s_stop(v) 이므로 "검사 구간 무충돌" 이면 Fox
 //      의 허용 속도(V_a: 충돌 전 정지 가능)도 성립.
 //   5) 동적 장애물: VO 원뿔 안의 샘플 제외(옵션) + 예측 충돌 시각 TTC₀ 비용.
+//      VO 가 창 전체를 덮으면(포화) VO 를 끄지 않고 VO 진입 시각이 가장 늦은 샘플을 고른다.
 //   6) 비용(최소화, 항별 [0,1] 정규화) J = w_h J_head + w_c J_clear
 //   + w_v J_vel + w_p J_path + w_o J_osc + w_d J_dyn
 //        J_head  = |wrap(atan2(target − p_E) − θ_E)| / π,  p_E = 롤아웃의 path_eval_time
@@ -23,8 +29,11 @@
 //        J_path  = mean_{k ≤ k_E} min(|e⊥(p_k)| / d_band, 1)  (추종 항은 앞 path_eval_time 만,
 //                  충돌·여유는 롤아웃 전체 — docs/algorithms/dwa.md §1.5)
 //        J_osc   = 제자리 회전 방향 반전 / 전후진 반전 플래그
-//        J_dyn   = max(0, 1 − TTC₀ / T_pred)
-//   7) 최소 비용 샘플 선택. 유효 샘플이 없으면 제동 후보.
+//        J_dyn   = min(1, max(0, |v| − v_safe(TTC₀)) / (v_max − v_min)
+//                         + λ·max(0, 1 − TTC₀ / T_pred)),
+//                  v_safe(TTC₀) = a·max(0, TTC₀ − T_c − a/(2j)) (예측 접촉 전에 설 수 있는 속도)
+//   7) 선택: 충돌 없고 VO 밖인 샘플 중 비용 최소 → 없으면(VO 포화) 충돌 없는 샘플 중
+//      VO 진입이 가장 늦은 것 → 그것도 없으면 제동 후보.
 #ifndef AMR_NAVIGATION__CORE__DWA_HPP_
 #define AMR_NAVIGATION__CORE__DWA_HPP_
 
@@ -96,6 +105,16 @@ struct DwaConfig
   double vo_margin{0.3};            // [m] VO 합성 반경 여유 (emergency_stop_distance)
   double vo_max_range{6.0};         // [m] 이 거리 밖 장애물은 VO 에서 제외
   double dynamic_speed_threshold{0.2};  // [m/s] 이보다 느린 트랙은 정적(코스트맵이 처리)
+  double dynamic_steer_gain{0.3};   // λ: J_dyn 의 TTC 보조항 (같은 속도에서 TTC 가 긴 방향 선호)
+  // [s] VO 포화 시 진입 시각이 이만큼 안이면 같다고 보고 비용으로 고른다
+  double vo_time_tie{0.02};
+  // 좁은 곳 경로 재중심 (0 단계)
+  bool recenter_narrow{true};
+  double recenter_min_cost{100.0};  // 이 비용 이상인 경로 점만 (지역 s = 3: 장애물 ≈ 0.5 m 이내)
+  double recenter_max_shift{0.10};  // [m] 법선 방향 탐색 폭 = 최대 이동 (0.60 m 통로 측면 여유)
+  double recenter_step{0.025};      // [m] 탐색 간격 (지역 코스트맵 해상도)
+  int recenter_smooth{4};           // 이동량 이동평균 반폭 [경로 점]
+  double recenter_goal_keep{0.5};   // [m] 목표에서 이 거리 안은 옮기지 않는다
 };
 
 struct DwaCostTerms
@@ -118,7 +137,8 @@ struct DwaCandidate
   bool collision{false};
   bool vo_rejected{false};
   bool is_brake{false};
-  double ttc{std::numeric_limits<double>::infinity()};
+  double ttc{std::numeric_limits<double>::infinity()};       // 원호 예측 TTC₀ (R_d)
+  double vo_time{std::numeric_limits<double>::infinity()};   // VO 진입 시각 (R, τ 안), 없으면 +inf
 };
 
 struct DwaInput
@@ -154,7 +174,8 @@ struct DwaResult
   std::size_t n_valid{0};
   std::size_t n_collision{0};
   std::size_t n_vo_rejected{0};
-  bool vo_fallback{false};       // VO 가 모든 샘플을 제외해 이번 주기에 VO 를 끔
+  bool vo_saturated{false};      // VO 가 충돌 없는 샘플을 모두 덮어 VO 진입 최지연 샘플을 골랐음
+  std::size_t n_recentered{0};   // 0 단계에서 골 바닥으로 옮긴 기준 경로 점 수
   double d_goal{0.0};
 };
 
@@ -188,6 +209,11 @@ public:
   static double stoppingDistance(double v, double a, double j, double t_c);
   /// 창 중심 선택 규칙.
   std::pair<double, double> windowCenter(const DwaInput & in) const;
+  /// 0 단계: 좁은 곳(양쪽이 막힌 골) 기준 경로 점을 코스트맵 골 바닥으로 옮긴 복사본.
+  /// shifted: 옮긴 점 수.
+  std::vector<Pose2D> recenterPath(
+    const std::vector<Pose2D> & path, const PointCostFn & point_cost, bool end_is_goal,
+    std::size_t * shifted = nullptr) const;
 
 private:
   DwaConfig config_;

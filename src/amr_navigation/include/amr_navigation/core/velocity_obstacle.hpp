@@ -44,6 +44,11 @@ Point2D chordVelocity(double theta, double v, double w, double tau);
 /// 절단 VO 원뿔 판정: 상대 위치 p, 상대 속도 w_rel, 합성 반경 R, 시간 지평 τ.
 bool inVelocityObstacle(const Point2D & p, const Point2D & w_rel, double R, double tau);
 
+/// VO 진입 시각: 상대 등속 운동 p − t·w_rel 이 처음 반경 R 안에 드는 t ∈ [0, τ] (없으면 +inf).
+/// 이미 R 안이면 접근 중일 때 0, 멀어지는 중이면 +inf. inVelocityObstacle ⇔ 이 값이 유한.
+/// VO 가 동적 창의 모든 샘플을 덮을 때(포화) 가장 늦게 진입하는 샘플을 고르는 기준 (dwa.md §2.1).
+double velocityObstacleTime(const Point2D & p, const Point2D & w_rel, double R, double tau);
+
 /// 로봇 궤적(시각 t_k 의 자세들, 등간격 dt)과 장애물 예측 위치
 ///   사이 거리가 처음으로 R 미만이 되는 시각 [s].
 /// 구간 사이는 선형 보간해 상대 운동의 2차식 근으로 정확한 진입 시각을 구한다. 없으면 +inf.

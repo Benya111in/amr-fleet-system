@@ -43,6 +43,27 @@ bool inVelocityObstacle(const Point2D & p, const Point2D & w_rel, double R, doub
   return dx * dx + dy * dy < R * R;
 }
 
+double velocityObstacleTime(const Point2D & p, const Point2D & w_rel, double R, double tau)
+{
+  constexpr double kInf = std::numeric_limits<double>::infinity();
+  const double pn2 = p.x * p.x + p.y * p.y;
+  const double closing = p.x * w_rel.x + p.y * w_rel.y;
+  if (pn2 < R * R) {
+    return closing > 0.0 ? 0.0 : kInf;
+  }
+  const double wn2 = w_rel.x * w_rel.x + w_rel.y * w_rel.y;
+  if (wn2 < 1e-12 || closing <= 0.0) {
+    return kInf;
+  }
+  // ‖p − t·w‖² = R² 의 작은 근
+  const double disc = closing * closing - wn2 * (pn2 - R * R);
+  if (disc <= 0.0) {   // 접선(최근접 = R)은 inVelocityObstacle 과 같이 밖으로 본다
+    return kInf;
+  }
+  const double t = (closing - std::sqrt(disc)) / wn2;
+  return t <= tau ? std::max(0.0, t) : kInf;
+}
+
 double firstContactTime(
   const std::vector<Pose2D> & traj, double dt, const DynamicObstacle & obs, double R)
 {

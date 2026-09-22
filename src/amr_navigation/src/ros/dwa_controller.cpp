@@ -142,10 +142,19 @@ void DWAController::configure(
   c.vo_margin = param(node, p + "vo_margin", 0.3);
   c.vo_max_range = param(node, p + "vo_max_range", 6.0);
   c.dynamic_speed_threshold = param(node, p + "dynamic_speed_threshold", 0.2);
+  c.dynamic_steer_gain = param(node, p + "dynamic_steer_gain", 0.3);
+  c.vo_time_tie = param(node, p + "vo_time_tie", 0.02);
+  c.recenter_narrow = param(node, p + "recenter_narrow", true);
+  c.recenter_min_cost = param(node, p + "recenter_min_cost", 100.0);
+  c.recenter_max_shift = param(node, p + "recenter_max_shift", 0.10);
+  c.recenter_smooth = param(node, p + "recenter_smooth", 4);
+  c.recenter_goal_keep = param(node, p + "recenter_goal_keep", 0.5);
+  c.recenter_step = costmap_ros_->getCostmap()->getResolution();   // 탐색 간격 = 지역 코스트맵 셀
   const double robot_radius = param(node, p + "robot_radius", -1.0);
   c.robot_radius = robot_radius > 0.0 ? robot_radius :
     core::FootprintChecker::circumscribedRadius(footprintOf(*costmap_ros_));
   obstacle_radius_ = param(node, p + "obstacle_radius", 0.25);
+  dynamic_fast_speed_ = param(node, p + "dynamic_fast_speed", 0.5);
   track_timeout_ = param(node, p + "track_timeout", 0.5);
   robot_mass_ = param(node, p + "robot_mass", 47.6);
   path_horizon_ = param(node, p + "path_horizon", 6.0);
@@ -255,6 +264,11 @@ std::vector<core::DynamicObstacle> DWAController::obstaclesInFrame(const std::st
   const double s = std::sin(T.theta);
   const double dt = std::max(0.0, age);
   for (const auto & o : msg->obstacles) {
+    // 추적기 분류(is_dynamic) 이거나 빠른 트랙만
+    // (정지 물체 트랙의 추정 속도 잡음 0.2–0.3 m/s 가 VO·TTC 를 만들지 않게)
+    if (!o.is_dynamic && std::hypot(o.velocity.x, o.velocity.y) < dynamic_fast_speed_) {
+      continue;
+    }
     core::DynamicObstacle d;
     // 등속 모델로 현재 시각까지 전진시킨 뒤 코스트맵 프레임으로 회전·이동
     const double px = o.position.x + o.velocity.x * dt;
@@ -345,9 +359,9 @@ geometry_msgs::msg::TwistStamped DWAController::computeVelocityCommands(
     std_msgs::msg::Float64MultiArray st;
     st.data = {cycle_ms, static_cast<double>(res.n_samples), static_cast<double>(res.n_valid),
       static_cast<double>(res.n_collision), static_cast<double>(res.n_vo_rejected),
-      res.vo_fallback ? 1.0 : 0.0,
+      res.vo_saturated ? 1.0 : 0.0,
       std::isfinite(res.best.ttc) ? res.best.ttc : -1.0, res.v, res.w,
-      std::isfinite(res.d_goal) ? res.d_goal : -1.0};
+      std::isfinite(res.d_goal) ? res.d_goal : -1.0, static_cast<double>(res.n_recentered)};
     stats_pub_->publish(st);
   }
   return cmd;

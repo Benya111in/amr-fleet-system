@@ -25,8 +25,8 @@ def _setup(context):
     gc = params['global_costmap']['global_costmap']['ros__parameters']
     gc['plugins'] = ['static_layer', 'inflation_layer']
     gc.pop('filters', None)          # 빈 목록은 파라미터 값이 될 수 없다 → 키 자체를 뺀다 (기본 = 필터 없음)
-    gc.pop('obstacle_layer', None)
-    gc.pop('keepout_filter', None)
+    for layer in ('obstacle_layer', 'depth_layer', 'sensor_inflation_layer', 'keepout_filter'):
+        gc.pop(layer, None)
     gc['use_sim_time'] = False
     ps = params['planner_server']['ros__parameters']
     ps['use_sim_time'] = False

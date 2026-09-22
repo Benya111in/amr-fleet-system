@@ -81,42 +81,115 @@ void AStarPlanner::loadParameters()
 rcl_interfaces::msg::SetParametersResult AStarPlanner::onParameters(
   const std::vector<rclcpp::Parameter> & params)
 {
-  // 동적 재설정: 이 플러그인 접두어의 파라미터만 반영 (재빌드·재시작 없이 튜닝 — 명세 9장)
+  // 동적 재설정 (재빌드·재시작 없이 튜닝 — 명세 9장). 이 플러그인 접두어의 선언된 키는 모두 바로
+  // 반영하고, 모르는 키·잘못된 타입·범위 밖 값은 묶음 전체를 거부한다
+  // (리뷰: 일부 키를 성공으로 답하고 무시했다).
   rcl_interfaces::msg::SetParametersResult result;
   result.successful = true;
   std::lock_guard<std::mutex> lock(mutex_);
   core::AStarConfig a = astar_.config();
   core::SmootherConfig sc = smoother_.config();
+  double tolerance = tolerance_;
+  double max_planning_time = max_planning_time_;
+  bool final_orientation = use_final_approach_orientation_;
   const std::string p = name_ + ".";
+  auto reject = [&result](const std::string & why) {
+      result.successful = false;
+      result.reason = why;
+    };
   for (const auto & prm : params) {
     const std::string & n = prm.get_name();
     if (n.rfind(p, 0) != 0) {
       continue;
     }
     const std::string key = n.substr(p.size());
-    if (key == "cost_weight") {
-      a.cost_weight = prm.as_double();
+    const auto type = prm.get_type();
+    const bool is_num = type == rclcpp::ParameterType::PARAMETER_DOUBLE ||
+      type == rclcpp::ParameterType::PARAMETER_INTEGER;
+    const bool is_bool = type == rclcpp::ParameterType::PARAMETER_BOOL;
+    auto num = [&prm, type]() {
+        return type == rclcpp::ParameterType::PARAMETER_DOUBLE ? prm.as_double() :
+               static_cast<double>(prm.as_int());
+      };
+    auto need = [&](bool ok, const char * what) {
+        if (!ok) {
+          reject(n + ": " + what);
+        }
+        return ok;
+      };
+    if (key == "plugin") {
+      reject(n + ": plugin 은 재시작이 필요하다");
+    } else if (key == "cost_weight") {
+      if (need(is_num && num() >= 0.0, "0 이상 실수")) {a.cost_weight = num();}
     } else if (key == "allow_unknown") {
-      a.allow_unknown = prm.as_bool();
-      sc.allow_unknown = a.allow_unknown;
+      if (need(is_bool, "bool")) {
+        a.allow_unknown = prm.as_bool();
+        sc.allow_unknown = a.allow_unknown;
+      }
+    } else if (key == "unknown_cost") {
+      if (need(is_num && num() >= 0.0 && num() <= core::kMaxNonObstacle, "0~252")) {
+        a.unknown_cost = static_cast<uint8_t>(num());
+      }
     } else if (key == "tolerance") {
-      tolerance_ = prm.as_double();
+      if (need(is_num && num() >= 0.0, "0 이상 [m]")) {tolerance = num();}
+    } else if (key == "max_iterations") {
+      if (need(is_num && num() >= 0.0, "0 이상 정수")) {
+        a.max_iterations = static_cast<std::size_t>(num());
+      }
     } else if (key == "max_planning_time") {
-      max_planning_time_ = prm.as_double();
-    } else if (key == "smoother.w_data") {
-      sc.w_data = prm.as_double();
-    } else if (key == "smoother.w_smooth") {
-      sc.w_smooth = prm.as_double();
-    } else if (key == "smoother.w_clearance") {
-      sc.w_clearance = prm.as_double();
-    } else if (key == "smoother.enable_smoothing") {
-      sc.enable_smoothing = prm.as_bool();
+      if (need(is_num && num() > 0.0, "양수 [s]")) {max_planning_time = num();}
+    } else if (key == "allow_corner_cutting") {
+      if (need(is_bool, "bool")) {a.allow_corner_cutting = prm.as_bool();}
+    } else if (key == "allow_start_in_inscribed") {
+      if (need(is_bool, "bool")) {a.allow_start_in_inscribed = prm.as_bool();}
+    } else if (key == "use_final_approach_orientation") {
+      if (need(is_bool, "bool")) {final_orientation = prm.as_bool();}
     } else if (key == "smoother.enable_shortcut") {
-      sc.enable_shortcut = prm.as_bool();
+      if (need(is_bool, "bool")) {sc.enable_shortcut = prm.as_bool();}
+    } else if (key == "smoother.enable_smoothing") {
+      if (need(is_bool, "bool")) {sc.enable_smoothing = prm.as_bool();}
+    } else if (key == "smoother.shortcut_max_length") {
+      if (need(is_num && num() > 0.0, "양수 [m]")) {sc.shortcut_max_length = num();}
+    } else if (key == "smoother.shortcut_cost_ratio") {
+      if (need(is_num && num() >= 0.0, "0 이상")) {sc.shortcut_cost_ratio = num();}
+    } else if (key == "smoother.clearance_cost_margin") {
+      if (need(is_num && num() >= 0.0 && num() <= 252.0, "0~252")) {
+        sc.clearance_cost_margin = static_cast<int>(num());
+      }
+    } else if (key == "smoother.output_spacing") {
+      if (need(is_num, "실수 [m] (≤ 0 이면 격자 해상도)")) {sc.output_spacing = num();}
+    } else if (key == "smoother.w_data") {
+      if (need(is_num && num() >= 0.0, "0 이상")) {sc.w_data = num();}
+    } else if (key == "smoother.w_smooth") {
+      if (need(is_num && num() >= 0.0, "0 이상")) {sc.w_smooth = num();}
+    } else if (key == "smoother.w_clearance") {
+      if (need(is_num && num() >= 0.0, "0 이상")) {sc.w_clearance = num();}
+    } else if (key == "smoother.clearance_cost_threshold") {
+      if (need(is_num && num() >= 0.0 && num() <= 252.0, "0~252")) {
+        sc.clearance_cost_threshold = static_cast<uint8_t>(num());
+      }
+    } else if (key == "smoother.max_iterations") {
+      if (need(is_num && num() >= 0.0, "0 이상 정수")) {
+        sc.max_iterations = static_cast<int>(num());
+      }
+    } else if (key == "smoother.tolerance") {
+      if (need(is_num && num() >= 0.0, "0 이상 [m]")) {sc.tolerance = num();}
+    } else {
+      reject(n + ": 알 수 없는 AStar 파라미터");
     }
+    if (!result.successful) {
+      return result;   // 묶음 전체 거부 (아무것도 반영하지 않음)
+    }
+  }
+  if (sc.w_data + 2.0 * sc.w_smooth >= 2.0) {
+    reject(p + "smoother: w_data + 2 w_smooth < 2 여야 수렴한다");
+    return result;
   }
   astar_.setConfig(a);
   smoother_.setConfig(sc);
+  tolerance_ = tolerance;
+  max_planning_time_ = max_planning_time;
+  use_final_approach_orientation_ = final_orientation;
   return result;
 }
 

@@ -11,6 +11,7 @@
 #include "amr_navigation/core/pid.hpp"
 #include "amr_navigation/core/pure_pursuit.hpp"
 #include "amr_navigation/core/speed_profile.hpp"
+#include "aisle_scene.hpp"
 
 using amr_navigation::core::Point2D;
 using amr_navigation::core::Pose2D;
@@ -407,4 +408,95 @@ TEST(SpeedProfile, TravelTimePrediction)
   SpeedProfile one;
   one.build({{0.0, 0.0, 0.0}}, c);
   EXPECT_NEAR(one.predictTravelTime(0.0, 0.5, 0.0), 1.0, 1e-12);
+}
+
+namespace
+{
+struct PpAisleRun
+{
+  bool traversed{false};
+  double min_clearance{1e9};
+  double min_speed_inside{1e9};
+  int collision_events{0};   // 플러그인이 "collision ahead on commanded arc" 예외를 낼 주기 수
+};
+
+// 플러그인의 명령 원호 충돌 검사(PurePursuitController::arcCollides)와 같은 규칙:
+// T = max(1.0 s, v / a_dec), 0.1 s 간격 풋프린트 검사. 충돌이면 그 주기는 정지 명령.
+PpAisleRun ppThroughAisle(double resolution, bool denoise, double path_offset, unsigned seed)
+{
+  aisle::Scene sc;
+  sc.resolution = resolution;
+  sc.denoise = denoise;
+  sc.rng.seed(seed);
+  PurePursuit pp;
+  std::vector<Pose2D> path;
+  for (double x = 0.0; x <= 8.3 + 1e-9; x += 0.05) {
+    path.push_back({x, path_offset, 0.0});
+  }
+  pp.setPath(path);
+  Pose2D pose{0.3, 0.0, 0.0};
+  double v = 0.0;
+  PpAisleRun out;
+  for (int k = 0; k < 600; ++k) {
+    if (k % 2 == 0) {
+      sc.observe(pose);
+    }
+    const PurePursuitOutput o = pp.compute(pose, v);
+    double cmd_v = o.v;
+    double cmd_w = o.w;
+    if (o.mode == PurePursuitMode::kTrack) {
+      const auto chk = sc.checker();
+      const double T = std::max(1.0, std::abs(o.v) / 1.0);
+      for (int i = 1; i <= static_cast<int>(std::ceil(T / 0.1)); ++i) {
+        if (chk.collides(integrateArc(pose, o.v, o.w, i * 0.1))) {
+          ++out.collision_events;
+          cmd_v = 0.0;
+          cmd_w = 0.0;
+          break;
+        }
+      }
+    }
+    // 가속 한계 1.0 m/s² (하류 프로파일러 근사)
+    v = std::clamp(cmd_v, v - 0.05, v + 0.05);
+    if (pose.x > 3.2 && pose.x < 6.0) {
+      out.min_speed_inside = std::min(out.min_speed_inside, v);
+    }
+    pose = integrateArc(pose, v, cmd_w, 0.05);
+    out.min_clearance = std::min(out.min_clearance, aisle::trueClearance(pose));
+    if (o.mode == PurePursuitMode::kGoalReached || (pose.x > 8.0 && std::abs(v) < 1e-3)) {
+      out.traversed = pose.x > 8.0;
+      break;
+    }
+  }
+  return out;
+}
+}  // namespace
+
+TEST(PurePursuit, NarrowAisleWithLidarNoise)
+{
+  // 리뷰 실측 (σ 0.03, 0.05 m 격자, 원 끝점): 한 번은 입구에서 "collision ahead" 로 중단,
+  // 한 번은 예외 17 회.
+  for (const double offset : {0.0, 0.02}) {
+    for (const unsigned seed : {1U, 2U, 3U}) {
+      const PpAisleRun r = ppThroughAisle(0.025, true, offset, seed);
+      std::printf(
+        "[ info ] PP aisle 0.025 m + denoise, offset %.2f seed %u: traversed %d, "
+        "min clearance %.3f m, min v inside %.2f, collision events %d\n",
+        offset, seed, r.traversed, r.min_clearance,
+        r.min_speed_inside,
+        r.collision_events);
+      EXPECT_TRUE(r.traversed);
+      EXPECT_GT(r.min_clearance, 0.04);
+      EXPECT_EQ(r.collision_events, 0);
+    }
+  }
+  int degraded = 0;
+  for (const unsigned seed : {1U, 2U, 3U}) {
+    const PpAisleRun r = ppThroughAisle(0.05, false, 0.0, seed);
+    std::printf(
+      "[ info ] PP aisle 0.05 m raw marks seed %u: traversed %d, collision events %d\n", seed,
+      r.traversed, r.collision_events);
+    degraded += !r.traversed || r.collision_events > 0;
+  }
+  EXPECT_EQ(degraded, 3);
 }

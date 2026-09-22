@@ -7,7 +7,10 @@
   odometry/filtered   nav_msgs/Odometry      <p>odom → <p>base_footprint (EKF 출력 자리)
   /tf                 <p>odom → <p>base_footprint
   ground_truth/odom   nav_msgs/Odometry      map 프레임 참값 (amr_evaluation cte_logger 입력)
-  scan_filtered       sensor_msgs/LaserScan  지도(map_yaml) + 이동 장애물 광선 투사, 10 Hz
+  scan_filtered       sensor_msgs/LaserScan  지도(map_yaml) + 이동 장애물 광선 투사, 10 Hz. <p>lidar_link 원점
+                      (lidar_x 앞, sensors.yaml extrinsic)에서 scan_beams 빔(720 = 0.5°), 거리 가우시안 잡음
+                      scan_noise_std (sensors.yaml lidar.noise_stddev 0.03) — 실제 센서와 같은 기하·잡음으로
+                      코스트맵 높이 창·잡음 처리까지 시험된다 (런치가 base_footprint → lidar_link 정적 TF 를 낸다)
   perception/tracked_obstacles  amr_msgs/TrackedObstacleArray  이동 장애물 참값 트랙 (DWA VO 시험)
   sim/footprint_clearance  std_msgs/Float64   풋프린트(0.60 x 0.40)와 지도 장애물 최소 거리 [m] (충돌 판정)
 구독: cmd_topic (기본 cmd_vel), initialpose (자세 순간 이동, 속도 0).
@@ -40,6 +43,46 @@ def integrate_arc(x: float, y: float, th: float, v: float, w: float, dt: float):
     th1 = th + w * dt
     r = v / w
     return x + r * (math.sin(th1) - math.sin(th)), y - r * (math.cos(th1) - math.cos(th)), th1
+
+
+def cast_scan(grid, x, y, th, lidar_x, beams, scan_range, range_min, noise, rng, obstacles=()):
+    """
+    lidar_link(로봇 자세에서 lidar_x 앞) 원점 광선 투사: (빔 각 [rad, 로봇 기준], 거리 [m]).
+
+    지도 점유 셀(반 셀 간격 행진) + 원판 장애물 (x, y, vx, vy, r). 검출 거리에 N(0, noise) 를 더하고
+    range_min 미만은 미검출(inf)로 둔다.
+    """
+    ang = np.linspace(-math.pi, math.pi, beams, endpoint=False)
+    ranges = np.full(beams, np.inf)
+    ox = x + lidar_x * math.cos(th)
+    oy = y + lidar_x * math.sin(th)
+    wa = th + ang
+    if grid is not None:
+        step = 0.5 * grid.resolution
+        r = np.arange(step, scan_range, step)
+        px = ox + np.cos(wa)[:, None] * r[None, :]
+        py = oy + np.sin(wa)[:, None] * r[None, :]
+        ix = np.floor((px - grid.origin[0]) / grid.resolution).astype(int)
+        iy = np.floor((py - grid.origin[1]) / grid.resolution).astype(int)
+        inside = (ix >= 0) & (iy >= 0) & (ix < grid.width) & (iy < grid.height)
+        hit = np.zeros_like(inside)
+        hit[inside] = grid.occ[iy[inside], ix[inside]]
+        first = np.argmax(hit, axis=1)
+        has = hit[np.arange(beams), first]
+        ranges[has] = r[first[has]]
+    for bx, by, _, _, orad in obstacles:
+        dx, dy = bx - ox, by - oy
+        b = dx * np.cos(wa) + dy * np.sin(wa)
+        c = dx * dx + dy * dy - orad * orad
+        disc = b * b - c
+        ok = (disc >= 0) & (b > 0)
+        t_hit = b - np.sqrt(np.where(ok, disc, 0.0))
+        ranges = np.where(ok & (t_hit > 0) & (t_hit < ranges), t_hit, ranges)
+    hit = np.isfinite(ranges)
+    if noise > 0.0:
+        ranges[hit] += rng.normal(0.0, noise, int(hit.sum()))
+    ranges[hit & (ranges < range_min)] = np.inf
+    return ang, ranges
 
 
 class ServoAxis:
@@ -83,8 +126,11 @@ class KinematicSim(Node):
         self.v_axis = ServoAxis(tau, delay, p('max_linear_accel', 1.0).value, self.dt)
         self.w_axis = ServoAxis(tau, delay, p('max_angular_accel', 2.0).value, self.dt)
         self.odom_noise = p('odom_noise_v', 0.0).value
-        self.beams = int(p('scan_beams', 360).value)
+        self.beams = int(p('scan_beams', 720).value)
         self.scan_range = p('scan_range', 12.0).value
+        self.scan_range_min = p('scan_range_min', 0.10).value
+        self.scan_noise = p('scan_noise_std', 0.03).value
+        self.lidar_x = p('lidar_x', 0.15).value
         self.cmd_timeout = p('cmd_timeout', 0.5).value
         self.footprint = (p('footprint_length', 0.60).value, p('footprint_width', 0.40).value)
         mov = list(p('moving_obstacles', [0.0]).value)
@@ -213,41 +259,17 @@ class KinematicSim(Node):
         return float(max(0.0, np.min(np.hypot(dx, dy)) - 0.5 * g.resolution))
 
     def publish_scan(self, stamp):
-        ang = np.linspace(-math.pi, math.pi, self.beams, endpoint=False)
-        ranges = np.full(self.beams, np.inf)
-        if self.grid is not None:
-            g = self.grid
-            step = 0.5 * g.resolution
-            r = np.arange(step, self.scan_range, step)
-            wa = self.th + ang
-            px = self.x + np.cos(wa)[:, None] * r[None, :]
-            py = self.y + np.sin(wa)[:, None] * r[None, :]
-            ix = np.floor((px - g.origin[0]) / g.resolution).astype(int)
-            iy = np.floor((py - g.origin[1]) / g.resolution).astype(int)
-            inside = (ix >= 0) & (iy >= 0) & (ix < g.width) & (iy < g.height)
-            hit = np.zeros_like(inside)
-            hit[inside] = g.occ[iy[inside], ix[inside]]
-            first = np.argmax(hit, axis=1)
-            has = hit[np.arange(self.beams), first]
-            ranges[has] = r[first[has]]
-        for o in self.obstacles:
-            ox, oy, _, _, orad = self.obstacle_state(o, self.t)
-            dx, dy = ox - self.x, oy - self.y
-            wa = self.th + ang
-            b = dx * np.cos(wa) + dy * np.sin(wa)
-            c = dx * dx + dy * dy - orad * orad
-            disc = b * b - c
-            ok = (disc >= 0) & (b > 0)
-            t_hit = b - np.sqrt(np.where(ok, disc, 0.0))
-            ranges = np.where(ok & (t_hit > 0) & (t_hit < ranges), t_hit, ranges)
+        ang, ranges = cast_scan(self.grid, self.x, self.y, self.th, self.lidar_x, self.beams,
+                                self.scan_range, self.scan_range_min, self.scan_noise, self.rng,
+                                [self.obstacle_state(o, self.t) for o in self.obstacles])
         scan = LaserScan()
         scan.header.stamp = stamp
-        scan.header.frame_id = self.prefix + 'base_footprint'
+        scan.header.frame_id = self.prefix + 'lidar_link'
         scan.angle_min = float(ang[0])
         scan.angle_max = float(ang[-1])
         scan.angle_increment = float(ang[1] - ang[0])
         scan.scan_time = 0.1
-        scan.range_min = 0.05
+        scan.range_min = float(self.scan_range_min)
         scan.range_max = float(self.scan_range)
         scan.ranges = [float(v) if math.isfinite(v) else float('inf') for v in ranges]
         self.pub_scan.publish(scan)

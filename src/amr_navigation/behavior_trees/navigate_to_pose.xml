@@ -1,9 +1,19 @@
 <!--
   amr_navigation 기본 NavigateToPose BT (components.md §3.3).
-  - 재계획: RateController 1 Hz 주기 재계획 + TTC 트리거 즉시 재계획.
+  - 재계획: 1 Hz 로 경로 유효성(IsPathValid: 전역 코스트맵 치명·내접 셀)을 보고 막혔거나 목표가 바뀌었을 때만
+    ComputePathToPose (Nav2 navigate_w_replanning_only_if_path_becomes_invalid 와 같은 규칙) + TTC 트리거 즉시 재계획.
+    매 1 Hz 무조건 재계획하면 지역 회피로 비낀 로봇 위치에서 목표로 곧장 가는 새 경로가 나와 원래 경로로 돌아오지
+    않았다 (Gazebo 1.0 m/s 횡단 절제 실험: 복귀 5 s 이내 2/10 vs 이 BT 13/14, docs/algorithms/costmap.md §6.3).
+    지나가는 동적 장애물은 전역 코스트맵에서 빠지므로(같은 문서 §5.2) 경로를 무효로 만들지 않고, 지역 계획기(DWA VO/TTC)가
+    양보로 피한다.
     IsTTCBelowThreshold (amr_behavior 패키지의 Nav2 BT 조건 플러그인,
     라이브러리 amr_is_ttc_below_threshold_condition_bt_node) 가 perception/tracked_obstacles 의 최소 TTC 가
     threshold [s] 미만이면 SUCCESS → 주기를 기다리지 않고 ComputePathToPose 실행 (cooldown 으로 과재계획 방지).
+  - 구조: TTC 가지(ForceSuccess)와 1 Hz 가지(RateController)를 PipelineSequence 의 형제로 둔다. PipelineSequence 는
+    앞 자식이 SUCCESS/RUNNING 이어도 멈추지(halt) 않으므로 RateController 가 주기 타이머를 유지한다.
+    이전 구조(ReactiveFallback 아래 RateController)는 자식 SUCCESS 때마다 ReactiveFallback 이 RateController 를
+    halt → IDLE → 다음 tick 에 first_time 으로 다시 실행해 BT tick 마다 재계획했다 (/plan 22 Hz, FollowPath 선점 수백 회).
+    test/test_bt_replan.cpp 가 실제 BehaviorTree.CPP·Nav2 제어 노드로 이 XML 을 돌려 재계획 횟수를 센다.
   - 계획기/제어기 선택: PlannerSelector / ControllerSelector (토픽 planner_selector / controller_selector,
     latched). 기본 AStar / DWA. 구간별로 PurePursuit, 비교 실험용 NavFn / Smac / DWB 선택 가능.
   - 복구: Nav2 기본 BT 와 같은 RoundRobin (코스트맵 초기화 → 제자리 회전 → 대기 → 후진).
@@ -15,18 +25,26 @@
       <PipelineSequence name="NavigateWithReplanning">
         <PlannerSelector selected_planner="{selected_planner}" default_planner="AStar" topic_name="planner_selector"/>
         <ControllerSelector selected_controller="{selected_controller}" default_controller="DWA" topic_name="controller_selector"/>
-        <ReactiveFallback name="ReplanOnTTCOrRate">
+        <ForceSuccess>
           <Sequence name="TTCReplan">
             <IsTTCBelowThreshold threshold="2.0" cooldown="1.0" only_dynamic="true"/>
             <ComputePathToPose goal="{goal}" path="{path}" planner_id="{selected_planner}"/>
           </Sequence>
-          <RateController hz="1.0">
+        </ForceSuccess>
+        <RateController hz="1.0">
+          <Fallback name="ReplanIfInvalid">
+            <ReactiveSequence name="PathStillGood">
+              <Inverter>
+                <GlobalUpdatedGoal/>
+              </Inverter>
+              <IsPathValid path="{path}"/>
+            </ReactiveSequence>
             <RecoveryNode number_of_retries="1" name="ComputePathToPose">
               <ComputePathToPose goal="{goal}" path="{path}" planner_id="{selected_planner}"/>
               <ClearEntireCostmap name="ClearGlobalCostmap-Context" service_name="global_costmap/clear_entirely_global_costmap"/>
             </RecoveryNode>
-          </RateController>
-        </ReactiveFallback>
+          </Fallback>
+        </RateController>
         <RecoveryNode number_of_retries="1" name="FollowPath">
           <FollowPath path="{path}" controller_id="{selected_controller}"/>
           <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>

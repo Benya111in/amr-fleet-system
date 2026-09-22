@@ -1,6 +1,8 @@
 <!--
   amr_navigation 기본 NavigateThroughPoses BT (경유점 작업). navigate_to_pose.xml 과 같은 구조에
-  RemovePassedGoals(반경 0.7 m) + ComputePathThroughPoses 를 쓴다 (1 Hz 재계획 + TTC 즉시 재계획).
+  RemovePassedGoals(반경 0.7 m) + ComputePathThroughPoses 를 쓴다 (1 Hz 경로 유효성 검사 후 재계획 + TTC 즉시 재계획,
+  두 가지를 PipelineSequence 형제로 두는 이유는 navigate_to_pose.xml 참고). 경로가 유효하면 1 Hz 가지가 계획하지 않아
+  {goals} 에 지난 경유점이 남으므로 TTC 가지도 계획 전에 RemovePassedGoals 를 거친다 (지난 경유점으로 되돌아가지 않게).
   amr_behavior 미설치 환경에서는 navigate_through_poses_no_ttc.xml.
 -->
 <root main_tree_to_execute="MainTree">
@@ -9,12 +11,21 @@
       <PipelineSequence name="NavigateWithReplanning">
         <PlannerSelector selected_planner="{selected_planner}" default_planner="AStar" topic_name="planner_selector"/>
         <ControllerSelector selected_controller="{selected_controller}" default_controller="DWA" topic_name="controller_selector"/>
-        <ReactiveFallback name="ReplanOnTTCOrRate">
+        <ForceSuccess>
           <Sequence name="TTCReplan">
             <IsTTCBelowThreshold threshold="2.0" cooldown="1.0" only_dynamic="true"/>
+            <RemovePassedGoals input_goals="{goals}" output_goals="{goals}" radius="0.7"/>
             <ComputePathThroughPoses goals="{goals}" path="{path}" planner_id="{selected_planner}"/>
           </Sequence>
-          <RateController hz="1.0">
+        </ForceSuccess>
+        <RateController hz="1.0">
+          <Fallback name="ReplanIfInvalid">
+            <ReactiveSequence name="PathStillGood">
+              <Inverter>
+                <GlobalUpdatedGoal/>
+              </Inverter>
+              <IsPathValid path="{path}"/>
+            </ReactiveSequence>
             <RecoveryNode number_of_retries="1" name="ComputePathThroughPoses">
               <ReactiveSequence>
                 <RemovePassedGoals input_goals="{goals}" output_goals="{goals}" radius="0.7"/>
@@ -22,8 +33,8 @@
               </ReactiveSequence>
               <ClearEntireCostmap name="ClearGlobalCostmap-Context" service_name="global_costmap/clear_entirely_global_costmap"/>
             </RecoveryNode>
-          </RateController>
-        </ReactiveFallback>
+          </Fallback>
+        </RateController>
         <RecoveryNode number_of_retries="1" name="FollowPath">
           <FollowPath path="{path}" controller_id="{selected_controller}"/>
           <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>

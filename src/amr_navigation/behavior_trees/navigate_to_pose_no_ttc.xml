@@ -1,6 +1,6 @@
 <!--
   amr_navigation NavigateToPose BT — TTC 조건 없는 대체판 (amr_behavior 미설치 환경, 단독 시험용).
-  navigate_to_pose.xml 에서 IsTTCBelowThreshold 즉시 재계획 가지만 뺐다. 나머지(1 Hz 재계획, 선택기, 복구)는 같다.
+  navigate_to_pose.xml 에서 IsTTCBelowThreshold 즉시 재계획 가지만 뺐다. 나머지(1 Hz 유효성 검사 후 재계획, 선택기, 복구)는 같다.
 -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
@@ -9,10 +9,18 @@
         <PlannerSelector selected_planner="{selected_planner}" default_planner="AStar" topic_name="planner_selector"/>
         <ControllerSelector selected_controller="{selected_controller}" default_controller="DWA" topic_name="controller_selector"/>
         <RateController hz="1.0">
-          <RecoveryNode number_of_retries="1" name="ComputePathToPose">
-            <ComputePathToPose goal="{goal}" path="{path}" planner_id="{selected_planner}"/>
-            <ClearEntireCostmap name="ClearGlobalCostmap-Context" service_name="global_costmap/clear_entirely_global_costmap"/>
-          </RecoveryNode>
+          <Fallback name="ReplanIfInvalid">
+            <ReactiveSequence name="PathStillGood">
+              <Inverter>
+                <GlobalUpdatedGoal/>
+              </Inverter>
+              <IsPathValid path="{path}"/>
+            </ReactiveSequence>
+            <RecoveryNode number_of_retries="1" name="ComputePathToPose">
+              <ComputePathToPose goal="{goal}" path="{path}" planner_id="{selected_planner}"/>
+              <ClearEntireCostmap name="ClearGlobalCostmap-Context" service_name="global_costmap/clear_entirely_global_costmap"/>
+            </RecoveryNode>
+          </Fallback>
         </RateController>
         <RecoveryNode number_of_retries="1" name="FollowPath">
           <FollowPath path="{path}" controller_id="{selected_controller}"/>

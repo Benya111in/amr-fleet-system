@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <limits>
+#include <random>
 #include <vector>
 
 #include "amr_navigation/core/footprint.hpp"
@@ -25,6 +26,7 @@ using amr_navigation::core::kInscribedInflated;
 using amr_navigation::core::kLethalObstacle;
 using amr_navigation::core::kNoInformation;
 using amr_navigation::core::kPi;
+using amr_navigation::core::velocityObstacleTime;
 
 TEST(Footprint, RectangleRadii)
 {
@@ -94,6 +96,41 @@ TEST(VelocityObstacle, ChordVelocity)
   const Pose2D end = integrateArc({0.0, 0.0, 0.1}, v, w, tau);
   EXPECT_NEAR(c.x * tau, end.x, 1e-12);
   EXPECT_NEAR(c.y * tau, end.y, 1e-12);
+}
+
+// VO 진입 시각: 유한 ⇔ VO 안, 그 시각에 거리 = R (이미 안이면 0), 무작위 20 만 경우
+TEST(VelocityObstacle, VoTimeMatchesCone)
+{
+  std::mt19937 rng(9);
+  std::uniform_real_distribution<double> pos(-4.0, 4.0);
+  std::uniform_real_distribution<double> vel(-2.5, 2.5);
+  int inside = 0;
+  for (int i = 0; i < 200000; ++i) {
+    const Point2D p{pos(rng), pos(rng)};
+    const Point2D w{vel(rng), vel(rng)};
+    const double R = 0.911;
+    const double tau = 2.0;
+    const double t = velocityObstacleTime(p, w, R, tau);
+    ASSERT_EQ(std::isfinite(t), inVelocityObstacle(p, w, R, tau)) << p.x << " " << p.y;
+    if (std::isfinite(t)) {
+      ++inside;
+      ASSERT_GE(t, 0.0);
+      ASSERT_LE(t, tau);
+      const double d = std::hypot(p.x - t * w.x, p.y - t * w.y);
+      if (t > 0.0) {
+        ASSERT_NEAR(d, R, 1e-9);
+      } else {
+        ASSERT_LT(std::hypot(p.x, p.y), R + 1e-9);
+      }
+    }
+  }
+  EXPECT_GT(inside, 1000);
+  // 정면 3 m, 접근 1.5 m/s: ‖p − t w‖ = R → t = (3 − 0.911)/1.5
+  EXPECT_NEAR(velocityObstacleTime({3.0, 0.0}, {1.5, 0.0}, 0.911, 2.0), (3.0 - 0.911) / 1.5, 1e-12);
+  EXPECT_TRUE(std::isinf(velocityObstacleTime({3.0, 0.0}, {-1.0, 0.0}, 0.911, 2.0)));   // 멀어짐
+  // 이미 안: 접근이면 0, 이탈이면 VO 아님
+  EXPECT_DOUBLE_EQ(velocityObstacleTime({0.5, 0.0}, {1.0, 0.0}, 0.911, 2.0), 0.0);
+  EXPECT_TRUE(std::isinf(velocityObstacleTime({0.5, 0.0}, {-1.0, 0.0}, 0.911, 2.0)));
 }
 
 TEST(VelocityObstacle, ConeCases)

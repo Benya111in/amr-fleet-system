@@ -24,6 +24,7 @@ find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
+find_package(sensor_msgs REQUIRED)
 find_package(amr_msgs REQUIRED)
 
 set(ROS_DEPS
@@ -38,6 +39,7 @@ set(ROS_DEPS
   std_msgs
   tf2
   tf2_ros
+  sensor_msgs
   amr_msgs
 )
 
@@ -58,6 +60,7 @@ add_library(amr_navigation_core SHARED
   src/core/jerk_limiter.cpp
   src/core/pid.cpp
   src/core/velocity_profiler.cpp
+  src/core/scan_denoise.cpp
 )
 target_include_directories(amr_navigation_core PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -83,6 +86,14 @@ add_executable(velocity_profiler_node src/nodes/velocity_profiler_main.cpp)
 target_link_libraries(velocity_profiler_node amr_velocity_profiler)
 ament_target_dependencies(velocity_profiler_node rclcpp)
 
+# --- costmap_scan_filter_node (scan_filtered → 게이트 중앙값 → scan_costmap) ---
+add_library(amr_costmap_scan_filter SHARED src/nodes/costmap_scan_filter_node.cpp)
+target_link_libraries(amr_costmap_scan_filter amr_navigation_core)
+ament_target_dependencies(amr_costmap_scan_filter rclcpp sensor_msgs geometry_msgs tf2 tf2_ros amr_msgs)
+add_executable(costmap_scan_filter_node src/nodes/costmap_scan_filter_main.cpp)
+target_link_libraries(costmap_scan_filter_node amr_costmap_scan_filter)
+ament_target_dependencies(costmap_scan_filter_node rclcpp)
+
 # --- 도구 (ROS 비의존): PID 게인 격자 탐색, A* 벤치마크, 폐루프 추종 시뮬레이터 ---
 add_executable(pid_tuning tools/pid_tuning.cpp)
 target_link_libraries(pid_tuning amr_navigation_core)
@@ -93,12 +104,13 @@ target_link_libraries(tracking_sim amr_navigation_core)
 
 install(DIRECTORY include/ DESTINATION include)
 install(TARGETS amr_navigation_core amr_navigation_plugins amr_velocity_profiler
+  amr_costmap_scan_filter
   EXPORT export_${PROJECT_NAME}
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
 )
-install(TARGETS velocity_profiler_node pid_tuning astar_benchmark tracking_sim
+install(TARGETS velocity_profiler_node costmap_scan_filter_node pid_tuning astar_benchmark tracking_sim
   DESTINATION lib/${PROJECT_NAME}
 )
 install(PROGRAMS
@@ -138,13 +150,30 @@ if(BUILD_TESTING)
 
   # C++ 단위 테스트 (gtest): 코어 모듈별 1 바이너리 + 플러그인/노드 통합 1 바이너리
   find_package(ament_cmake_gtest REQUIRED)
-  foreach(_t grid astar geometry path_smoother collision dwa pure_pursuit profiler)
+  foreach(_t grid astar geometry path_smoother collision dwa pure_pursuit profiler scan_denoise)
     ament_add_gtest(test_${_t} test/test_${_t}.cpp TIMEOUT 120)
     target_link_libraries(test_${_t} amr_navigation_core)
   endforeach()
+  # 배포 nav2_params.yaml 을 그대로 읽는 코스트맵 마킹 시험 (센서 extrinsic 은 저장소 config/)
+  find_package(yaml-cpp REQUIRED)
+  ament_add_gtest(test_costmap_marking test/test_costmap_marking.cpp TIMEOUT 120
+    SKIP_LINKING_MAIN_LIBRARIES)
+  target_compile_definitions(test_costmap_marking PRIVATE
+    NAV2_PARAMS_FILE="${CMAKE_CURRENT_SOURCE_DIR}/config/nav2_params.yaml"
+    REPO_CONFIG_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../config")
+  ament_target_dependencies(test_costmap_marking rclcpp nav2_costmap_2d nav_msgs sensor_msgs
+    geometry_msgs tf2 tf2_ros)
+  target_link_libraries(test_costmap_marking yaml-cpp)
+  # 배포 BT XML 을 실제 BehaviorTree.CPP·Nav2 제어 노드로 돌려 재계획 주기를 세는 시험 (액션·조건은 대역)
+  find_package(behaviortree_cpp_v3 REQUIRED)
+  ament_add_gtest(test_bt_replan test/test_bt_replan.cpp TIMEOUT 120)
+  target_compile_definitions(test_bt_replan PRIVATE
+    BT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/behavior_trees")
+  ament_target_dependencies(test_bt_replan behaviortree_cpp_v3)
   ament_add_gtest(test_ros_plugins test/test_ros_plugins.cpp TIMEOUT 120
     SKIP_LINKING_MAIN_LIBRARIES)
-  target_link_libraries(test_ros_plugins amr_navigation_plugins amr_velocity_profiler)
+  target_link_libraries(test_ros_plugins amr_navigation_plugins amr_velocity_profiler
+    amr_costmap_scan_filter)
   ament_target_dependencies(test_ros_plugins ${ROS_DEPS})
 endif()
 

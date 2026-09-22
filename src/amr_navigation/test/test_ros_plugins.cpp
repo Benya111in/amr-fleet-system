@@ -13,6 +13,7 @@
 
 #include "amr_msgs/msg/tracked_obstacle_array.hpp"
 #include "amr_navigation/astar_planner.hpp"
+#include "amr_navigation/costmap_scan_filter_node.hpp"
 #include "amr_navigation/core/grid.hpp"
 #include "amr_navigation/dwa_controller.hpp"
 #include "amr_navigation/pure_pursuit_controller.hpp"
@@ -23,6 +24,10 @@
 #include "nav2_costmap_2d/costmap_2d_ros.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
+#include "sensor_msgs/msg/laser_scan.hpp"
+#include "sensor_msgs/msg/point_cloud2.hpp"
+#include "sensor_msgs/point_cloud2_iterator.hpp"
+#include "tf2_ros/static_transform_broadcaster.h"
 #include "std_msgs/msg/float32.hpp"
 #include "tf2_ros/buffer.h"
 
@@ -110,7 +115,9 @@ nav_msgs::msg::Path straightPlan(double x0, double y, double len)
 
 TEST(AStarPlannerPlugin, PlansThroughAisleAndHandlesErrors)
 {
-  auto node = std::make_shared<rclcpp_lifecycle::LifecycleNode>("astar_test");
+  // planner_server 처럼 선언 안 된 키도 받아 콜백까지 오게 한다 (모르는 키 거부 시험)
+  auto node = std::make_shared<rclcpp_lifecycle::LifecycleNode>(
+    "astar_test", rclcpp::NodeOptions().allow_undeclared_parameters(true));
   auto cm = makeCostmap("astar_costmap");
   auto tf = std::make_shared<tf2_ros::Buffer>(node->get_clock());
   amr_navigation::AStarPlanner planner;
@@ -147,6 +154,47 @@ TEST(AStarPlannerPlugin, PlansThroughAisleAndHandlesErrors)
   // 시작이 지도 밖
   EXPECT_THROW(
     planner.createPlan(pose(-1.0, 1.0, 0.0), pose(2.0, 1.0, 0.0)), nav2_core::PlannerException);
+  // 리뷰: 콜백이 모르는·무시하는 키에도 성공을 답했다.
+  // 이제 선언된 키는 모두 즉시 반영, 나머지는 거부
+  EXPECT_TRUE(node->set_parameter(rclcpp::Parameter("AStar.max_iterations", 5)).successful);
+  EXPECT_THROW(
+    // 확장 5 회로는 못 찾는다 → 반영됐다는 증거 (이전에는 무시)
+    planner.createPlan(pose(1.0, 1.0, 0.0), pose(9.0, 5.0, 0.5)), nav2_core::PlannerException);
+  EXPECT_TRUE(node->set_parameter(rclcpp::Parameter("AStar.max_iterations", 0)).successful);
+  EXPECT_TRUE(
+    node->set_parameter(rclcpp::Parameter("AStar.use_final_approach_orientation", true))
+    .successful);
+  const auto approach = planner.createPlan(pose(1.0, 1.0, 0.0), pose(9.0, 5.0, 0.5));
+  EXPECT_GT(std::abs(amr_navigation::yawOf(approach.poses.back().pose) - 0.5), 1e-3);   // 접근 방향
+  EXPECT_TRUE(
+    node->set_parameter(rclcpp::Parameter("AStar.smoother.output_spacing", 0.10))
+    .successful);
+  EXPECT_LT(
+    planner.createPlan(pose(1.0, 1.0, 0.0), pose(9.0, 5.0, 0.5)).poses.size(),
+    approach.poses.size());
+  for (const auto & bad : {
+    rclcpp::Parameter("AStar.no_such_key", 1.0),                // 모르는 키
+    rclcpp::Parameter("AStar.cost_weight", std::string("x")),    // 타입
+    rclcpp::Parameter("AStar.unknown_cost", 300),                // 범위
+    rclcpp::Parameter("AStar.smoother.w_smooth", 1.0),           // 수렴: w_data + 2 w_smooth < 2
+  })
+  {
+    bool rejected = false;
+    try {
+      const auto r = node->set_parameter(bad);
+      rejected = !r.successful && !r.reason.empty();
+    } catch (const rclcpp::exceptions::InvalidParameterTypeException &) {
+      rejected = true;   // 선언된 타입과 다름 → rclcpp 가 콜백 전에 거부
+    }
+    EXPECT_TRUE(rejected) << bad.get_name();
+  }
+  // 거부된 묶음은 아무것도 반영하지 않는다
+  EXPECT_FALSE(
+    node->set_parameters_atomically(
+      {rclcpp::Parameter("AStar.max_iterations", 5), rclcpp::Parameter(
+          "AStar.bogus",
+          1)}).successful);
+  EXPECT_NO_THROW(planner.createPlan(pose(1.0, 1.0, 0.0), pose(9.0, 5.0, 0.5)));
   planner.deactivate();
   planner.cleanup();
 }
@@ -281,6 +329,108 @@ TEST(PurePursuitControllerPlugin, TracksAndDetectsCollision)
   pp2.cleanup();
   pp.deactivate();
   pp.cleanup();
+}
+
+TEST(CostmapScanFilterNode, RepublishesDenoisedScanAndExcludesDynamicTracks)
+{
+  auto filt = std::make_shared<amr_navigation::CostmapScanFilterNode>();
+  EXPECT_EQ(filt->config().half_window, 5);
+  auto io = std::make_shared<rclcpp::Node>("scan_filter_io");
+  auto tf = std::make_shared<tf2_ros::StaticTransformBroadcaster>(io);
+  geometry_msgs::msg::TransformStamped t;
+  t.header.frame_id = "map";
+  t.child_frame_id = "lidar_link";
+  t.transform.translation.x = 2.0;   // 센서가 map (2, 0) 에서 +x 방향
+  t.transform.rotation.w = 1.0;
+  tf->sendTransform(t);
+  auto pub = io->create_publisher<sensor_msgs::msg::LaserScan>(
+    "scan_filtered",
+    rclcpp::SensorDataQoS());
+  auto cloud_pub = io->create_publisher<sensor_msgs::msg::PointCloud2>(
+    "camera/depth/points_filtered", rclcpp::SensorDataQoS());
+  auto tracks_pub = io->create_publisher<amr_msgs::msg::TrackedObstacleArray>(
+    "perception/tracked_obstacles", 5);
+  sensor_msgs::msg::LaserScan::SharedPtr local;
+  sensor_msgs::msg::LaserScan::SharedPtr global;
+  sensor_msgs::msg::PointCloud2::SharedPtr cloud_out;
+  auto s1 = io->create_subscription<sensor_msgs::msg::LaserScan>(
+    "scan_costmap", rclcpp::SensorDataQoS(),
+    [&local](sensor_msgs::msg::LaserScan::SharedPtr m) {local = m;});
+  auto s2 = io->create_subscription<sensor_msgs::msg::LaserScan>(
+    "scan_costmap_static", rclcpp::SensorDataQoS(),
+    [&global](sensor_msgs::msg::LaserScan::SharedPtr m) {global = m;});
+  auto s3 = io->create_subscription<sensor_msgs::msg::PointCloud2>(
+    "camera/depth/points_static", rclcpp::SensorDataQoS(),
+    [&cloud_out](sensor_msgs::msg::PointCloud2::SharedPtr m) {cloud_out = m;});
+  rclcpp::executors::SingleThreadedExecutor exec;
+  exec.add_node(filt);
+  exec.add_node(io);
+  // 360° 스캔 (0.5°): 1 m 벽 + 한 빔 튀는 잡음
+  sensor_msgs::msg::LaserScan scan;
+  scan.header.frame_id = "lidar_link";
+  scan.angle_min = -M_PI;
+  scan.angle_increment = 2.0 * M_PI / 720.0;
+  scan.angle_max = M_PI - scan.angle_increment;
+  scan.ranges.assign(720, 1.0f);
+  scan.ranges[100] = 0.93f;
+  scan.intensities.assign(720, 7.0f);
+  // 트랙: map (3, 0) 에서 +y 1 m/s (동적, 센서 정면 1 m) 와
+  // (2, −1) 의 느린 정지 물체 트랙 (0.25 m/s, is_dynamic false)
+  amr_msgs::msg::TrackedObstacleArray tracks;
+  tracks.header.frame_id = "map";
+  amr_msgs::msg::TrackedObstacle walk;
+  walk.position.x = 3.0;
+  walk.velocity.y = 1.0;
+  walk.is_dynamic = true;
+  amr_msgs::msg::TrackedObstacle still;
+  still.position.x = 2.0;
+  still.position.y = -1.0;
+  still.velocity.x = 0.25;
+  still.is_dynamic = false;
+  tracks.obstacles = {walk, still};
+  // 점군: 센서 프레임 (lidar_link) 에 사람 근처 점 1 개 + 먼 점 1 개
+  sensor_msgs::msg::PointCloud2 pc;
+  pc.header.frame_id = "lidar_link";
+  sensor_msgs::PointCloud2Modifier mod(pc);
+  mod.setPointCloud2FieldsByString(1, "xyz");
+  mod.resize(2);
+  {
+    sensor_msgs::PointCloud2Iterator<float> x(pc, "x");
+    sensor_msgs::PointCloud2Iterator<float> y(pc, "y");
+    *x = 1.0f;
+    *y = 0.1f;
+    ++x;
+    ++y;
+    *x = 0.0f;
+    *y = 1.0f;
+  }
+  const auto t_end = std::chrono::steady_clock::now() + std::chrono::seconds(4);
+  while ((!local || !global || !cloud_out || cloud_out->width != 1U) &&
+    std::chrono::steady_clock::now() < t_end)
+  {
+    const auto now = io->now();
+    scan.header.stamp = now;
+    tracks.header.stamp = now;
+    pc.header.stamp = now;
+    tracks_pub->publish(tracks);
+    exec.spin_some(std::chrono::milliseconds(20));
+    pub->publish(scan);
+    cloud_pub->publish(pc);
+    exec.spin_some(std::chrono::milliseconds(50));
+  }
+  ASSERT_TRUE(local && global && cloud_out);
+  EXPECT_EQ(local->header.frame_id, "lidar_link");
+  ASSERT_EQ(local->ranges.size(), 720U);
+  EXPECT_FLOAT_EQ(local->ranges[100], 1.0f);   // 같은 표면 이웃의 중앙값
+  EXPECT_FLOAT_EQ(local->ranges[360], 1.0f);   // 지역: 모든 끝점
+  EXPECT_EQ(local->intensities.size(), 720U);
+  // 전역: 사람(센서 앞 1 m, 반경 0.55) 안 끝점만 +inf, 옆·뒤 벽과 느린 비동적 트랙 근처는 그대로
+  EXPECT_TRUE(std::isinf(global->ranges[360]));
+  EXPECT_FLOAT_EQ(global->ranges[180], 1.0f);   // −90° (map (2, −1): 느린 트랙 위치)
+  EXPECT_FLOAT_EQ(global->ranges[0], 1.0f);
+  EXPECT_GT(filt->removedBeams(), 0U);
+  EXPECT_EQ(cloud_out->width, 1U);   // 사람 근처 점 제외
+  EXPECT_GT(filt->removedPoints(), 0U);
 }
 
 TEST(VelocityProfilerNode, SmoothsStepCommand)

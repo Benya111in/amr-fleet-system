@@ -28,8 +28,12 @@
         kd: 0.0
         setpoint_weight: 1.0
         tracking_time: 0.447
-    max_linear_correction: 0.2   # [m/s] PI 보정 폭 (피드포워드 ± 이 값)
+    max_linear_correction: 0.2   # [m/s] PI 보정 폭 (피드포워드 ± 이 값). 최종 명령은 출력 성형으로 가속·저크 한계 안
+                                 #       (보정은 기준 램프가 남긴 가속·저크 여유 안에서만 더해진다, path_tracking.md §3)
     max_angular_correction: 0.3  # [rad/s]
-    resync_threshold_v: 0.4      # [m/s] 기준−측정 차가 이보다 크면 필터를 측정으로 재동기화 (안전 노드 개입 후)
+    resync_threshold_v: 0.4      # [m/s] 기준−측정 차가 이보다 크면 즉시 필터를 측정으로 재동기화 (E-stop·급정지 후)
     resync_threshold_w: 0.6      # [rad/s]
+    hold_error_v: 0.15           # [m/s] 모델 응답−측정 차가 이보다 크고 측정 < 0.6×모델 이거나, 측정 ≈ 0 인데 모델 > 0.04
+    hold_time: 0.3               # [s]   가 이만큼 이어지면 하류(safety_node)가 명령을 붙잡은 것 → 재동기화 (PI 와인드업 방지)
+    measurement_filter_time: 0.04  # [s] 측정·모델 응답 공통 1차 저역 (잡음 5 mm/s 가 kp 로 명령에 새는 것 억제)
     stop_deadband: 0.001         # [m/s] 목표·기준이 이 안이면 정확히 0 출력

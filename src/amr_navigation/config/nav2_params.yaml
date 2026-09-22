@@ -127,7 +127,7 @@ controller_server:
       path_band: 0.8                   # [m] 경로 이탈 비용 정규화 폭
       goal_align_distance: 0.08        # [m] 목표 정렬(제자리 회전) 시작 거리 (≤ xy_goal_tolerance)
       goal_overshoot_margin: 0.1       # [m] 목표 너머 충돌 검사 여유
-      path_horizon: 6.0                # [m] 코스트맵 프레임으로 옮길 경로 길이 (로컬 코스트맵 반폭)
+      path_horizon: 4.0                # [m] 코스트맵 프레임으로 옮길 경로 길이 (로컬 코스트맵 반폭)
       no_valid_patience: 10            # 유효 샘플 없음이 이 주기 수 이어지고 정지 상태면 예외 → BT 복구
       use_dynamic_obstacles: True      # perception/tracked_obstacles 예측 위치 → TTC₀ 비용
       use_velocity_obstacles: True     # VO 원뿔 안 샘플 제외 (명세 4.7)
@@ -137,6 +137,14 @@ controller_server:
       vo_margin: 0.3                   # [m] VO 합성 반경 여유 = safety.emergency_stop_distance
       vo_max_range: 6.0                # [m]
       dynamic_speed_threshold: 0.2     # [m/s] 이보다 느린 트랙은 정적(코스트맵이 처리) — 추적기 is_dynamic 기준과 같게
+      dynamic_fast_speed: 0.5          # [m/s] is_dynamic 이 아니어도 이 속도 이상 트랙은 동적 (정지 물체 트랙 속도 잡음 0.2–0.3 은 제외)
+      dynamic_steer_gain: 0.3          # λ: J_dyn = 과속분(v − v_safe(TTC₀)) + λ(1 − TTC₀/T_pred) — 보조항 (dwa.md §2.2)
+      vo_time_tie: 0.02                # [s] VO 포화 시 진입 시각이 이 안이면 같다고 보고 비용으로 고른다 (dwa.md §2.1)
+      recenter_narrow: True            # 좁은 곳(양쪽이 막힌 골) 기준 경로를 지역 코스트맵 골 바닥으로 옮긴다 (dwa.md §1.7):
+      recenter_min_cost: 100.0         #   위치추정 편향(전역 경로가 0.60 m 통로 중심에서 2–4 cm 비낌)과 무관하게 실제 통로 중심
+      recenter_max_shift: 0.10         # [m] 탐색 폭 = 최대 이동 (0.60 m 통로 측면 여유)
+      recenter_smooth: 4               # 이동량 이동평균 반폭 [경로 점] (0.05 m 간격 → ±0.2 m)
+      recenter_goal_keep: 0.5          # [m] 목표에서 이 거리 안은 옮기지 않는다
       obstacle_radius: 0.25            # [m] 트랙 덮개 반경 (TrackedObstacle 에 반경 필드 없음)
       track_timeout: 0.5               # [s] 트랙 메시지 유효 시간
       robot_radius: -1.0               # [m] ≤ 0 이면 풋프린트 외접 반경 (0.361)
@@ -232,6 +240,24 @@ controller_server:
       max_robot_pose_search_dist: 10.0
       use_interpolation: True
 
+costmap_scan_filter_node:            # scan_filtered → 게이트 중앙값 → scan_costmap (두 코스트맵의 LiDAR 입력, costmap.md §3)
+  ros__parameters:
+    use_sim_time: True
+    input_topic: scan_filtered
+    output_topic: scan_costmap
+    half_window: 5                     # ±5 빔 (±2.5°): σ 0.03 → 수직 입사 벽 σ_med ≈ 0.011 m
+    range_gate: 0.15                   # [m] 같은 표면 판정 (두 빔 잡음 차 σ√2 의 3.5 배) — 얇은 물체·불연속 보존
+    min_support: 3                     # 지지 빔이 이보다 적으면 원래 값 (단발 반사도 장애물로 남긴다)
+    static_output_topic: scan_costmap_static   # 전역 코스트맵용: 동적 트랙 끝점 제외 (costmap.md §5.2)
+    cloud_input_topic: camera/depth/points_filtered
+    cloud_output_topic: camera/depth/points_static   # 전역 깊이 레이어용: 동적 트랙 근처 점 제외
+    tracks_topic: perception/tracked_obstacles
+    exclude_dynamic: True              # 지나가는 사람·차량은 지역 계획기(VO/TTC)가 피하고 전역 경로는 뒤집히지 않게
+    dynamic_min_speed: 0.2             # [m/s] DWA dynamic_speed_threshold 와 같게
+    dynamic_fast_speed: 0.5            # [m/s] is_dynamic 분류 전이라도 이 속도 이상이면 동적 (분류 지연·ID 교체 대비)
+    dynamic_radius: 0.55               # [m] 트랙 중심 반경: 사람 발자국 0.30 + 추적 위치 오차(실측 0.1–0.25)
+    track_timeout: 0.5                 # [s]
+
 local_costmap:
   local_costmap:
     ros__parameters:
@@ -241,50 +267,63 @@ local_costmap:
       global_frame: <prefix>odom
       robot_base_frame: <prefix>base_footprint
       rolling_window: True
-      width: 12                        # [m] 2 m/s × 2.5 s = 5 m 롤아웃 + 여유 (반폭 6 m)
-      height: 12
-      resolution: 0.05                 # [m] 전역 지도와 같은 해상도
+      width: 8                         # [m] 반폭 4 m ≥ DWA 롤아웃 최대 2.5 s × 1.0 m/s + 풋프린트 (costmap.md §1)
+      height: 8
+      resolution: 0.025                # [m] 0.60 m 통로 측면 여유 0.10 m 에서 격자 양자화 손실을 셀 하나(≤ 0.025)로 (costmap.md §3)
       footprint: "[[0.30, 0.20], [0.30, -0.20], [-0.30, -0.20], [-0.30, 0.20]]"   # robot_params 0.60 x 0.40
       footprint_padding: 0.0           # 패딩 0.01 이면 r_ins 0.21 → 0.60 m 통로 중앙 비용 상승 (costmap.md)
       track_unknown_space: False
       always_send_full_costmap: True
-      plugins: ["obstacle_layer", "voxel_layer", "inflation_layer"]
+      plugins: ["obstacle_layer", "depth_layer", "inflation_layer"]
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
+        max_obstacle_height: 2.0       # [m] 레이어 상한 (소스 창보다 넓게)
         observation_sources: scan
         scan:
-          topic: <robot_ns>/scan_filtered   # scan_filter_node 출력 (위 주의: 절대 이름으로 치환)
+          topic: <robot_ns>/scan_costmap   # costmap_scan_filter_node 출력 = scan_filtered 의 게이트 중앙값 (위 주의: 절대 이름으로 치환)
           data_type: "LaserScan"
           marking: True
           clearing: True
+          # 높이 창 [m]: 점은 odom 에서 lidar_link 높이(지면 +0.20 = base_link 0.18 + extrinsic 0.02)에 온다.
+          # Humble 의 소스별 max_obstacle_height 기본값은 0.0 이라 적지 않으면 모든 점이 버려진다 (리뷰 실측:
+          # 랙 옆 costmap 전 셀 0). test/test_costmap_config.py 가 이 창이 센서 평면을 담는지 검사한다.
+          min_obstacle_height: 0.0
+          max_obstacle_height: 2.0
           observation_persistence: 0.0 # [s] 최신 스캔만 사용 → 지나간 동적 장애물 셀은 다음 스캔 레이트레이싱으로 즉시 지움
           expected_update_rate: 0.3    # [s] = safety.sensor_timeouts.lidar. 넘으면 코스트맵 비최신 → 제어 정지 (LiDAR 고장 = 안전 정지)
-          obstacle_max_range: 10.0     # [m]
+          obstacle_max_range: 5.5      # [m] 창 대각 반폭 5.7 m 안
           obstacle_min_range: 0.0
-          raytrace_max_range: 12.0     # [m] 마킹보다 길게 → 먼 곳의 유령 셀도 지운다
+          raytrace_max_range: 6.0      # [m] 마킹보다 길게 → 창 가장자리의 지난 셀도 지운다
           raytrace_min_range: 0.0
           inf_is_valid: False
-      voxel_layer:
-        plugin: "nav2_costmap_2d::VoxelLayer"
+      depth_layer:                     # 깊이 카메라: LiDAR 평면(지면 +0.20) 아래 물체 (소형 박스 0.15, 지게차 포크 0.05~0.10)
+        # 2D 장애물 레이어 (VoxelLayer 아님): 복셀은 3D 광선이 지나간 복셀만 지우는데 바닥 점은 높이 창에서 빠져
+        # 광선이 없으므로, 지나간 사람의 몸통 복셀이 남는다 (실측: 횡단 actor 궤적에 잔상 셀 평균 128, 최대 490 —
+        # costmap.md §5). 2D 레이어는 바닥 점까지의 광선이 그 열(column) 전체를 지운다.
+        plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
-        publish_voxel_map: False
-        origin_z: 0.0
-        z_resolution: 0.125            # [m] 16 × 0.125 = 2.0 m 높이까지 (선반·지게차 포크 등 LiDAR 평면 밖 장애물)
-        z_voxels: 16
         max_obstacle_height: 2.0
-        mark_threshold: 0
-        observation_sources: depth
-        depth:
-          topic: <robot_ns>/camera/depth/points_filtered   # pointcloud_filter_node 출력
+        observation_sources: depth_mark depth_clear
+        depth_mark:                    # 마킹 전용: 바닥 위 min_obstacle_height 이상 점
+          topic: <robot_ns>/camera/depth/points_filtered   # pointcloud_filter_node 출력 (5 cm 복셀 다운샘플, 광학 프레임)
           data_type: "PointCloud2"
           marking: True
-          clearing: True
-          min_obstacle_height: 0.05    # [m] 바닥 잡음 제거
+          clearing: False
+          min_obstacle_height: 0.05    # [m] 바닥 점 제거. 실측 바닥 점 높이 분포는 costmap.md §5.1
           max_obstacle_height: 2.0
           observation_persistence: 0.0
           expected_update_rate: 0.0    # 카메라 고장은 저속 운행(safety degraded_mode) 대상 → 코스트맵 최신성 판정에서 제외
           obstacle_max_range: 4.0      # [m] 깊이 잡음 σ ∝ d² (sensors.yaml) → 4 m 이내만 마킹
+        depth_clear:                   # 소거 전용: 바닥 점 포함 (카메라 → 바닥 점 광선이 지나간 사람·박스 셀을 지운다)
+          topic: <robot_ns>/camera/depth/points_filtered
+          data_type: "PointCloud2"
+          marking: False
+          clearing: True
+          min_obstacle_height: -0.50
+          max_obstacle_height: 2.0
+          observation_persistence: 0.0
+          expected_update_rate: 0.0
           raytrace_max_range: 5.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
@@ -304,7 +343,10 @@ global_costmap:
       footprint_padding: 0.0
       track_unknown_space: True
       always_send_full_costmap: True
-      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      # 팽창 두 번: 정적 지도는 넓게(1.2 m, A* 가 넓은 통로 선호), 센서 장애물(사람·지게차·박스)은 그 뒤에 좁게(0.6 m) —
+      # 지나가는 사람을 1.2 m 로 팽창하면 1 Hz·TTC 재계획이 1 m 넘게 돌아가 복귀가 늦다 (횡단 actor 실측, costmap.md §5.2).
+      # 두 번째 팽창도 정적 셀을 다시 팽창하지만 값이 더 작아 max 결합에서 첫 번째가 남는다.
+      plugins: ["static_layer", "inflation_layer", "obstacle_layer", "depth_layer", "sensor_inflation_layer"]
       filters: ["keepout_filter"]
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
@@ -314,21 +356,53 @@ global_costmap:
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
+        max_obstacle_height: 2.0
         observation_sources: scan
         scan:
-          topic: <robot_ns>/scan_filtered
+          topic: <robot_ns>/scan_costmap_static   # 동적 트랙 끝점 제외본 (지나가는 사람은 지역 계획기가)
           data_type: "LaserScan"
           marking: True
           clearing: True
+          min_obstacle_height: 0.0     # [m] 지역과 같은 창 (LiDAR 평면 +0.20)
+          max_obstacle_height: 2.0
           observation_persistence: 0.0
           expected_update_rate: 0.3
           obstacle_max_range: 8.0      # [m] 전역 재계획에 반영할 새 장애물 범위
           raytrace_max_range: 10.0
           inf_is_valid: False
-      inflation_layer:
+      depth_layer:                     # LiDAR 평면 아래 장애물을 전역 재계획에도 (지역 depth_layer 와 같은 두 소스)
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        max_obstacle_height: 2.0
+        observation_sources: depth_mark depth_clear
+        depth_mark:
+          topic: <robot_ns>/camera/depth/points_static
+          data_type: "PointCloud2"
+          marking: True
+          clearing: False
+          min_obstacle_height: 0.05
+          max_obstacle_height: 2.0
+          observation_persistence: 0.0
+          expected_update_rate: 0.0
+          obstacle_max_range: 4.0
+        depth_clear:
+          topic: <robot_ns>/camera/depth/points_static
+          data_type: "PointCloud2"
+          marking: False
+          clearing: True
+          min_obstacle_height: -0.50
+          max_obstacle_height: 2.0
+          observation_persistence: 0.0
+          expected_update_rate: 0.0
+          raytrace_max_range: 5.0
+      inflation_layer:                 # 정적 지도만 (센서 레이어보다 앞)
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 2.0       # [1/m] 완만한 감쇠: 넓은 통로에서는 중앙으로, 0.60 m 통로 중앙은 206 (통과)
         inflation_radius: 1.2          # [m] 비용이 34 까지 내려가는 거리 — A* 가 좁은 통로보다 넓은 통로를 선호
+      sensor_inflation_layer:          # 센서 장애물 (정적 셀에는 첫 팽창이 이미 더 큰 값)
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 5.0       # [1/m] r_ins 0.2 에서 253, 0.36 m(외접) 113, 0.6 m 34
+        inflation_radius: 0.6          # [m]
       keepout_filter:
         plugin: "nav2_costmap_2d::KeepoutFilter"
         enabled: True

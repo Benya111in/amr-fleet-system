@@ -66,6 +66,19 @@ double Pid::update(double r, double y, double dt, double ff, double out_min, dou
   return u;
 }
 
+void Pid::backCalculate(double du, double dt)
+{
+  if (config_.tracking_time > 0.0 && dt > 0.0) {
+    integral_ += du / config_.tracking_time * dt;
+    integral_ = std::clamp(integral_, -config_.integral_limit, config_.integral_limit);
+  }
+}
+
+void Pid::addToIntegral(double du)
+{
+  integral_ = std::clamp(integral_ + du, -config_.integral_limit, config_.integral_limit);
+}
+
 FirstOrderPlant::FirstOrderPlant(
   double gain, double time_constant, double delay, double dt, double y0)
 : gain_(gain), tau_(time_constant), dt_(dt),
