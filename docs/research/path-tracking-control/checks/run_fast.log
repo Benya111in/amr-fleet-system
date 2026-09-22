@@ -1,0 +1,102 @@
+=== c01_geometry.py
+M1  (t x (p-P)).z = 1.0  (p-P).n = 1.0  (old (p-P) x t).z = -1.0
+M2  R=1.5 L=1.6: y_g^0=0.8533 (L^2k/2=0.8533) dyg/de=-0.4311 (-c0=-0.4311) dyg/dpsi=-1.3534 (-Lc1=-1.3534) zeta_circ(K=1)=0.5981
+M2  R=1.5 L=0.9: y_g^0=0.2700 (L^2k/2=0.2700) dyg/de=-0.8200 (-c0=-0.8200) dyg/dpsi=-0.8585 (-Lc1=-0.8585) zeta_circ(K=1)=0.6745
+M2  R=1.5 L=0.876: y_g^0=0.2558 (L^2k/2=0.2558) dyg/de=-0.8295 (-c0=-0.8295) dyg/dpsi=-0.8378 (-Lc1=-0.8378) zeta_circ(K=1)=0.6763
+M2  R=1.0 L=0.9: y_g^0=0.4050 (L^2k/2=0.4050) dyg/de=-0.5950 (-c0=-0.5950) dyg/dpsi=-0.8037 (-Lc1=-0.8037) zeta_circ(K=1)=0.6315
+M2  zeta_circ K=2, R=1.5, L=0.876: 1.0
+Lk  R=3.0: v_cap=1.549 L=1.239 (vt_L=1.239, Lmin=0.945) L*kappa=0.413 zeta_circ(K=1)=0.692
+Lk  R=2.0: v_cap=1.265 L=1.012 (vt_L=1.012, Lmin=0.848) L*kappa=0.506 zeta_circ(K=1)=0.684
+Lk  R=1.5: v_cap=1.095 L=0.876 (vt_L=0.876, Lmin=0.786) L*kappa=0.584 zeta_circ(K=1)=0.676
+Lk  R=1.0: v_cap=0.894 L=0.716 (vt_L=0.716, Lmin=0.707) L*kappa=0.716 zeta_circ(K=1)=0.660
+Lk  R=0.5: v_cap=0.632 L=0.590 (vt_L=0.506, Lmin=0.590) L*kappa=1.180 zeta_circ(K=1)=0.571
+M8  Stanley k_s=0.0: zeta at v=0.2/0.5/1/2 = [np.float64(1.107), np.float64(1.0), np.float64(1.061), np.float64(1.25)]
+M8  Stanley k_s=0.5: zeta at v=0.2/0.5/1/2 = [np.float64(1.014), np.float64(1.061), np.float64(1.155), np.float64(1.342)]
+=== c02_scurve_estop.py
+M4  2.0->1.1: numeric 2.1700 m, closed 2.1700, reviewer 1.6200, trapezoid 1.3950
+M4  2.0->1.8: numeric 1.2017 m, closed 1.2017, reviewer 0.4300, trapezoid 0.3800
+M4  2.0->0.0: numeric 2.5000 m, closed 2.5000, reviewer 2.5000, trapezoid 2.0000
+M4  0.5->0.0: numeric 0.2500 m, closed 0.2500, reviewer 0.2500, trapezoid 0.1250
+M4  0.2->0.0: numeric 0.0632 m, closed 0.0632, reviewer 0.0700, trapezoid 0.0200
+M4  1.1->0.0: numeric 0.8800 m, closed 0.8800, reviewer 0.8800, trapezoid 0.6050
+M4  max |dinv(vt, d(v,vt)) - v| over grid = 4.440892098500626e-16
+M7  Dstop(0.2) piecewise 0.0632  old closed form 0.07  over-estimate % 10.7
+M7  threshold a^3/j^2 = 0.25  Dstop(0.5) = 0.25
+M7  max round-trip err 2.220446049250313e-16
+M7  Dstop(2.0) = 2.5
+M6  pure jerk rise to 0.02 m/s: 141.4 ms
+M6  with a0=0.3 step: 56.2 ms;  first 50 Hz profiler sample v = 0.0004 m/s (>0)
+M10 config a=1.0, tau=0.15: D_E(2/1/0.5/0.2) = [2.3, 0.65, 0.2, 0.05], max v stopping within 0.3 m = 0.639
+M10 brief  a_tau(70kg)=2.08, tau=0.05: D_E(2/1/0.5/0.2) = [1.063, 0.291, 0.085, 0.02], max v stopping within 0.3 m = 1.018
+M10 torque a_tau(72.6kg)=2.00, tau=0.15: D_E(2/1/0.5/0.2) = [1.298, 0.4, 0.137, 0.04], max v stopping within 0.3 m = 0.836
+M10 torque a_tau(47.6kg)=3.06, tau=0.15: D_E(2/1/0.5/0.2) = [0.955, 0.314, 0.116, 0.037], max v stopping within 0.3 m = 0.971
+=== c03_pi.py
+M3  zeta=1.0 b=1.0: overshoot 13.53 %
+M3  zeta=1.0 b=0.5: overshoot 0.00 %
+M3  zeta=1.0 b=0.3: overshoot 0.00 %
+M3  zeta=0.707 b=1.0: overshoot 20.79 %
+M3  zeta=0.707 b=0.5: overshoot 6.71 %
+M3  zeta=0.707 b=0.3: overshoot 4.94 %
+M3  m=45.0 kg: M_v=46.00 kg, Kp=45.5 N s, Ki=136.6 N
+M3  m=47.6 kg: M_v=48.60 kg, Kp=48.1 N s, Ki=144.3 N
+M3  m=72.6 kg: M_v=73.60 kg, Kp=72.9 N s, Ki=218.6 N
+M11 fixed gains 48.6->73.6 kg: omega_c -18.7 %, zeta -18.7 %, zeta*omega_c -34.0 %   (brief 45->70: -19.8 / -35.7 %)
+M3  ID step 0.2 m/s (b=0.5): initial accel 1.20 m/s^2, total torque 4.81 N m (2.41/wheel)
+M3  ID step 0.15 m/s (b=0.5): initial accel 0.90 m/s^2, total torque 3.61 N m (1.80/wheel)
+M3  0.5 m/s 1-DOF step: Kp*0.5 = 24.1 N m total
+M11 b=1.0: phase at 1.768 rad/s = -2.32 deg, equiv delay 23 ms
+M11 b=0.5: phase at 1.768 rad/s = -16.42 deg, equiv delay 162 ms
+M11 PP+lag(b=0.5) poles [-3.118+0.j    -1.441+1.984j -1.441-1.984j]  dominant zeta 0.588
+M11 PP overshoot, ideal inner loop: 4.32 %
+M11 PP overshoot, b=1 inner loop  : 3.45 %
+M11 PP overshoot, b=0.5 inner loop: 6.36 %
+SG4 tick-difference resolution over 10 ms: 0.0127 m/s (uniform rms 0.0037)
+SG4 tick-difference resolution over 20 ms: 0.0063 m/s (uniform rms 0.0018)
+SG4 tick-difference resolution over 30 ms: 0.0042 m/s (uniform rms 0.0012)
+SG4 slip noise at v=0.5: per-wheel sigma 0.0050 m/s, body v sigma 0.0035 m/s, torque-level Kp*sigma = 0.17 N m
+SG4 slip noise at v=2.0: per-wheel sigma 0.0200 m/s, body v sigma 0.0141 m/s, torque-level Kp*sigma = 0.68 N m
+PIc Td=0.04 Tp=0.05 Kp=0.3 Ki=3.0: crossover 3.10 rad/s, PM 91.3 deg, GM 18.0 dB
+PIc Td=0.04 Tp=0.05 Kp=0.4 Ki=4.0: crossover 4.25 rad/s, PM 91.3 deg, GM 15.5 dB
+PIc Td=0.04 Tp=0.05 Kp=0.5 Ki=5.0: crossover 5.50 rad/s, PM 90.8 deg, GM 13.5 dB
+PIc Td=0.06 Tp=0.1 Kp=0.3 Ki=3.0: crossover 3.00 rad/s, PM 79.7 deg, GM 18.8 dB
+PIc Td=0.06 Tp=0.1 Kp=0.4 Ki=4.0: crossover 4.00 rad/s, PM 76.2 deg, GM 16.3 dB
+PIc Td=0.06 Tp=0.1 Kp=0.5 Ki=5.0: crossover 5.00 rad/s, PM 72.8 deg, GM 14.4 dB
+=== c05_jerk_filter_closed.py
+CLOSED dt=0.01: t(|v-2|<1e-6)=2.500s max|a|=1.0000 max|j|=2.0000 overshoot=0.0e+00 final a=0.0e+00 jerk sign changes after 3 s=0
+CLOSED dt=0.01 2.0->1.1: max|j|=2.0000 max|a|=1.0000 final v=1.10000 final a=0.0e+00
+CLOSED dt=0.01 reversal: max|j|=2.0000 max|a|=1.0000 final v=0.50000 final a=0.0e+00
+CLOSED dt=0.01 ramp+stop: max|j|=2.0000 max|a|=1.0000 final v=0.00000 final a=0.0e+00
+CLOSED dt=0.01: 200 random step sequences: max|j|=2.0000, max|a|=1.0000
+CLOSED dt=0.02: t(|v-2|<1e-6)=2.500s max|a|=1.0000 max|j|=2.0000 overshoot=0.0e+00 final a=0.0e+00 jerk sign changes after 3 s=0
+CLOSED dt=0.02 2.0->1.1: max|j|=2.0000 max|a|=1.0000 final v=1.10000 final a=0.0e+00
+CLOSED dt=0.02 reversal: max|j|=2.0000 max|a|=1.0000 final v=0.50000 final a=0.0e+00
+CLOSED dt=0.02 ramp+stop: max|j|=2.0000 max|a|=1.0000 final v=0.00000 final a=0.0e+00
+CLOSED dt=0.02: 200 random step sequences: max|j|=2.0000, max|a|=1.0000
+BRIEF: max|j| 5.78 at t=2.74s, a before 0.0578 -> after 0.0000, v 2.0000
+=== c08_lmin_schedule.py
+M12 L_min(v) RSS K=1: [np.float64(0.328), np.float64(0.523), np.float64(0.749), np.float64(1.086)]  sigma_psi->0: [np.float64(0.327), np.float64(0.516), np.float64(0.73), np.float64(1.033)]
+M12 sigma_psi share at v=2, L=1.6: 0.044 rad/s of 0.15 budget (29 %)
+M12 L_min increase from sigma_psi at v=2: +5.2 %
+SG1 brief gamma=0: v=0.2: L=0.328 K=1.00 zeta=0.71 wn=0.86 sigma_w=0.150 | v=0.5: L=0.523 K=1.00 zeta=0.71 wn=1.35 sigma_w=0.150
+SG1 brief gamma=1: v=0.2: L=0.328 K=2.05 zeta=1.01 wn=1.23 sigma_w=0.308 | v=0.5: L=0.523 K=1.31 zeta=0.81 wn=1.55 sigma_w=0.196
+SG1 brief gamma=2: v=0.2: L=0.328 K=4.00 zeta=1.41 wn=1.72 sigma_w=0.600 | v=0.5: L=0.523 K=1.71 zeta=0.92 wn=1.77 sigma_w=0.256
+SG1 joint gamma=0: v=0.2: L=0.328 K=1.00 zeta=0.71 wn=0.862 sigma_w=0.150 | v=0.5: L=0.523 K=1.00 zeta=0.71 wn=1.352 sigma_w=0.150
+SG1 joint gamma=1: v=0.2: L=0.667 K=4.00 zeta=1.41 wn=0.849 sigma_w=0.150 | v=0.5: L=0.697 K=1.74 zeta=0.93 wn=1.339 sigma_w=0.150
+SG1 joint gamma=2: v=0.2: L=0.667 K=4.00 zeta=1.41 wn=0.849 sigma_w=0.150 | v=0.5: L=1.086 K=4.00 zeta=1.41 wn=1.302 sigma_w=0.150
+SG1 noise bound omega_n,max(v=0.2) = sqrt(v sigma_w/sigma_e) = 0.866 rad/s
+SG1 noise bound omega_n,max(v=0.5) = sqrt(v sigma_w/sigma_e) = 1.369 rad/s
+SG1 speed above which L=v t_L is noise-feasible (sigma_psi->0): v* = 2 sigma_e/(sigma_w t_L^2) = 0.833 m/s
+=== c09_unit_test3.py
+UT3 straight L=1.2 v=1.5 e0=0.2: overshoot K=1 4.35 %, K=2 -0.000 %, K=1+inner(b=1) 3.47 %
+UT3 straight L=0.4 v=0.5 e0=0.2: overshoot K=1 4.46 %, K=2 -0.000 %, K=1+inner(b=1) 3.55 %
+UT3 straight L=1.0 v=1.25 e0=0.2: overshoot K=1 4.36 %, K=2 -0.000 %, K=1+inner(b=1) 3.47 %
+=== c10_dwa_curvature.py
+M5 rest->R1.5 (brief test 8b): brief argmin (v,w)=(0.1500,0.0999) kappa_exec=0.6663 | DWPP (0.1500,0.1000) kappa_exec=0.6667 | kappa_cmd=0.6667
+M5 accel into R=0.5 (kappa*dv > dw): brief argmin (v,w)=(0.5500,1.1000) kappa_exec=2.0000 | DWPP (0.5500,1.1000) kappa_exec=2.0000 | kappa_cmd=2.0000
+M5 on-line, kappa step 0->0.667 at 1.1 m/s: brief argmin (v,w)=(1.0500,0.1000) kappa_exec=0.0952 | DWPP (1.0500,0.1000) kappa_exec=0.0952 | kappa_cmd=0.6667
+M5 R=0.4 accel: brief argmin (v,w)=(0.4499,1.1000) kappa_exec=2.4451 | DWPP (0.4400,1.1000) kappa_exec=2.5000 | kappa_cmd=2.5000
+=== c11_jerk_metric.py
+SG7 IMU 100 Hz, sigma_a=0.017 (config): sigma_j=0.087 m/s^3, P99|j|=0.226
+SG7 IMU 100 Hz, sigma_a=0.02 (brief): sigma_j=0.104 m/s^3, P99|j|=0.267
+SG7 fs=50: filtered |j| peak with start-up step 4.06 m/s^3 vs without 2.07
+SG7 fs=100: filtered |j| peak with start-up step 4.28 m/s^3 vs without 2.07

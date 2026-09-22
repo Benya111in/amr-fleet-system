@@ -1,0 +1,159 @@
+{
+ "slug": "perception-tracking",
+ "math_errors": [
+  {
+   "location": "§3.2 line 66 (also §0 line 10 summary and §7 line 247 compute budget)",
+   "error": "GPU budget arithmetic: '5 × 30 FPS = 150 img/s → 배치당 ≤ 6.7 ms'. 6.7 ms is the per-IMAGE budget (1000/150). A batch of 5 served at 30 Hz has a 33.3 ms per-batch budget. Conservative by 5× but wrong, and the same number is reused as the design constraint.",
+   "correction": "State per-image budget 6.7 ms and per-batch budget 33.3 ms (minus queueing). Add the batching-induced latency (up to one 33 ms frame period) to the E2E latency budget in §6."
+  },
+  {
+   "location": "§3.3 line 80, cluster covariance R_cl",
+   "error": "Noise assignment is inconsistent: σ_∥² = σ_r² + L_∥²/12 does not average the range noise over the n cluster points (a centroid of n independent range returns has σ_r²/n along the line of sight), while σ_⊥² = σ_r²/n + L_⊥²/12 attributes the perpendicular centroid error to RANGE noise, although perpendicular error comes from angular quantisation/bearing noise ≈ (rΔφ)²/(12n). In addition, the L²/12 'uniform' terms model a PERSISTENT bias (visible-face centroid ≈ L_∥/2 nearer than the object centre) as white measurement noise, and L_⊥²/12 is applied even though the full width is observed (unbiased across width). When the robot passes the object the bias direction rotates and shows up as a velocity artefact that the χ² test can flag as motion.",
+   "correction": "σ_∥² = σ_r²/n + (L_∥,unobserved)²/12, σ_⊥² = (rΔφ)²/(12n) + (unobserved width)²/12; better, correct the bias explicitly (shift the centroid by +½·depth_c along the LOS using the class-conditioned depth, or track the nearest-face point as the state) and keep only the residual as noise. Document that the L²/12 term is a heuristic, not a derivation."
+  },
+  {
+   "location": "§3.1 line 58 (lever-arm term G) and §3.3 line 82",
+   "error": "G = [-(p_y − t_y), p_x − t_x, 0]ᵀ uses the camera optical origin t as the pivot, but the AMCL/EKF yaw error rotates the estimate about base_link, so the lever arm is p − t_base (camera offset ≈ 0.2 m is ignored). The cross-covariance between translation and yaw in the 3×3 pose covariance is dropped (Σ_t and σ_θ² added independently).",
+   "correction": "Σ_map = R Σ_opt Rᵀ + [I₂ G_base] Σ_pose,3×3 [I₂ G_base]ᵀ with G_base = [-(p_y − y_base), p_x − x_base]ᵀ."
+  },
+  {
+   "location": "§3.1 line 58, §3.3 line 82, §5.2 line 186 — tracking frame choice",
+   "error": "The AMCL pose covariance is added to EVERY measurement as if independent white noise. In reality the pose error is common-mode across all clusters/detections of one scan (fully correlated) and temporally correlated (a bias over seconds), so (i) NEES of Σ_map cannot come out at 2, and (ii) every AMCL correction jump (3–8 cm by spec, occasionally larger) displaces all static clusters simultaneously in the map frame → spurious velocity → false 'dynamic' on static objects. Tracking a single robot's LiDAR clusters in the map frame is the root cause.",
+   "correction": "Run the tracker in the odom frame (smooth, no jumps), transform the static map/free-space grid into odom via the latest map→odom TF for the overlap tests, and transform the tracks to map only for output. Drop the per-measurement pose-covariance term or apply it once to the output."
+  },
+  {
+   "location": "§3.5 line 96 vs YAML §7 line 260 (cv: sigma_a: 0.7) and §5.1 line 170 (CV = CTRV with ω≡0)",
+   "error": "Three different CV process-noise parametrisations coexist: text q = 0.5 m²/s³ (person), YAML sigma_a = 0.7 m/s² (their own heuristic q ≈ σ_a²Δt gives 0.049, 10× smaller), and the IMM's 'CV' mode is CTRV-with-ω=0 driven by Γ·σ_a, a different noise structure from the CWNA Q of §3.5.",
+   "correction": "Pick one parametrisation per model, state its units, and derive the YAML values from it; the baseline B1 CV-KF and the IMM 'CV' mode must be documented as different models if both remain."
+  },
+  {
+   "location": "§5.1 line 172 and line 179 (class-conditioned speed gate)",
+   "error": "v_max(p) = Σ_c p(c)·v_max,c is a posterior MEAN, not a bound. With p = (box 0.6, person 0.4) it gives 0.8 m/s while a person walks at 1.5 m/s; with the 0.95 cap on 'box' it gives 0.09 m/s. The gate ‖z − p̂‖ ≤ v_max Δt + 3√λ_max(S) then only passes 1.5 m/s objects because of the 3σ term (0.08 + 0.35 = 0.43 m vs 0.15 m/step), i.e. the class term is either inert or harmful under misclassification.",
+   "correction": "Use an upper envelope: v_max(p) = max{v_max,c : p(c) > τ} (τ ≈ 0.05) or the (1−τ) quantile, and never let it fall below the generic CV bound."
+  },
+  {
+   "location": "§5.1 line 179 (association innovation/covariance from the mixed prediction)",
+   "error": "'Σ_j c̄_j (x̂^{j−}, S_j)' mixes only the per-mode S_j; the mixture predicted-measurement covariance must include the spread-of-means term Σ_j c̄_j (ẑ_j − z̄)(ẑ_j − z̄)ᵀ. Numerically, ST vs CV modes at 1 m/s (0.3 m apart per 0.3 s) give diag(S) 0.050 → 0.0725; omitting it tightens the gate exactly when modes disagree (manoeuvres).",
+   "correction": "S_assoc = Σ_j c̄_j [S_j + (ẑ_j − z̄)(ẑ_j − z̄)ᵀ], z̄ = Σ_j c̄_j ẑ_j (this is the standard IMM gating covariance)."
+  },
+  {
+   "location": "§5.1 lines 170–177 (common 5-state [px,py,v,θ,ω] with ST mode) and §3.5 line 116",
+   "error": "(i) Heading θ is mixed/combined by arithmetic weighted averages (μ_{i|j} x̂ⁱ, (x̂ⁱ − x̂⁰ʲ)) with no wrap-around handling → wrong near ±π. (ii) In the ST mode v decays to ≈0, where θ is unobservable (∂p/∂θ = vΔt·(…) → 0); P_θθ inflates without bound, the spread term (x̂ⁱ − x̂⁰ʲ)ᵀ on θ becomes meaningless, and when the object starts moving the polar-velocity EKF is ill-conditioned — precisely the stop→go transition P1 claims to improve.",
+   "correction": "Wrap all θ differences to (−π, π] and average headings circularly; either use Cartesian velocity for ST/CV (mixing via the v,θ ↔ v_x,v_y conversion) or bound P_θθ and re-initialise θ from the first significant displacement; add a stop→go GT scenario to the NEES/NIS tests."
+  },
+  {
+   "location": "§5.2 line 186, cost C_ij = d²_ij − λ log c_i − λ log s_j",
+   "error": "A per-row constant (−λ log c_i) and a per-column constant (−λ log s_j) add the same amount to every feasible assignment whenever all rows (or all columns) must be assigned, so they cannot change the argmin. In 200 random rectangular problems they changed the assignment in 19 cases, only by changing which rows/columns are left unassigned. With gate-out = ∞ and no explicit miss/birth costs, the 'confidence-weighted association' is essentially a no-op; the benefit attributed to Conf-SLAMMOT [11] is unfounded.",
+   "correction": "Define the augmented (n+k)×(k+n) matrix with explicit miss cost γ (=χ² gate) and birth cost, so that −λ log c_i competes against γ; or move confidence into the lifecycle (confirmation/deletion), where it actually acts."
+  },
+  {
+   "location": "§5.3 line 190 (MPFS log-odds) with YAML class_prior_dyn line 263",
+   "error": "Sign/prior defect: w₁(0.5 − ρ_map) = +2.0 for any cluster with ρ_map = 0 ('not in the static map' is scored as strong evidence FOR motion). With no other evidence and a uniform class posterior (p_dyn = mean of class_prior_dyn = 0.534, because 3 of 5 labels are dynamic), P(dyn) = σ(2.0 + 0.136) = 0.894 > 0.7: every un-mapped static object (pallet placed after mapping, parked forklift, box) is exported to the planner as DYNAMIC; even with p(box) = 0.8 the score is 0.546. Also ρ_free counts cells that 'were free' without distinguishing unobserved/occluded cells, so ego-motion uncovering previously hidden static objects scores them as dynamic.",
+   "correction": "Make the map term non-positive: −w₁·max(0, ρ_map − ρ₀). Replace the uniform label prior by the empirical base rate of clusters in the warehouse (mostly static), so logit p_dyn is negative absent evidence. Compute ρ_free only over cells observed free (with log-odds free-space grid, unknown ≠ free). Re-derive the weights from a truth table (my re-derived table with these fixes gives 0.17 for an un-mapped static box and 0.99 for a walking person near a shelf)."
+  },
+  {
+   "location": "§3.4 line 87 vs §5.3 line 190",
+   "error": "Velocity evidence is defined twice inconsistently: §3.4 requires T > 9.21 on 3 consecutive updates; §5.3 uses a single-step indicator 1[T > 9.21]. Also, 'three consecutive' tests on the same recursive state are strongly correlated, so the false-alarm rate is not 0.01³ as the design implies.",
+   "correction": "Use one definition; if consecutive tests are kept, justify the false-alarm rate by simulation (my check: 0/600 static runs over 5 s at q = 0.5, but only because P_vv is inflated by the L²/12 terms — re-check after fixing R_cl)."
+  },
+  {
+   "location": "§3.4 line 87, §1 line 20, §6 line 231 ('확정 지연 ≤ 0.5 s … 1.0 m/s 요구 충족 근거')",
+   "error": "Unsupported quantitative target. Monte-Carlo with the brief's own R_cl at 5 m (σ ≈ 0.078/0.116 m), Δt = 0.1 s, q = 0.5, initial σ_v = 2 m/s: time to pass 3 consecutive χ² velocity tests at 1.0 m/s is median 0.9 s, 90th pct 1.6 s (q = 0.1: 0.6 s; only ≥ 1.5 m/s reaches 0.5 s). At 0.3 m/s — the spec's minimum dynamic-obstacle speed (4.1) — the test never fires within 3 s at q = 0.5 (0 % of runs) and needs 1.4 s median even at q = 0.02. The lifecycle alone (3 hits in 5 scans, then 3 tests) sets a floor of ≥ 0.6 s.",
+   "correction": "Replace '≤ 0.5 s' with a per-speed latency budget derived per evidence path (free-space path ≈ object depth / speed ≈ 0.25–0.3 s at 1.0 m/s, ≈ 0.8 s at 0.3 m/s; velocity path as above) and evaluate at 0.3, 1.0 and 1.5 m/s."
+  },
+  {
+   "location": "§3.1 line 44 (bbox-centre median depth) and §6 line 230 ('RMSE ≤ 0.10 m @ ≤ 5 m', NEES ≈ 2)",
+   "error": "The median depth of the bbox centre is the SURFACE depth, but the GT used for RMSE is the model centre. Bias = ½ object depth along the ray: 15–25 cm for the spec's 30–60 cm boxes, ≈ 1 m for a forklift; Σ_map contains no such term, so NEES ≈ 2 cannot hold and the 10 cm target is unattainable for boxes/forklifts. Independently, the random part at 5 m with the brief's own model is already ≈ 9 cm RMS (σ_Z = 6 cm; σ_X = (Z/f_x)·κw ≈ 6.5 cm for w = 80 px, using f_x ≈ 337 px, which is what the spec's 87° HFOV at 640 px implies — not the ~500 px implicitly assumed).",
+   "correction": "Add a class-conditioned half-extent correction along the viewing ray (and its variance) before comparing with centre GT, or evaluate against the nearest-surface GT; recompute σ_X with f_x from the actual CameraInfo; set the RMSE target per range band from the propagated model."
+  },
+  {
+   "location": "§3.5 line 128 (class Bayes update) and §5.5 line 220 / YAML lines 265–267",
+   "error": "(i) The score s multiplies M_{ĉ,c} for all c equally, so it is not a likelihood but a tempering between ε and M. (ii) Consecutive YOLO frames of the same object are not independent, yet the naive-Bayes product reaches p = 0.985 after 3 consistent hits (0.1 s at 30 Hz) — over-confident under persistent misclassification. (iii) The p(c) ≤ 0.95 cap promised in §5.5 is absent from the formula. (iv) Π_c is given only for person/forklift/box; Π_sign and Π_amr are undefined, so Π(p) is undefined for posteriors with mass on them.",
+   "correction": "Update the class posterior at most once per LiDAR cycle (or use a tempered exponent 1/k), apply the cap explicitly, and define Π_c for all |C| classes (sign := box, amr := forklift-like)."
+  },
+  {
+   "location": "§5.2 line 186, ego-speed term β‖v_ego‖²Δt² I (β = 0.1) citing SG-LKF [8]",
+   "error": "Not derived and double-counted: §3.3 already interpolates the TF per beam, leaving mm-level residual distortion, while the term adds 6.3 cm (2 m/s) / 3.2 cm (1 m/s) std per axis. β is dimensionless-by-fiat with no physical model. SG-LKF learns these parameters with an MLP on KITTI/nuScenes; it does not motivate a hand-set β.",
+   "correction": "Either drop the term or derive it from the actual residual after interpolation (TF timing jitter × ego speed) and validate with NIS."
+  },
+  {
+   "location": "§3.5 line 130 and §5.4 on_camera_detections (async update)",
+   "error": "Out-of-sequence measurement: a camera detection stamped up to 100 ms BEFORE the last LiDAR update is applied to the current state as if current. For a 1.5 m/s object that injects up to 15 cm of stale position with a tight Σ_map and corrupts the velocity estimate — the opposite of the P2 goal.",
+   "correction": "Process measurements in stamp order with a fixed-lag buffer (≥ camera latency), or use Bar-Shalom OOSM retrodiction, or restrict camera hits to class updates only (no position update)."
+  },
+  {
+   "location": "§3.3 line 76 (segment merge rule 'centroid distance < 0.3 m')",
+   "error": "Merging by CENTROID distance fuses a pedestrian standing within ~0.3 m of a shelf leg/box into the static cluster — exactly the 'dynamic object near static structure' failure P3 cites Rached et al. [16] for; the rule contradicts the P3 motivation.",
+   "correction": "Merge on minimum inter-point gap (≈ 2× D_th or 0.1 m), never merge segments with different map-overlap status, and re-split clusters whose PCA extent exceeds the class size prior."
+  },
+  {
+   "location": "§7 line 241 (ApproximateTimeSynchronizer slop = 0.03 s) with spec 4.1 depth 15 Hz / RGB 30 Hz",
+   "error": "With 30 Hz detections and 15 Hz depth (period 66.7 ms), half of the detections have no depth frame within ±30 ms and are dropped; the effective 3D projection rate is 15 Hz, not 30 Hz, and this is nowhere stated.",
+   "correction": "Either trigger projection on depth frames (15 Hz) and state that, or set slop ≥ 34 ms and accept the ±33 ms depth-RGB skew in Σ_map (skew × object speed)."
+  },
+  {
+   "location": "§6 line 230 (NEES '2 ± 0.3')",
+   "error": "The acceptance band for the mean 2-DoF NEES over N samples is 2 ± 1.96·√(4/N): ±0.39 for N = 100, ±0.12 for N = 1000; '±0.3' is not tied to any N.",
+   "correction": "State N and use the χ² band (or the two-sided 95% interval of χ²_{2N}/N)."
+  }
+ ],
+ "proposal_verdicts": [
+  {
+   "proposal": "P1: CC-IMM — Class-Conditioned IMM with camera late fusion",
+   "verdict": "already_published",
+   "reasoning": "The core mechanism — a class posterior that mixes class-dependent motion-model sets/transition matrices — is the textbook Joint Tracking and Classification (JTC) construction: modes = (class × motion model), and marginalising the class gives exactly Π(p) = Σ_c p(c) Π_c and Q(p) = Σ_c p(c) Q_c. Context-driven time-varying IMM TPMs are also published (Meng et al. 2019), class evidence fused from camera into a lidar tracker with class-aware models is published (Chavez-Garcia & Aycard, T-ITS 2016), and classification-aided association is in Bar-Shalom/Kirubarajan/Gokberk 2005 and in MathWorks' Sensor Fusion toolbox. What is new is only the engineering instance (2D-LiDAR clusters + YOLO late fusion in a warehouse sim). The brief's positioning 'new_combination' overstates; the honest label is 'engineering_adaptation of JTC / class-dependent IMM'. The brief's own characterisation of IMM-MOT as class-agnostic is also inaccurate (its IMM is applied to five vehicle classes only). The design additionally has the defects listed in math_errors (mean-based v_max gate, missing spread-of-means term, heading wrap and polar-velocity ill-conditioning in the ST mode, undefined Π for sign/amr, over-confident class update). Feasible in weeks and cheap, so worth keeping — but as a variant, with the ablation (−P1) as the real result. The '≥ 20 % velocity-RMSE reduction' is correctly framed as a hypothesis.",
+   "evidence": "JTC: Challa & Pulford, 'Joint target tracking and classification using radar and ESM sensors', IEEE TAES 2001; Gordon, Maskell, Kirubarajan, 'Efficient particle filters for joint tracking and classification', SPIE 2002; Ristic, Gordon, Bessell, Information Fusion 2004 (search result: 'for each target class a separate filter … each class-dependent filter implemented by IMM'). Meng et al., arXiv 1912.00603 (fetched: 'Road context is integrated to conduct adjustments of the time varying transition probability matrix (TPM) of the IMM'). Chavez-Garcia & Aycard, IEEE T-ITS 17(2) 2016 (class evidence fused into lidar/radar/camera tracking). Bar-Shalom, Kirubarajan, Gokberk, IEEE TAES 41(3) 2005. IMM-MOT html (fetched): 'the IMM filter is applied to targets from five classes: bicycle, bus, car, motorcycle, and truck' with bank {CV, CA, CTRV, CTRA}. Poly-MOT (fetched) confirms per-category motion models/metrics. Recent: PR-IMM, arXiv 2609.13307 (Sept 2026)."
+  },
+  {
+   "proposal": "P2: UPA — Uncertainty-Propagated Association",
+   "verdict": "flawed",
+   "reasoning": "Propagating the pinhole/depth covariance and the cluster covariance into Mahalanobis gating is sound and textbook (Bar-Shalom gating; UCMCTrack MMD; UncertaintyTrack), and the brief honestly labels it variant_of_prior. But as specified it has four defects that void the claimed benefit: (1) the confidence terms −λ log c_i − λ log s_j are provably inert for the assignment unless miss/birth costs are defined (row/column constants; changed 19/200 random rectangular cases only via unassigned rows/cols); (2) R_cl assigns range noise to the wrong axis and treats a persistent half-depth bias as white noise; (3) the AMCL pose covariance is added per measurement although it is common-mode, and map-frame tracking turns AMCL jumps into false velocities; (4) the ego-speed term is un-derived and double-counts the per-beam TF interpolation. The NEES-calibration test proposed in §6 will fail for reasons (2)–(3) and the surface-vs-centre bias, not because of tuning. Feasible in weeks once corrected.",
+   "evidence": "UCMCTrack (fetched, AAAI 2024: ground-plane KF + Mapped Mahalanobis Distance handling homography uncertainty); UncertaintyTrack (fetched, ICRA 2024: 'reduces the number of ID switches by around 19%'); UTrack (fetched, ECCV 2024 UnCV workshop); SG-LKF (fetched: parameters predicted by MotionScaleNet MLP — a learned method, not a basis for β = 0.1); Conf-SLAMMOT (fetched: confidence used in factor-graph association, not in a Hungarian row-constant). Numerical checks in checks/rev_checks.py §6 and rev_checks2.py (assignment invariance, ego term = 6.3 cm at 2 m/s)."
+  },
+  {
+   "proposal": "P3: MPFS — Map-prior + Free-space + velocity-test log-odds dynamic score",
+   "verdict": "flawed",
+   "reasoning": "The idea (free-space violation + map inconsistency + velocity evidence for 2D-laser moving-object detection) is the classical DATMO consistency-based detector of Wang, Thorpe & Thrun (ICRA 2003 / IJRR 2007) and Vu, Burlet & Aycard (Information Fusion 2011, with an adaptive IMM tracker on top) — 20 years before Dynablox, which the brief wrongly credits as the '원형'. That makes the honest label 'engineering_adaptation of 2D DATMO', which the brief nearly says. However the formula as written is wrong at its defaults: an un-mapped static object with no class evidence scores P(dyn) = 0.894 (> 0.7) because the map term is positive for ρ_map = 0 and the uniform label prior yields p_dyn = 0.534; ρ_free does not distinguish unobserved from free cells; the velocity indicator contradicts §3.4; and, in the map frame, AMCL corrections corrupt both ρ_free and the velocity test. The claimed 'confirmation latency ≤ 0.5 s' is only reachable through this path and only for ≥ 1 m/s objects (displacement ≈ object depth); at 0.3 m/s it is ≈ 0.8 s. With the sign/prior/unknown-cell fixes and a truth-table re-derivation of w it becomes sound and is cheap (< 0.5 ms raycast is plausible).",
+   "evidence": "Wang, Thorpe, Thrun, 'Online SLAM with DATMO…', ICRA 2003; Wang et al., IJRR 26(9) 2007 (consistency-based moving-object detection: measurements in previously free space). Vu, Burlet, Aycard, 'Grid-based localization and local mapping with moving object detection and tracking', Information Fusion 12(1) 2011 (search result confirms laser DATMO with MHT + adaptive IMM). Dynablox (fetched: '86% IoU at 17 FPS'), Rached et al. 2026 (fetched: 'Purely geometric LiDAR pipelines that rely on clustering and heuristic filtering can miss dynamic obstacles when they move in close proximity to static structure'). MPFS numeric truth table in checks/rev_checks.py §5 and rev_checks2.py (0.894 / 0.718 / 0.546 for un-mapped static cases)."
+  }
+ ],
+ "spec_gaps": [
+  "Spec 4.1 requires dynamic obstacles at 0.3–1.5 m/s; the brief's velocity-test path cannot detect 0.3 m/s objects (0 % confirmation within 3 s in Monte-Carlo with the stated parameters) and the evaluation plan (§6) never evaluates the 0.3 m/s case or reports latency per speed.",
+  "Spec 4.7 includes TTC, VO/ORCA reactive avoidance, safety zones, E-stop and SENSOR-FAILURE detection with fallback. The brief hands TTC/VO to 'the planner team' without a written interface contract (prediction horizon, covariance growth law, latency bound, 10 Hz guarantee) and says nothing about LiDAR/camera pipeline health monitoring (scan timeout, stale TF, GPU server down) — which is perception's responsibility under 4.7.",
+  "Spec 4.6 alternative 'CPU 10 FPS' is not covered: the container test showed cuda unavailable and TensorRT is absent; there is no CPU/ONNX fallback plan or measured CPU FPS, so a compose/GPU failure leaves 4.6 unmet.",
+  "Spec 4.4 asks for the costmap dynamic-obstacle update rate and obstacle persistence to be SET; the brief only names `observation_persistence` with no value and does not specify what the optional `dynamic_cloud` source contains (all clusters vs. dynamic tracks only) or how static clusters reach the obstacle layer.",
+  "Spec 4.1 depth camera is 15 Hz while RGB is 30 Hz; the brief claims a 30 Hz 3D pipeline but its own synchroniser (slop 0.03 s) yields 15 Hz. The 3D-marker/E2E-latency targets should be stated at 15 Hz.",
+  "Spec 4.10 'performance-metric measurement standardisation' and peer question '칼만 필터 추적 예측 정확도': the brief lists MOTA/ID-switch for LiDAR clusters but never defines the GT-to-track matching distance, the track-level log format for MOTA, or how 'prediction accuracy' (1.0/1.5 s) is logged; 'confidence calibration' is proposed for a heuristic weighted-sum score that has no probabilistic meaning.",
+  "Spec 4.1 sensor calibration/extrinsic file documentation is only partially addressed (optical-frame static TF mentioned; no camera–LiDAR extrinsic file or calibration procedure for the projection pipeline).",
+  "Multi-robot (spec 4.9): with 5 AMRs each tracker will see the other four as 'amr' clusters; the brief leaves the fleet-pose fusion decision open, but the 30-run collision test involves other robots as dynamic obstacles, so the decision is on the critical path, not optional.",
+  "Schedule risk against spec deliverables: W1 bundles synthetic auto-labeller, YOLO fine-tuning, TensorRT export (runtime absent) and the GPU server; open question 1 (Gazebo actors invisible to GPU LiDAR) blocks all 4.7 evaluation and has no owner/date."
+ ],
+ "required_revisions": [
+  "Move the LiDAR tracker to the odom frame; use map→odom TF only for static-map overlap, the free-space grid and output. Remove the per-measurement AMCL covariance terms (or apply once at output) and re-run the NEES test.",
+  "Fix R_cl (§3.3): σ_∥² = σ_r²/n + (unobserved depth)²/12, σ_⊥² = (rΔφ)²/(12n) + (unobserved width)²/12, and add an explicit class-conditioned half-extent bias correction along the line of sight (LiDAR) and along the viewing ray (camera median depth). Restate the 3D RMSE target per range band from the propagated model, using f_x from the actual CameraInfo (≈ 337 px for 87° HFOV @ 640 px).",
+  "Rewrite MPFS (§5.3): map term −w₁·max(0, ρ_map − ρ₀); class prior from the empirical static/dynamic base rate of clusters; ρ_free over OBSERVED-free cells only (log-odds free grid, unknown ≠ free); one velocity-evidence definition consistent with §3.4; re-derive w from a truth table and include the table in the brief.",
+  "Replace 'confirmation latency ≤ 0.5 s' with a per-speed (0.3 / 1.0 / 1.5 m/s) latency budget derived per evidence path, and add 0.3 m/s scenarios to §6.",
+  "Change the class speed gate to an upper envelope (max over classes with p(c) > τ), add the spread-of-means term to the IMM association covariance, wrap headings, and handle the v≈0 unobservability of θ (Cartesian velocity in ST/CV or bounded P_θθ with re-initialisation). Define Π_c for all five classes and put the p(c) ≤ 0.95 cap and a once-per-LiDAR-cycle (or tempered) class update into the formula.",
+  "Define the augmented assignment matrix (miss cost γ, birth cost) so that the confidence terms actually influence the solution, or drop them from the cost and use confidence only in the lifecycle; state the Hungarian input as finite (large-M) rather than ∞.",
+  "Handle camera OOSM: fixed-lag stamp-ordered buffer or retrodiction, or camera = class-only updates; document the resulting effective 3D rate (15 Hz) and synchroniser slop.",
+  "Reconcile CV process-noise parametrisation (q vs σ_a) between §3.5, §5.1 and the YAML; make the baseline B1 model and the IMM 'CV' mode explicitly the same or explicitly different. Drop or derive the ego-speed term.",
+  "Change the segment-merge rule to a minimum inter-point gap and forbid merging across different map-overlap status; add a 'pedestrian 0.2 m from shelf' scenario to §6.",
+  "Correct the GPU budget statement (6.7 ms per image, 33 ms per batch) and add batching latency to the E2E budget; add a measured CPU/ONNX fallback path for spec 4.6's 10 FPS alternative.",
+  "Re-position novelty honestly: P1 = engineering adaptation of Joint Tracking and Classification / class-dependent IMM (cite Challa & Pulford 2001, Gordon–Maskell–Kirubarajan 2002, Ristic et al. 2004, Bar-Shalom–Kirubarajan–Gokberk 2005, Meng et al. 2019, Chavez-Garcia & Aycard 2016); P3 = 2D DATMO consistency-based detection (cite Wang–Thorpe–Thrun 2003/2007 and Vu–Burlet–Aycard 2011) rather than Dynablox as the origin; correct the IMM-MOT description (class-selective, bank {CV,CA,CTRV,CTRA}); note that [24] models ToF axial noise vs distance and incidence angle and does not support the a + bZ² form (which is [C6] Kinect); note the '< 4.2 cm' in [22] holds for pallets within 5 m head-on; note that `half=True` is now a deprecated alias of `quantize=16` in the Ultralytics export docs.",
+  "Add to §7 an interface contract for the planner/TTC team (message fields, prediction horizon and covariance growth, 10 Hz deadline, dyn_prob semantics) and a perception health topic (scan/camera timeouts, TF staleness, GPU server liveness) to cover spec 4.7 sensor-failure detection.",
+  "Define MOTA/ID-switch computation for LiDAR clusters (GT matching radius, log format) and drop or redefine 'confidence calibration' for the heuristic score; state N and the χ² band for the NEES test.",
+  "Set concrete costmap parameters for spec 4.4 (obstacle-layer update rate, observation_persistence) and specify exactly which clusters go to the obstacle layer vs. the track list."
+ ],
+ "citation_problems": [
+  "[3] IMM-MOT (2502.09672): the brief calls it 'class-agnostic'; the paper applies the IMM only to five vehicle classes (bicycle, bus, car, motorcycle, truck) with bank {CV, CA, CTRV, CTRA} — it is class-selective, which weakens the claimed differentiation of P1.",
+  "[8] SG-LKF (2508.00358): exists and does adapt uncertainty to ego speed, but via a learned MotionScaleNet MLP on driving datasets; it does not support a hand-set β‖v_ego‖²Δt² term, and the brief's use of it as a 'basis' is over-read.",
+  "[24] Cai et al. (2412.15040): exists (COINS 2024, PMD Flexx2 ToF); it models axial noise as a Gaussian function of distance AND incidence angle — it does not support the quadratic a + bZ² model the brief attributes to '[23][24]'; the quadratic form comes only from [C6] (Kinect, structured light). [23] Rustler et al. is an empirical comparison (D435 < 1 cm at ≤ 1 m, ZED 2 < 3 cm at 4 m) and gives no functional noise model.",
+  "[17] Dynablox: exists and the '86 % IoU, 17 FPS' claim is correct, but it is mis-credited as the '원형' of free-space-violation moving-object detection; Wang–Thorpe–Thrun (ICRA 2003/IJRR 2007) and Vu–Burlet–Aycard (Information Fusion 2011) did exactly this with 2D laser and are absent from the bibliography.",
+  "[22] Mueller et al. (2503.22965): correct (Unity, 0.995 mAP50), but the '< 4.2 cm' position error is stated for pallets within 5 m viewed head-on — the condition is omitted.",
+  "[D1] Ultralytics export docs: `format='engine'` and `batch` (max concurrent images) are as described, but `half`/`int8` are now documented as deprecated aliases forwarding to `quantize=16/8` — the brief's export call should be updated.",
+  "[14] Plozza et al.: verified (DR-SPAAM detector, Norfair tracker, MOTA 85.45 %, 20 Hz on Jetson Xavier NX) — the brief omits that the tracker is Norfair, relevant since it is the benchmark it targets.",
+  "[4] MCTrack: IROS 2025 acceptance is confirmed via the official GitHub/IEEE Xplore entry (not on the arXiv page); BEV-plane matching claim not visible in the abstract — cite the paper section.",
+  "Missing key prior art for P1/P3 (see required_revisions): JTC literature, Bar-Shalom–Kirubarajan–Gokberk 2005, Meng et al. 2019 (1912.00603), Chavez-Garcia & Aycard 2016, Wang et al. 2003/2007, Vu et al. 2011; also PR-IMM (arXiv 2609.13307, Sept 2026) for the recent IMM-MOT line. No cited VERIFIED entry was found to be non-existent: [1][2][5][6][7][9][10][11][12][13][15][16][19][20][21][25] all fetched and consistent with the brief's claims."
+ ],
+ "score": 5
+}

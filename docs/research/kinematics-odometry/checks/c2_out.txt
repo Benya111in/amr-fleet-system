@@ -1,0 +1,22 @@
+tau_on(chi2_2, 0.999) = 13.816, tau_off(0.95) = 5.991, chi2_2 0.99 = 9.210
+
+ v | sqrt(S_w) [rad/s] | asym dv [m/s] | sqrt(S_v) [m/s] | sym dv [m/s] | parts of S_v (enc, imu, bias)
+ 0.3 | 0.0058 | 0.0077 | 0.0019 | 0.0070 | 2.07e-06, 1.45e-06, 1.20e-08
+ 1.0 | 0.0181 | 0.0242 | 0.0047 | 0.0173 | 2.03e-05, 1.45e-06, 1.20e-08
+ 2.0 | 0.0361 | 0.0483 | 0.0090 | 0.0336 | 8.03e-05, 1.45e-06, 1.20e-08
+param term for dv=1 m/s over T_a: sqrt(h^T P h) = 7.07e-04 m/s
+sym slip dv=0.045: r_v^2/S_v = 24.8
+sym slip dv=0.06: r_v^2/S_v = 44.1
+0.3 m/s^2 slip: time to reach detectable dv at 2 m/s = 0.11 s (+ window/2-of-2 latency)
+v1 accel channel (k=1e-5): v=1.0: sigma_vbar=0.0071, sigma_a=0.100 m/s^2
+   same channel with config noise: sigma_a=0.045 m/s^2 -> (0.3/sigma_a)^2 = 44.4 vs tau_on
+v1 accel channel (k=1e-5): v=2.0: sigma_vbar=0.0100, sigma_a=0.141 m/s^2
+   same channel with config noise: sigma_a=0.090 m/s^2 -> (0.3/sigma_a)^2 = 11.2 vs tau_on
+ramp jerk      2 m/s^3: max |r_v| no-slip, synchronous = 1.10e-04 m/s; with 5 ms IMU lag = 4.84e-03 m/s
+ramp jerk     10 m/s^3: max |r_v| no-slip, synchronous = 1.49e-04 m/s; with 5 ms IMU lag = 5.10e-03 m/s
+ramp jerk   1000 m/s^3: max |r_v| no-slip, synchronous = 3.72e-03 m/s; with 5 ms IMU lag = 4.70e-03 m/s
+
+H0 (1 m/s): empirical Var(r_w)/S_w = 1.009, Var(r_v)/S_v = 0.968
+H0: P(d2>tau_on) = 1.00e-03 (nominal 1e-3); corr(r_v[k], r_v[k+1]) = 0.057; corr(r_v[k], r_v[k+5]) = -0.465; corr(d2[k],d2[k+1]) = 0.005
+
+chi2_3 2.5/97.5 % = 0.216/9.348; 20-run averaged NEES band = [2.02, 4.16]

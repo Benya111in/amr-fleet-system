@@ -1,0 +1,37 @@
+E2. camera ground-plane RMS (base frame), kappa=0.05, surface->centre offset corrected, central-50% ROI median
+   medium box  1-3  m: RMS sim  4.2 cm (max in band  4.2) | correlated  4.4 cm | iid-median sigma at far edge 0.11 cm
+   medium box  3-6  m: RMS sim  4.2 cm (max in band  4.3) | correlated  6.2 cm | iid-median sigma at far edge 0.83 cm
+   medium box  6-10 m: RMS sim  4.8 cm (max in band  5.7) | correlated 14.2 cm | iid-median sigma at far edge 3.84 cm
+   person      1-3  m: RMS sim  4.6 cm (max in band  4.6) | correlated  4.7 cm | iid-median sigma at far edge 0.05 cm
+   person      3-6  m: RMS sim  4.6 cm (max in band  4.6) | correlated  6.4 cm | iid-median sigma at far edge 0.37 cm
+   person      6-10 m: RMS sim  4.7 cm (max in band  4.9) | correlated 14.4 cm | iid-median sigma at far edge 1.70 cm
+   map-frame RMS = sqrt(base^2 + 0.05^2 + (Z*0.01)^2) at band far edge (medium box / person, sim):
+      1-3 m: 7.2 / 7.4 cm
+      3-6 m: 8.9 / 9.1 cm
+      6-10 m: 12.6 / 12.2 cm
+G2. LiDAR lateral centroid sd: total (random beam-grid offset) vs s/sqrt(24) -> shape part sqrt(tot^2 - s^2/24)
+   person legs        r=3 m: total 0.0065 | s/sqrt24 0.0053 | shape part 0.0036 | model sqrt(s^2/24+shape^2) 0.0065
+   person legs        r=5 m: total 0.0109 | s/sqrt24 0.0089 | shape part 0.0064 | model sqrt(s^2/24+shape^2) 0.0109
+   person legs        r=8 m: total 0.0197 | s/sqrt24 0.0143 | shape part 0.0136 | model sqrt(s^2/24+shape^2) 0.0197
+   person legs        -> sigma_lat (max shape part over 3/5/8 m) = 0.014 m
+   large box 60x50    r=3 m: total 0.0155 | s/sqrt24 0.0053 | shape part 0.0145 | model sqrt(s^2/24+shape^2) 0.0155
+   large box 60x50    r=5 m: total 0.0127 | s/sqrt24 0.0089 | shape part 0.0090 | model sqrt(s^2/24+shape^2) 0.0127
+   large box 60x50    r=8 m: total 0.0159 | s/sqrt24 0.0143 | shape part 0.0071 | model sqrt(s^2/24+shape^2) 0.0159
+   large box 60x50    -> sigma_lat (max shape part over 3/5/8 m) = 0.015 m
+   AMR+payload 60x40  r=3 m: total 0.0130 | s/sqrt24 0.0053 | shape part 0.0119 | model sqrt(s^2/24+shape^2) 0.0130
+   AMR+payload 60x40  r=5 m: total 0.0114 | s/sqrt24 0.0089 | shape part 0.0071 | model sqrt(s^2/24+shape^2) 0.0114
+   AMR+payload 60x40  r=8 m: total 0.0153 | s/sqrt24 0.0143 | shape part 0.0056 | model sqrt(s^2/24+shape^2) 0.0153
+   AMR+payload 60x40  -> sigma_lat (max shape part over 3/5/8 m) = 0.012 m
+   forklift 1.2x1.0   r=3 m: total 0.0509 | s/sqrt24 0.0053 | shape part 0.0506 | model sqrt(s^2/24+shape^2) 0.0509
+   forklift 1.2x1.0   r=5 m: total 0.0347 | s/sqrt24 0.0089 | shape part 0.0336 | model sqrt(s^2/24+shape^2) 0.0347
+   forklift 1.2x1.0   r=8 m: total 0.0265 | s/sqrt24 0.0143 | shape part 0.0223 | model sqrt(s^2/24+shape^2) 0.0265
+   forklift 1.2x1.0   -> sigma_lat (max shape part over 3/5/8 m) = 0.051 m
+S. skew pixel shift at 1.5 rad/s: max 8.4 px; skew ~ U[-16.7, 16.7] ms -> sigma 4.9 px
+W. |omega_LOS| <= v(D)/D (object at footprint clearance D; sensor range >= D): max 1.04 rad/s at D=1.00 m (v=1.04 m/s); D=2: 0.85, D=3: 0.67, inside warning zone max 1.00 (D=0.5)
+R. d_req = (v_r + v_o)(tau_warn + l), l = per-speed p90 budget (0.3 m/s: 0.8 s; 1.0/1.5 m/s: 0.5 s)
+   robot 1.0 + obstacle 0.3 m/s, l=0.8 s -> 4.94 m
+   robot 1.0 + obstacle 1.0 m/s, l=0.5 s -> 7.00 m
+   robot 1.0 + obstacle 1.5 m/s, l=0.5 s -> 8.75 m
+   robot 2.0 + obstacle 0.3 m/s, l=0.8 s -> 8.74 m
+   robot 2.0 + obstacle 1.0 m/s, l=0.5 s -> 10.50 m
+   robot 2.0 + obstacle 1.5 m/s, l=0.5 s -> 12.25 m

@@ -1,0 +1,274 @@
+{
+ "slug": "path-tracking-control",
+ "doc_path": "docs/research/path-tracking-control/path-tracking-control.md",
+ "web_tools_available": true,
+ "papers": [
+  {
+   "title": "DWPP: Dynamic Window Pure Pursuit Considering Velocity and Acceleration Constraints",
+   "authors": "F. Ohnishi, M. Takahashi",
+   "venue_year": "arXiv 2601.15006, 2026",
+   "url": "https://arxiv.org/abs/2601.15006",
+   "status": "VERIFIED",
+   "relevance": "Closest prior work to our PP-nominal DWA arbitration: picks the point in the dynamic window nearest the line omega = kappa*v. Ours generalizes with obstacle + nominal-deviation costs."
+  },
+  {
+   "title": "Dynamic Lookahead Distance via Reinforcement Learning-Based Pure Pursuit for Autonomous Racing",
+   "authors": "M. Elgouhary, A. S. El-Wakeel",
+   "venue_year": "arXiv 2603.28625, 2026",
+   "url": "https://arxiv.org/abs/2603.28625",
+   "status": "VERIFIED",
+   "relevance": "PPO maps speed + multi-horizon curvature to lookahead; learning-based counterpart to our analytic lookahead bounds."
+  },
+  {
+   "title": "Learning to Tune Pure Pursuit in Autonomous Racing: Joint Lookahead and Steering-Gain Control with PPO",
+   "authors": "M. Elgouhary, A. S. El-Wakeel",
+   "venue_year": "arXiv 2602.18386, 2026",
+   "url": "https://arxiv.org/abs/2602.18386",
+   "status": "VERIFIED",
+   "relevance": "Jointly tunes lookahead and a steering gain online; our K gain is the deterministic, damping-ratio-interpretable analogue."
+  },
+  {
+   "title": "Reachability-Aware Time Scaling for Path Tracking",
+   "authors": "H. Gholampour, L. E. Beaver",
+   "venue_year": "arXiv 2604.00439, 2026",
+   "url": "https://arxiv.org/abs/2604.00439",
+   "status": "VERIFIED",
+   "relevance": "Speed-profile rescaling from acceleration margins along a spline path; same motivation as our curvature / curvature-rate speed caps in JRG."
+  },
+  {
+   "title": "Enhanced pure pursuit with dynamic steering control for autonomous mobile robots and application to safe navigation in chemical plants (PP-DSC)",
+   "authors": "N. Promkaew, N. Junhuathon, A. Phuphaphud, P. Kulvanit, S. Sukpancharoen",
+   "venue_year": "Scientific Reports, 2026, DOI 10.1038/s41598-026-38695-1",
+   "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC12982613/",
+   "status": "VERIFIED",
+   "relevance": "Speed-linear lookahead + steering-ratio speed reduction on a ROS 2 AMR; mean lateral deviation 0.05-0.08 m at 1-5 m/s, evidence the spec's 5/10 cm CTE targets are realistic."
+  },
+  {
+   "title": "Model-Based Hybrid Control of Pure Pursuit and Stanley Methods for Vehicle Path Tracking",
+   "authors": "H. Jung",
+   "venue_year": "Sensors 25(20):6491, 2025",
+   "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC12567833/",
+   "status": "VERIFIED",
+   "relevance": "IMM-probability blend of PP and Stanley (3-9% RMS gain); informs our decision to keep PP as base and absorb Stanley's direct error feedback via chord correction."
+  },
+  {
+   "title": "Path Tracking with Dynamic Control Point Blending for Autonomous Vehicles: An Experimental Study",
+   "authors": "A. Lombard, F. Perronnet, N. Gaud, A. Abbas-Turki",
+   "venue_year": "arXiv 2602.01892, 2026",
+   "url": "https://arxiv.org/abs/2602.01892",
+   "status": "VERIFIED",
+   "relevance": "Barycentric blend of front-axle Stanley and rear-axle curvature controller plus curvature-aware longitudinal control; related FF+FB design space."
+  },
+  {
+   "title": "Evaluation of Local Planner-Based Stanley Control in Autonomous RC Car Racing Series",
+   "authors": "M. Fazekas, Z. Demeter, J. Toth, A. Bogar-Nemeth, G. Bari",
+   "venue_year": "IEEE IV 2024, arXiv 2408.15152",
+   "url": "https://arxiv.org/abs/2408.15152",
+   "status": "VERIFIED",
+   "relevance": "Stanley augmented with low/high-speed stabilization terms and adaptive lookahead; Stanley ablation baseline design."
+  },
+  {
+   "title": "Unscented Transform-based Pure Pursuit Path-Tracking Algorithm under Uncertainty",
+   "authors": "C. Nantabut",
+   "venue_year": "ICINCO 2024, arXiv 2409.18585",
+   "url": "https://arxiv.org/abs/2409.18585",
+   "status": "VERIFIED",
+   "relevance": "Propagates localization uncertainty through PP; probabilistic generalization of our noise-derived lookahead lower bound."
+  },
+  {
+   "title": "A Sim-to-Real Vision-based Lane Keeping System for a 1:10-scale Autonomous Vehicle",
+   "authors": "A. Gallina, M. Grandin, A. Cenedese, M. Bruschetta",
+   "venue_year": "arXiv 2409.18097, 2024",
+   "url": "https://arxiv.org/abs/2409.18097",
+   "status": "VERIFIED",
+   "relevance": "Pure pursuit with derivative action tuned via time-delay stability analysis; Gazebo-trained."
+  },
+  {
+   "title": "Jerk-limited Traversal of One-dimensional Paths and its Application to Multi-dimensional Path Tracking",
+   "authors": "J. C. Kiemel, T. Kroger",
+   "venue_year": "ICRA 2024, arXiv 2407.13423",
+   "url": "https://arxiv.org/abs/2407.13423",
+   "status": "VERIFIED",
+   "relevance": "Jerk-limited traversal along path arc length; our 100 Hz third-order filter is an online approximation of this problem."
+  },
+  {
+   "title": "Online Generation of Collision-Free Trajectories in Dynamic Environments",
+   "authors": "N. Covic, B. Lacevic",
+   "venue_year": "IEEE RA-L 2026, arXiv 2603.00759",
+   "url": "https://arxiv.org/abs/2603.00759",
+   "status": "VERIFIED",
+   "relevance": "Converts arbitrary geometric paths to jerk-limited spline trajectories online with stopping-safety guarantees."
+  },
+  {
+   "title": "Towards Safe Path Tracking Using the Simplex Architecture",
+   "authors": "G. Jager, N.-J. Friedrich, H. Petersen, B. Noack",
+   "venue_year": "arXiv 2503.10559, 2025 (rev. 2026)",
+   "url": "https://arxiv.org/abs/2503.10559",
+   "status": "VERIFIED",
+   "relevance": "RL performance controller arbitrated with RPP/DWA/MPPI high-assurance controllers; precedent for 'nominal tracker + safety arbitration'."
+  },
+  {
+   "title": "Intelligent Control of Differential Drive Robots Subject to Unmodeled Dynamics with EKF-based State Estimation",
+   "authors": "A. Alwala, Y. Hu, G. da Silva Lima, W. M. Bessa",
+   "venue_year": "arXiv 2603.14940, 2026",
+   "url": "https://arxiv.org/abs/2603.14940",
+   "status": "VERIFIED",
+   "relevance": "Adaptive RBF + feedback linearization for diff-drive velocity control in Gazebo; alternative to PID for unmodeled dynamics (out of scope)."
+  },
+  {
+   "title": "Do Better Imagined Rollouts Mean Better Robot Control? A Controlled Study of World-Model Evaluation Under Feedback",
+   "authors": "D. Raghavan, A. Singh",
+   "venue_year": "arXiv 2609.02811, 2026",
+   "url": "https://arxiv.org/abs/2609.02811",
+   "status": "VERIFIED",
+   "relevance": "Diff-drive path tracking closed-loop cross-track RMSE study; lesson for evaluation design (state horizon and measurement rate)."
+  },
+  {
+   "title": "Online Joint Calibration of Steering Offset and Planar LiDAR Extrinsics for Wheeled Mobile Robots",
+   "authors": "S. Mishra, A. Dhar, S. Majumdar",
+   "venue_year": "arXiv 2608.26789, 2026",
+   "url": "https://arxiv.org/abs/2608.26789",
+   "status": "VERIFIED",
+   "relevance": "Warehouse robots' elevated CTE traced to calibration offsets; a residual-analysis check item."
+  },
+  {
+   "title": "Regulated Pure Pursuit for Robot Path Tracking",
+   "authors": "S. Macenski, S. Singh, F. Martin, J. Gines",
+   "venue_year": "Autonomous Robots 2023, arXiv 2305.20026",
+   "url": "https://arxiv.org/abs/2305.20026",
+   "status": "VERIFIED",
+   "relevance": "The Nav2 RPP baseline itself (curvature/proximity regulation, velocity-scaled lookahead); formulas cross-checked against Humble source."
+  },
+  {
+   "title": "Adaptive Lookahead Pure-Pursuit for Autonomous Racing",
+   "authors": "V. Sukhil, M. Behl",
+   "venue_year": "arXiv 2111.08873, 2021",
+   "url": "https://arxiv.org/abs/2111.08873",
+   "status": "VERIFIED",
+   "relevance": "Offline greedy per-waypoint lookahead (20% gain); offline ancestor of our optional rollout-based lookahead selection."
+  },
+  {
+   "title": "Model- and Acceleration-based Pursuit Controller for High-Performance Autonomous Racing",
+   "authors": "J. Becker et al.",
+   "venue_year": "ICRA 2023, arXiv 2209.04346",
+   "url": "https://arxiv.org/abs/2209.04346",
+   "status": "VERIFIED",
+   "relevance": "Tire-dynamics-aware pursuit at 11 m/s; shows geometric control suffices in our 0-2 m/s regime."
+  },
+  {
+   "title": "Time Governors for Safe Path-Following Control",
+   "authors": "O. Arslan",
+   "venue_year": "arXiv 2212.01444, 2022",
+   "url": "https://arxiv.org/abs/2212.01444",
+   "status": "VERIFIED",
+   "relevance": "Closed-loop time parametrization ('governor') of a planned path; conceptual origin of the JRG naming/structure."
+  },
+  {
+   "title": "Jerk-limited Real-time Trajectory Generation with Arbitrary Target States (Ruckig)",
+   "authors": "L. Berscheid, T. Kroger",
+   "venue_year": "RSS 2021, arXiv 2105.04830",
+   "url": "https://arxiv.org/abs/2105.04830",
+   "status": "VERIFIED",
+   "relevance": "Time-optimal multi-DOF jerk-limited OTG; our 1-DOF filter is the in-house simplification (no external library)."
+  },
+  {
+   "title": "Implementation of the Pure Pursuit Path Tracking Algorithm",
+   "authors": "R. C. Coulter",
+   "venue_year": "CMU-RI-TR-92-01, 1992",
+   "url": "https://www.ri.cmu.edu/publications/implementation-of-the-pure-pursuit-path-tracking-algorithm/",
+   "status": "RECALLED",
+   "relevance": "Original pure pursuit."
+  },
+  {
+   "title": "Autonomous Automobile Trajectory Tracking for Off-Road Driving: Controller Design, Experimental Validation and Racing",
+   "authors": "G. M. Hoffmann, C. J. Tomlin, M. Montemerlo, S. Thrun",
+   "venue_year": "ACC 2007",
+   "url": "https://ieeexplore.ieee.org/document/4282788",
+   "status": "RECALLED",
+   "relevance": "Stanley controller original (includes curvature feedforward)."
+  },
+  {
+   "title": "Automatic Steering Methods for Autonomous Automobile Path Tracking",
+   "authors": "J. M. Snider",
+   "venue_year": "CMU-RI-TR-09-08, 2009",
+   "url": "https://www.ri.cmu.edu/publications/automatic-steering-methods-for-autonomous-automobile-path-tracking/",
+   "status": "RECALLED",
+   "relevance": "PP/Stanley/LQR comparison and linearizations."
+  },
+  {
+   "title": "A Stable Tracking Control Method for an Autonomous Mobile Robot",
+   "authors": "Y. Kanayama, Y. Kimura, F. Miyazaki, T. Noguchi",
+   "venue_year": "ICRA 1990",
+   "url": "https://ieeexplore.ieee.org/document/126006",
+   "status": "RECALLED",
+   "relevance": "Classic FF+FB nonholonomic tracking law; closest classical ancestor of chord-corrected PP."
+  },
+  {
+   "title": "The Dynamic Window Approach to Collision Avoidance",
+   "authors": "D. Fox, W. Burgard, S. Thrun",
+   "venue_year": "IEEE RA Magazine 1997",
+   "url": "https://ieeexplore.ieee.org/document/580977",
+   "status": "RECALLED",
+   "relevance": "DWA original; basis of the team's local planner used as arbitration layer."
+  }
+ ],
+ "baseline_summary": "Baseline = Pure Pursuit on the diff-drive axle midpoint (unicycle model, wheel speeds w_R,L = (v +/- w d/2)/r with d=0.36 m, r=0.0825 m; joint limit must be >= 28 rad/s to allow v=2.0 and w=1.5 simultaneously). Geometry: lookahead point G=(x_g,y_g) at distance L gives curvature kappa = 2 y_g / L^2 = 2 sin(alpha)/L and w = v*kappa (identical to Nav2 RPP, verified in Humble source). Proposition 1: on a circular path PP has zero steady-state error for any L < 2R (proof in brief), so corner cutting is purely a transient at curvature changes. Proposition 2: linearized error dynamics on a straight path are e'' + (2v/L) e' + (2v^2/L^2) e = 0, i.e. zeta = 1/sqrt(2) for any L and omega_n = sqrt(2) v/L; hence velocity-scaled lookahead L = v*t_L makes the closed-loop poles speed-invariant (theoretical justification for RPP's lookahead_time) and PP's damping cannot be tuned without an extra gain. Noise-derived lower bound: sigma_w = 2Kv sigma_e / L^2 -> L_min(v) = sqrt(2 K v sigma_e / sigma_w,max) (0.45 m at 0.5 m/s, 0.89 m at 2 m/s with sigma_e = 0.03 m). Stanley (virtual-wheelbase mapping w = v tan(delta)/l) has speed-dependent damping (v/l + k), so PP is preferred as base for 0-2 m/s; Stanley kept as ablation. CTE: signed perpendicular distance from GT position to the nearest path segment, segments classified curve if |kappa| > 0.1 1/m plus 0.5 m transition buffer; report mean |e| (spec), RMSE, max, P95. PID: torque->velocity plant derived as decoupled first-order systems (M_v = m + 2J_w/r^2) v' = (tau_L+tau_R)/r - b_v v and (I_z + J_w d^2/(2r^2)) w' = (tau_R-tau_L) d/(2r) - b_w w; PI by pole placement K_p = (2 zeta w_c M_v - b_v) r, K_i = w_c^2 M_v r (~45 N*s, ~137 N at w_c = 6 rad/s, 46 kg), back-calculation anti-windup, 100 Hz, payload-mass gain scheduling; Ziegler-Nichols/relay only as an auxiliary delay-identification step (explicitly inappropriate for a pure first-order plant). S-curve: 7-segment times, closed-form jerk-aware stopping distance D_stop = v^2/(2a) + v a/(2j) and its inverse v_stop(D); online 3rd-order bang-bang filter guaranteeing |a| <= a_max, |j| <= j_max; lateral jerk bound |w'| <= (j_lat,max - |v' w|)/v. Verified stack facts: nav2_core::Controller API (computeVelocityCommands returns TwistStamped, setSpeedLimit), controller_server publishes geometry_msgs/Twist on cmd_vel at 20 Hz, nav2_velocity_smoother limits acceleration only (no jerk), Humble RPP lacks use_fixed_curvature_lookahead, Gazebo Fortress has DiffDrive (with jerk params), JointController, ApplyJointForce (/model/{m}/joint/{j}/cmd_force, Double) and JointStatePublisher systems; ros_gz_bridge maps Float64<->Double and JointState<->Model; TEB is not installed.",
+ "proposals": [
+  {
+   "name": "CC-PP: Chord-Corrected Pure Pursuit (module 1 of CCRP)",
+   "idea": "Split the lookahead chord's lateral coordinate y_g into the part that exists even under perfect tracking (y_g^0, computed from the path in the Frenet frame at the robot's projection) and the true error part; feed forward the local path curvature and feed back only the error part: w = v [ kappa(s_r) + K * 2 (y_g - y_g^0) / L^2 ], with L = clamp(v t_L, L_min(v), L_max) where L_min(v) = sqrt(2 K v sigma_e / sigma_w,max) is derived from localization-noise amplification. Properties proven in the brief: identical to PP on straight lines and circles (K=1); exact geometric tracking of any C^1 path when e = psi = 0; linearized error dynamics are path-invariant with zeta = sqrt(K/2), omega_n = sqrt(2K) v / L, so a single gain K sets damping independent of speed and curvature.",
+   "closest_prior_work": "Stanley curvature feedforward (Hoffmann 2007), Kanayama 1990 FF+FB tracking; recent PP/Stanley hybrids (Jung 2025 IMM blend; Lombard 2026 control-point blending); Nav2 RPP (Macenski 2023) and DWPP (Ohnishi 2026) have no such correction.",
+   "novelty_claim": "variant_of_prior",
+   "expected_gain": "Removes PP corner-cutting at straight-to-arc transitions (transient error ~ L^2 kappa / 8 at L = 1.6 m, R = 1.5 m is ~0.2 m for plain PP) so curve-segment mean CTE should drop from >10 cm to the 3-6 cm range while straight-segment behavior is unchanged; one interpretable gain instead of lookahead re-tuning per speed.",
+   "risks": "Curvature feedforward needs a smooth (ideally G2) path from the global planner; noisy kappa(s_r) injects omega jumps (mitigated by 0.5 m curvature smoothing and the alpha_max / lateral-jerk rate limit). Exact tracking at curvature steps is impossible under finite omega-dot, so the JRG curvature-rate speed cap must be active. Benefit vanishes on purely straight/circular test paths, so evaluation must include polyline-smoothed A* paths.",
+   "realtime_budget": "O(window ~ 40 points) projection + O(1) law per 20 Hz cycle (< 0.05 ms); O(N ~ 2000) curvature preprocessing at setPlan (< 0.2 ms)."
+  },
+  {
+   "name": "JRG: Jerk-bounded Regulated Governor (module 2 of CCRP)",
+   "idea": "Arc-length-parametrized speed cap v_cap(s) = min{ v_max, sqrt(a_lat,max/|kappa|), w_max/|kappa|, sqrt(alpha_max/|kappa'|), (j_lat,max/|kappa'|)^(1/3), v_stop(s_goal - s), v_ext } with forward (accel) and backward (jerk-aware stopping distance) passes at setPlan, online v_ref = min(v_b(s_r), v_cte(e), v_ttc), plus a 100 Hz third-order (jerk-limited) online filter in a separate amr_velocity_governor node that replaces nav2_velocity_smoother; E-stop bypasses the jerk limit. Produces ETA = sum(ds / v_bar) for the spec's 15% travel-time prediction metric.",
+   "closest_prior_work": "Nav2 RPP curvature/approach regulation (Macenski 2023); Macfarlane-Croft 2003 jerk-bounded S-curve; Kiemel-Kroger ICRA 2024 jerk-limited path traversal; Gholampour-Beaver 2026 reachability-aware time scaling; Arslan 2022 time governors.",
+   "novelty_claim": "new_combination",
+   "expected_gain": "Peak longitudinal jerk bounded at 2 m/s^3 (P99) versus unbounded steps with nav2_velocity_smoother; lateral acceleration <= 0.8 m/s^2 on curves; goal-approach without the RPP linear heuristic; travel-time prediction error within 15% because the same profile is used for prediction and execution.",
+   "risks": "Jerk filter adds up to a_max/j_max = 0.5 s lag, lengthening stopping distance (2.5 m from 2 m/s) so DWA admissibility and the safety zones (warning 1.0 m -> <= 0.5 m/s, critical 0.5 m -> <= 0.2 m/s) must use the jerk-aware D_stop; over-conservative kappa' caps if the planner path is not curvature-continuous; the physical payload slip/tip limits (3-12 m/s^2) are not binding at a_max = 1, so the jerk benefit must be reported as vibration/peak reduction, not slip prevention.",
+   "realtime_budget": "O(N) at setPlan (< 0.2 ms); O(1) per 20 Hz cycle; O(1) per 100 Hz filter tick."
+  },
+  {
+   "name": "PP-nominal DWA arbitration (module 3 of CCRP): single owner of cmd_vel",
+   "idea": "One nav2_core::Controller plugin (amr_navigation::TrackingController). CC-PP produces the nominal (v*, w*); the team's own DWA core searches the dynamic window with cost J = w_o C_obs + w_t [((v-v*)/v_max)^2 + ((w-w*)/w_max)^2] + w_c C_clear 1[d_min < d_c], with the nominal point itself included in the sample set. Lemma: if the nominal is collision-free and clear, argmin J = (v*, w*), so tracking is exactly CC-PP in free corridors and DWA only deviates near obstacles. Topic chain: controller_server(20 Hz, Twist) -> amr_velocity_governor(100 Hz) -> collision_monitor -> wheel_velocity_pid(100 Hz, ApplyJointForce torques). A standalone DWA plugin is also built for the spec's DWA-vs-TEB comparison (selectable via BT ControllerSelector).",
+   "closest_prior_work": "DWPP (Ohnishi & Takahashi 2026: nearest window point to omega = kappa v), Nav2 DWB PathAlign/PathDist critics, Simplex-architecture arbitration (Jager 2025).",
+   "novelty_claim": "variant_of_prior",
+   "expected_gain": "Resolves the spec's dual requirement (own DWA + own PP/Stanley) without two competing cmd_vel publishers; free-corridor CTE equal to CC-PP, obstacle avoidance equal to DWA; smooth transitions because the window is centered on the current velocity and the nominal respects accel limits.",
+   "risks": "Grid resolution may miss the nominal unless it is explicitly inserted; weight tuning (w_t vs w_o) affects how early avoidance begins; DWA horizon must include the jerk-filter lag; two-plugin (BT selector) fallback adds switching transients.",
+   "realtime_budget": "DWA 11 x 21 samples x 20 steps with footprint checks ~ 1-2 ms per 20 Hz cycle; total plugin ~ 2-3 ms; 5 robots ~ 0.3 CPU core."
+  },
+  {
+   "name": "Payload-scheduled wheel PI on torque-level Gazebo interface (supporting module)",
+   "idea": "Use Gazebo ApplyJointForce (cmd_force per wheel) + JointStatePublisher instead of the DiffDrive system so the team's 100 Hz PI loop (pole-placement gains from the derived first-order plant, back-calculation anti-windup) actually closes on a mass-dependent plant; recompute K_p, K_i from the payload mass published by the task system (45 -> 70 kg would otherwise cut bandwidth 35%).",
+   "closest_prior_work": "Standard control practice; Alwala 2026 adaptive neural control is the learning-based alternative.",
+   "novelty_claim": "engineering_adaptation",
+   "expected_gain": "Makes the spec's 'PID velocity controller with documented tuning' and 'payload mass reflected in dynamics' requirements verifiable; constant 6 rad/s velocity-loop bandwidth across payloads; step overshoot < 5%, settling < 0.5 s.",
+   "risks": "Depends on the simulation team adopting ApplyJointForce/DetachableJoint payload modeling; torque saturation must be set above the a_max requirement so acceleration limiting stays with the S-curve reference; simulation friction/damping (b_v, b_w) must be identified from step tests.",
+   "realtime_budget": "O(1) at 100 Hz per robot."
+  },
+  {
+   "name": "Optional: rollout-based lookahead/gain selection (stretch, ablation only)",
+   "idea": "Each cycle evaluate 8 candidate (L, K) pairs by a 1.5 s forward simulation of the CC-PP closed loop on the known path, cost sum e^2 + lambda sum (delta w)^2, low-pass the winner.",
+   "closest_prior_work": "Sukhil & Behl 2021 (offline greedy per-waypoint lookahead), Elgouhary & El-Wakeel 2026 (RL lookahead/gain).",
+   "novelty_claim": "variant_of_prior",
+   "expected_gain": "Possible further CTE reduction at transitions when curvature feedforward is imperfect; deterministic and explainable unlike RL.",
+   "risks": "Marginal benefit once chord correction is active; parameter chattering without filtering; only pursued if W4 schedule allows.",
+   "realtime_budget": "8 x 15 = 120 unicycle integrations per 20 Hz cycle (< 0.1 ms)."
+  }
+ ],
+ "evaluation_plan": "Metrics mapped to spec: (1) CTE straight mean |e| <= 5 cm and curve <= 10 cm against Gazebo ground-truth pose (PosePublisher), logged at 20 Hz as [timestamp, planned_x/y, actual_x/y, cte] with automatic straight/curve classification (|kappa| > 0.1 1/m plus 0.5 m transition buffer), plus RMSE/max/P95; (2) jerk from IMU a_x (100 Hz, Savitzky-Golay 11-point) and lateral jerk d(v w)/dt, P99 <= 2 m/s^3; |a| P99 <= 1.0 m/s^2, |alpha| <= 2.0 rad/s^2; (3) travel-time prediction error |T_pred - T_real|/T_real <= 15% using the JRG ETA; (4) response time command-stamp to first motion <= 200 ms (chain budget 50+10+10 ms + physics); (5) CPU <= 80% with 5 robots, per-cycle plugin timing logged; (6) gain-tuning documentation per spec 4.5 with the five-step procedure across three payloads. Scenarios (20 runs each, fixed dynamic-obstacle seeds): S1 30 m straight corridor at 2.0 m/s; S2 aisle-change U-turns R in {1.0, 1.5, 2.0} m; S3 slalom; S4 three consecutive 90-degree intersections; S5 payload 0/10/25 kg; S6 GT vs EKF pose input (separates tracker error from localization error); S7 1.0 m/s crossing dynamic obstacle (DWA intervention; deviation <= 1 m, recovery <= 5 s per spec 4.7). Baselines: Nav2 RPP (Humble defaults and a re-tuned set for 2 m/s), DWB (Nav2 DWA), MPPI (installed), TEB (source build, open question), team plain PP (K=1, no correction), Stanley virtual-wheelbase. Ablations: chord correction on/off, velocity-scaled lookahead on/off, K in {1, 1.5, 2}, jerk filter on/off, CTE slowdown on/off, rollout lookahead. Statistics: mean +/- std, paired Wilcoxon on shared seeds, success rate, zero collisions, minimum clearance. Report to docs/reports/path_tracking_eval.md.",
+ "implementation_plan": "Language: C++17 for the nav2_core plugins and the two 100 Hz nodes (plugins must be C++); a ROS-independent core library (amr_tracking_core) so gtest runs without ROS; Python 3.10 for evaluation/logging and a numpy reference implementation used to cross-check the C++ core. Package src/amr_navigation (currently a Python-only skeleton; package.xml already declares nav2_core/nav2_costmap_2d/pluginlib-family deps): include/amr_navigation/tracking/{path_geometry, pure_pursuit, speed_governor, jerk_filter, dwa_core, tracking_controller}.hpp, src/tracking/*.cpp, src/plugins/{tracking_controller, dwa_controller}.cpp, src/nodes/{velocity_governor_node, wheel_velocity_pid_node}.cpp, amr_navigation/eval/{cte_logger, jerk_metrics, eta_metrics}.py, plugins/amr_controllers.xml (pluginlib base nav2_core::Controller), config/{tracking_controller, wheel_pid, velocity_governor}.yaml, test/{test_path_geometry, test_pure_pursuit, test_speed_governor, test_jerk_filter, test_wheel_pid}.cpp + test_cte_metrics.py. CMake: add_library(amr_tracking_core SHARED), add_library(amr_controllers SHARED) with ament_target_dependencies(rclcpp rclcpp_lifecycle nav2_core nav2_costmap_2d nav2_util nav_2d_utils pluginlib tf2_geometry_msgs angles) and pluginlib_export_plugin_description_file(nav2_core plugins/amr_controllers.xml), two add_executable nodes, five ament_add_gtest; add angles, nav2_util, nav_2d_utils, pluginlib, tf2_geometry_msgs, sensor_msgs, std_msgs to package.xml; keep -Wall -Wextra -Wpedantic warning-free. ROS interfaces (per /amr_i namespace): controller_server FollowPath plugin amr_navigation::TrackingController (params lookahead_time 0.8, min/max lookahead 0.4/1.8, damping_gain_K 1.0, sigma_e 0.04, sigma_omega_max 0.15, max vel/accel/jerk from robot_params, max_lateral_accel 0.8, max_lateral_jerk 1.5, cte_slowdown [0.05, 0.30], dwa {11x21 samples, 1.0 s, weights}) and FollowPathDWA amr_navigation::DWAController; cmd_vel (Twist, 20 Hz) -> amr_velocity_governor -> cmd_vel_smoothed -> nav2_collision_monitor -> cmd_vel_safe -> wheel_velocity_pid -> /model/amr_i/joint/{left,right}_wheel_joint/cmd_force (std_msgs/Float64 bridged to ignition.msgs.Double); feedback JointState via JointStatePublisher (ignition.msgs.Model); payload_mass (Float64) subscription for gain scheduling; nav2_msgs/SpeedLimit honored through setSpeedLimit -> v_ext; E-stop bypass service on the governor. Gazebo-side requests to the simulation team: ApplyJointForce on both wheel joints, JointStatePublisher, PosePublisher for GT, DetachableJoint payload models. Unit tests: PP curvature exact on circles (<1e-9), zero feedback under perfect tracking (line/circle/clothoid), 4.3% overshoot at K=1 and none at K=2, jerk filter bounds and 2.5 s 0->2 m/s time, v_stop(D_stop(v)) identity, PI anti-windup overshoot < 5%, forward/backward pass monotonicity, nominal-inclusive DWA returns the nominal in free space, CTE logger sign/segmentation. Compute budget: ~2-3 ms per 20 Hz cycle per robot (DWA dominant), 5 robots ~0.3 core; 100 Hz nodes negligible. Schedule: W1 core geometry/CC-PP/governor + gtest + numpy cross-check; W2 plugin, wheel PID, bridge, single-robot driving; W3 DWA integration, scenario automation, logging; W4 baselines (RPP/DWB/MPPI/TEB), payload runs, report and peer-review doc docs/algorithms/path_tracking.md.",
+ "open_questions": [
+  "CTE reference: the spec measures planned path vs actual (ground-truth) trajectory, and its 5 cm straight-line localization tolerance equals the CTE tolerance; we budget 2 cm for the tracker itself, but if EKF bias pushes GT-based CTE over 5 cm we need agreement on also reporting estimated-pose-based CTE.",
+  "TEB baseline: teb_local_planner is not in the image and has no official Humble binary (community ros2 branches); the source branch/commit must be agreed with the local-planning owner, or MPPI (installed) reported as an additional baseline.",
+  "Wheel actuation choice in Gazebo: ApplyJointForce (torque, our PID) versus the DiffDrive system (plugin-internal velocity control). This brief assumes the former; it determines whether the spec's PID requirement and payload-mass dynamics are meaningful.",
+  "Curvature continuity of the global planner's smoothed path (G2 spline/clothoid vs polyline): large kappa' would make the JRG curvature-rate caps over-conservative and make curvature feedforward noisy.",
+  "Ordering and naming of the cmd_vel chain with the safety system: collision_monitor placement after the jerk governor and the E-stop bypass service must be fixed with the safety-system owner.",
+  "Definition of the 15% travel-time prediction metric (prediction at plan time vs updated after replanning) to be agreed with the planner team.",
+  "Mechanism for runtime payload mass change in Gazebo Fortress (DetachableJoint payload model vs inertial component edit) and the payload_mass topic contract with the task/behavior team."
+ ]
+}

@@ -1,0 +1,7 @@
+ mu_psi  joint   p_psi   p_y    old rule(|mu|>tau_psi)  marginal rule
+ 0.00   0.997   0.997   1.000   pass     -> -                 -
+ 0.20   0.975   0.975   1.000   pass     -> -                 -
+ 0.30   0.929   0.929   1.000   FAIL     -> NONE              heading
+ 0.41   0.824   0.824   1.000   FAIL     -> NONE              heading
+ 0.50   0.688   0.688   1.000   FAIL     -> NONE              heading
+ 0.70   0.312   0.312   1.000   FAIL     -> heading           heading

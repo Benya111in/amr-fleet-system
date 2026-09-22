@@ -1,0 +1,262 @@
+{
+ "slug": "kinematics-odometry",
+ "doc_path": "docs/research/kinematics-odometry/kinematics-odometry.md",
+ "web_tools_available": true,
+ "papers": [
+  {
+   "title": "Online Odometry Calibration for Differential Drive Mobile Robots in Low Traction Conditions with Slippage",
+   "authors": "C. De Giorgi, D. De Palma, G. Parlangeli",
+   "venue_year": "Robotics (MDPI) 13(1):7, Dec 2023",
+   "url": "https://doi.org/10.3390/robotics13010007",
+   "status": "VERIFIED",
+   "relevance": "Closest prior work: encoder+gyro+IMU redundancy to detect slip during online odometry calibration of a diff-drive robot; our GRC is a variant (RLS on psi=r/b with slip gating and covariance feedback)."
+  },
+  {
+   "title": "Tightly-Coupled LiDAR-IMU-Wheel Odometry with Online Calibration of a Kinematic Model for Skid-Steering Robots",
+   "authors": "T. Okawara, K. Koide, S. Oishi, M. Yokozuka, A. Banno, K. Uno, K. Yoshida",
+   "venue_year": "IEEE Access 2024 (arXiv 2404.02515)",
+   "url": "https://arxiv.org/abs/2404.02515",
+   "status": "VERIFIED",
+   "relevance": "Online kinematic-parameter calibration plus online estimation of wheel-odometry covariance inside a factor graph; our SACO delivers a lightweight O(1) version of the covariance-adaptation idea as a robot_localization twist covariance."
+  },
+  {
+   "title": "Tightly-Coupled LiDAR-IMU-Wheel Odometry with an Online Neural Kinematic Model Learning via Factor Graph Optimization",
+   "authors": "T. Okawara et al.",
+   "venue_year": "Robotics and Autonomous Systems 187:104929, 2025 (arXiv 2407.08907)",
+   "url": "https://arxiv.org/abs/2407.08907",
+   "status": "VERIFIED",
+   "relevance": "Online learned kinematic model robust to large slippage; positions the learning-based end of the design space we deliberately avoid (peer-review explainability)."
+  },
+  {
+   "title": "Visual-Inertial-Wheel Odometry with Slip Compensation and Dynamic Feature Elimination",
+   "authors": "N. Reginald, O. Al-Buraiki, T. Choopojcharoen, B. Fidan, E. Hashemi",
+   "venue_year": "Sensors 2025",
+   "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11902339/",
+   "status": "VERIFIED",
+   "relevance": "GPR/LSTM slip-residual correction in an MSCKF; shows slip is treated as a learned bias, contrasting our residual-test + covariance inflation approach."
+  },
+  {
+   "title": "WING: Wheel-Inertial Neural Odometry with Ground Manifold Constraints",
+   "authors": "C. Jiang, K. Zhang, S. Yang, S. Shen, C. Xu, F. Gao",
+   "venue_year": "arXiv 2407.10101, Jul 2024",
+   "url": "https://arxiv.org/abs/2407.10101",
+   "status": "VERIFIED",
+   "relevance": "Wheel-encoder + IMU only odometry with ground-manifold constraint; benchmark for what interoceptive-only odometry can achieve."
+  },
+  {
+   "title": "Observability-Aware Active Calibration of Multi-Sensor Extrinsics for Ground Robots via Online Trajectory Optimization",
+   "authors": "J. Wang, Y. Kang, L. Fu, K. Nakadai, H. Kong",
+   "venue_year": "IEEE Sensors Journal 2025 (arXiv 2506.13420)",
+   "url": "https://arxiv.org/abs/2506.13420",
+   "status": "VERIFIED",
+   "relevance": "FIM-based observability metric for calibration trajectories; motivates our persistent-excitation (straight + rotation) gating and cond(P) monitoring in GRC."
+  },
+  {
+   "title": "Online Slip Detection and Friction Coefficient Estimation for Autonomous Racing",
+   "authors": "C. Oeltjen, C. Sobolewski, S. Faghfoorian, L. Domokos, G. Vidal, S. Yerramsetty, I. Ruchkin",
+   "venue_year": "arXiv 2509.15423, Sep 2025 (v3 Mar 2026)",
+   "url": "https://arxiv.org/abs/2509.15423",
+   "status": "VERIFIED",
+   "relevance": "Model-free slip detection by comparing commanded and IMU/LiDAR-measured motion; supports our accelerometer residual channel for symmetric longitudinal slip."
+  },
+  {
+   "title": "Odometry Calibration and Pose Estimation of a 4WIS4WID Mobile Wall Climbing Robot",
+   "authors": "B. Caran, V. Milic, M. Svaco, B. Jerbic",
+   "venue_year": "ECMR 2025 (arXiv 2509.04016)",
+   "url": "https://arxiv.org/abs/2509.04016",
+   "status": "VERIFIED",
+   "relevance": "Compares LM/GA/PSO kinematic-parameter calibration with EKF/UKF fusion of wheel odometry, VO and IMU; reference for the offline LS identification in our UMBmark experiments."
+  },
+  {
+   "title": "Intelligent Control of Differential Drive Robots Subject to Unmodeled Dynamics with EKF-based State Estimation",
+   "authors": "A. Alwala, Y. Hu, G. da Silva Lima, W. M. Bessa",
+   "venue_year": "arXiv 2603.14940, Mar 2026",
+   "url": "https://arxiv.org/abs/2603.14940",
+   "status": "VERIFIED",
+   "relevance": "EKF fusion of IMU, wheel encoders and 2D LiDAR on a diff-drive robot under slip/drift; comparable stack to ours."
+  },
+  {
+   "title": "Covariance-Regulated Recursive Koopman Learning for Nonlinear Systems with Uncertain Time-Varying Dynamics",
+   "authors": "W. Gu, C. Yang, L. Shi, C. Gao",
+   "venue_year": "arXiv 2606.15317, Jun 2026",
+   "url": "https://arxiv.org/abs/2606.15317",
+   "status": "VERIFIED",
+   "relevance": "Recursive estimation with covariance regulation (dead-zone, constant trace, directional forgetting) validated on a diff-drive robot with wheel slip; informs the forgetting/freezing safeguards of our RLS."
+  },
+  {
+   "title": "A Two-Step Filtering Approach for Indoor LiDAR Point Clouds: Efficient Removal of Jump Points and Misdetected Points",
+   "authors": "Y. Cao, Y. Huang, J. Ni",
+   "venue_year": "Sensors 2025",
+   "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC12527108/",
+   "status": "VERIFIED",
+   "relevance": "Distance-adaptive jump-point threshold 2r sin(dalpha) m / cos(theta_max) for indoor mobile-robot scans; adopted for our speckle/isolation filter threshold."
+  },
+  {
+   "title": "Debiasing 6-DOF IMU via Hierarchical Learning of Continuous Bias Dynamics",
+   "authors": "B. Liu, T.-Y. Lin, W. Zhang, M. Ghaffari",
+   "venue_year": "RSS 2025 (arXiv 2504.09495)",
+   "url": "https://arxiv.org/abs/2504.09495",
+   "status": "VERIFIED",
+   "relevance": "Continuous IMU bias dynamics modelling; we use the classical Gauss-Markov bias KF matched to the Gazebo noise model instead."
+  },
+  {
+   "title": "Teaching Robots to Say 'I Don't Know': SENTINEL for Uncertainty-Aware SLAM",
+   "authors": "Abhishek S, B. Praharaj, Sreeram MV",
+   "venue_year": "ICRA 2026 Workshop (arXiv 2606.04853)",
+   "url": "https://arxiv.org/abs/2606.04853",
+   "status": "VERIFIED",
+   "relevance": "Per-scan 2D LiDAR reliability scoring with fallback to calibrated wheel odometry; supports why odometry covariance quality matters when LiDAR degrades."
+  },
+  {
+   "title": "KISS-IMU: Self-supervised Inertial Odometry with Motion-balanced Learning and Uncertainty-aware Inference",
+   "authors": "J. Choi, H. Kim, G. Yang, J. Lee, Y. Cho",
+   "venue_year": "ICRA 2026 (arXiv 2603.06205)",
+   "url": "https://arxiv.org/abs/2603.06205",
+   "status": "VERIFIED",
+   "relevance": "Uncertainty-driven adaptive weighting of IMU in inference; conceptual parallel to adaptive covariance weighting."
+  },
+  {
+   "title": "Analyzing Uncertainty in the Spatial Representation of the Kinematic Bicycle Model",
+   "authors": "S. Abrar, M. Z. Baig, S. U. I. Anzal, A. B. Memon",
+   "venue_year": "ICETECC 2025 (arXiv 2606.29566, Jun 2026)",
+   "url": "https://arxiv.org/abs/2606.29566",
+   "status": "VERIFIED",
+   "relevance": "Closed-form covariance evolution of discretised stochastic kinematics validated against Monte Carlo; same methodology as our F_p/F_u propagation and its MC unit test."
+  },
+  {
+   "title": "Learning-based Inertial-wheel Odometry for a Mobile Robot",
+   "authors": "M. Kim, K. Jang, J. Park",
+   "venue_year": "Journal of Korea Robotics Society, 2023",
+   "url": "https://koreascience.kr/article/JAKO202334849100062.pub?lang=en",
+   "status": "VERIFIED",
+   "relevance": "LSTM correction of encoder+IMU velocities under slip, reported to beat EKF; a learning-based alternative to our explainable residual approach."
+  },
+  {
+   "title": "A comparative study on the accuracy & repeatability of mobile robotic platforms for the delivery of precision NDE measurement",
+   "authors": "S. Nabi Pour, S. G. Pierce, R. Vithanage, E. Mohseni, D. Carswell, M. Shields",
+   "venue_year": "arXiv 2609.03794, Sep 2026",
+   "url": "https://arxiv.org/abs/2609.03794",
+   "status": "VERIFIED",
+   "relevance": "Laser-tracker evaluation of platform odometry calibratability; methodological reference for our ground-truth drift benchmarking."
+  },
+  {
+   "title": "Fully Proprioceptive Slip-Velocity-Aware State Estimation for Mobile Robots via Invariant Kalman Filtering and Disturbance Observer",
+   "authors": "X. Yu, S. Teng, T. Chakhachiro, W. Tong, T. Li, T.-Y. Lin, S. Koehler, M. Ahumada, J. M. Walls, M. Ghaffari",
+   "venue_year": "IROS 2023 (arXiv 2209.15140)",
+   "url": "https://arxiv.org/abs/2209.15140",
+   "status": "VERIFIED",
+   "relevance": "Slip velocity as a state in an RI-EKF with disturbance observer using IMU + body velocity; our SACO is the lightweight residual-test variant."
+  },
+  {
+   "title": "GRAR: Glass-induced Reflection Artifact Removal in LiDAR Point Clouds",
+   "authors": "W. Shao, Z. Guo, B. Zhang, Y. Xue, T. Ji, Y. Lao",
+   "venue_year": "arXiv 2606.10541, Jun 2026",
+   "url": "https://arxiv.org/abs/2606.10541",
+   "status": "VERIFIED",
+   "relevance": "Glass reflection artefact handling; optional extension for warehouse glass zones in the LiDAR filter chain."
+  },
+  {
+   "title": "Online Learning of Wheel Odometry Correction for Mobile Robots with Attention-based Neural Network",
+   "authors": "A. Navone, M. Martini, S. Angarano, M. Chiaberge",
+   "venue_year": "CASE 2023 (arXiv 2303.11725)",
+   "url": "https://arxiv.org/abs/2303.11725",
+   "status": "VERIFIED",
+   "relevance": "Online-learned odometry correction under slip; contrasts with our model-based approach."
+  },
+  {
+   "title": "A Generalized Framework for Autonomous Calibration of Wheeled Mobile Robots",
+   "authors": "M. Nutalapati et al.",
+   "venue_year": "Robotics and Autonomous Systems 2022 (arXiv 2001.01555)",
+   "url": "https://arxiv.org/abs/2001.01555",
+   "status": "VERIFIED",
+   "relevance": "Alternating-minimisation / IRLS odometry calibration with outlier handling; prior work for our LS identification step."
+  },
+  {
+   "title": "Wheel odometry model calibration with neural network-based weighting",
+   "authors": "M. Fazekas, P. Gaspar",
+   "venue_year": "Engineering Applications of AI, 2024",
+   "url": "https://doi.org/10.1016/j.engappai.2024.108631",
+   "status": "VERIFIED",
+   "relevance": "Bibliographic record only (abstract not fetched); NN-weighted odometry model calibration."
+  },
+  {
+   "title": "A Dynamic-Model-Based Wheel Slip Detector for Mobile Robots on Outdoor Terrain",
+   "authors": "C. C. Ward, K. Iagnemma",
+   "venue_year": "IEEE T-RO 2008",
+   "url": "https://doi.org/10.1109/tro.2008.924945",
+   "status": "VERIFIED",
+   "relevance": "Classic IMU-vs-encoder slip detection (bibliographic record verified via Crossref); SACO's gyro channel is a variant."
+  },
+  {
+   "title": "Measurement and Correction of Systematic Odometry Errors in Mobile Robots (UMBmark) / Gyrodometry",
+   "authors": "J. Borenstein, L. Feng",
+   "venue_year": "IEEE T-RA 1996 / ICRA 1996",
+   "url": "http://www-personal.umich.edu/~johannb/umbmark.htm",
+   "status": "RECALLED",
+   "relevance": "UMBmark square-path protocol used for our drift experiment; Gyrodometry is the ancestor of gyro-substituted heading during slip."
+  },
+  {
+   "title": "Accurate Odometry and Error Modelling for a Mobile Robot",
+   "authors": "K. S. Chong, L. Kleeman",
+   "venue_year": "ICRA 1997",
+   "url": "https://doi.org/10.1109/ROBOT.1997.606954",
+   "status": "RECALLED",
+   "relevance": "Var(delta s_i) = k_i |delta s_i| wheel-noise model and Jacobian covariance propagation used as our baseline."
+  },
+  {
+   "title": "Linearized Error Propagation in Odometry",
+   "authors": "A. Kelly",
+   "venue_year": "IJRR 23(2), 2004",
+   "url": "https://doi.org/10.1177/0278364904039652",
+   "status": "RECALLED",
+   "relevance": "Closed-form drift growth (heading random walk gives lateral variance proportional to L^3) used in our drift analysis."
+  },
+  {
+   "title": "A Calibration Method for Odometry of Mobile Robots Based on the Least-Squares Technique: Theory and Experimental Validation",
+   "authors": "G. Antonelli, S. Chiaverini, G. Fusco",
+   "venue_year": "IEEE T-RO 2005",
+   "url": "https://doi.org/10.1109/TRO.2005.851382",
+   "status": "RECALLED",
+   "relevance": "Linear-in-parameters odometry calibration; GRC uses the same trick with the gyro as reference."
+  },
+  {
+   "title": "Simultaneous Calibration of Odometry and Sensor Parameters for Mobile Robots",
+   "authors": "A. Censi, A. Franchi, L. Marchionni, G. Oriolo",
+   "venue_year": "IEEE T-RO 2013",
+   "url": "https://doi.org/10.1109/TRO.2012.2226380",
+   "status": "RECALLED",
+   "relevance": "Joint odometry/sensor calibration; scale observability discussion relevant to our AMCL-based scale option."
+  }
+ ],
+ "baseline_summary": "Baseline = tick-based differential-drive odometry with closed-form covariance. Encoder ticks (N=4096/rev, delta = 2*pi*r/N = 1.15e-4 m at r=0.075 m) -> wheel arcs delta_s_L/R -> midpoint integration of p=[x,y,theta] (per-step error O(delta_s*delta_theta^2), verified against exact ICR arc). Per-wheel noise sigma_i^2 = k_i|delta_s_i| + delta^2/6 (Chong-Kleeman slip/floor term + quantisation). Pose covariance propagated with closed-form Jacobians F_p (3x3) and F_u (3x2) [Sigma_{k+1} = F_p Sigma F_p^T + F_u Sigma_u F_u^T, O(1)/step]. Twist covariance for robot_localization: Var(vx) = (sigma_R^2+sigma_L^2)/(4 dt^2), Var(omega) = (sigma_R^2+sigma_L^2)/(b^2 dt^2) + omega^2 sigma_b^2/b^2, Cov(vx,omega) = (sigma_R^2-sigma_L^2)/(2 b dt^2), Var(vy) = sigma_vy0^2 + (kappa_y vx omega)^2; placed at covariance indices 0, 35, 5/30, 7; unused diagonals 1e-3 (robot_localization substitutes 1e-6 for zeros; docs warn against inflating to ignore). Quantisation makes 100 Hz single-difference encoder yaw-rate noise ~0.019 rad/s, 2-10x noisier than the gyro, which the formulas expose. Drift closed forms: straight L -> Var(theta)=2kL/b^2, Var(y)=2kL^3/(3b^2); rotation Theta -> Var(theta)=k|Theta|/b; systematic radius-ratio/baseline errors dominate (0.5% ratio error -> 2.9 m lateral after 20 m). Stack facts verified in the amr-fleet-system container / upstream source: Gazebo Fortress DiffDrive computes odometry from noise-free joint positions, publishes no covariance and its own TF; WheelSlip plugin applies slip = compliance*(r|w|)/F_N; gz IMU orientation is ground truth (only rates/accels get white + constant + Gauss-Markov bias noise), so IMU yaw must not be fused (orientation_covariance[0] = -1); ros_gz_bridge supports JointState<->gz.msgs.Model so a self-built tick emulator on /joint_states is the encoder path. Sensor preprocessing baselines: LiDAR range/angle/footprint/shadow(beta = atan2(r_{i+1} sin da, r_i - r_{i+1} cos da))/speckle filters equivalent to installed laser_filters 2.0.9 plugins; depth decimation + pinhole back-projection (f_x = 337 px) + height crop + 0.05 m closest-point voxel grid (PCL 1.12 headers + pcl_conversions; pcl_ros/depth_image_proc not installed); IMU first-order IIR LPF (alpha = dt/(tau+dt)) + startup/ZUPT Gauss-Markov bias Kalman filter matched to the gz-sensors noise model + Allan variance identification.",
+ "proposals": [
+  {
+   "name": "SACO — Slip-Adaptive Covariance Odometry (chi-square gated 2-channel slip detector + covariance inflation + gyro-substituted heading)",
+   "idea": "Every T_w = 0.05-0.1 s compute r_omega = omega_enc - (omega_gyro - b_g) and r_a = a_enc - (a_x_imu - b_a), normalise by the quantisation-aware encoder variances plus LPF'd IMU variances (S_omega, S_a) and test d^2 = r_omega^2/S_omega + r_a^2/S_a ~ chi2(2) with hysteresis (on 9.21, off 4.6 for 0.2 s). When flagged: Var(omega) += r_omega^2, Var(vx) += (r_a T_w)^2 + (b r_omega/2)^2, held with exponential decay (tau_d = 0.3 s), and the odom-frame heading increment is replaced by the gyro rate; the resulting twist covariance is what robot_localization consumes. The accelerometer channel catches symmetric longitudinal slip that the gyro cannot see.",
+   "closest_prior_work": "Borenstein & Feng 1996 Gyrodometry (gyro/encoder discrepancy switch); Ward & Iagnemma 2008 T-RO (dynamic-model IMU-based slip detector); Oeltjen et al. 2025 (commanded-vs-measured slip detection); Yu et al. IROS 2023 (slip-velocity RI-EKF + DOB); Okawara et al. 2024 (online wheel-odometry covariance in factor graph).",
+   "novelty_claim": "new_combination",
+   "expected_gain": "In low-friction-patch and payload-change scenarios: >50% reduction of odometry heading error during slip (gyro substitution), EKF NEES inside the 95% chi-square band (fixed-covariance baseline typically over-confident), smaller AMCL correction jumps, helping the 8 cm rotation / 5 cm straight targets; false-alarm rate <= 1% on no-slip data.",
+   "risks": "Gyro/accelerometer bias mis-estimation biases residuals (mitigated by ZUPT bias KF and Allan-based noise settings); if Gazebo IMU noise is set unrealistically small the test is trivial, and without WheelSlip patches in the world there is nothing to detect; differentiated encoder velocity is noisy (T_w = 0.1 s gives sigma_a ~ 7e-3 m/s^2, still far below 0.3 m/s^2 slip residuals); over-inflation could starve the EKF of velocity information (bounded by decay and gamma_max).",
+   "realtime_budget": "~200 flops per 100 Hz step, < 5 us; < 0.1% of one core per robot, negligible for 5 robots on the 32-thread CPU."
+  },
+  {
+   "name": "GRC — Gyro-Referenced Recursive Least-Squares wheel-parameter calibration with covariance feedback",
+   "idea": "Parameterise psi = [r_R/b, r_L/b] so the gyro model omega_gyro - b_g = phi_dot_R psi_R - phi_dot_L psi_L is linear; run a forgetting-factor RLS (lambda 0.995-0.9995) only in no-slip, excited (|phi_dot| > 1 rad/s), non-ZUPT windows. Straight motion observes psi_R - psi_L (radius ratio), in-place rotation observes psi_R + psi_L = 2 r_bar/b, so normal warehouse driving provides persistent excitation; cond(P) freezes unexcited directions. Recover b = 2 r_bar/(psi_R+psi_L), r_i = psi_i b; the absolute scale r_bar is unobservable from the gyro and is either held nominal or slowly corrected from AMCL displacement ratios on long straight segments. The RLS covariance Sigma_psi = sigma_e^2 P is injected into Var(omega) and Var(vx) as h^T Sigma_psi h terms, so the EKF covariance justification is data-driven.",
+   "closest_prior_work": "De Giorgi, De Palma, Parlangeli 2023 (Robotics 13(1):7) online odometry calibration with slippage using encoders+gyro+IMU; Antonelli et al. 2005 T-RO linear least-squares odometry calibration; Censi et al. 2013 T-RO; Okawara et al. 2024/2025 online kinematic calibration in factor graphs.",
+   "novelty_claim": "variant_of_prior",
+   "expected_gain": "With a deliberately perturbed nominal model (5% radius-ratio/baseline error, emulating tyre wear/payload) GRC should converge to within 1% in about 60 s of mixed driving, removing systematic drift that otherwise reaches 0.29 rad heading and ~2.9 m lateral error over 20 m; UMBmark E_max,syst reduced by an order of magnitude versus uncalibrated odometry.",
+   "risks": "Scale (mean radius) is not observable from the gyro alone; gyro bias errors map directly into psi (needs good ZUPT bias tracking); insufficient rotational excitation on long straight corridors makes psi_R + psi_L drift with forgetting (mitigated by cond(P) freeze / directional forgetting as in Gu et al. 2026); in a rigid-body simulator radius changes must be emulated by parameter mismatch rather than physical tyre compression.",
+   "realtime_budget": "2x2 RLS update per 100 Hz step (< 50 flops), plus diagnostics publishing; negligible."
+  }
+ ],
+ "evaluation_plan": "Experiments (Gazebo ground truth via pose/OdometryPublisher bridge, logs in the spec's [timestamp, gt_x, gt_y, est_x, est_y, error] format with >= 100 samples): T1 straight 20 m x10 both directions at 1.0/2.0 m/s (final error, error/L %, heading drift deg/m, fit of k from Var(theta) vs L); T2 in-place rotation +/-10 rev x5 at 1.5 rad/s (heading error, k|Theta|/b fit, baseline error); T3 UMBmark 4 m square CW x5 / CCW x5 (E_max,syst = max(r_cg,cw, r_cg,ccw), CW/CCW centroids -> E_b/E_d, plus direct nonlinear LS identification of (r_L, r_R, b) from 100 Hz ground truth); T4 slip: three 2x2 m low-friction patches (WheelSlip compliance) and payload 0/10/25 kg (detection rate and false-alarm rate against GT slip |v_gt - v_enc|/v_gt > 5%, heading error, EKF RMSE/max error, AMCL jump magnitude); T5 consistency: NEES (p-p_hat)^T Sigma^-1 (p-p_hat) ~ chi2(3) fraction inside 95% band and EKF NIS on all runs; T6 static 60 s x5 (position RMSE, IMU bias estimate vs long-run mean, Allan deviation curve); T7 preprocessing: synthetic and simulated scans (removal rates, equivalence with laser_filters chain, costmap false-obstacle count, depth points/frame and latency); T8 resource: per-node CPU and topic rates with 5 robots. Comparison arms: (A) Gazebo DiffDrive built-in odometry (no quantisation, no covariance), (B) our baseline with fixed-k covariance, (C) +SACO, (D) +SACO+GRC. Mapped spec targets: localisation error static 3 cm / straight 5 cm / rotation 8 cm (through EKF+AMCL with our covariances), drift report, covariance justification, CPU <= 80%.",
+ "implementation_plan": "Package amr_kinematics (C++17, ament_cmake, Eigen3, per-robot namespaces, YAML params). Header-only pure functions in include/amr_kinematics/: diff_drive_kinematics.hpp (fk, integrate_midpoint, integrate_arc, jacobians F_p/F_u/F_rho, twist_covariance), encoder_emulator.hpp (joint angle -> int64 ticks, unwrap, quantise, optional multiplicative slip noise), slip_detector.hpp (SACO), gyro_rls_calibrator.hpp (GRC), iir_filter.hpp, bias_kf.hpp. Nodes: src/wheel_odometry_node.cpp (sub /joint_states from ros_gz_bridge gz.msgs.Model and /imu/data; pub /wheel_odom nav_msgs/Odometry child_frame_id=base_link, publish_tf=false, pose+twist covariance per the formulas; /wheel_odom/diagnostics with d^2, slip flag, psi_hat, P), src/imu_preprocess_node.cpp (/imu/raw -> /imu/data: LPF, bias KF, orientation_covariance[0] = -1), src/laser_preprocess_node.cpp (/scan -> /scan_filtered: REP-117 range, angular mask, footprint, shadow, speckle), src/depth_cloud_node.cpp (depth image + CameraInfo -> decimate, back-project, height crop, 0.05 m closest-point voxel -> /camera/points_ds PointCloud2 using PCL 1.12 headers + pcl_conversions). Tools: tools/drift_experiment.py, umbmark.py, allan.py (rosbag2 -> metrics/plots). ROS/Nav2 interfaces: robot_localization ekf (two_d_mode true, 50 Hz) odom0=/wheel_odom (vx, vy, vyaw), imu0=/imu/data (vyaw, ax, ay; yaw=false), pose0=/amcl_pose; costmap observation_sources scan_filtered (LaserScan) and points_ds (PointCloud2). Gazebo: DiffDrive used only as cmd_vel controller (its odom/TF not bridged), JointStatePublisher, WheelSlip, IMU/LiDAR/depth noise per SDF (gyro stddev 0.005, bias 0.005, dynamic_bias_stddev 8e-5 with tau 300 s; accel 0.05; lidar 0.03 m), low-friction patch world. Unit tests (gtest, coverage >= 70%): FK invariants, midpoint vs arc error bound, Jacobians vs finite differences (1e-6), covariance propagation vs 1e4-sample Monte Carlo (5%), quantisation sigma, RLS convergence (2%) and slip freeze, chi-square detector FA <= 1% / detection >= 95%, shadow/speckle/REP-117 behaviour, voxel invariants, LPF -3 dB, bias-KF convergence; launch_pytest integration. Compute budget: odometry 100 Hz < 5 us/step, IMU 100 Hz, LiDAR 10 Hz x 720 beams (~10 us), depth 15 Hz x 19.2k points (< 1 ms) -> < 3% of one core per robot, < 15% total for 5 robots. Schedule: week 1 kinematics/emulator/covariance/tests, week 2 three preprocessing nodes, week 3 SACO+GRC, week 4 experiments and report.",
+ "open_questions": [
+  "Wheel radius, wheel separation and encoder gear ratio are not fixed in the spec; the brief assumes r = 0.075 m, b = 0.35 m, 4096 ticks at the wheel axle — must be agreed with the URDF/simulation team.",
+  "How the EKF/localisation team wants to handle the absolute odometry scale (mean wheel radius), which is unobservable from the gyro: nominal value only, or the optional AMCL-displacement scale correction interface.",
+  "The spec's example ekf config fuses IMU yaw; since the Gazebo IMU orientation is ground truth, the team must decide to publish orientation_covariance[0] = -1 (recommended) or to integrate a noisy yaw in our IMU node.",
+  "Which floor-friction and WheelSlip compliance values (and low-friction patch layout) the world team will implement — the slip experiments and SACO validation depend on them.",
+  "Whether payload-dependent effective wheel radius should be emulated in the encoder emulator (rigid-body Gazebo wheels do not compress), and with what magnitude.",
+  "arXiv API was rate-limited (HTTP 429) for most of the session, so the 2023-2026 survey relied on four API listings plus individual abstract pages; a rerun of the remaining targeted queries (laser-scan filtering, gyro-bias/ZUPT for wheeled robots) is recommended before the final report."
+ ]
+}

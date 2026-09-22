@@ -1,0 +1,5 @@
+pipeline_320 core-ms median 125.2 p90 142.5 (pre 0.7, forward 117.0, post 1.1); loadavg 119
+FPS per dedicated core: median 8.0, p90 7.0
+10 FPS single stream: 1.25 cores at perfect scaling; with 2 intra-op threads needs parallel efficiency >= 0.63
+5 robots CPU inference @ 10 Hz: 6.26 cores -> host total 26.8 vs budget 25.6 (84 % of 32 threads) -> EXCEEDS
+5 robots CPU inference @ 5 Hz: 3.13 cores -> host total 23.6 vs budget 25.6 (74 % of 32 threads) -> FITS

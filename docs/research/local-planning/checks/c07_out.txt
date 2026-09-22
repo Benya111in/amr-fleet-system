@@ -1,0 +1,18 @@
+HP bound      : 18.9 ns/eval
+min(HP,box)   : 52.0 ns/eval
+prescreened   : 56.0 ns/eval (91% evaluated)
+hypot (GVO)   : 11.4 ns/eval
+worst-case dynamic terms (10 tracks, no prescreen): 18.76 ms
+
+HP bound      : 26.7 ns/eval
+min(HP,box)   : 52.2 ns/eval
+prescreened   : 64.6 ns/eval (91% evaluated)
+hypot (GVO)   : 10.3 ns/eval
+worst-case dynamic terms (10 tracks, no prescreen): 17.69 ms
+
+HP bound      : 17.8 ns/eval
+min(HP,box)   : 44.1 ns/eval
+prescreened   : 49.7 ns/eval (91% evaluated)
+hypot (GVO)   : 26.2 ns/eval
+worst-case dynamic terms (10 tracks, no prescreen): 32.91 ms
+

@@ -1,0 +1,25 @@
+1) Euclidean tube raster vs formulas
+   L=6.0 rho=1.0 ang=0: raster=6177  pi-formula=6057 (+2.0 %)  4-formula=6400
+   L=6.0 rho=1.0 ang=22.5: raster=6148  pi-formula=6057 (+1.5 %)  4-formula=6400
+   L=6.0 rho=1.0 ang=45: raster=6102  pi-formula=6057 (+0.7 %)  4-formula=6400
+   L=6.0 rho=3.0 ang=0: raster=25809  pi-formula=25710 (+0.4 %)  4-formula=28800
+   L=6.0 rho=3.0 ang=22.5: raster=25805  pi-formula=25710 (+0.4 %)  4-formula=28800
+   L=6.0 rho=3.0 ang=45: raster=25654  pi-formula=25710 (-0.2 %)  4-formula=28800
+   max raster/pi-formula over grid = 1.023  (>1 => '<=' claim false) ; raster <= 4-formula everywhere: True
+2) smoother spectral radius (n=60)
+   (w_d,w_s)=(0.2,0.3) omega=0.80: rho_GS=0.7020 rho_Jacobi=0.7991
+   (w_d,w_s)=(0.2,0.5) omega=1.20: rho_GS=0.5203 rho_Jacobi=1.1986
+   (w_d,w_s)=(0.2,0.85) omega=1.90: rho_GS=0.9000 rho_Jacobi=2.5976
+   (w_d,w_s)=(0.2,0.89) omega=1.98: rho_GS=0.9800 rho_Jacobi=2.7575
+   (w_d,w_s)=(0.2,0.91) omega=2.02: rho_GS=1.0200 rho_Jacobi=2.8374
+   (w_d,w_s)=(0.2,0.95) omega=2.10: rho_GS=1.1000 rho_Jacobi=2.9973
+3) C3 post-processing worst-case lookups
+   path 40 m: M=880, shortcut<=7.04e+05, spiral<=1.58e+06 (disk 9845), smooth~2.6e+05 -> total 2.54e+06 lookups = 5-13 ms at 2-5 ns
+   path 100 m: M=2200, shortcut<=1.76e+06, spiral<=3.94e+06 (disk 9845), smooth~6.6e+05 -> total 6.36e+06 lookups = 13-32 ms at 2-5 ns
+   path 150 m: M=3300, shortcut<=2.64e+06, spiral<=5.91e+06 (disk 9845), smooth~9.9e+05 -> total 9.54e+06 lookups = 19-48 ms at 2-5 ns
+4) lower-bound property if continuous limit is forward-only (lateral obstacle)
+   config A: violating c (fwd-only) = [34]..[34] (n=1), edge D range 1.00-1.00 m ; isotropic violations: []
+   config B: violating c (fwd-only) = [4, 5, 6]..[32, 33, 34] (n=31), edge D range 1.00-2.00 m ; isotropic violations: []
+   aisle 2.4 m centred D=1.00: isotropic gate 1.04 m/s, fwd-only gate 2.00 m/s
+   aisle 3.0 m centred D=1.30: isotropic gate 1.27 m/s, fwd-only gate 2.00 m/s
+5) costmap: 5 robots x 5 Hz x 3..10 ms = 0.075 - 0.25 core

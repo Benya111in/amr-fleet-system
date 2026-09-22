@@ -1,0 +1,7 @@
+free-space coarse positions: 1865, hypotheses: 44760
+dyn=0.00 trim=1.0: correct@top1 14/40, @top3 22/40, @top20 25/40; median m(best correct coarse) 0.240 m, median m(best wrong cluster) 0.223 m
+dyn=0.00 trim=0.8: correct@top1 5/40, @top3 9/40, @top20 20/40; median m(best correct coarse) 0.135 m, median m(best wrong cluster) 0.084 m
+dyn=0.10 trim=1.0: correct@top1 7/40, @top3 15/40, @top20 20/40; median m(best correct coarse) 0.313 m, median m(best wrong cluster) 0.267 m
+dyn=0.10 trim=0.8: correct@top1 2/40, @top3 11/40, @top20 16/40; median m(best correct coarse) 0.176 m, median m(best wrong cluster) 0.104 m
+true pose, dyn=0.00: capped mean m median 0.016 (max 0.020); 80% trimmed median 0.008 (max 0.012)
+true pose, dyn=0.10: capped mean m median 0.119 (max 0.128); 80% trimmed median 0.014 (max 0.017)

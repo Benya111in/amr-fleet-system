@@ -1,0 +1,10 @@
+R=1.5 L=0.876 K=1.0 e0=+0.01: first overshoot 5.914 % -> zeta 0.669 | Prop.3 zeta_circ 0.676
+R=1.5 L=0.876 K=1.0 e0=-0.01: first overshoot 5.268 % -> zeta 0.684 | Prop.3 zeta_circ 0.676
+R=1.5 L=1.6 K=1.0 e0=+0.01: first overshoot 10.142 % -> zeta 0.589 | Prop.3 zeta_circ 0.598
+R=1.5 L=1.6 K=1.0 e0=-0.01: first overshoot 9.031 % -> zeta 0.608 | Prop.3 zeta_circ 0.598
+R=1.5 L=0.9 K=1.0 e0=+0.01: first overshoot 6.000 % -> zeta 0.667 | Prop.3 zeta_circ 0.675
+R=1.5 L=0.9 K=1.0 e0=-0.01: first overshoot 5.337 % -> zeta 0.682 | Prop.3 zeta_circ 0.675
+R=1.5 L=0.876 K=2.0 e0=+0.01: first overshoot 0.334 % -> zeta 0.876 | Prop.3 zeta_circ 1.000
+R=1.5 L=0.876 K=2.0 e0=-0.01: first overshoot -0.334 % -> zeta nan | Prop.3 zeta_circ 1.000
+R=1e+06 L=0.876 K=1.0 e0=+0.01: first overshoot 4.323 % -> zeta 0.707 | Prop.3 zeta_circ 0.707
+R=1e+06 L=0.876 K=1.0 e0=-0.01: first overshoot 4.323 % -> zeta 0.707 | Prop.3 zeta_circ 0.707
