@@ -1,0 +1,74 @@
+# amr_evaluation 로거 파라미터 (명세 4.10 성능 지표 측정 절차 표준화)
+# 공통 키는 /** 에, 노드별 키는 /**/<노드 이름> 에 둔다 (같은 이름의 키가 노드마다 다른 값을 갖도록).
+# 토픽은 로봇 네임스페이스 기준 상대 이름 (launch 의 namespace 인자로 /amr_01/... 이 된다).
+# output_dir / run_name 은 launch 인자가 덮어쓴다 (기본: $ROS_WS/logs/eval/<run_name>/).
+
+/**:
+  ros__parameters:
+    output_dir: ''            # '' → $ROS_WS/logs/eval
+    run_name: ''              # '' → run_YYYYmmdd_HHMMSS (launch 가 모든 로거에 같은 값을 준다)
+    best_effort: false        # 구독 QoS. 브리지의 ground_truth/odom 은 reliable
+    report_period: 5.0        # [s] 진행 로그 주기
+
+# 명세 4.3: 정지 3 / 직선 5 / 회전 8 cm
+/**/pose_error_logger:
+  ros__parameters:
+    gt_topic: ground_truth/odom
+    est_topic: odometry/filtered_map
+    stop_linear_threshold: 0.02       # [m/s]  |v| 미만이면 정지 후보
+    stop_angular_threshold: 0.02      # [rad/s] |w| 미만이면 정지 후보
+    straight_angular_threshold: 0.05  # [rad/s] |w| 미만이면 직선, 이상이면 회전
+    gt_max_gap: 0.2                   # [s] GT 샘플 간격이 이보다 크면 그 사이는 보간하지 않음
+    gt_buffer_sec: 5.0                # [s]
+    max_wait: 1.0                     # [s] 추정보다 GT 가 늦게 올 때 기다리는 상한
+    flush_rate: 20.0                  # [Hz]
+    target_samples: 100               # 명세: 최소 100 시점
+
+# 명세 4.5: 직선 5 / 곡선 10 cm
+# 로봇이 그 경로를 따라가는 중인 표본만 쓴다 (규칙: cte_gate.py). 주행 상태 원천이 없으면(토픽 '' 또는
+# 발행자 없음) 경로 만료(plan_timeout)·정지·끝점 규칙만 적용한다.
+/**/cte_logger:
+  ros__parameters:
+    path_topic: plan
+    gt_topic: ground_truth/odom
+    nav_status_topic: navigate_to_pose/_action/status   # 최신 목표가 ACCEPTED/EXECUTING 일 때만
+    phase_topic: executor/phase       # task_executor phase 가 active_phases 일 때만
+    active_phases: [moving]
+    min_speed: 0.02                   # [m/s]  |v| 미만이고 |ω| < min_angular 면 정지 → 제외
+    min_angular: 0.02                 # [rad/s]
+    plan_timeout: 3.0                 # [s] 경로 수신 후 이 시간이 지나면 제외 (0 끔; 1 Hz 재계획 주기보다 길게)
+    skip_endpoint: true               # 최근접점이 경로 시작점 앞/끝점 너머면 제외 (종방향 거리)
+    curvature_threshold: 0.1          # [1/m] 초과 시 곡선 (곡률 반경 10 m 미만)
+    curvature_window: 1.0             # [m] 곡률 현(chord) 창 (앞뒤 0.5 m)
+    curvature_smoothing: 0.2          # [m] 곡률 전에 경로를 가우시안 평활하는 σ (격자 계단·mm 지터 제거)
+    min_curve_turn_deg: 10.0          # [deg] 곡선 구간 하나의 최소 누적 회전각 (계단 요철 제외)
+    curve_margin: 0.5                 # [m] 곡선 앞뒤 천이대를 곡선으로 계상
+    log_rate: 20.0                    # [Hz] GT 데시메이션
+    min_path_points: 2
+
+# 명세 4.10: 평균 응답 200 ms, 50 회 이상 — "작업 명령 발행 → 로봇 첫 움직임"
+/**/response_time_logger:
+  ros__parameters:
+    cmd_topic: /fleet/task_events     # amr_msgs/Task, IN_PROGRESS 로 전이한 작업이 명령
+    cmd_type: task                    # task | pose (geometry_msgs/PoseStamped 목표 직접 발행)
+    cmd_stamp: auto                   # auto(명령 시각 pickup_pose stamp, 없으면 전이 시각) | pickup | dropoff | header
+    motion_topic: ground_truth/odom
+    motion_type: odom                 # odom (실제 움직임) | twist (cmd_vel 등 첫 속도 명령)
+    motion_threshold: 0.05            # [m/s] 첫 움직임 판정
+    angular_threshold: 0.1            # [rad/s]
+    robot_id: ''                      # task 모드에서 이 로봇의 작업만 (빈 값: 전부, 앞뒤 / 무시)
+    require_rest: true                # 명령 시각에 이미 주행 중이던 작업은 제외
+    timeout: 10.0                     # [s] 무응답 판정
+    max_clock_skew: 3600.0            # [s] 명령·움직임 스탬프가 이보다 떨어지면 시계 불일치
+    rtf_window: 5.0                   # [s] 실시간 계수 추정 창
+    target_samples: 50                # 명세: 50 회 이상
+
+# 명세 4.10: 5대 운용 시 80 % 이하 (multi_robot.md §7: 호스트 32 스레드 기준)
+# process_groups 기본값(ros / gazebo / nav 정규식)은 cpu_accounting.DEFAULT_GROUPS — 'name=regex' 목록으로 덮어쓴다
+/**/cpu_sampler:
+  ros__parameters:
+    sample_rate: 1.0                  # [Hz] (단조 시계 타이머)
+    proc_stat_path: /proc/stat        # 호스트 전체 (참고값)
+    proc_root: /proc                  # 프로세스 그룹 귀속 ('' 끔). 이 PID 네임스페이스에서 보이는 것만
+    cgroup_root: /sys/fs/cgroup       # 이 컨테이너 cgroup 사용률 ('' 끔)
+    num_cpus: 0                       # 백분율 분모 CPU 수 (0 → 호스트 온라인 CPU 수)
