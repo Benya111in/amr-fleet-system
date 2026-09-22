@@ -646,7 +646,7 @@ POST 는 `Origin` 이 있으면 `Host` 와 같아야 하고(403), `api_token` �
 | `config/robot_params.yaml` | xacro (footprint/wheel/drive 토크·속도 한계/payload 크기·질량/emergency_deceleration), `wheel_odometry_node`, `velocity_profiler_node`, DWA/PurePursuit 플러그인, `safety_node`(safety.*), `collision_monitor_node`(footprint), `payload_manager_node`(payload.*) |
 | `config/sensors.yaml` | xacro (extrinsic, 노이즈 SDF, RGB `gz_noise_stddev`), spawn.launch.py(브리지 토픽), `scan_filter_node`, `imu_filter_node`, `wheel_odometry_node`(ticks, slip), `pointcloud_filter_node`(depth 노이즈 k·d²), `object_localizer_node` |
 | `src/amr_simulation/config/dynamic_obstacles.yaml` | `obstacle_truth_node`, `collision_monitor_node` (사람 반지름, 차량 발자국) |
-| `src/amr_simulation/config/fleet_spawn_poses.yaml` | 다중 로봇 런치 (스폰 자세, [multi_robot.md](multi_robot.md) §5) |
+| `src/amr_bringup/config/fleet_spawn.yaml` | 다중 로봇 런치 (스폰 자세, [multi_robot.md](multi_robot.md) §5; `test_spawn_poses.py` 가 월드와 대조) |
 | `config/ekf.yaml` | `ekf_filter_node_odom`, `ekf_filter_node_map` |
 | `src/amr_navigation/config/nav2_params.yaml` | Nav2 서버 전부, A*/DWA/PurePursuit 플러그인 파라미터 |
 | `src/amr_localization/config/{amcl,slam_toolbox}.yaml` | `amcl`, `slam_toolbox` |

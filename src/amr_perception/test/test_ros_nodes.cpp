@@ -406,15 +406,17 @@ TEST_F(RosNodesTest, SafetyNodeVolatileEstopExclusionPolygonAndDepthCloud)
   v_cmd = -0.2;  // 후진 → 해제
   ASSERT_TRUE(spinUntil(exec, [&]() {return level == 0 && last_cmd < -0.19;}, 3.0, tick));
   // 5) 판 0.2 m: 다각형 없으면 STOP, map 프레임 다각형이 오면 예외(정지 거리 0.10, CRITICAL 0.2)
+  //    상한 8 s: 전체 colcon test 병렬 실행(11 패키지) 중 이 전이가 3 s 를 넘겨 실패한 적이 있다
+  //    (단독 실행 6/6 통과). 여기서는 전이 자체를 보고, 실제 도킹 지연은 Gazebo 도킹 시험이 본다
   v_cmd = 0.3;
   plate = 0.2;
-  ASSERT_TRUE(spinUntil(exec, [&]() {return level == 3 && last_cmd == 0.0;}, 3.0, tick));
+  ASSERT_TRUE(spinUntil(exec, [&]() {return level == 3 && last_cmd == 0.0;}, 8.0, tick));
   polygon = true;
   ASSERT_TRUE(
-    spinUntil(exec, [&]() {return level != 3 && std::abs(last_cmd - 0.2) < 1e-9;}, 3.0, tick));
+    spinUntil(exec, [&]() {return level != 3 && std::abs(last_cmd - 0.2) < 1e-9;}, 8.0, tick));
   // 6) 다각형이 끊기면 (0.3 s) 일반 규칙으로 돌아온다
   polygon = false;
-  ASSERT_TRUE(spinUntil(exec, [&]() {return level == 3 && last_cmd == 0.0;}, 3.0, tick));
+  ASSERT_TRUE(spinUntil(exec, [&]() {return level == 3 && last_cmd == 0.0;}, 8.0, tick));
 }
 
 TEST_F(RosNodesTest, ObstacleTrackerNodeTracksMovingObstacleAndRemovesMapWall)

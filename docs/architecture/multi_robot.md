@@ -131,13 +131,13 @@ graph TD
 - 스폰 (구현): `spawn.launch.py` → `ros2 run amr_description gz_world.py spawn --world warehouse --name amr_01 --x X --y Y --yaw YAW`. create 서비스가 뜰 때까지 기다리고(최대 900 s), 같은 이름이 이미 있으면 실패하고, 생성 후 `/world/warehouse/scene/info` 에서 모델을 확인한다. 어느 단계든 실패하면 ERROR 와 함께 런치를 내린다. (`ros_gz_sim create` 0.244.26 은 응답 5 s 시간 초과에도 종료 코드 0 이라 쓰지 않는다 — 확인.)
 - **기동 순서 (일시정지 스폰, 결정)**: Fortress 센서는 sim 0 부터 한 주기씩 갱신 시각을 늘리므로 sim T 에 스폰된 로봇은 T × 주기 만큼 몰아서 갱신한다(폭주, 실측 T ≈ 92 s → ~1 kHz). 다중 로봇 런치(`multi_robot.launch.py`)는
   1. `amr_simulation warehouse.launch.py spawn_robot:=false paused:=true monitor_robots:=amr_01,amr_02,...` — 월드가 sim 0 에 멈춘 채 뜬다 (지면 진실·충돌 판정 노드 포함)
-  2. 로봇마다 `amr_description description.launch.py robot_name:=amr_0N prefix:=amr_0N/` + `spawn.launch.py robot_name:=amr_0N x:=… y:=… yaw:=…` (자세는 아래 표 = `amr_simulation/config/fleet_spawn_poses.yaml`)
+  2. 로봇마다 `amr_description description.launch.py robot_name:=amr_0N prefix:=amr_0N/` + `spawn.launch.py robot_name:=amr_0N x:=… y:=… yaw:=…` (자세는 아래 표 = `amr_bringup/config/fleet_spawn.yaml`)
   3. `amr_simulation unpause.launch.py robots:=amr_01,amr_02,...` — 모든 모델이 월드에 보이면 일시정지를 푼다 (하나라도 300 s 안에 안 보이면 ERROR, 월드는 멈춘 채)
 
   순서로 띄운다. 실측: 2대·6대 모두 첫 scan 이 sim 0.0 s, 간격 0.100 s (폭주 없음), 해제까지 월드 기동 후 7~10 s. 운용 중(sim T > 0) 재스폰은 여전히 폭주를 일으키므로 피한다 (적재 변경도 재스폰 대신 향후 DetachableJoint).
 - 브리지: 로봇당 `parameter_bridge` 1개. 인자 나열(`/amr_01/scan@sensor_msgs/msg/LaserScan[ignition.msgs.LaserScan …`) 또는 `config_file` YAML(0.244.26 에서 지원 확인)을 쓰고, 이름을 바꿔야 할 때만 `--ros-args -r __ns:=/amr_01 -r <gz>:=<ros>` 를 쓴다 (확인). `/clock` 브리지는 루트에 1개.
 - `IGN_PARTITION`: gz-transport 디스커버리 범위. 서버·모든 브리지·`ign topic` CLI 가 같은 값을 가져야 하며, 다른 파티션에서는 토픽이 전혀 보이지 않는다 (확인: 0개). `docker-compose.yml` 은 `.env` 의 `IGN_PARTITION`(`.env.example`: `IGN_PARTITION=amr_<이름>`, 사람마다 다르게)을 모든 서비스에 주입하므로 한 사람의 서버·브리지·CLI 컨테이너는 같은 파티션을 쓰고, 같은 호스트의 다른 사용자와는 격리된다. 호스트에서 직접 `ign topic` 을 쓸 때는 같은 값을 export 한다.
-- 스폰 좌표 (대기 구역 패드, `src/amr_simulation/config/fleet_spawn_poses.yaml` — `test_world.py` 가 랙·기둥·사람 경로·차량 경로와 겹치지 않는지 검사):
+- 스폰 좌표 (대기 구역 패드, `src/amr_bringup/config/fleet_spawn.yaml` — `amr_bringup/test/test_spawn_poses.py` 가 월드 SDF 의 충돌체·actor 궤적·지게차 경로와 대조):
 
 | 로봇 | x | y | yaw |
 | --- | --- | --- | --- |
