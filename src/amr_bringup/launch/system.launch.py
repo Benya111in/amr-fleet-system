@@ -17,7 +17,13 @@
                   다중 로봇과 같은 프레임 이름을 쓰려면 prefix:=amr_01/
     x, y, yaw     스폰 자세 (기본 '' = robots_file 에서 robot_name 항목, 없으면 0, 0, 0 — 랙 B-C 통로 중앙)
     robots_file / headless / world / use_sim_time / with_* / eval_run_name / allocation_strategy /
-    dashboard_port   multi_robot.launch.py 참고. 공통 스폰 옵션(일시 정지, 시간 상한, 지연)도 robots_file 에서 읽는다
+    dashboard_port / localization_mode / map_yaml / nav_ttc_bt
+                  multi_robot.launch.py 참고. 공통 스폰 옵션(일시 정지, 시간 상한, 지연)도 robots_file
+                  에서 읽는다
+    매핑 (maps/warehouse 재생성): localization_mode:=slam x:=0.0 y:=0.0 yaw:=0.0 \
+        with_navigation:=false with_perception:=false with_behavior:=false — map 프레임 = 시작 자세이므로
+        월드 원점·yaw 0 에서 시작해야 지도 좌표 = 월드 좌표 (behavior.yaml 도크 표·플릿 작업·스폰 초기
+        자세가 모두 월드 좌표를 쓴다)
 """
 
 from dataclasses import replace

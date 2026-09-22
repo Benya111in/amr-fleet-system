@@ -190,6 +190,10 @@ def test_stacks_included_only_when_installed(prefix):
     assert first['frame_prefix'] == first['prefix'] == 'amr_01/' and first['namespace'] == 'amr_01'
     assert (first['initial_x'], first['initial_y']) == ('18.0', '-16.0')
     assert first['waiting_pose'] == '18.0,-16.0,1.5708'
+    # 로봇마다 다른 Groot ZMQ 포트 (같은 호스트에서 1666 을 두 번 bind 할 수 없다)
+    assert [(a['groot_publisher_port'], a['groot_server_port']) for a in loc] == [
+        (str(1666 + 2 * i), str(1667 + 2 * i)) for i in range(5)]
+    assert all(a['mode'] == 'localization' and 'map' not in a for a in loc)
     text = '\n'.join(logs(ctx, out))
     assert 'navigation skipped: package not built yet (amr_navigation has no launch/' in text
     assert 'perception skipped: package not built yet (amr_perception not in ament index' in text
@@ -211,6 +215,24 @@ def test_system_single_robot_defaults(prefix):
     assert len(evals) == 1 and evals[0]['with_cpu'] == 'true'
     assert evals[0]['run_name'].startswith('system_')
     assert any('(18, -16, 1.5708)' in m for m in logs(ctx, actions))    # 스폰 목록의 amr_01 자세
+
+
+def test_localization_mode_and_map_reach_localization_only(prefix):
+    spawn = fleet_spawn.load_fleet_spawn(str(CONFIG))
+    ctx = LaunchContext()
+    opts = _opts()
+    opts.localization_mode, opts.map_yaml = 'slam', '/maps/new.yaml'
+    loc = by_file(includes(ctx, lu.stack_actions(spawn.robots[:1], False, opts)),
+                  'localization.launch.py')
+    assert loc[0]['mode'] == 'slam' and loc[0]['map'] == '/maps/new.yaml'
+    assert lu.stack_extra_arguments('navigation', opts) == {'use_ttc_bt': 'false'}
+    assert lu.stack_extra_arguments('perception', opts) == {}
+    # 부모 범위 launch 인자는 포함한 런치에 그대로 보인다 → 스택 런치의 인자 이름(map, mode …)을 선언하면
+    # 그 기본값을 '' 로 가린다 (실측: map_server 가 yaml_filename 없이 떴다)
+    declared = {a.name for a in lu.common_arguments()}
+    assert not declared & {'map', 'mode', 'namespace', 'frame_prefix', 'config_dir', 'params_file'}
+    ctx, actions = setup('system.launch.py', localization_mode='slam')
+    assert any('단일 로봇 amr_01' in m for m in logs(ctx, actions))
 
 
 def test_system_pose_override_and_unlisted_robot(prefix):
@@ -257,3 +279,18 @@ def test_truthy():
     assert lu.truthy(' True ') and not lu.truthy('0')
     with pytest.raises(ValueError):
         lu.truthy('maybe')
+
+
+def test_dds_profile_follows_localhost_only():
+    # ROS_LOCALHOST_ONLY=1 이면 UDPv4 를 127.0.0.1 로 묶은 변형 (사용자 전송이 rmw 의 localhost 설정을 대체)
+    assert lu.dds_profile_name({}) == 'fastdds_multi_robot.xml'
+    assert lu.dds_profile_name({'ROS_LOCALHOST_ONLY': '0'}) == 'fastdds_multi_robot.xml'
+    assert lu.dds_profile_name({'ROS_LOCALHOST_ONLY': '1'}) == 'fastdds_multi_robot_localhost.xml'
+    import xml.etree.ElementTree as ET
+    ns = {'p': 'http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles'}
+    for name, whitelisted in (('fastdds_multi_robot.xml', False),
+                              ('fastdds_multi_robot_localhost.xml', True)):
+        root = ET.parse(str(CONFIG.parent / name)).getroot()
+        assert root.find('.//p:mutation_tries', ns).text == '400'
+        assert root.find('.//p:segment_size', ns).text == str(16 * 1024 * 1024)
+        assert (root.find('.//p:interfaceWhiteList/p:address', ns) is not None) == whitelisted
