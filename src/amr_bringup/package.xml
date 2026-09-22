@@ -12,6 +12,8 @@
 
   <!-- 런치가 include 하는 패키지 (launch/config 만 쓰므로 실행 의존) -->
   <exec_depend>amr_simulation</exec_depend>
+  <exec_depend>lifecycle_msgs</exec_depend>
+  <exec_depend>rclpy</exec_depend>
   <exec_depend>amr_description</exec_depend>
   <exec_depend>amr_fleet</exec_depend>
   <exec_depend>amr_dashboard</exec_depend>
