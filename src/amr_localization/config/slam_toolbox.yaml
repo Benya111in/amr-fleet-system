@@ -72,3 +72,17 @@
     use_response_expansion: true
     min_pass_through: 2
     occupancy_threshold: 0.1
+
+# slam_toolbox 가 save_map 서비스 안에서 직접 띄우는 nav2 map_saver (노드 이름 map_saver, 같은 프로세스).
+# 이 파일은 그 프로세스의 전역 인자로 들어가므로 여기서 값을 준다.
+/**/map_saver:
+  ros__parameters:
+    # 기본 2 s 안에 /map 을 한 장 못 받으면 "Failed to spin map subscription" 으로 저장이 실패한다.
+    # 창고 지도는 ≈ 1 M 셀(0.05 m, 60 × 40 m)이고 재발행 주기가 2 s 라 2 s 로는 아슬아슬하다 —
+    # 통합 시나리오 03 에서 매번 이 시각 초과로 실패했다 (서비스는 정상 응답, 파일만 없음).
+    save_map_timeout: 15.0
+    # 임계값을 적지 않으면 map_saver 가 경고하며 free 0.25 를 쓰는데, trinary 미지 셀 205 는
+    # p = (255 − 205)/255 = 0.196 이라 그 값이면 미지가 '자유'로 읽힌다. docs/algorithms/slam.md §2
+    # 의 map_saver_cli --free 0.19 규약과 같은 값을 준다.
+    free_thresh_default: 0.19
+    occupied_thresh_default: 0.65
