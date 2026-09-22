@@ -50,6 +50,12 @@ public:
   /// 출력 한계를 이번 호출에만 따로 준다 (피드포워드 주변의 보정 폭 제한 등).
   double update(double r, double y, double dt, double ff, double out_min, double out_max);
 
+  /// 하류(출력 성형·포화)가 PI 출력과 다른 값을 실제로 냈을 때 그 차 du = u_applied − u 만큼 역계산
+  /// (T_t ≤ 0 이면 적분기를 du 방향으로 더 밀지 않도록 아무것도 하지 않는다).
+  void backCalculate(double du, double dt);
+  /// 적분기에 du 를 그대로 더한다 (추종 시정수 0 의 역계산: 출력이 곧바로 u_applied 가 된다).
+  void addToIntegral(double du);
+
   double integral() const {return integral_;}
   bool saturated() const {return saturated_;}
   double lastUnsaturated() const {return u_raw_;}

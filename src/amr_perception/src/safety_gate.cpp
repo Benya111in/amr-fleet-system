@@ -418,6 +418,18 @@ void SafetyGate::setMeasuredVelocity(double linear, double angular, double stamp
   measured_stamp_ = stamp;
 }
 
+double minTrackTtc(const std::vector<TrackTtc> & tracks, bool only_dynamic)
+{
+  double best = std::numeric_limits<double>::infinity();
+  for (const auto & t : tracks) {
+    if (std::isnan(t.ttc) || (only_dynamic && !t.is_dynamic)) {
+      continue;
+    }
+    best = std::min(best, t.ttc);
+  }
+  return best;
+}
+
 void SafetyGate::setMinTtc(double ttc, double stamp)
 {
   min_ttc_ = std::isnan(ttc) ? kInf : ttc;

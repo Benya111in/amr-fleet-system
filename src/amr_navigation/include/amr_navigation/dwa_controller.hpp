@@ -9,7 +9,8 @@
 // 구독: perception/tracked_obstacles (amr_msgs/TrackedObstacleArray), payload/mass
 //   (std_msgs/Float32, latched)
 // 발행: local_plan (nav_msgs/Path, 선택 궤적), dwa/stats (std_msgs/Float64MultiArray, 아래 순서)
-//   [cycle_ms, n_samples, n_valid, n_collision, n_vo_rejected, vo_fallback, best_ttc, v, w, d_goal]
+//   [cycle_ms, n_samples, n_valid, n_collision, n_vo_rejected, vo_saturated, best_ttc, v, w,
+//    d_goal, n_recentered]
 #ifndef AMR_NAVIGATION__DWA_CONTROLLER_HPP_
 #define AMR_NAVIGATION__DWA_CONTROLLER_HPP_
 
@@ -105,6 +106,7 @@ private:
   std::mutex obs_mutex_;
   amr_msgs::msg::TrackedObstacleArray::SharedPtr obstacles_;
   double obstacle_radius_{0.25};
+  double dynamic_fast_speed_{0.5};
   double track_timeout_{0.5};
   double robot_mass_{47.6};
 

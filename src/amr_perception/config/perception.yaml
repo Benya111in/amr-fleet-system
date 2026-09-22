@@ -235,6 +235,8 @@
       enabled: true
       critical: 2.15             # [s] τ_crit = reaction_latency + v_max/a = 0.15 + 2.0/1.0 (sequences.md §2)
       max_age: 0.5               # [s] 이보다 오래된 tracked_obstacles 의 TTC 는 무시
+      only_dynamic: true         # TTC 제한은 is_dynamic 트랙만. 정적 구조물은 접근 거리 존이 맡는다 — 추적기의 외접원
+                                 # (0.361 m) TTC 로는 0.60 m 통로 옆 벽(중심에서 0.30 m)이 TTC 0 이 되어 통로 안에서 멈췄다
     # 센서 생존 감시 (tracking.md §6.8): 수신 간격 > safety.sensor_timeouts (robot_params.yaml, ≈ 3 주기)
     # → 지연 경고(진단만), > max(그 값, sensor_fault_periods / <센서>.update_rate (sensors.yaml)) → 고장.
     # 한 번 늦은 메시지(예: 휠 60 ms)는 정지시키지 않고, 실제 끊김은 고장 시간 + 1 주기(20 ms) 안에 대응한다.

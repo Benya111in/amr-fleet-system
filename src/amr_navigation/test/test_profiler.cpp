@@ -368,9 +368,11 @@ TEST(VelocityProfiler, ResyncStopDeadbandAndPid)
   o = vp.update(0.5, 0.0, true, 0.3, 0.0, 0.02);
   EXPECT_GT(o.v, o.v_ref);
   EXPECT_LE(o.v, o.v_ref + c.max_linear_correction + 1e-12);
-  // dt ≤ 0 → 현재 기준 그대로
+  // dt ≤ 0 → 상태 그대로 (직전 출력)
+  const double v_prev = o.v;
   o = vp.update(1.0, 0.0, true, 0.3, 0.0, 0.0);
-  EXPECT_DOUBLE_EQ(o.v, vp.linearFilter().velocity());
+  EXPECT_DOUBLE_EQ(o.v, v_prev);
+  EXPECT_DOUBLE_EQ(o.v_ref, vp.linearFilter().velocity());
 }
 
 // 정지 착지: 슬립 플랜트(이득 0.8)에서 PI 보정이 남은 채 목표 0
@@ -434,4 +436,206 @@ TEST(VelocityProfiler, InPlaceRotationIsJerkLimited)
   const double w_before = vp.update(0.5, 0.5, false, 0, 0, 0.02).w_ref;
   const double w_after = vp.update(0.0, 0.5, false, 0, 0, 0.02).w_ref;
   EXPECT_LE(std::abs(w_after - w_before), c.angular.a_max * 0.02 + 1e-9);
+}
+
+namespace
+{
+// 명령 흐름 시험대: 50 Hz 프로파일러 → 플랜트 (1차 + 지연), 측정 = 플랜트 + 잡음
+// (stale_every 번째 주기는 직전 표본). 최종 명령의 수치 저크 (2차 차분) 통계와 재동기화 수를 본다
+// (리뷰 하네스 jerk_probe 와 같은 목표 열).
+struct StreamStats
+{
+  double jerk_max{0.0};
+  double jerk_p99{0.0};
+  double accel_max{0.0};
+  int resyncs{0};
+  double final_v{0.0};
+  double overshoot{0.0};
+};
+
+StreamStats runStream(
+  double gain, double tau, double delay, int stale_every, double noise, bool mark_stale,
+  unsigned seed = 1)
+{
+  VelocityProfilerConfig cfg;
+  cfg.pid_linear.tracking_time = 0.447;
+  cfg.pid_angular.tracking_time = 0.447;
+  VelocityProfiler prof(cfg);
+  const double dt = 0.02;
+  FirstOrderPlant plant(gain, tau, delay, dt, 0.0);
+  std::mt19937 rng(seed);
+  std::normal_distribution<double> nd(0.0, 1.0);
+  double y = 0.0;
+  double meas = 0.0;
+  double v1 = 0.0;
+  double v0 = 0.0;
+  std::vector<double> js;
+  StreamStats st;
+  for (int k = 0; k < 1500; ++k) {
+    const double t = k * dt;
+    const double target = t < 1.0 ? 0.0 : (t < 12.0 ? 1.0 : (t < 20.0 ? 0.4 : 0.0));
+    const bool stale = stale_every > 0 && k % stale_every == 0;
+    if (!stale) {
+      meas = y + noise * nd(rng);
+    }
+    const ProfilerOutput o = prof.update(target, 0.0, true, meas, 0.0, dt, !(stale && mark_stale));
+    y = plant.step(o.v);
+    if (k >= 2 && !o.resynced) {
+      const double j = std::abs((o.v - v1) - (v1 - v0)) / (dt * dt);
+      js.push_back(j);
+      st.jerk_max = std::max(st.jerk_max, j);
+    }
+    st.accel_max = std::max(st.accel_max, std::abs(o.v - v1) / dt);
+    if (t > 1.0 && t < 12.0) {
+      st.overshoot = std::max(st.overshoot, y - 1.0);
+    }
+    v0 = v1;
+    v1 = o.v;
+  }
+  std::sort(js.begin(), js.end());
+  st.jerk_p99 = js[static_cast<std::size_t>(0.99 * static_cast<double>(js.size() - 1))];
+  st.resyncs = prof.resyncCount();
+  st.final_v = y;
+  return st;
+}
+}  // namespace
+
+// 보내는 명령(기준 + PI 보정)의 저크·가속도가 한계 안
+// (리뷰: 잡음 5 mm/s 에서 p99 29.6, 최대 38 m/s³).
+TEST(VelocityProfiler, OutputStreamJerkWithinLimit)
+{
+  struct Case {const char * name; double gain, tau, delay; int stale; double noise; bool mark;};
+  const Case cases[] = {
+    {"nominal", 1.0, 0.08, 0.04, 0, 0.0, true},
+    {"slow servo T 0.15", 1.0, 0.15, 0.04, 0, 0.0, true},
+    {"slip gain 0.9", 0.9, 0.08, 0.04, 0, 0.0, true},
+    {"slip gain 0.8, T 0.12, delay 0.06", 0.8, 0.12, 0.06, 0, 0.0, true},
+    {"odom repeated every 7th (marked stale)", 1.0, 0.08, 0.04, 7, 0.0, true},
+    {"odom repeated every 7th (unmarked)", 1.0, 0.08, 0.04, 7, 0.0, false},
+    {"odom noise 5 mm/s", 1.0, 0.08, 0.04, 0, 0.005, true},
+    {"odom noise 14 mm/s + repeats", 1.0, 0.08, 0.04, 3, 0.014, false},
+  };
+  for (const auto & c : cases) {
+    const StreamStats st = runStream(c.gain, c.tau, c.delay, c.stale, c.noise, c.mark);
+    std::printf(
+      "[ info ] %-38s jerk p99 %.3f max %.3f, |a| max %.3f, resync %d, overshoot %.4f, end %.3f\n",
+      c.name, st.jerk_p99, st.jerk_max, st.accel_max, st.resyncs, st.overshoot, st.final_v);
+    EXPECT_LE(st.jerk_max, 2.0 + 1e-6) << c.name;
+    EXPECT_LE(st.accel_max, 1.0 + 1e-6) << c.name;
+    EXPECT_EQ(st.resyncs, 0) << c.name;
+    EXPECT_LT(st.overshoot, 0.05) << c.name;
+    EXPECT_NEAR(st.final_v, 0.0, 1e-3) << c.name;   // 끝에서 정지
+  }
+}
+
+// PI 는 성형 뒤에도 불일치 플랜트를 보정한다 (슬립 이득 0.9: 정상오차 < 1 cm/s)
+TEST(VelocityProfiler, PiStillCorrectsSlipThroughShaper)
+{
+  VelocityProfilerConfig cfg;
+  cfg.pid_linear.tracking_time = 0.447;
+  VelocityProfiler prof(cfg);
+  FirstOrderPlant plant(0.9, 0.08, 0.04, 0.02, 0.0);
+  double y = 0.0;
+  for (int k = 0; k < 400; ++k) {
+    y = plant.step(prof.update(0.8, 0.0, true, y, 0.0, 0.02).v);
+  }
+  EXPECT_NEAR(y, 0.8, 0.01);
+  EXPECT_EQ(prof.resyncCount(), 0);
+}
+
+// safety_node 가 명령을 붙잡음 (플랜트 출력 0): PI 가 +c_max 로 와인드업해 cmd_vel_smoothed 가
+// cmd_vel_nav 보다 0.2 m/s 위에 머물던 문제 (리뷰 실측 평균 +0.199). 측정 기반 재동기화로
+// 괴리가 작고,
+// 풀린 뒤에는 측정 속도에서 저크 한계로 다시 올라간다.
+TEST(VelocityProfiler, HeldOutputDoesNotWindUpAndRestartsSmoothly)
+{
+  for (const double v_nav : {0.05, 0.3}) {
+    VelocityProfilerConfig cfg;
+    cfg.pid_linear.tracking_time = 0.447;
+    VelocityProfiler prof(cfg);
+    FirstOrderPlant plant(1.0, 0.08, 0.04, 0.02, 0.0);
+    double y = 0.0;
+    double sum_gap = 0.0;
+    double max_gap = 0.0;
+    int n = 0;
+    // 3 s 붙잡힘: 로봇은 0 (명령이 하류에서 0 으로 바뀜)
+    for (int k = 0; k < 150; ++k) {
+      const ProfilerOutput o = prof.update(v_nav, 0.0, true, 0.0, 0.0, 0.02);
+      if (k > 25) {
+        sum_gap += o.v - v_nav;
+        max_gap = std::max(max_gap, o.v - v_nav);
+        ++n;
+      }
+    }
+    std::printf(
+      "[ info ] held at 0 with cmd_vel_nav %.2f: mean(out − nav) %+.3f, max %+.3f, resyncs %d\n",
+      v_nav,
+      sum_gap / n, max_gap, prof.resyncCount());
+    EXPECT_GT(prof.resyncCount(), 0);
+    EXPECT_LT(sum_gap / n, 0.05);
+    EXPECT_LT(max_gap, 0.15);
+    // 풀림: 플랜트가 명령을 따른다 → 저크 한계, 목표 위로 튀지 않음
+    double v1 = prof.update(v_nav, 0.0, true, 0.0, 0.0, 0.02).v;
+    double v0 = v1;
+    double jmax = 0.0;
+    double ymax = 0.0;
+    const int r0 = prof.resyncCount();
+    for (int k = 0; k < 250; ++k) {
+      const ProfilerOutput o = prof.update(v_nav, 0.0, true, y, 0.0, 0.02);
+      y = plant.step(o.v);
+      if (k >= 1) {
+        jmax = std::max(jmax, std::abs((o.v - v1) - (v1 - v0)) / 4e-4);
+      }
+      ymax = std::max(ymax, y);
+      v0 = v1;
+      v1 = o.v;
+    }
+    EXPECT_EQ(prof.resyncCount(), r0);
+    EXPECT_LE(jmax, 2.0 + 1e-6);
+    EXPECT_LT(ymax, v_nav + 0.02);
+    EXPECT_NEAR(y, v_nav, 0.01);
+  }
+}
+
+// 들쭉날쭉한 주기 (부하로 50 Hz 타이머가 10–40 ms 간격): 실제 경과로 적분해도 보내는 명령의
+// 수치 저크 (u_k − 2u_{k−1} + u_{k−2} 를 실제 간격으로 나눈 값)가 한계 안
+// (Gazebo 부하 150+ 에서 노드 진단 저크 7.6 실측)
+TEST(VelocityProfiler, IrregularPeriodsKeepOutputJerk)
+{
+  VelocityProfilerConfig cfg;
+  cfg.pid_linear.tracking_time = 0.447;
+  VelocityProfiler prof(cfg);
+  FirstOrderPlant plant(1.0, 0.08, 0.04, 0.02, 0.0);
+  std::mt19937 rng(3);
+  std::uniform_real_distribution<double> per(0.008, 0.045);
+  std::normal_distribution<double> nd(0.0, 0.005);
+  double t = 0.0;
+  double y = 0.0;
+  double v1 = 0.0;
+  double a1 = 0.0;
+  double jmax = 0.0;
+  double amax = 0.0;
+  double dt_prev = 0.02;
+  for (int k = 0; k < 2000; ++k) {
+    const double dt = per(rng);
+    t += dt;
+    const double target = t < 1.0 ? 0.0 : (t < 8.0 ? 1.0 : (t < 14.0 ? 0.3 : 0.0));
+    const ProfilerOutput o = prof.update(target, 0.0, true, y + nd(rng), 0.0, dt);
+    y = plant.step(o.v, dt);
+    const double a = (o.v - v1) / dt;
+    if (k >= 2 && !o.resynced) {
+      jmax = std::max(jmax, std::abs(a - a1) / dt);
+    }
+    amax = std::max(amax, std::abs(a));
+    v1 = o.v;
+    a1 = a;
+    dt_prev = dt;
+  }
+  (void)dt_prev;
+  std::printf(
+    "[ info ] irregular 8–45 ms periods: output jerk max %.3f, |a| max %.3f, end %.4f\n", jmax,
+    amax, v1);
+  EXPECT_LE(jmax, 2.0 + 1e-6);
+  EXPECT_LE(amax, 1.0 + 1e-6);
+  EXPECT_EQ(prof.resyncCount(), 0);
 }

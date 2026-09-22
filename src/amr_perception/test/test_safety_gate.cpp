@@ -22,6 +22,8 @@ using amr_perception::Pose2D;
 using amr_perception::SafetyGate;
 using amr_perception::SafetyParams;
 using amr_perception::SafetyStatus;
+using amr_perception::TrackTtc;
+using amr_perception::minTrackTtc;
 using amr_perception::SafetyZone;
 using amr_perception::SensorFailureAction;
 using amr_perception::SensorWatch;
@@ -939,4 +941,16 @@ TEST(SafetyGate, ZoneHysteresis)
   EXPECT_EQ(frame(g, plate(0.56), 0.5, 0.0, 0.6).zone, SafetyZone::kWarning);
   EXPECT_EQ(g.zone(), SafetyZone::kWarning);
   EXPECT_DOUBLE_EQ(g.params().emergency_stop_distance, 0.30);
+}
+
+TEST(SafetyGate, TtcLimitUsesOnlyDynamicTracks)
+{
+  // 0.60 m 통로 옆 벽 클러스터(정적, 외접원 TTC 0)는 TTC 제한에서 빠진다
+  // — 벽은 접근 거리 존이 맡는다
+  const std::vector<TrackTtc> tracks = {
+    {0.0, false}, {std::numeric_limits<double>::quiet_NaN(), true}, {1.4, true}, {2.5, true}};
+  EXPECT_DOUBLE_EQ(minTrackTtc(tracks, true), 1.4);
+  EXPECT_DOUBLE_EQ(minTrackTtc(tracks, false), 0.0);
+  EXPECT_TRUE(std::isinf(minTrackTtc({{0.0, false}}, true)));
+  EXPECT_TRUE(std::isinf(minTrackTtc({}, false)));
 }

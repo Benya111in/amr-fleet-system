@@ -8,7 +8,13 @@
 // Pub  cmd_vel_smoothed   geometry_msgs/Twist     rate [Hz] (기본 50)
 //      velocity_profiler/state  std_msgs/Float64MultiArray
 //        [v_target, w_target, v_ref, w_ref, a_ref, v_out, w_out, v_meas, w_meas, jerk_ref,
-//        resynced, jerk_out]  (jerk_out: 최종 명령 v_out 의 2차 차분, PID 보정 포함)
+//        resynced, jerk_out, a_out, correction, resync_count, meas_fresh]
+//        (jerk_out: 최종 명령 v_out 의 2차 차분 — 출력 성형으로 ≤ limits.max_linear_jerk,
+//         재동기화 순간 제외)
+// 측정 신선도: odometry/filtered 헤더 시각이 직전 주기와 같으면 PI 를 갱신하지 않는다
+//   (반복 표본이 kp 로 새는 것 방지).
+// 첫 명령: 유휴(발행 중단) 상태에서 cmd_vel_nav 가 오면 다음 타이머를 기다리지 않고 바로 한 주기를
+//   돌린다.
 // 파라미터: config/robot_params.yaml 의 limits.*, robot.base_mass 와 config/velocity_profiler.yaml.
 #ifndef AMR_NAVIGATION__VELOCITY_PROFILER_NODE_HPP_
 #define AMR_NAVIGATION__VELOCITY_PROFILER_NODE_HPP_
@@ -38,6 +44,7 @@ private:
   void onOdom(const nav_msgs::msg::Odometry::SharedPtr msg);
   void onPayload(const std_msgs::msg::Float32::SharedPtr msg);
   void onTimer();
+  void tickLocked();
 
   std::mutex mutex_;
   core::VelocityProfiler profiler_;
@@ -55,6 +62,8 @@ private:
   double w_meas_{0.0};
   rclcpp::Time last_odom_time_;
   bool has_odom_{false};
+  double odom_stamp_{-1.0};        // 최신 odometry 헤더 시각 [s]
+  double used_odom_stamp_{-2.0};   // 직전 PI 갱신에 쓴 헤더 시각
   rclcpp::Time last_tick_;
   bool has_tick_{false};
   double idle_time_{0.0};

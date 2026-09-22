@@ -1,33 +1,55 @@
 # Costmap 구성과 튜닝 (명세 4.4 "Costmap 구성")
 
-> 대상: `src/amr_navigation/config/nav2_params.yaml` 의 `global_costmap`, `local_costmap`.
+> 대상: `src/amr_navigation/config/nav2_params.yaml` 의 `global_costmap`, `local_costmap`, `costmap_scan_filter_node`.
 > 관련: [astar.md](astar.md) (전역 계획기가 비용을 쓰는 방식), [dwa.md](dwa.md) (지역 계획기의 충돌·여유 비용).
+> 이 문서의 수치는 모두 이 기준 — `feature/system-integration` 052ba54 (새 safety_node: 풋프린트 접근 영역 정지·
+> 계약 C1/C2, scan-to-map 정합 위치추정, 월드 좌표 SLAM 지도 `maps/warehouse.*` — map 프레임 = 월드 프레임, 계약 C4)
+> 위에 이 산출물을 얹은 트리 — 에서 직접 돌린 결과다. Gazebo 는 headless, 로봇 1 대, 창고 월드 그대로(actor 5 ·
+> 지게차·셔틀, LiDAR σ 0.03 m 등 센서 잡음 켬), 명령 사슬 `controller → velocity_profiler → safety_node → DiffDrive`,
+> 위치추정 EKF + AMCL + scan-to-map. 결과마다 호스트 부하(`uptime` load average, 32 스레드)와 실시간 계수(RTF)를 적는다
+> — 측정(2026-09-22 23:08 – 09-23 00:20 KST) 동안 이 작업의 Gazebo 1–3 개가 동시에 돌았고, 23:32 이후에는 다른 사용자의
+> 통합 시험 컨테이너 3 개가 겹쳐 load 7–102, RTF 0.33–0.99 였다 (결과마다 그 실행의 값).
 
 ## 1. 레이어 구성
 
 | 코스트맵 | 호스트 노드 | 프레임 | 크기 / 해상도 | 레이어 (순서) | 갱신 / 발행 |
 | --- | --- | --- | --- | --- | --- |
-| 전역 | `planner_server` | `map` | 정적 지도 크기 (60 × 40 m → 1200 × 800) / 0.05 m | `static_layer` → `obstacle_layer`(scan_filtered) → `inflation_layer` + 필터 `keepout_filter` | 5 Hz / 1 Hz |
-| 지역 | `controller_server` | `<prefix>odom` (rolling) | 12 × 12 m / 0.05 m | `obstacle_layer`(scan_filtered) → `voxel_layer`(camera/depth/points_filtered) → `inflation_layer` | 10 Hz / 2 Hz |
+| 전역 | `planner_server` | `map` | 정적 지도 크기 (1207 × 806) / 0.05 m | `static_layer` → `inflation_layer`(1.2 m) → `obstacle_layer`(scan_costmap_static) → `depth_layer`(points_static) → `sensor_inflation_layer`(0.6 m) + 필터 `keepout_filter` | 5 Hz / 1 Hz |
+| 지역 | `controller_server` | `<prefix>odom` (rolling) | 8 × 8 m / **0.025 m** | `obstacle_layer`(scan_costmap) → `depth_layer`(points_filtered) → `inflation_layer` | 10 Hz / 2 Hz |
+
+센서 입력 전처리 `costmap_scan_filter_node` (amr_navigation, `navigation.launch.py` 가 띄움):
+
+```
+scan_filtered ─► 게이트 중앙값 (§3.2) ─► scan_costmap ─────────────► 지역 obstacle_layer
+                                      └► 동적 트랙 제외 (§5.2) ─► scan_costmap_static ─► 전역 obstacle_layer
+camera/depth/points_filtered ─────────────────────────────────────► 지역 depth_layer
+                              └► 동적 트랙 제외 ─► camera/depth/points_static ─► 전역 depth_layer
+```
 
 - **Static Layer**: `map_topic: /map` (공유 지도, `multi_robot.md`), `trinary_costmap: true` — 지도 값은 0/254/255
   뿐이고 1…252 는 inflation 에서만 나오게 해서 비용 ↔ 거리 역함수(§3)가 성립하게 한다.
 - **토픽 이름 (다중 로봇)**: Humble 의 `Costmap2DROS` 는 `/<ns>/<costmap 이름>` 네임스페이스의 자식 노드라서
-  레이어 토픽을 상대 이름 `scan_filtered` 로 적으면 `/amr_01/local_costmap/scan_filtered` 로 풀린다 (실측:
-  `ros2 topic info` — 발행자 0, 코스트맵 비최신 → controller_server 가 `isCurrent()` 대기에서 멈춤). 그래서
-  템플릿에 `<robot_ns>/scan_filtered` 로 적고 `navigation.launch.py` 가 `<robot_ns>` → `/amr_01` 로 치환한다
-  (`/tf` 는 리맵하지 않는다 — multi_robot.md). 서버 노드 자신의 토픽(`odom_topic` 등)은 상대 이름 그대로다.
-- **Obstacle Layer**: 2D LiDAR (`scan_filter_node` 출력 `<robot_ns>/scan_filtered`). 마킹 10 m(전역 8 m),
-  레이트레이싱 12 m(전역 10 m) — 레이트레이싱을 마킹보다 길게 둬야 먼 곳의 지난 장애물 셀도 지워진다.
-- **Voxel Layer** (지역만): 깊이 카메라 점군 → LiDAR 평면(지면 +0.38 m) 밖의 장애물(선반 선반판, 지게차 포크,
-  낮은 상자). 0.125 m × 16 층 = 2.0 m 높이까지, `min_obstacle_height 0.05` 로 바닥 잡음 제거,
-  깊이 잡음 σ ∝ d² (sensors.yaml) 때문에 4 m 이내만 마킹.
+  레이어 토픽을 상대 이름으로 적으면 `/amr_01/local_costmap/<토픽>` 으로 풀린다. 그래서 템플릿에 `<robot_ns>/…` 로
+  적고 `navigation.launch.py` 가 `<robot_ns>` → `/amr_01` 로 치환한다 (`/tf` 는 리맵하지 않는다 — multi_robot.md).
+- **Obstacle Layer (LiDAR)**: 관측 소스의 높이 창을 **명시**한다 — `min_obstacle_height 0.0`, `max_obstacle_height 2.0`.
+  Humble 의 소스별 `max_obstacle_height` 기본값은 0.0 이라 적지 않으면 odom 에서 z = 0.20 (lidar_link: base_link 0.18 +
+  extrinsic 0.02) 인 스캔 점이 **모두** 버려진다 (§6.1: 리뷰 전 설정에서 두 코스트맵 모두 LiDAR 치명 셀 0). 지역 마킹
+  5.5 m / 레이트레이싱 6 m (창 대각 반폭 5.7 m), 전역 8 m / 10 m — 레이트레이싱을 마킹보다 길게 둬야 먼 곳의 지난
+  장애물 셀도 지워진다. `test/test_costmap_config.py` 가 배포 파일의 창이 센서 평면을 ±0.1 m 이상 담는지 검사한다.
+- **Depth Layer (깊이 카메라, 2D ObstacleLayer 두 소스)**: LiDAR 평면(지면 +0.20) **아래** 물체 — 소형 박스(0.15 m),
+  지게차 포크(0.05–0.10 m) — 를 전방 카메라(광학 중심 지면 +0.25 m, hfov 87°)로 찍는다.
+  - `depth_mark`: 마킹 전용, 높이 창 [0.05, 2.0] m, 4 m 이내 (깊이 잡음 σ ∝ d², sensors.yaml).
+    하한 0.05 m 근거: 정지 로봇에서 잰 바닥 점 높이 (base_footprint 기준, §6.1) 0–3 m 거리 p99.9 ≤ 0.008 m.
+  - `depth_clear`: 소거 전용, 높이 창 [−0.5, 2.0] m (바닥 점 포함), 5 m. 카메라 → 바닥 점 광선이 그 사이 셀을 지운다.
+  - 리뷰 전의 `VoxelLayer` 는 3D 광선이 지나간 복셀만 지우는데 바닥 점은 높이 창에서 빠져 광선이 없으므로, 지나간 사람의
+    몸통 복셀이 남았다 (§6.1: 횡단 actor 궤적에 잔상 셀 평균 105, 최대 457). 2D 레이어는 바닥까지의 광선이 그 열 전체를
+    지운다 (마킹이 소거 뒤에 적용되므로 지금 보이는 물체는 남는다).
 - **Inflation Layer**: Nav2 식 `c(d) = ⌊252·exp(−s·(d − r_ins))⌋` (d ≤ r_ins 이면 253, 장애물 셀 254).
+  전역은 두 번 — 정적 지도 뒤 1.2 m / s 2.0 (A* 가 넓은 통로 선호, §4.1), 센서 레이어 뒤 0.6 m / s 5.0 (§5.2).
 - **Keepout Filter** (전역): 교통 관리자(`traffic_manager_node`)가 발행하는 `keepout_mask` + `costmap_filter_info`
   (`<robot_ns>/costmap_filter_info`, 로봇별). **이진 마스크(0/100 → 0/254)만** 허용한다 — 필터는 inflation 뒤에
-  적용되어 1…252 값을 만들지 않으므로
-  §3 의 역함수를 깨지 않는다. keepout 셀은 팽창되지 않으므로 교통 관리자가 분쟁 구간 마스크를 r_circ(0.361 m)만큼
-  미리 팽창해서 발행해야 한다 (연구 브리프 global-planning §1.1-2).
+  적용되어 1…252 값을 만들지 않으므로 §3 의 역함수를 깨지 않는다. keepout 셀은 팽창되지 않으므로 교통 관리자가 분쟁
+  구간 마스크를 r_circ(0.361 m)만큼 미리 팽창해서 발행해야 한다 (연구 브리프 global-planning §1.1-2).
 
 ## 2. 풋프린트
 
@@ -48,10 +70,12 @@ footprint_padding: 0.0
 0.60 m 통로 중앙(d = 0.30)이 r_ins(0.36) 안이 되어 **253 (INSCRIBED) → 모든 계획기가 통로를 막힌 것으로 본다**.
 사각형 풋프린트가 필수인 이유다.
 
-## 3. 좁은 통로 (로봇 폭 + 20 cm = 0.60 m) 산술
+## 3. 좁은 통로 (로봇 폭 + 20 cm = 0.60 m)
 
-명세 4.4 "로봇 폭 +20 cm 이내의 좁은 통로를 충돌 없이 주행". 월드의 좁은 통로(중심 (0, −10), 순폭 0.60 m,
-길이 4 m)와 합성 지도가 같은 치수다 (`amr_navigation/warehouse_map.py`, 단위 테스트 `test_narrow_passage_is_060m`).
+명세 4.4 "로봇 폭 +20 cm 이내의 좁은 통로를 충돌 없이 주행". 월드의 좁은 통로: 중심 (0, −10), 순폭 0.60 m, 길이 4 m
+(y ∈ [−12, −8]), 양쪽은 1.0 m 깊이 랙 두 베이씩 (`gen_warehouse_world.py` NARROW_*).
+
+### 3.1 잡음 없는 산술
 
 로봇이 통로 중앙에 있으면 양쪽 벽까지 d = 0.30 m:
 
@@ -64,31 +88,76 @@ footprint_padding: 0.0
 | r_ins 0.21 (padding 0.01), s = 2.0 | 210 | 통과 (여유 감소) |
 | r_ins 0.36 (robot_radius 0.36) | 253 | **막힘** |
 
-통로 안에서 로봇 중심이 통과 가능한(c < 253) 띠: d > r_ins ⇔ |횡 편차| < 0.30 − 0.20 = **0.10 m**
-(격자 정렬 때문에 벽 셀 한 칸이 안으로 들어오는 최악의 경우 0.075 m). 편차별 중앙 비용 (s = 2.0):
-0 → 206, 2.5 cm → 216, 5 cm → 228, 7.5 cm → 239, 10 cm → 253.
+통로 안에서 로봇 중심이 통과 가능한(c < 253) 띠는 |횡 편차| < 0.30 − 0.20 = **0.10 m**. 풋프린트 외곽선이 벽에 닿지
+않는 최대 헤딩 오차 ψ (반폭 0.3 sin ψ + 0.2 cos ψ ≤ 0.30 − 편차): 편차 0 → 22.7°, 2 cm → 17.3°, 5 cm → 10.3°.
 
-풋프린트 외곽선이 벽에 닿지 않는 최대 헤딩 오차 ψ (반폭 0.3 sin ψ + 0.2 cos ψ ≤ 0.30 − 편차):
-편차 0 → **22.7°**, 2 cm → 17.3°, 5 cm → 10.3°. 따라서 통로 안에서는 제어기의 CTE 가 2 cm 이내, 헤딩 오차가
-15° 이내여야 한다. DWA 의 경로 이탈 비용과 Pure Pursuit 의 CTE 수렴이 이 조건을 만든다 ([dwa.md](dwa.md),
-[path_tracking.md](path_tracking.md)).
+### 3.2 LiDAR 잡음 σ = 0.03 m 예산
+
+위 산술은 벽이 정확히 ±0.30 에 찍힌다고 본다. 실제로는 끝점이 빔마다 거리 방향으로 N(0, 0.03²) 흩어지고, 코스트맵은
+끝점 하나하나를 치명 셀로 찍는다:
+
+- **원 끝점**: 통로 한가운데 LiDAR 의 벽 끝점 중 0.05 m 이상 안쪽에 찍히는 비율은 합성 시험에서 1.79 %
+  (`ScanDenoise.AisleWallNoiseStaysOutsideTheRobotBand`, 200 스캔 · 137 200 점, 스캔마다 12 점꼴). 0.05 m 격자라면
+  벽 셀 하나 안쪽(0.20–0.25) 이 매 스캔 치명이 되어 **중앙에 선 로봇의 외곽선 셀**이 막힌다.
+  Gazebo 통로 안에서 잰 실제 스캔 (§6.2 의 20 회 관통, 로봇이 통로 ±1 m 안일 때 1 318 스캔, 벽 끝점 51 만 개):
+  `scan_filtered` 끝점의 **1.89 %** 가 0.05 m 이상 안쪽이고 (최대 0.129 m) **스캔의 66 %** 가 그런 점을 1 개 이상
+  가진다 — 0.05 m 격자라면 거의 매 스캔 외곽선 셀이 막힌다.
+- **처리 1 — 게이트 중앙값** (`costmap_scan_filter_node`, `core::denoiseRanges`): 빔 i 를 ±5 빔(±2.5°) 중
+  |r_j − r_i| ≤ 0.15 m 인 빔(같은 표면)의 중앙값으로 바꾼다. 수직 입사 벽은 이웃 빔 간격이 수 mm 라 창 전체가 같은 표면
+  → σ_med ≈ 1.25·σ/√11 ≈ 0.011 m. 스치는 입사는 이웃 거리 차가 게이트에 걸리지만 이때 벽 수직 방향 잡음은
+  σ·sin(입사각) 로 이미 작다. 얇은 물체(1–2 빔)·거리 불연속은 게이트가 배경 빔을 빼므로 지워지지 않는다
+  (`ThinObjectsAndStepsArePreserved`; 지지 빔 < 3 이면 원래 값 — 단발 반사도 장애물로 남긴다). 같은 합성 시험에서
+  0.05 m 이상 침범 0 점, 최대 침범 0.045 m, 벽 위치 편향 0.0001 m. Gazebo 의 같은 스캔 1 318 개에서는 게이트 중앙값
+  (`scan_costmap`) 뒤 0.05 m 이상 침범 **0.0016 %** (스캔의 0.15 %), 최대 0.068 m.
+- **처리 2 — 지역 해상도 0.025 m**: 격자 정렬 때문에 벽 셀의 안쪽 끝이 벽보다 최대 한 셀 안으로 들어온다. 0.05 m 면
+  허용 횡 편차가 최악 ±0.05 − 잡음 여유로 줄지만, 0.025 m 면 한 셀 손실이 0.025 m 다. 창을 12 → 8 m 로 줄여 셀 수는
+  1.8 배 (240² → 320²).
+- **처리 3 — DWA 좁은 곳 재중심** ([dwa.md](dwa.md) §1.7): map 프레임 전역 경로는 위치추정·지도 오차만큼 통로
+  중심에서 비낀다. 지역 코스트맵(odom, 로봇과 같은 프레임)의 골 바닥으로 기준 경로를 옮긴다. 이 기준(재매핑 지도,
+  추종 중 위치추정 오차 평균 약 1 cm)의 Gazebo 에서는 재중심을 꺼도 통로 안 횡 편차가 작아 이득이 측정되지 않았다
+  (§6.2) — 지도·위치추정 편향이 클 때의 보호 장치로 켜 둔다 (3.5 cm 편향·틀어진 진입의 단위 시험 효과는 dwa.md §1.7).
+
+단위 시험 (`Dwa.NarrowAisleWithLidarNoise`, `PurePursuit.NarrowAisleWithLidarNoise`: 매 스캔 σ 0.03 끝점으로 새로
+만든 코스트맵, 영속 0, 0.60 m × 4 m 통로, 1.0 m/s, 3 seed):
+
+| 설정 | DWA | Pure Pursuit (명령 원호 충돌 검사 1 s) |
+| --- | --- | --- |
+| 리뷰 전: 0.05 m 격자, 원 끝점 | 3/3 통로 입구에서 정지 (유효 샘플 없음 826–831 / 832–835 주기) | 3/3 입구에서 "collision ahead" (538–540 주기) |
+| 채택: 0.025 m + 게이트 중앙값 | 3/3 관통, 1.0 m/s 유지, 참값 최소 여유 0.094–0.097 m | 3/3 관통, 최소 여유 0.100 m, 충돌 판정 0 |
+| 채택, 전역 경로 2 cm 비낌 | 3/3, 0.085–0.090 m | 3/3, 0.080 m |
+
+### 3.3 전역 지도의 통로
+
+SLAM 지도(`maps/warehouse.pgm`, 이 기준의 재매핑본)의 통로 벽은 흩어져 있다: 양쪽 벽이 모두 점유로 찍힌 54 개 행(y)에서
+점유 셀 안쪽 경계가 왼쪽 최대 −0.228 m (평균 −0.254), 오른쪽 최소 +0.222 m (평균 +0.270) — 가장 좁은 행의 자유 폭
+0.45 m (평균 0.524). 그래도 전역 팽창(0.2 / 1.2 / 2.0) 뒤 통로 78 개 행 모두 최소 비용 ≤ 228 < 253 이라 전역 계획이
+통로를 지날 수 있다: (0, −6.5) → (0, −10) 과 (0, −13.5) → (0, −10) 은 통로 중심선 0.00–0.05 m 안으로 계획되고,
+(0, −6.5) → (0, −14) 관통 목표는 11.1 m 우회를 고른다 (§4.1 배율; 코어 A* 를 이 지도에 직접 돌린 `astar_aisle`
+결과). 지도의 안쪽 경계는 실제 벽(±0.30)보다 최대 0.08 m 안쪽이라 위치추정 매칭에도 영향을 줄 수 있다 (지도는
+amr_localization 소관).
 
 ## 4. Inflation 파라미터 튜닝
 
 전역과 지역을 다르게 둔다. 둘 다 **"0.60 m 통로 중앙 < 253"** 이 하드 제약이고, 나머지는 경로 품질 트레이드오프다.
 
-### 4.1 전역: `inflation_radius 1.2`, `cost_scaling_factor 2.0`
+### 4.1 전역: 정적 지도 `inflation_radius 1.2`, `cost_scaling_factor 2.0`
 
 - A* 간선 가중 `ℓ·(1 + κ·c/252)` (κ = 2.0) 에서 통로 중앙의 배율이 2.63 → 4 m 좁은 통로를 지나는 비용이
   빈 공간 10.5 m 와 같다. 즉 **돌아가는 길이 6.5 m 이내면 넓은 통로를 택하고**, 그보다 멀면 좁은 통로를 쓴다.
-  창고 레이아웃(랙 열 사이 5 m 통로)에서 좁은 통로는 남쪽 구역으로 가는 지름길일 때만 선택된다.
 - 반경 1.2 m 에서 c = 34 → 5 m 통로 중앙(벽까지 2.5 m)은 0 이라 넓은 통로는 비용 0 구간이 있고,
-  계획기는 벽에서 ≥ 1.2 m 떨어진 중앙 띠를 선호한다 (평균 여유거리 결과: [astar.md](astar.md) 벤치마크 표).
+  계획기는 벽에서 ≥ 1.2 m 떨어진 중앙 띠를 선호한다.
 - s 를 키우면(5.0) 통로 중앙 비용이 152 로 내려가 좁은 통로를 더 자주 쓰고 벽에 더 붙는다. s 를 줄이면(1.0)
   넓은 통로 안에서도 비용이 남아 중앙 선호가 강해지지만 좁은 통로 배율이 2.81 로 커진다.
-  2.0 은 연구 브리프(global-planning §1.1-5) 구성 A 와 같다.
 
-### 4.2 지역: `inflation_radius 0.8`, `cost_scaling_factor 3.0`
+### 4.2 전역: 센서 장애물 `sensor_inflation_layer 0.6 m`, `5.0`
+
+정적 지도 팽창을 센서 레이어 **앞**에 두고, 센서 레이어 뒤에 좁은 팽창을 한 번 더 둔다. 두 번째 팽창도 정적 셀을
+다시 팽창하지만 값이 더 작아 max 결합에서 첫 번째가 남는다. 센서 장애물(서 있는 사람, 놓인 팔레트)은 r_ins 0.2 에서
+253, 외접 0.361 m 에서 113, 0.6 m 에서 34 — 계획기가 돌아가되 1.2 m 로 크게 돌지 않는다. 지나가는 사람은 이 팽창과
+무관하게 전역에서 빠진다 (§5.2) — 빼지 않으면 0.6 m 팽창으로도 재계획 경로가 횡단 actor 를 0.83–1.30 m 돌아갔다
+(§6.3 절제 실험).
+
+### 4.3 지역: `inflation_radius 0.8`, `cost_scaling_factor 3.0`
 
 - DWA 의 여유 비용 `J_clear = max_k max(0, c(p_k) − c(g_k))/252` 는 **기준 경로 대비 초과 비용**만 벌점을 준다
   ([dwa.md](dwa.md) §1.5). 가파른 감쇠(s = 3.0)로 벽 0.5 m 이내에서만 비용이 크게 변해 궤적 선택이 날카롭다.
@@ -99,34 +168,146 @@ footprint_padding: 0.0
 
 ## 5. 동적 장애물 반영 (센서 주기·장애물 유지 시간)
 
+### 5.1 주기와 유지 시간
+
 | 파라미터 | 값 | 근거 |
 | --- | --- | --- |
 | 지역 `update_frequency` | 10 Hz | LiDAR 10 Hz 와 같게 — 매 스캔 반영 |
 | 전역 `update_frequency` | 5 Hz | 1 Hz 재계획보다 충분히 빠르게, 전역 지도 전체 갱신 비용 절감 |
-| `observation_persistence` | 0.0 s | 가장 최근 스캔만 마킹 → 지나간 사람·지게차의 셀은 다음 스캔의 레이트레이싱으로 즉시 지워진다 (잔상 없음) |
-| scan `expected_update_rate` | 0.3 s | `safety.sensor_timeouts.lidar` 와 같다. 넘으면 코스트맵이 비최신 → controller_server 가 명령을 멈춘다 (LiDAR 고장 = 안전 정지, robot_params.yaml 정책) |
-| depth `expected_update_rate` | 0.0 (검사 안 함) | 카메라 고장은 정지가 아니라 저속 운행(`degraded_mode_max_speed 0.2`) 대상 → 코스트맵 최신성 판정에서 뺀다 |
+| `observation_persistence` (모든 소스) | 0.0 s | 가장 최근 관측만 마킹 → 지나간 사람·지게차의 셀은 다음 관측의 레이트레이싱으로 지워진다 |
+| scan `expected_update_rate` | 0.3 s | `safety.sensor_timeouts.lidar` 와 같다. 넘으면 코스트맵 비최신 → controller_server 가 명령을 멈춘다 (LiDAR 고장 = 안전 정지) |
+| depth `expected_update_rate` | 0.0 (검사 안 함) | 카메라 고장은 정지가 아니라 저속 운행 대상 → 최신성 판정에서 뺀다 |
 | 추적 트랙 | DWA 플러그인이 `perception/tracked_obstacles` 를 직접 구독 | 코스트맵은 "현재 점유"만 안다 → 예측(등속, 5 s)·VO 는 제어기가 처리 ([dwa.md](dwa.md) §2) |
 
-`observation_persistence 0` 의 대가: 한 스캔에서 빔이 빠지면(반사율, 가림) 그 주기 동안 장애물이 사라진다.
-추적기(`obstacle_tracker_node`)가 트랙을 유지하므로 동적 장애물은 DWA 의 TTC·VO 항이 계속 본다.
+### 5.2 지나가는 동적 장애물은 전역 코스트맵에서 뺀다
+
+`costmap_scan_filter_node` 가 추적 트랙 중 **동적**(속도 ≥ 0.2 m/s 이면서 `is_dynamic` 이거나 속도 ≥ 0.5 m/s, 메시지
+나이 ≤ 0.5 s) 트랙의 중심을 센서 시각으로 등속 예측해 반경 0.55 m (사람 발자국 0.30 + 추적 위치 오차 — Gazebo 1.0 m/s 횡단 actor, 로봇 6 m 안 트랙 메시지 1 712 개: 참값과 가장 가까운
+트랙 거리 중앙값 0.19 m, p95 0.26 m, 최대 0.62 m, 그중 `is_dynamic` 87 %; 1 m 안에 트랙이 없는 표본 7.6 %)
+안의 스캔 끝점을 +inf 로, 깊이 점을 빼서 전역용 토픽으로 낸다. 트랙 프레임(map) → 센서 프레임 변환은 센서 시각의 TF,
+없으면 최신 TF 로 한다. 지역 코스트맵은 모든 장애물을 본다.
+
+이유: 전역 코스트맵이 지나가는 사람을 찍으면 재계획마다 그 순간 위치를 돌아가는 경로가 나오고, 사람이 움직여 다음
+재계획에서 경로가 반대쪽으로 뒤집힌다. 지나가는 장애물은 지역 계획기(DWA 의 VO 포화 제동·TTC 감속 + 지역 코스트맵 충돌
+검사)가 양보로 피하고, 전역 경로는 서 있는 장애물과 비동적 트랙만 돌아간다. 트랙이 없거나 TF 가 없으면 빼지 않는다
+(안전 쪽). 효과는 §6.3 의 절제 실험(동적 제외 끔 + 1 Hz 무조건 재계획): 원래 경로 이탈 중앙값 0.12 → 0.61 m, 복귀
+5 s 이내 13/14 → 2/10, `/plan` 0.14 → 2.67 Hz.
+단위 시험: `ScanDenoise.ExcludeDiscsRemovesOnlyBeamsInsideTracks`, 노드
+`CostmapScanFilterNode.RepublishesDenoisedScanAndExcludesDynamicTracks` (동적 트랙 앞 빔·점만 빠지고 느린 비동적 트랙·
+벽은 남는다).
 
 ## 6. 검증
 
-- 단위 테스트: `test_grid.cpp` (`InflationCostMatchesNav2Formula`: 코어 팽창식 = Nav2 `computeCost`),
-  `test_collision.cpp` (3단계 풋프린트 검사, 외접 비용 경계), `test_warehouse_map.py`
-  (`test_narrow_passage_is_060m`).
-- 폐루프 좁은 통로 관통 (`closed_loop_eval.py` 의 `narrow` 경로, 통로 중심선 8.5 m, 1.0 m/s, 실제 지역 코스트맵
-  s = 3.0 / 0.8 m 와 전역 코스트맵 활성):
+### 6.1 마킹·소거 (정지 로봇 주변 구조물, 횡단 actor)
 
-  | 시험대 | 제어기 | 성공 | CTE 평균 / 최대 | 풋프린트 최소 여유 | 주행 시간 실제 / 예측 |
-  | --- | --- | --- | --- | --- | --- |
-  | 운동학 시뮬레이터 | DWA | ✓ | 0.0 / 0.1 cm | **0.10 m** | 9.8 / 10.0 s |
-  | 운동학 시뮬레이터 | PurePursuit | ✓ | 0.0 / 0.0 cm | **0.10 m** | 9.6 / 10.0 s |
-  | Gazebo (월드의 실제 통로, 6.1 m) | DWA | ✓ | 0.0 / 0.0 cm | 0.10 m | 7.4 / 7.6 s |
-  | Gazebo | PurePursuit | ✓ | 0.0 / 0.0 cm | 0.10 m | 7.3 / 7.6 s |
+- 설정 수준: `test/test_costmap_config.py` — navigation.launch.py 와 같은 치환(ReplaceString → RewrittenYaml)으로 배포
+  파일을 만든 뒤, 모든 관측 소스가 높이 창을 명시하고, LaserScan 창이 LiDAR 평면(config 에서 계산한 0.20 m)을 ±0.1 m
+  이상 담고, 깊이 마킹 하한이 0.02–0.05 m 이며 소거 소스는 바닥 점을 담는지, 전역 팽창이 두 단인지 검사한다.
+  리뷰 전 파일로 돌리면 6 개 모두 실패한다 (`NAV2_PARAMS_OVERRIDE`, 이 기준에서 확인).
+- 동작 수준: `test_costmap_marking.cpp` — 배포 파일을 `--params-file` 로 넣은 실제 `Costmap2DROS` 두 개(지역·전역),
+  config 의 extrinsic 으로 만든 TF, lidar_link(지면 +0.20) 스캔의 1 m 앞 벽과 깊이 점군의 0.10 m 높이 상자:
+  지역 벽 치명 46 셀 · 상자 12 셀, 전역 25 · 9 셀, 바닥 점 구역 0 셀; 벽·상자가 사라진 다음 관측들에서 둘 다 0 으로
+  지워진다. 리뷰 전 파일로 돌리면 두 코스트맵 모두 벽 0 셀, 지역 복셀 상자 9 셀이 지워지지 않고 남는다.
+- Gazebo (로봇 (0, −4.5) 정지·남쪽, 앞 2.5 m 를 1.0 m/s actor `worker_crossing` 이 횡단, 70 s, `cm_probe.py`,
+  치명 셀(254)을 참값 자세로 월드 좌표화; 두 설정 모두 같은 트리, 코스트맵 파라미터만 다름 — 리뷰 전 설정 =
+  a7d43f7 의 `nav2_params.yaml`). 지역 격자가 0.05 → 0.025 m 로 바뀌어 셀 수는 면적(셀 × 해상도²)도 함께 적는다:
 
-  0.10 m 는 통로 중앙에서의 기하 최대 여유(0.30 − 0.20)다 — 지역 코스트맵 비용 186(§3)이 DWA 의 상대 여유 비용
-  (`J_clear`, 기준 경로 대비 초과분만 벌점)에서 벌점이 되지 않아 감속 없이 통과했다.
-- 전역 계획: 무작위 50 쌍 중 통로를 지나는 쌍은 0 (우회 ≤ 6.5 m 면 넓은 통로 선호, §4.1), NavigateToPose 의
-  (0, −6.5) → (0, −14) 목표도 10.6 m 우회 경로를 택했다 ([astar.md](astar.md) §8.3).
+| | 리뷰 전 설정 (RTF 0.90, load 28) | 채택 설정 (RTF 0.93, load 18) |
+| --- | --- | --- |
+| 스캔 소스 `max_obstacle_height` (실행 중 `ros2 param get`, 지역 / 전역) | 0.0 / 0.0 | 2.0 / 2.0 |
+| 갱신 수 (지역 / 전역) | 107 / 54 | 101 / 51 |
+| 지역: 카메라 시야 밖(방위 > 50° 또는 4.2 m 밖) 구조물 치명 셀 / 갱신 | 2.0 셀 (0.005 m²) | 204 셀 (0.128 m²) |
+| 전역: 정적 지도에 없는 치명 셀 / 갱신 | 0 | 160 셀 (0.40 m²) |
+| actor 가 5.5 m 안일 때 actor 에 치명 셀이 있는 갱신 비율 (지역 / 전역) | 0.58 (깊이 복셀만) / 0 | **0.91** / 0.13 (전역은 §5.2 동적 제외 — 분류 전 트랙만 남음) |
+| 잔상: actor 에서 1.0 m 넘게 떨어진, 0.5–3 s 전 actor 위치 0.45 m 안 치명 셀 (지역 평균 / 최대) | 105 / 457 셀 (0.26 / 1.14 m²) | **20.5 / 81 셀 (0.013 / 0.051 m²)** |
+| 같은 잔상 (전역 평균 / 최대) | 0 / 0 (마킹 자체가 없음) | 2.8 / 24 셀 (0.007 / 0.06 m²) |
+
+- 깊이 바닥 점 높이 (정지, 채택 설정 실행, base_footprint 기준, 정적 구조물·actor 에서 떨어진 점 28 만 개): 평균
+  0.006 m, 거리 0–1 / 1–2 / 2–3 m p99.9 = 0.008 / 0.004 / 0.006 m → 마킹 하한 0.05 m 는 4 cm 이상 여유. 3–4 m 띠는
+  p99.9 가 2.04 m 로 바닥이 아닌 점(정적 지도 0.4 m 밖에 선 물체 — 선별 기준이 지도·actor 거리뿐이다)이 섞이고,
+  전체의 0.26 % 가 0.05 m 이상이다.
+  주행 중 분포 (Gazebo 통합 체인 경로 추종 12 회, 남측 공터, [path_tracking.md](path_tracking.md) §5.3): |v| ≥ 0.3 m/s
+  38.6 만 점 평균 0.003 m, p99 0.010 · p99.9 0.012 m, 0.05 m 이상 0 개; |ω| ≥ 0.3 rad/s 7.1 만 점 p99.9 0.013 m —
+  가감속·회전으로 인한 카메라 기울기에도 마킹 하한까지 3.7 cm 이상 여유.
+
+### 6.2 좁은 통로 관통 (Gazebo, 통합 체인)
+
+조건: 창고 월드 그대로 (actor·지게차 포함 — 1.0 m/s 횡단 actor `worker_crossing` 이 통로 북쪽 입구 1 m 앞 y = −7 을,
+0.3 m/s actor 가 남쪽 y = −14.5 를 지난다), 위치추정 EKF + AMCL + scan-to-map (SLAM 지도), 인지 스택(scan_filter, 깊이
+점군, 추적기), **safety_node 가 명령 사슬에 있음** (중계·우회 없음). 경로 = map 프레임 x = 0 직선을 FollowPath(DWA)로
+(0, −5.5) ↔ (0, −13.2) 왕복 (회전점에서 제자리 180° 회전). 판정 = 참값 로봇 사각형과 랙 4 베이 실제 치수의 최소 거리,
+통로 = y ∈ [−12, −8]. `aisle_probe.py`.
+
+| safety_node 설정 | 관통 (남 / 북) | 참값 최소 여유 [m] (최소 / 평균) | 통로 안 시간 [s] / 평균 속도 [m/s] | 통로 안 cmd_vel = 0 비율 | DWA 유효 샘플 없음 | RTF, load |
+| --- | --- | --- | --- | --- | --- | --- |
+| **배포 설정** (perception.yaml 그대로) | **0 / 3 시도** — 3 회 모두 입구 1.3 m 안 (y −9.33…−9.36) 에서 정지, 이후 통로 안 180° 회전이 불가능해 북행도 중단 | 0.069–0.095 (정지 위치) | – / 0.05–0.06 | 0.91–1.00 | 0 | 0.89–0.99, 7–30 |
+| **TTC 제한만 끔** (`ttc.enabled: false`, 근접 정지·존·센서 고장·E-stop 은 그대로) | **10 / 10** | **0.055 / 0.081** (20 회) | 3.90–4.08 / 0.98–1.02 | 0.0 | 0 / 1 765 주기 | 0.87–0.98, 14–31 |
+
+- **배포 설정이 멈추는 원인은 safety_node 의 TTC 제한이다** (진단 `reasons = ttc_limit`, `min_ttc_s = 0.00`, 존은
+  CLEAR/WARNING): 추적기(`obstacle_tracker_node`)가 통로 벽 조각을 정적 트랙으로 내고, TTC 를 로봇 외접원(0.361 m)으로
+  계산해 벽(중심에서 0.30 m)이 이미 접촉(TTC 0)으로 나온다. safety_node 는 모든 트랙의 최소 TTC 로
+  v ≤ a·(TTC − 0.15) = 0 을 건다. 근접 정지(접근 영역 판정)는 통로 벽을 올바르게 무시한다 — 멈춘 뒤 제자리 회전을 시도할
+  때만 STOP. 인지 쪽 수정이 필요하다 (동적 트랙만, 또는 풋프린트 기반 TTC — cross-package 요청). 이 표의 두 번째 줄이
+  내비게이션 쪽 결과이며, 명세 "로봇 폭 + 20 cm 통로를 충돌 없이" 는 **이 설정에서만** 만족한다.
+- 통로 안 LiDAR (§3.2): 원 끝점 0.05 m 이상 침범 1.89 %, `scan_costmap` 0.0016 %. 지역 코스트맵의 통로 벽 치명 셀 중
+  셀 중심이 벽면보다 반 셀(0.0125 m) 넘게 안쪽인 셀 갱신당 평균 59 개 (최대 침범 0.084 m) — 대부분 격자 정렬 몫이고,
+  DWA 유효 샘플이 없는 주기는 0. 지역 코스트맵이 보는 통로 중심 = 월드 x −0.0001 ± 0.0043 m (175 갱신).
+- 통로 안 참값 횡 편차 최대 0.5–4.2 cm (평균 1.8 cm), 헤딩 오차 최대 7.4°. 같은 설정에서 **DWA 재중심만 끈** 비교
+  (`recenter_narrow: false`, 10 회 관통 5 / 5, RTF 0.42, load 56–76): 횡 편차 최대 1.2–2.9 cm (평균 2.0 cm), 참값 최소
+  여유 0.070 m (평균 0.079), 유효 샘플 없음 0 / 1 827 주기 — 이 기준에서는 재중심의 차이가 잡음 안이다. 재중심 끈
+  실행에서도 북쪽 출구에서 1.0 m/s actor 와 1 회 스쳤다 (아래 항목과 같은 상황).
+- **동적 장애물 접촉 2 회** (rack 과는 0 회): 북행 2 회에서 통로를 나와 y = −7 의 1.0 m/s actor 와 스쳤다
+  (collision_monitor 부호 거리 −0.003 / −0.001 m). (1) 입구를 1.0 m/s 로 나오는 순간 랙에 가려 있던 actor 가 1 m 앞
+  차선으로 들어와 DWA 가 0.85 m/s 로 왼쪽으로 꺾는 중 스침 (이 설정은 safety TTC 감속이 꺼져 있다). (2) safety_node 가
+  0.45 m 앞에서 정지시킨 로봇에 actor(대본 이동, 회피 없음)가 걸어 들어옴. 통로 출구가 횡단 차선에 1 m 로 붙은 가려진
+  교차로라 1.0 m/s 로는 인지·정지 거리가 모자란다 — 통로 출구 감속(구역 속도 제한) 같은 교통 규칙이 필요하다.
+
+### 6.3 1.0 m/s 횡단 장애물 (전역 재계획과 동적 제외)
+
+조건: 배포 설정 그대로 (safety_node TTC 제한 포함, TTC 재계획 BT `navigate_to_pose.xml`), 로봇은 차선 x = −2.5 를
+NavigateToPose 로 (−2.5, −4) ↔ (−2.5, −11) 왕복, actor `worker_crossing` (y = −7, x ∈ [−6, 6] 왕복 1.0 m/s) 의
+위상을 참값으로 보고 로봇 도착 예상 시각 + δ (δ ~ U(−1.2, 1.2) s, seed 7) 에 차선을 지나도록 출발시킨다
+(`cross_probe.py`). 충돌 = amr_simulation `collision_monitor` 접촉 사건, 이탈 = 참값 위치 ↔ **수락 뒤 첫 전역 경로**
+(원래 경로) 폴리라인 거리, 복귀 시간 = 이탈 0.10 m 초과가 처음 생긴 때부터 마지막으로 0.10 m 안으로 돌아온 때까지.
+
+| 실행 (RTF, load) | 도착 | 충돌 | 최소 부호 거리 (풋프린트 ↔ actor) | 원래 경로 이탈 최대 (전체 / 중앙값) | 복귀 시간 ≤ 5 s | /plan 빈도 (FollowPath 목표 수) |
+| --- | --- | --- | --- | --- | --- | --- |
+| r2: 14 회 (RTF 0.82, load 27–45) | 14 / 14 | **0** | 0.33 m | **0.83 m** / 0.12 m | **13 / 14** (최대 8.8 s) | 0.14 Hz (25 개 / 184 s) |
+| r1: 12 회 (RTF 0.91, load 7–31, 이탈은 차선 기준만) | 12 / 12 | **0** | 0.40 m | – | – | 0.12 Hz (18 개 / 149 s) |
+
+- 26 회 모두 충돌 0, 이탈 ≤ 1 m (명세 4.7). **복귀 5 s 는 1 회 미달**(r2 run 0, 8.8 s): actor 가 가까워지며 safety_node
+  의 TTC 상한이 1.53 → 0.49 m/s 로 내려가는 동안(TTC 1.68 → 0.64 s) DWA 가 VO 로 막힌 샘플(342 개 중 184–202 개)을
+  피해 오른쪽으로 꺾었고, VO 가 풀린 뒤에도 같은 방향 회전(ω −1.5 rad/s)을 이어 반경 약 0.3 m 로 한 바퀴 돌며
+  (헤딩 −91° → 176° → −80°) 0.83 m 비껴났다. 그 사이 TTC 재계획(t = 4 s)이 비껴난 자리에서 새 경로를 만들었고, 로봇은
+  그 경로(원래 경로로 비스듬히 합류)를 따라 횡 0.1 m/s 로 천천히 돌아왔다. 나머지 13 회는 0.0–4.6 s.
+- 동적 제외 (§5.2) 덕분에 전역 경로가 지나가는 actor 를 돌아가지 않는다: 원래 경로 이탈 중앙값 0.12 m, 계획 수는
+  실행당 1–4 개. 같은 시나리오의 **절제 실험** — 동적 제외 끔(`exclude_dynamic: false`) + 1 Hz 무조건 재계획 BT
+  (리뷰 전 재계획 규칙, ReactiveFallback 결함 없이 PipelineSequence 형제로 둔 판): 10 회 (RTF 0.38, load 81–94) 모두 도착·
+  충돌 0 · 최소 부호 거리 0.39 m 이지만, 계획이 실행당 26–52 개(`/plan` 2.67 Hz, 매 재계획이 actor 를 1.3 m 까지 돌아감),
+  원래 경로 이탈 최대 1.21 m (1 회 > 1 m) · 중앙값 0.61 m, 복귀 5 s 이내 **2 / 10** (최대 11.1 s). RTF 가 달라(0.82 vs
+  0.38) 절대 시간 비교는 거칠지만, 이탈·복귀의 차이는 재계획이 지나가는 actor 를 돌아가는지로 설명된다 (§5.2).
+- 재계획 빈도는 BT 수정(§6.4) 뒤의 값이다: 목표당 첫 계획 + TTC 사건(cooldown 1 s)만.
+
+### 6.4 재계획 빈도 (주행 BT 결함과 수정)
+
+통합 시험(5 대)에서 `/plan` 이 22 Hz 로 나와 FollowPath 가 수백 번 선점되고 목표 방향 정렬이 실패했다. 원인은
+`navigate_to_pose.xml` / `navigate_through_poses.xml` 의 구조였다: 1 Hz `RateController` 가 `ReactiveFallback` 아래에
+있어, 자식이 SUCCESS 할 때마다 ReactiveFallback 이 자식 전체를 halt → RateController 가 IDLE 로 돌아가 다음 tick 에
+first_time 으로 다시 실행 → **BT tick(10 ms)마다 재계획**. 이 문서의 이전 판에서 넣은 IsPathValid 변형은 재계획은
+막았지만 IsPathValid(서비스 호출)를 tick 마다 불렀다. 수정: TTC 가지를 `ForceSuccess(Sequence(IsTTCBelowThreshold,
+ComputePathToPose))` 로, 1 Hz 가지를 `RateController(Fallback(경로 유효·목표 불변, 계획))` 로 `PipelineSequence` 의
+형제로 둔다 — PipelineSequence 는 앞 자식이 SUCCESS/RUNNING 이어도 halt 하지 않아 RateController 가 주기를 지킨다.
+경유점 BT 는 TTC 가지에도 `RemovePassedGoals` 를 넣었다 (1 Hz 가지가 계획하지 않으면 지난 경유점이 `{goals}` 에 남는다).
+
+| Gazebo, 1.5 m 목표 8 개 (NavigateToPose, 같은 조건) | ComputePathToPose 요청 | /plan | FollowPath 목표 | 목표당 시간 |
+| --- | --- | --- | --- | --- |
+| a7d43f7 BT (ReactiveFallback + 무조건 재계획), RTF 0.81 | **41 Hz** | 7.8–43 Hz | 3 266 개 / 80 s | 5.1–12.1 s |
+| 이전 판 BT (ReactiveFallback + IsPathValid), RTF 0.91 | 0.23 Hz | 0.23 Hz | 8 개 | 2.7–5.8 s |
+| **수정 BT**, 52 목표 (응답 시간 시험과 같은 실행), RTF 0.90 | **0.25 Hz** | 0.25 Hz | 56 개 | – |
+
+이전 판 BT 의 tick 마다 IsPathValid 호출은 `/plan` 에 보이지 않으므로 단위 시험으로 잡는다: `test_bt_replan.cpp` 가 배포
+XML 4 종을 실제 BehaviorTree.CPP v3 + Nav2 제어 노드 플러그인(PipelineSequence, RateController, RecoveryNode,
+RoundRobin)과 호출 수를 세는 대역 액션·조건으로 10 ms tick 실시간 구동한다 — 경로 유효 3.25 s 동안 계획 1 회·유효성 검사
+4 회(첫 tick + 1 Hz), 막힘 1 주기 뒤 재계획 1 회, TTC 사건 즉시 재계획 1 회, FollowPath halt 0. 같은 시험에 a7d43f7 XML
+을 넣으면 3.25 s 동안 계획 82 회, 이전 판 XML 이면 IsPathValid 322 회로 실패한다. `test_behavior_trees.py` 는 구조
+규칙(RateController 의 부모가 PipelineSequence, 조상에 Reactive* 없음, TTC 가지가 ForceSuccess 형제)을 검사한다.

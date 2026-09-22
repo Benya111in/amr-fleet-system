@@ -11,6 +11,8 @@ Nav2 + 직접 구현 계획기/제어기 + velocity_profiler_node 기동 (compon
   풀리므로 절대 이름이 필요하다), RewrittenYaml(root_key=robot_name) 으로 네임스페이스 키를 씌운다.
 - controller_server / behavior_server 의 cmd_vel 은 cmd_vel_nav 로 리맵 → velocity_profiler_node →
   cmd_vel_smoothed → safety_node → cmd_vel (components.md §4.1).
+- costmap_scan_filter_node: scan_filtered → 게이트 중앙값 → scan_costmap (두 코스트맵의 LiDAR 입력,
+  docs/algorithms/costmap.md §3). 파라미터는 같은 nav2_params.yaml 의 costmap_scan_filter_node 블록.
 - BT: amr_behavior 의 IsTTCBelowThreshold 플러그인이 설치돼 있으면 TTC 조건 포함 BT, 아니면 대체 BT
   (use_ttc_bt:=auto|true|false).
 """
@@ -72,6 +74,10 @@ NAV2_BT_LIBS = [
     'nav2_back_up_cancel_bt_node',
     'nav2_drive_on_heading_cancel_bt_node',
 ]
+# lifecycle_manager bond 시간 상한 [s] (기동 대기 + 운용 중 heartbeat). 통합 실측: 5대 전체 기동 시
+# 부하에서 4 s 로는 "unable to be reached by bond → Aborting bringup" 이 났다. 운용 중 bond 가 끊기면
+# 관리 노드 전체를 내리므로 넉넉히 둔다 (localization.launch.py 와 같은 값)
+BOND_TIMEOUT_S = 30.0
 
 
 def _default_config_dir() -> str:
@@ -142,10 +148,12 @@ def _setup(context):
         Node(package='nav2_lifecycle_manager', executable='lifecycle_manager',
              name='lifecycle_manager_navigation',
              parameters=[{'use_sim_time': sim_time, 'autostart': autostart.lower() == 'true',
-                          'node_names': LIFECYCLE_NODES, 'bond_timeout': 4.0}],
+                          'node_names': LIFECYCLE_NODES, 'bond_timeout': BOND_TIMEOUT_S}],
              namespace=robot_name, output='screen', arguments=ros_args),
         Node(package=PKG, executable='velocity_profiler_node', name='velocity_profiler_node',
              parameters=extra + [profiler_file, {'use_sim_time': sim_time}], **common),
+        Node(package=PKG, executable='costmap_scan_filter_node', name='costmap_scan_filter_node',
+             parameters=[configured], **common),
     ]
     return actions
 

@@ -58,6 +58,9 @@ VelocityProfilerNode::VelocityProfilerNode(const rclcpp::NodeOptions & options)
   c.max_angular_correction = declare_parameter("max_angular_correction", 0.3);
   c.resync_threshold_v = declare_parameter("resync_threshold_v", 0.4);
   c.resync_threshold_w = declare_parameter("resync_threshold_w", 0.6);
+  c.hold_error_v = declare_parameter("hold_error_v", 0.15);
+  c.hold_time = declare_parameter("hold_time", 0.3);
+  c.measurement_filter_time = declare_parameter("measurement_filter_time", 0.04);
   c.stop_deadband = declare_parameter("stop_deadband", 1e-3);
   profiler_.setConfig(c);
 
@@ -88,10 +91,19 @@ VelocityProfilerNode::VelocityProfilerNode(const rclcpp::NodeOptions & options)
 void VelocityProfilerNode::onCmd(const geometry_msgs::msg::Twist::SharedPtr msg)
 {
   std::lock_guard<std::mutex> lock(mutex_);
+  const bool idle = !has_cmd_ || idle_time_ > idle_publish_time_;
   v_target_ = msg->linear.x;
   w_target_ = msg->angular.z;
   last_cmd_time_ = now();
   has_cmd_ = true;
+  if (idle && (v_target_ != 0.0 || w_target_ != 0.0)) {
+    // 유휴에서 첫 명령: 타이머 위상(최대 1 주기)을 기다리지 않고 바로 한 주기
+    // → 이후 타이머는 여기서 다시 센다
+    idle_time_ = 0.0;
+    has_tick_ = false;
+    tickLocked();
+    timer_->reset();
+  }
 }
 
 void VelocityProfilerNode::onOdom(const nav_msgs::msg::Odometry::SharedPtr msg)
@@ -100,6 +112,7 @@ void VelocityProfilerNode::onOdom(const nav_msgs::msg::Odometry::SharedPtr msg)
   v_meas_ = msg->twist.twist.linear.x;
   w_meas_ = msg->twist.twist.angular.z;
   last_odom_time_ = now();
+  odom_stamp_ = rclcpp::Time(msg->header.stamp).seconds();
   has_odom_ = true;
 }
 
@@ -115,6 +128,11 @@ void VelocityProfilerNode::onPayload(const std_msgs::msg::Float32::SharedPtr msg
 void VelocityProfilerNode::onTimer()
 {
   std::lock_guard<std::mutex> lock(mutex_);
+  tickLocked();
+}
+
+void VelocityProfilerNode::tickLocked()
+{
   const rclcpp::Time t = now();
   double dt = period_;
   if (has_tick_) {
@@ -125,6 +143,9 @@ void VelocityProfilerNode::onTimer()
     if (dt > 5.0 * period_) {
       dt = period_;   // 시각 점프(재시작) 방어
     }
+    // 늦게 온 주기는 실제 경과로 적분한다 (프로파일이 시뮬레이션 시각을 따라간다).
+    // 주기가 들쭉날쭉해도 명령의 수치 저크가 한계를 넘지 않는 것은 코어 출력 성형이 맡는다
+    // (VelocityProfiler::shapeOutput)
   }
   last_tick_ = t;
   has_tick_ = true;
@@ -135,8 +156,10 @@ void VelocityProfilerNode::onTimer()
     w_target_ = 0.0;
   }
   const bool meas_ok = has_odom_ && (t - last_odom_time_).seconds() <= odom_timeout_;
+  const bool fresh = odom_stamp_ != used_odom_stamp_;
   const core::ProfilerOutput out =
-    profiler_.update(v_target_, w_target_, meas_ok, v_meas_, w_meas_, dt);
+    profiler_.update(v_target_, w_target_, meas_ok, v_meas_, w_meas_, dt, fresh);
+  used_odom_stamp_ = odom_stamp_;
 
   // 유휴: 목표·출력이 0 인 상태가 idle_publish_time 이상 이어지면
   //   발행을 멈춘다(다른 발행자 방해 금지)
@@ -156,7 +179,8 @@ void VelocityProfilerNode::onTimer()
     const double jerk = (out.a_ref - last_a_ref_) / dt;
     const double jerk_out = (a_out - last_a_out_) / dt;
     st.data = {v_target_, w_target_, out.v_ref, out.w_ref, out.a_ref, out.v, out.w, v_meas_,
-      w_meas_, jerk, out.resynced ? 1.0 : 0.0, jerk_out};
+      w_meas_, jerk, out.resynced ? 1.0 : 0.0, jerk_out, out.a_out, out.correction,
+      static_cast<double>(profiler_.resyncCount()), fresh ? 1.0 : 0.0};
     state_pub_->publish(st);
   }
   last_a_ref_ = out.a_ref;

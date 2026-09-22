@@ -79,11 +79,14 @@ DwaWindow DwaPlanner::dynamicWindow(double v_c, double w_c, double v_cap) const
   DwaWindow win;
   win.v_lo = std::max(L.min_vel_x, v_c - L.decel_lim_x * dt);
   win.v_hi = std::min(std::min(L.max_vel_x, v_cap), v_c + L.acc_lim_x * dt);
-  if (v_c < L.min_vel_x) {
-    // 후진 한계 밖(예: 외부 요인)이면 한계 쪽으로 가속만 허용
-    win.v_lo = v_c;
-    win.v_hi = std::min(L.min_vel_x, v_c + L.acc_lim_x * dt);
+  if (v_c + L.acc_lim_x * dt < L.min_vel_x) {
+    // 허용 범위 한참 아래(후진 복구 직후 등): 한 주기에 닿을 수 있는 만큼만 범위 쪽으로
+    win.v_lo = win.v_hi = v_c + L.acc_lim_x * dt;
   }
+  // (리뷰 후 수정) 이전에는 v_c < min_vel_x 이면 상한을 min_vel_x 로 막았다 — 정지 뒤 측정 속도가
+  // −1e-4 처럼 조금만 음수여도 창이 [v_c, 0] 으로 붙어 0 만 고르고, 그 명령이 다시 창 중심이 되어
+  // 영영 출발하지 못했다 (Gazebo 좁은 통로 왕복 lap 8: 18 s 정지 → Failed to make progress).
+  // 시험: DwaWindowRecoversFromTinyNegativeSpeed
   if (win.v_hi < win.v_lo) {
     win.v_hi = win.v_lo;   // 상한이 창 아래로 내려감(속도 제한 급감) → 최대 감속만
   }
@@ -141,6 +144,99 @@ std::vector<Pose2D> DwaPlanner::rollout(const Pose2D & start, double v, double w
   return poses;
 }
 
+std::vector<Pose2D> DwaPlanner::recenterPath(
+  const std::vector<Pose2D> & path, const PointCostFn & point_cost, bool end_is_goal,
+  std::size_t * shifted) const
+{
+  const std::size_t n = path.size();
+  std::vector<double> off(n, 0.0);
+  std::size_t count = 0;
+  if (n < 3 || config_.recenter_max_shift <= 0.0 || config_.recenter_step <= 0.0) {
+    if (shifted != nullptr) {
+      *shifted = 0;
+    }
+    return path;
+  }
+  const std::vector<double> cum = cumulativeLength(path);
+  const int K =
+    std::max(
+    1,
+    static_cast<int>(std::floor(config_.recenter_max_shift / config_.recenter_step + 1e-9)));
+  std::vector<double> costs(static_cast<std::size_t>(2 * K + 1));
+  for (std::size_t i = 0; i < n; ++i) {
+    if (end_is_goal && cum.back() - cum[i] < config_.recenter_goal_keep) {
+      continue;
+    }
+    const Pose2D & p = path[i];
+    if (point_cost(p.x, p.y) < config_.recenter_min_cost) {
+      continue;
+    }
+    // 법선은 이웃 점 방향으로 (경로 자세 θ 가 없거나 거친 경우 대비)
+    const Pose2D & a = path[i > 0 ? i - 1 : i];
+    const Pose2D & b = path[i + 1 < n ? i + 1 : i];
+    const double th = std::atan2(b.y - a.y, b.x - a.x);
+    const double nx = -std::sin(th);
+    const double ny = std::cos(th);
+    double best = std::numeric_limits<double>::infinity();
+    for (int k = -K; k <= K; ++k) {
+      const double o = k * config_.recenter_step;
+      const double c = point_cost(p.x + o * nx, p.y + o * ny);
+      costs[static_cast<std::size_t>(k + K)] = c;
+      best = std::min(best, c);
+    }
+    // 골: 양쪽 끝이 바닥보다 높다 (한쪽만 막힌 곳이면 끝이 바닥 → 옮기지 않는다)
+    if (!(costs.front() > best && costs.back() > best)) {
+      continue;
+    }
+    // 바닥이 평평하면 그 구간의 가운데
+    double sum = 0.0;
+    int cnt = 0;
+    for (int k = -K; k <= K; ++k) {
+      if (costs[static_cast<std::size_t>(k + K)] <= best) {
+        sum += k;
+        ++cnt;
+      }
+    }
+    off[i] = sum / cnt * config_.recenter_step;
+    ++count;
+  }
+  if (shifted != nullptr) {
+    *shifted = count;
+  }
+  if (count == 0) {
+    return path;
+  }
+  // 이동평균 (옮기지 않은 점은 0 으로 참여 → 좁은 곳 입구에서 완만히 들어간다)
+  const int w = std::max(0, config_.recenter_smooth);
+  std::vector<Pose2D> out(path);
+  for (std::size_t i = 0; i < n; ++i) {
+    double sum = 0.0;
+    int cnt = 0;
+    for (int d = -w; d <= w; ++d) {
+      const std::ptrdiff_t j = static_cast<std::ptrdiff_t>(i) + d;
+      if (j < 0 || j >= static_cast<std::ptrdiff_t>(n)) {
+        continue;
+      }
+      sum += off[static_cast<std::size_t>(j)];
+      ++cnt;
+    }
+    const double o = std::clamp(
+      sum / std::max(
+        1,
+        cnt), -config_.recenter_max_shift,
+      config_.recenter_max_shift);
+    if (o == 0.0) {
+      continue;
+    }
+    const Pose2D & a = path[i > 0 ? i - 1 : i];
+    const Pose2D & b = path[i + 1 < n ? i + 1 : i];
+    const double th = std::atan2(b.y - a.y, b.x - a.x);
+    out[i].x += -std::sin(th) * o;
+    out[i].y += std::cos(th) * o;
+  }
+  return out;
+}
+
 DwaResult DwaPlanner::compute(
   const DwaInput & in, const FootprintCostFn & footprint_cost,
   const PointCostFn & point_cost) const
@@ -149,9 +245,11 @@ DwaResult DwaPlanner::compute(
   const auto & L = config_.limits;
   const auto & W = config_.weights;
 
-  // --- 경로 기준량 ---
+  // --- 경로 기준량 (0 단계: 좁은 곳 재중심) ---
   static const std::vector<Pose2D> kEmpty;
-  const std::vector<Pose2D> & path = in.path != nullptr ? *in.path : kEmpty;
+  const std::vector<Pose2D> & path_in = in.path != nullptr ? *in.path : kEmpty;
+  const std::vector<Pose2D> path = config_.recenter_narrow ?
+    recenterPath(path_in, point_cost, in.path_end_is_goal, &res.n_recentered) : path_in;
   const std::vector<double> cum_s = cumulativeLength(path);
   const Point2D robot_pt{in.pose.x, in.pose.y};
   Projection robot_proj;
@@ -211,6 +309,9 @@ DwaResult DwaPlanner::compute(
   }
 
   const double v_span = std::max(1e-6, L.max_vel_x - L.min_vel_x);
+  // 명령 → 감속 시작 지연: 명령 유지 T_c + 저크 램프의 평균 지연 a/(2j)
+  const double t_lag = config_.commit_time +
+    (L.jerk_lim_x > 0.0 ? L.decel_lim_x / (2.0 * L.jerk_lim_x) : 0.0);
   std::vector<DwaCandidate> cands;
   cands.reserve(samples.size());
   for (std::size_t si = 0; si < samples.size(); ++si) {
@@ -241,7 +342,7 @@ DwaResult DwaPlanner::compute(
     }
     c.poses.resize(n_check);
 
-    // --- 5) VO 원뿔 판정 ---
+    // --- 5) VO 원뿔 판정 (진입 시각도 기록: 포화 시 선택 기준) ---
     if (config_.use_velocity_obstacles && !dyn.empty()) {
       const Point2D v_eff = chordVelocity(in.pose.theta, c.v, c.w, config_.vo_time_horizon);
       for (const auto & o : dyn) {
@@ -251,11 +352,9 @@ DwaResult DwaPlanner::compute(
         }
         const double R = config_.robot_radius + o.radius + config_.vo_margin;
         const Point2D w_rel{v_eff.x - o.vx, v_eff.y - o.vy};
-        if (inVelocityObstacle(p, w_rel, R, config_.vo_time_horizon)) {
-          c.vo_rejected = true;
-          break;
-        }
+        c.vo_time = std::min(c.vo_time, velocityObstacleTime(p, w_rel, R, config_.vo_time_horizon));
       }
+      c.vo_rejected = std::isfinite(c.vo_time);
     }
 
     // --- 6) 비용 ---
@@ -320,7 +419,10 @@ DwaResult DwaPlanner::compute(
         std::abs(c.w) > eps && c.w * in.w_last < 0.0;
       c.terms.oscillation = (dir_flip || spin_flip) ? 1.0 : 0.0;
     }
-    // 동적 장애물 TTC₀ (평균 예측, 원호 연장)
+    // 동적 장애물 TTC₀ (평균 예측, 원호 연장). J_dyn 은 "예측 접촉 전에 설 수 있는 속도" 초과분이
+    // 주항이다: v_safe(TTC₀) = a·max(0, TTC₀ − t_lag). 초과 1 m/s 당 w_d/v_span 이 속도 항 기울기
+    // w_v/v_span 보다 커야 감속이 이긴다 (w_d 1.5 > w_v 0.4). 1 − TTC₀/T_pred 는 같은 속도에서
+    // TTC 가 긴 쪽(회피 방향)을 고르는 보조항 (dwa.md §2.2).
     if (!dyn.empty()) {
       const std::vector<Pose2D> pred = rollout(in.pose, c.v, c.w, config_.prediction_time);
       double ttc = kInf;
@@ -329,8 +431,12 @@ DwaResult DwaPlanner::compute(
         ttc = std::min(ttc, firstContactTime(pred, config_.sim_dt, o, R));
       }
       c.ttc = ttc;
-      c.terms.dynamic = std::isfinite(ttc) ?
-        std::max(0.0, 1.0 - ttc / std::max(1e-6, config_.prediction_time)) : 0.0;
+      if (std::isfinite(ttc)) {
+        const double v_safe = L.decel_lim_x * std::max(0.0, ttc - t_lag);
+        const double excess = std::max(0.0, std::abs(c.v) - v_safe) / v_span;
+        const double urgency = std::max(0.0, 1.0 - ttc / std::max(1e-6, config_.prediction_time));
+        c.terms.dynamic = std::min(1.0, excess + config_.dynamic_steer_gain * urgency);
+      }
     }
     c.cost = W.heading * c.terms.heading + W.clearance * c.terms.clearance +
       W.velocity * c.terms.velocity + W.path * c.terms.path +
@@ -350,9 +456,17 @@ DwaResult DwaPlanner::compute(
     }
   }
   if (best == nullptr && res.n_valid > 0) {
-    res.vo_fallback = true;   // VO 가 모두 제외 → 이번 주기는 VO 무시 (충돌 검사는 유지)
+    // VO 포화: 한 주기 동적 창(±a·Δt)이 통째로 VO 안이다. VO 를 끄지 않고 VO 진입이 가장 늦은
+    // 샘플(= 등속을 유지해도 가장 오래 안전)을 고른다 — 정면 접근이면 제동, 횡단이면 감속·회피 쪽이
+    // 뽑히고, 매 주기 한 창씩 VO 밖으로 옮겨 간다. 진입 시각이 vo_time_tie 안으로 같으면 비용 최소.
+    res.vo_saturated = true;
     for (const auto & c : cands) {
-      if (!c.collision && (best == nullptr || c.cost < best->cost)) {
+      if (c.collision) {
+        continue;
+      }
+      if (best == nullptr || c.vo_time > best->vo_time + config_.vo_time_tie ||
+        (std::abs(c.vo_time - best->vo_time) <= config_.vo_time_tie && c.cost < best->cost))
+      {
         best = &c;
       }
     }
