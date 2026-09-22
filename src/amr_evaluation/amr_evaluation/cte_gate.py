@@ -12,12 +12,17 @@ MoveTo 뒤에는 DockAt(경로가 아니라 마커를 보고 cmd_vel 직접 제�
   phase         executor/phase 를 받았고 값이 active_phases(기본 moving) 밖이다
                 (docking / loading / charging / idle / error)
   stale_plan    경로가 최신 목표보다 오래됐다: plan 스탬프 < 최신 목표 수락 스탬프, 또는 plan 수신 시각
-                + phase_grace < executor/phase 가 active 로 바뀐 수신 시각, 또는 plan 을 받은 지
-                plan_timeout(기본 3 s) 이 지났다 — bt_navigator 가 주행 중 1 Hz 로 재계획하므로
-                (components.md §3.3 RateController) 목표가 끝나면 경로가 더 오지 않는다
+                + phase_grace < executor/phase 가 active 로 바뀐 수신 시각, 또는 (항법 상태를 한 번도
+                받지 못했을 때만) plan 을 받은 지 plan_timeout(기본 3 s) 이 지났다
   stopped       GT |v| < min_speed 이고 |ω| < min_angular (정지·주차)
   endpoint      최근접점이 경로 시작점 앞/끝점 너머로 잘렸다 (그 거리는 종방향 — cte_logger 가 판정)
 
+plan_timeout 은 항법 상태가 없을 때의 대체 규칙이다: 우리 BT 는 Nav2 의
+navigate_w_replanning_only_if_path_becomes_invalid 와 같이 **경로가 무효가 될 때만** 재계획하므로
+(1 Hz RateController 가지 안에 유효성 검사가 있다) 주행 중에도 경로는 수십 초 된 것일 수 있다.
+상태를 받고 있으면 목표가 끝났는지는 nav_inactive 가 알려 주므로 시각 초과로 버리지 않는다 —
+실측(통합 시나리오 07): 상태를 받으면서 plan_timeout 3 s 를 걸었더니 전체 1809 표본 중 1280 개가
+stale_plan 으로 빠지고 289 개만 남아(경로 수신 8 회) 곡선 구간 판정 행이 아예 만들어지지 않았다.
 항법 상태·phase 를 한 번도 받지 못했으면 그 규칙은 건너뛰고 stale_plan(plan_timeout)·stopped·endpoint
 만 적용한다. GT 시각이 크게 거꾸로 가면(시뮬 리셋) 경로·목표·phase 기록을 모두 지운다.
 """
@@ -46,8 +51,8 @@ class GateConfig:
 
     min_speed: float = 0.02            # [m/s]
     min_angular: float = 0.02          # [rad/s]
-    # [s] 경로 수신 뒤 이 시간이 지나면 stale (0 이면 끔). 주행 중에는 1 Hz 재계획으로 1 s 마다 새로 오므로
-    # 3 s 면 재계획 두 번 누락·계획 지연까지 견디고, 상태 원천이 없을 때 도착 뒤 옛 경로 채점을 막는다.
+    # [s] 경로 수신 뒤 이 시간이 지나면 stale (0 이면 끔). **항법 상태를 못 받을 때만** 쓰는 대체 규칙이라
+    # (모듈 설명 참고) 도착 뒤 옛 경로로 채점하는 것을 막는 용도다. 상태를 받으면 nav_inactive 가 그 일을 한다.
     plan_timeout: float = 3.0
     active_phases: Tuple[str, ...] = ('moving',)
     # [s] phase 가 moving 으로 바뀌기 직전에 받은 경로도 새 주행의 것으로 본다 (목표 전송과 phase 발행
@@ -124,7 +129,8 @@ class PlanGate:
         if (self.phase_start_rx is not None
                 and self.plan_rx + cfg.phase_grace < self.phase_start_rx):
             return STALE_PLAN
-        if cfg.plan_timeout > 0.0 and rx_time - self.plan_rx > cfg.plan_timeout:
+        if (cfg.plan_timeout > 0.0 and not self.nav_seen
+                and rx_time - self.plan_rx > cfg.plan_timeout):
             return STALE_PLAN
         if abs(v) < cfg.min_speed and abs(w) < cfg.min_angular:
             return STOPPED

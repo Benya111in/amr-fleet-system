@@ -77,6 +77,16 @@ def test_plan_timeout_and_reset():
     assert PlanGate().summary() == '채택 0, 제외 0'
 
 
+def test_plan_timeout_is_not_applied_while_nav_status_says_active():
+    """항법 상태를 받고 있으면 오래된 경로도 버리지 않는다 (경로가 무효일 때만 재계획하는 BT)."""
+    gate = PlanGate(GateConfig(plan_timeout=2.0))
+    gate.on_plan(1.0, 1.0)
+    gate.on_nav_status([(0.5, cte_gate.GOAL_EXECUTING)])
+    assert gate.check(30.0, 0.5, 0.0) is None            # 29 s 된 경로 — 목표는 아직 실행 중
+    gate.on_nav_status([(0.5, 4)])                       # 4 = SUCCEEDED (목표 종료)
+    assert gate.check(31.0, 0.5, 0.0) == cte_gate.NAV_INACTIVE
+
+
 def test_plan_timeout_default_expires_plan_without_state_sources():
     """상태 원천이 없어도 기본 3 s 만료: 도착 뒤(재계획이 멈춘 뒤) 옛 경로로 채점하지 않는다."""
     assert GateConfig().plan_timeout == 3.0
