@@ -271,6 +271,10 @@ $$v_\max(D) = -at + \sqrt{(at)^2 + 2a(D - 0.30)}$$
 
 **TTC 연속 감속**: 최소 TTC ≤ τ_crit = 2.15 s (= $t + v_\max/a$, sequences.md §2) 이면 $v \le a(\text{TTC} - t)$
 (TTC 1.0 → 0.85, 0.5 → 0.35 m/s). 거리 존 상한이 더 낮으면 그쪽이 이긴다. 0.5 s 넘은 TTC 는 무시.
+**동적 트랙만** 본다 (`ttc.only_dynamic`, 기본 true — `minTrackTtc`): 정적 구조물은 접근 거리 존이 맡는다. 추적기의 TTC 는
+외접원(0.361 m)으로 계산하므로 0.60 m 통로 옆 벽 조각(중심에서 0.30 m)이 TTC 0 이 되어, 모든 트랙을 보던 이전 판은 통로
+안에서 로봇을 세웠다 (navigation 통합 시험 0/3 → 수정 뒤 10/10, costmap.md §6.2). Nav2 BT 의 `IsTTCBelowThreshold
+only_dynamic="true"` 와 같은 규칙이다.
 
 ### 6.6 도킹 예외 다각형 (계약 C2)
 
