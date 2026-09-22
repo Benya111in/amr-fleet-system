@@ -281,16 +281,24 @@ def test_truthy():
         lu.truthy('maybe')
 
 
-def test_dds_profile_follows_localhost_only():
+def test_dds_profile_follows_localhost_only_and_shm_size():
     # ROS_LOCALHOST_ONLY=1 이면 UDPv4 를 127.0.0.1 로 묶은 변형 (사용자 전송이 rmw 의 localhost 설정을 대체)
-    assert lu.dds_profile_name({}) == 'fastdds_multi_robot.xml'
-    assert lu.dds_profile_name({'ROS_LOCALHOST_ONLY': '0'}) == 'fastdds_multi_robot.xml'
-    assert lu.dds_profile_name({'ROS_LOCALHOST_ONLY': '1'}) == 'fastdds_multi_robot_localhost.xml'
+    big = 8 * 1024 ** 3
+    assert lu.dds_profile_name({}, big) == 'fastdds_multi_robot.xml'
+    assert lu.dds_profile_name({'ROS_LOCALHOST_ONLY': '0'}, big) == 'fastdds_multi_robot.xml'
+    assert (lu.dds_profile_name({'ROS_LOCALHOST_ONLY': '1'}, big)
+            == 'fastdds_multi_robot_localhost.xml')
+    # docker 기본 /dev/shm 64 MB: 16 MB 세그먼트가 공간을 다 써 통신이 멎었다 → SHM 확대 없는 변형
+    for env in ({}, {'ROS_LOCALHOST_ONLY': '1'}):
+        assert lu.dds_profile_name(env, 64 * 1024 ** 2) == 'fastdds_multi_robot_noshm.xml'
+    assert lu.shm_capacity('/no/such/dir') == 0
     import xml.etree.ElementTree as ET
     ns = {'p': 'http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles'}
-    for name, whitelisted in (('fastdds_multi_robot.xml', False),
-                              ('fastdds_multi_robot_localhost.xml', True)):
+    for name, shm, whitelisted in (('fastdds_multi_robot.xml', True, False),
+                                   ('fastdds_multi_robot_localhost.xml', True, True),
+                                   ('fastdds_multi_robot_noshm.xml', False, False)):
         root = ET.parse(str(CONFIG.parent / name)).getroot()
         assert root.find('.//p:mutation_tries', ns).text == '400'
-        assert root.find('.//p:segment_size', ns).text == str(16 * 1024 * 1024)
+        seg = root.find('.//p:segment_size', ns)
+        assert (seg is not None and seg.text == str(16 * 1024 * 1024)) == shm
         assert (root.find('.//p:interfaceWhiteList/p:address', ns) is not None) == whitelisted

@@ -222,6 +222,90 @@ TEST(ScanFilter, RemovesShadowVeilPoints)
   EXPECT_FLOAT_EQ(out[330], 2.0f);
 }
 
+namespace
+{
+/// 수직 벽(거리 d, ±20° 빔)에 σ 잡음을 준 스캔 n 개를 거른 뒤
+/// 벽 빔 유지율과 유지 빔의 평균 거리 오차.
+struct WallStats
+{
+  double kept_ratio;
+  double bias;
+};
+
+WallStats noisyWallStats(const ScanFilter & f, double d, double sigma, int scans, unsigned seed)
+{
+  std::mt19937 rng(seed);
+  std::normal_distribution<double> noise(0.0, sigma);
+  std::size_t wall = 0, kept = 0;
+  double err = 0.0;
+  std::vector<float> out;
+  for (int k = 0; k < scans; ++k) {
+    std::vector<float> in(kBeams, std::numeric_limits<float>::infinity());
+    std::vector<double> truth(kBeams, 0.0);
+    for (int i = 0; i < kBeams; ++i) {
+      const double a = kAngleMin + i * kInc;
+      if (std::abs(a) <= 20.0 * M_PI / 180.0) {
+        truth[i] = d / std::cos(a);
+        in[i] = static_cast<float>(truth[i] + noise(rng));
+      }
+    }
+    f.apply(in, kAngleMin, kInc, 0.1, 25.0, out);
+    for (int i = 0; i < kBeams; ++i) {
+      if (truth[i] > 0.0) {
+        ++wall;
+        if (std::isfinite(out[i])) {
+          ++kept;
+          err += out[i] - truth[i];
+        }
+      }
+    }
+  }
+  return {static_cast<double>(kept) / static_cast<double>(wall),
+    kept > 0 ? err / static_cast<double>(kept) : 0.0};
+}
+}  // namespace
+
+TEST(ScanFilter, ShadowStageKeepsNoisyNearWall)
+{
+  // 명세 σ = 0.03 m 잡음의 근거리 수직 벽: 잡음만으로 생긴 인접 거리 차를 베일로 보면
+  // 먼 쪽 점만 지워져 벽이 짧게 치우친다 (리뷰 실측: 0.5 m 에서 59 % 유지, −1.5 cm).
+  // 기본 설정(전 단계 켬)은 벽 빔을 95 % 이상 남기고 평균 거리 편향이 2 mm 미만이어야 한다.
+  ScanFilter f;
+  for (const double d : {0.5, 1.0, 1.5, 2.0}) {
+    const WallStats w = noisyWallStats(f, d, 0.03, 200, 7u);
+    EXPECT_GE(w.kept_ratio, 0.95) << "d = " << d;
+    EXPECT_LT(std::abs(w.bias), 0.002) << "d = " << d;
+  }
+  // 잡음 조건을 끄면(k = 0, 이전 동작) 같은 벽에서 결함이 재현된다
+  ScanFilterParams old_params;
+  old_params.shadow_noise_factor = 0.0;
+  const WallStats old = noisyWallStats(ScanFilter(old_params), 0.5, 0.03, 200, 7u);
+  EXPECT_LT(old.kept_ratio, 0.75);
+  EXPECT_LT(old.bias, -0.01);
+}
+
+TEST(ScanFilter, RemovesVeilUnderRangeNoise)
+{
+  // 잡음이 있어도 전경(2 m)·배경(6 m) 사이 베일 점(4 m)은 거리 차가 잡음 수준을
+  // 크게 넘으므로 지운다
+  ScanFilterParams p;
+  p.outlier_window = 0;
+  ScanFilter f(p);
+  std::mt19937 rng(3u);
+  std::normal_distribution<double> noise(0.0, 0.03);
+  std::vector<float> in(kBeams);
+  for (int i = 0; i < kBeams; ++i) {
+    in[i] = static_cast<float>((i >= 300 && i < 340 ? 2.0 : 6.0) + noise(rng));
+  }
+  in[340] = 4.0f;
+  std::vector<float> out;
+  const auto s = f.apply(in, kAngleMin, kInc, 0.1, 25.0, out);
+  EXPECT_TRUE(std::isnan(out[340]));
+  EXPECT_LE(s.shadows, 4u);              // 베일 + 모서리 양쪽 정도만, 면 위 점은 남는다
+  EXPECT_TRUE(std::isfinite(out[320]));
+  EXPECT_TRUE(std::isfinite(out[100]));
+}
+
 TEST(ScanFilter, EmptyScan)
 {
   ScanFilter f;

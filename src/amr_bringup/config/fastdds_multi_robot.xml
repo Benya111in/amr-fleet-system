@@ -19,6 +19,8 @@
   같은 그래프에 붙는 외부 도구(ros2 CLI, 통합 테스트 프로브)도 참가자가 100 개를 넘으면 같은 변수를 줘야 보인다
   (scripts/run_integration.sh 가 준다). 사용자가 FASTRTPS_DEFAULT_PROFILES_FILE 을 이미 줬으면 bringup 은 건드리지 않는다.
   ROS_LOCALHOST_ONLY=1 이면 UDPv4 를 127.0.0.1 로 묶은 fastdds_multi_robot_localhost.xml 을 쓴다.
+  /dev/shm 가 2 GiB 보다 작으면(docker 기본 64 MB) SHM 확대 없는 fastdds_multi_robot_noshm.xml 을 쓴다 — 16 MB 세그먼트가
+  공간을 다 써 통신이 멎는다. 컨테이너는 ipc: host (compose) 또는 shm_size ≥ 2 GB 로 띄운다.
 -->
 <profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
   <transport_descriptors>

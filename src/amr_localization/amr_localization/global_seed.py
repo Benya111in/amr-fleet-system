@@ -169,6 +169,85 @@ def nms(hyps: Sequence[Hypothesis], dist: float, ang: float, limit: int,
     return kept
 
 
+def pose_close(a: Tuple[float, float, float], b: Tuple[float, float, float], dist: float,
+               ang: float) -> bool:
+    """두 자세가 위치 dist, 헤딩 ang 안인지."""
+    dyaw = math.atan2(math.sin(a[2] - b[2]), math.cos(a[2] - b[2]))
+    return math.hypot(a[0] - b[0], a[1] - b[1]) <= dist and abs(dyaw) <= ang
+
+
+def alternative_poses(hyps: Sequence[Hypothesis], current: Tuple[float, float, float],
+                      motion: Tuple[float, float, float], dist: float = 1.0,
+                      ang: float = math.radians(20.0)) -> List[Tuple[float, float, float]]:
+    """
+    현재 추정과 다른 가설(별칭)들의 지금 자세.
+
+    가설은 탐색 시각의 자세이므로 그 뒤 odom 상대 이동 motion (탐색 시각 base 프레임에서 본 현재 base) 을
+    합성한다. 현재 추정(AMCL) 에서 dist / ang 안의 가설은 같은 가설로 보고 뺀다.
+    """
+    out = []
+    for h in hyps:
+        c, s = math.cos(h.yaw), math.sin(h.yaw)
+        pose = (h.x + c * motion[0] - s * motion[1], h.y + s * motion[0] + c * motion[1],
+                math.atan2(math.sin(h.yaw + motion[2]), math.cos(h.yaw + motion[2])))
+        if not pose_close(pose, current, dist, ang):
+            out.append(pose)
+    return out
+
+
+def refined_ratio(field: DistanceField, beams: np.ndarray, pose: Tuple[float, float, float],
+                  inlier_dist: float, radius: float = 0.1, step: float = 0.025,
+                  yaw_range: float = math.radians(2.0),
+                  yaw_step: float = math.radians(0.5)) -> Tuple[float, Tuple[float, float, float]]:
+    """
+    자세 pose 주변 ±radius, ±yaw_range 격자에서 인라이어 비율의 최댓값과 그 자세.
+
+    가설(탐색 격자 0.1 m × 1°)과 수렴한 AMCL 자세는 양자화가 달라 그대로 비교하면 격자에 걸친 쪽이 불리하다
+    (대칭 통로 시험: 같은 별칭인데 ρ 0.99 vs 0.94). 양쪽을 같은 국소 탐색으로 올린 뒤 비교한다.
+    """
+    if len(beams) == 0:
+        return 0.0, pose
+    k = int(round(radius / step))
+    dx, dy = [a.ravel() * step for a in np.meshgrid(np.arange(-k, k + 1), np.arange(-k, k + 1))]
+    ky = int(round(yaw_range / yaw_step))
+    best = (-1.0, pose)
+    for j in range(-ky, ky + 1):
+        yaw = pose[2] + j * yaw_step
+        c, s = math.cos(yaw), math.sin(yaw)
+        bx = c * beams[:, 0] - s * beams[:, 1]
+        by = s * beams[:, 0] + c * beams[:, 1]
+        ex = (pose[0] + dx)[:, None] + bx[None, :]
+        ey = (pose[1] + dy)[:, None] + by[None, :]
+        ratio = np.mean(field.lookup(ex.ravel(), ey.ravel()).reshape(ex.shape) <= inlier_dist,
+                        axis=1)
+        i = int(np.argmax(ratio))
+        if ratio[i] > best[0]:
+            best = (float(ratio[i]), (pose[0] + float(dx[i]), pose[1] + float(dy[i]), yaw))
+    return best
+
+
+def alias_margin(field: DistanceField, beams: np.ndarray, current: Tuple[float, float, float],
+                 alternatives: Sequence[Tuple[float, float, float]],
+                 inlier_dist: float) -> Optional[float]:
+    """
+    현재 추정의 (국소 정밀화한) 인라이어 비율 − 별칭 가설들의 (국소 정밀화한) 최대 인라이어 비율.
+
+    별칭이 없으면 None. 작거나 음수면 같은 스캔으로 현재 추정과 별칭을 가를 수 없다.
+    """
+    if not alternatives or len(beams) == 0:
+        return None
+    cur, _ = refined_ratio(field, beams, current, inlier_dist)
+    alt = max(refined_ratio(field, beams, p, inlier_dist)[0] for p in alternatives)
+    return cur - alt
+
+
+def base_beams(ranges: Sequence[float], angle_min: float, angle_increment: float,
+               range_max: float, max_beams: int,
+               sensor_offset: Tuple[float, float, float]) -> np.ndarray:
+    """스캔 → base_footprint 프레임 끝점 (B, 2) (max_beams 로 균등 솎음)."""
+    return _beams(ranges, angle_min, angle_increment, range_max, max_beams, sensor_offset)
+
+
 def search(field: DistanceField, free: np.ndarray, ranges: Sequence[float], angle_min: float,
            angle_increment: float, range_max: float,
            sensor_offset: Tuple[float, float, float] = (0.0, 0.0, 0.0),

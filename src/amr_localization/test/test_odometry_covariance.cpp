@@ -67,8 +67,12 @@ void compareWithMonteCarlo(double v, double w, int steps, double dt, double sigm
   const int runs = 4000;
   for (int r = 0; r < runs; ++r) {
     Eigen::Vector3d q = Eigen::Vector3d::Zero();
+    // 거리당 슬립: Δs + σ_s √(ℓ_ref |Δs|) N(0, 1) (인코더 모델과 같은 생성 과정)
+    const double ref = noise.slip_reference_distance;
     for (int k = 0; k < steps; ++k) {
-      q = stepPose(q, ds_r * (1.0 + sigma_s * n01(rng)), ds_l * (1.0 + sigma_s * n01(rng)));
+      q = stepPose(
+        q, ds_r + sigma_s * std::sqrt(ref * std::abs(ds_r)) * n01(rng),
+        ds_l + sigma_s * std::sqrt(ref * std::abs(ds_l)) * n01(rng));
     }
     finals.push_back(q);
   }
@@ -137,7 +141,7 @@ TEST(OdometryCovariance, RotationMatchesMonteCarlo)
 
 TEST(OdometryCovariance, StraightHeadingVarianceClosedForm)
 {
-  // 직진 L: Var θ = 2 σ_s² Δs L / b² (docs/algorithms/kinematics.md §4)
+  // 직진 L: Var θ = 2 σ_s² ℓ_ref L / b² (docs/algorithms/kinematics.md §4) — 주기 Δs 와 무관
   amr_localization::WheelNoiseParams noise;
   OdometryCovariance cov(kB);
   const double ds = 0.02;
@@ -147,10 +151,30 @@ TEST(OdometryCovariance, StraightHeadingVarianceClosedForm)
     cov.propagate(0.0, BodyIncrement{ds, 0.0}, ds / kR, ds / kR, var, var);
   }
   const double L = ds * steps;
-  const double expected = 2.0 * 1e-4 * ds * L / (kB * kB);
+  const double expected = 2.0 * 1e-4 * noise.slip_reference_distance * L / (kB * kB);
   EXPECT_NEAR(cov.poseCovariance()(2, 2) / expected, 1.0, 1e-9);
-  // Var y ≈ 2 σ_s² Δs L³ / (3 b²)
+  // Var y ≈ 2 σ_s² ℓ_ref L³ / (3 b²)
   EXPECT_NEAR(cov.poseCovariance()(1, 1) / (expected * L * L / 3.0), 1.0, 0.01);
+}
+
+TEST(OdometryCovariance, SlipVarianceIndependentOfSampleRateAndSpeed)
+{
+  // 같은 20 m 직진을 주기 변위 0.005 / 0.02 / 0.04 m (속도·주기 조합) 로 적분해도 헤딩 분산이 같다.
+  // 이전 주기당 곱셈 모델은 Δs 에 비례해 달라졌다 (리뷰: 0.5/1/2 m/s 에서 σ 2.17/3.02/4.41 mm).
+  amr_localization::WheelNoiseParams noise;
+  double first = 0.0;
+  for (const double ds : {0.005, 0.02, 0.04}) {
+    OdometryCovariance cov(kB);
+    const int steps = static_cast<int>(std::lround(20.0 / ds));
+    for (int k = 0; k < steps; ++k) {
+      const double var = amr_localization::stepDisplacementVariance(noise, ds);
+      cov.propagate(0.0, BodyIncrement{ds, 0.0}, ds / kR, ds / kR, var, var);
+    }
+    if (first == 0.0) {
+      first = cov.poseCovariance()(2, 2);
+    }
+    EXPECT_NEAR(cov.poseCovariance()(2, 2) / first, 1.0, 1e-9) << "ds " << ds;
+  }
 }
 
 TEST(OdometryCovariance, ParameterErrorGrowsQuadratically)
@@ -228,10 +252,12 @@ TEST(OdometryCovariance, StepVarianceModel)
 {
   amr_localization::WheelNoiseParams noise;
   noise.slip_noise_stddev = 0.01;
+  noise.slip_reference_distance = 0.01;
   noise.slip_distance_coeff = 1e-6;
+  // (σ_s² ℓ_ref + k)|Δs|
   EXPECT_NEAR(
     amr_localization::stepDisplacementVariance(noise, -0.02),
-    1e-4 * 4e-4 + 1e-6 * 0.02, 1e-18);
+    (1e-4 * 0.01 + 1e-6) * 0.02, 1e-18);
 }
 
 TEST(TwistCovariance, MatchesMonteCarloOfWheelNoise)

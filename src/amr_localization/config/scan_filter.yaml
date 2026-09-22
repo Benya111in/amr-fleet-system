@@ -1,6 +1,7 @@
 # scan_filter_node 파라미터 (명세 4.2 "LiDAR 거리 필터, 각도 필터, 아웃라이어 제거")
 # 알고리즘: docs/algorithms/kinematics.md §6. 빔 수·angle_min/increment 는 바꾸지 않는다 (720 빔 × 0.5°).
-# [공유] range_min/max 는 localization.launch.py 가 config/sensors.yaml lidar.* 에서 덮어쓴다.
+# [공유] range_min/max, shadow_range_noise_stddev 는 localization.launch.py 가 config/sensors.yaml lidar.*
+#        (range_min/max, noise_stddev) 에서 덮어쓴다.
 /**/scan_filter_node:
   ros__parameters:
     # --- 1. 거리 필터 (REP-117: < min → −Inf, > max·미검출 → +Inf) ---
@@ -11,8 +12,11 @@
     angle_window_min: -3.14159265 # [rad] 유지할 창 하한 (기본: 전 방위)
     angle_window_max: 3.14159265  # [rad] 상한
     # angle_mask: [시작1, 끝1, 시작2, 끝2, ...]  [rad] 제거할 반시계 호 목록 (시작 > 끝이면 ±π 를 넘는 호).
-    #   기본 없음: 스캔 평면(지면 +0.38 m)이 차체 상면(+0.33 m)보다 높아 자기 차체가 보이지 않는다.
-    #   적재물이 스캔 평면을 가리는 구성에서만 해당 섹터를 넣는다 (ROS 파라미터는 빈 배열을 YAML 로 줄 수 없어 생략).
+    #   LiDAR 는 차체 안 360° 슬롯(스캔 평면 지면 +0.20 m = base_link_height 0.18 + lidar z 0.02, 데크 +0.33 m
+    #   아래)에 있다. 시뮬레이션은 gpu_lidar <visibility_mask> 가 자기 차체 시각체를 빼므로 마스크가 필요 없다
+    #   (sensors.yaml lidar 주석). 실기는 슬롯 기둥이 가리는 각도 구간을 여기에 넣는다 — 정지 로봇의 원시 scan 에서
+    #   0.35 m 안쪽 고정 반사가 나오는 빔 구간을 ±1° 여유로 잡는다 (docs/architecture/sensor_calibration.md §4).
+    #   ROS 파라미터는 빈 배열을 YAML 로 줄 수 없어 기본값(없음)은 생략한다.
 
     # --- 3. 아웃라이어(스페클) 제거: 이웃 일관성 ---
     outlier_window: 2             # [빔] ±2 빔(±1°) 안에서 지지 이웃을 찾는다. 0 = 끔
@@ -23,7 +27,12 @@
 
     # --- 4. 섀도우(베일) 제거 ---
     shadow_filter_enabled: true
-    shadow_min_angle_deg: 10.0    # [deg] 인접 끝점 선분과 광선의 각이 10° 미만/170° 초과면 먼 쪽 점 제거
+    shadow_min_angle_deg: 10.0    # [deg] 인접 끝점 선분과 광선의 각이 10° 미만/170° 초과이고
                                   #   (모서리 혼합 픽셀 → 벽 사이 허공에 생기는 가짜 점. laser_filters 기본값과 동일)
+    shadow_range_noise_stddev: 0.03  # [m] σ_r (sensors.yaml lidar.noise_stddev 로 덮어씀) — 거리 차가
+    shadow_noise_factor: 3.0      #   |r_i − r_j| > k·√2·σ_r (= 0.127 m) 일 때만 먼 쪽 점 제거. 같은 면 두 빔의 잡음 차
+                                  #   N(0, 2σ²) 가 이를 넘을 확률은 0.27 %. 이 조건이 없으면 r·Δα ≪ σ 인 근거리에서
+                                  #   잡음만으로 β 가 작아져 먼 쪽(+ 잡음) 점만 지워지고 벽이 짧게 치우친다
+                                  #   (0.5 m 벽 59 % 유지·−1.5 cm → 조건 후 ≥ 95 %·|편향| < 2 mm, test_scan_filter)
 
     stats_log_period: 30.0        # [s] 단계별 평균 제거 수 로그 주기 (0 = 끔)

@@ -15,7 +15,9 @@ kidnap_monitor_node: 위치 상실(납치) 감지 → 전역 재초기화 + 제�
   SrvC <ekf_set_pose_service>    robot_localization/srv/SetPose (선택, 복구 즉시 map EKF 이동)
 판정 로직은 amr_localization.kidnap_detector, 전역 가설 탐색은 amr_localization.global_seed
 (둘 다 rclpy 비의존, pytest 대상). 재초기화 시도 k ≤ seed_attempts 는 k 번째 가설을 initialpose 로,
-그 뒤는 AMCL 균일 재초기화(reinitialize_global_localization)로 한다.
+그 뒤는 AMCL 균일 재초기화(reinitialize_global_localization)로 한다. 복구 중에는 현재 추정이 아닌 가설(별칭)을
+탐색 이후 odom 이동만큼 옮겨 같은 스캔으로 인라이어 비율을 재고, 현재 추정이 converge_margin 이상 앞설 때만
+수렴으로 본다 (별칭 거부, docs/algorithms/slam.md §5.2).
 spin 서버가 없으면(단독 시험) fallback_cmd_vel_topic 이 설정된 경우에만 직접 회전 명령을 낸다 —
 운용 스택에서는 cmd_vel 발행자가 safety_node 하나여야 하므로 기본값은 비활성('').
 """
@@ -110,7 +112,9 @@ class KidnapMonitorNode(Node):
         self.last_scan: Optional[LaserScan] = None
         self.seeds: List[global_seed.Hypothesis] = []
         self.seed_odom_yaw = 0.0
+        self.seed_odom_pose: Optional[kd.Pose] = None     # 가설 탐색 시각의 odom 자세
         self.last_odom_yaw = 0.0
+        self.last_alias_margin: Optional[float] = None
         self.seed_attempts = int(self.get_parameter('seed_attempts').value)
         self.map_frame = self.get_parameter('map_frame').value
         self.last_ratio: Optional[float] = None
@@ -224,7 +228,22 @@ class KidnapMonitorNode(Node):
                                    scan.angle_min, scan.angle_increment, scan.range_max,
                                    self.inlier_dist, self.max_beams)
         self.last_ratio = ratio
-        self.execute(self.detector.on_match(t_scan, ratio, valid))
+        self.last_alias_margin = self.alias_margin(scan, t_scan, pose)
+        self.execute(self.detector.on_match(t_scan, ratio, valid, self.last_alias_margin))
+
+    def alias_margin(self, scan: LaserScan, t_scan: float, pose: kd.Pose) -> Optional[float]:
+        """복구 중: ρ(현재 추정) − max ρ(현재 추정이 아닌 전역 가설 = 별칭), 둘 다 국소 정밀화."""
+        if (self.detector.state not in (kd.State.RECOVERING, kd.State.FAILED) or not self.seeds
+                or self.seed_odom_pose is None):
+            return None
+        odom_now = self.detector.odom_pose_at(t_scan)
+        if odom_now is None:
+            return None
+        motion = kd.relative_pose(self.seed_odom_pose, odom_now)
+        alternatives = global_seed.alternative_poses(self.seeds, pose, motion)
+        beams = global_seed.base_beams(scan.ranges, scan.angle_min, scan.angle_increment,
+                                       scan.range_max, self.max_beams, self.lidar_offset)
+        return global_seed.alias_margin(self.field, beams, pose, alternatives, self.inlier_dist)
 
     def on_tick(self) -> None:
         now = self.now_sec()
@@ -279,6 +298,7 @@ class KidnapMonitorNode(Node):
                 self.field, self.field.free, scan.ranges, scan.angle_min, scan.angle_increment,
                 scan.range_max, self.lidar_offset)
             self.seed_odom_yaw = self.last_odom_yaw
+            self.seed_odom_pose = self.detector.odom_pose_at(stamp_sec(scan.header.stamp))
             self.get_logger().info(
                 f'global seed search: {len(self.seeds)} hypotheses in '
                 f'{time.monotonic() - t0:.2f} s: ' + ', '.join(
@@ -389,6 +409,9 @@ class KidnapMonitorNode(Node):
         return {
             'state': d.state.value, 'lost': d.lost,
             'match_ratio': None if self.last_ratio is None else round(self.last_ratio, 3),
+            'alias_margin': (None if self.last_alias_margin is None
+                             else round(self.last_alias_margin, 3)),
+            'alias_rejections': d.alias_rejections,
             'amcl_cov_xy': round(self.last_amcl_cov[0], 4),
             'amcl_var_yaw': round(self.last_amcl_cov[1], 4),
             'recoveries': len(d.recovery_times),

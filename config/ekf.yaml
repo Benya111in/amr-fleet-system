@@ -1,48 +1,46 @@
 # EKF 센서 퓨전 설정 (명세 4장 3절 "위치 추정", robot_localization 3.5.x / ROS2 Humble)
 #
-# 융합 입력: Wheel Odometry + IMU + AMCL  →  dual-EKF 구조 (두 노드, 파일 하나)
+# 필터 구현은 robot_localization ekf_node (명세가 허용하는 "robot_localization 또는 직접 구현" 중 전자)이고,
+# 이 파일은 그 설정이다. 프로젝트 코드는 입력 쪽이다: 각 입력 메시지의 공분산 R 을 잡음 모델에서 계산해
+# 채우는 퍼블리셔(wheel_odometry_node, imu_filter_node, scan_matcher_node)와 AMCL 설정. 식과 입력별 공분산
+# 근거·측정은 docs/algorithms/ekf.md (무엇이 설정이고 무엇이 우리 코드인지 §1 표).
+#
+# 융합 입력: Wheel Odometry + IMU + AMCL (+ 스캔-지도 정합)  →  dual-EKF 구조 (두 노드, 파일 하나)
 #   ekf_filter_node_odom : world_frame=odom. 휠 오도메트리 + IMU 만 융합.
 #                          odom → base_footprint TF 발행. 연속적이고 점프하지 않는다 (REP-105).
-#   ekf_filter_node_map  : world_frame=map.  같은 연속 입력 + AMCL 절대 위치(amcl_pose) 융합.
-#                          map → odom TF 발행. AMCL 재수렴/납치 복구 시 점프할 수 있다 (REP-105).
+#   ekf_filter_node_map  : world_frame=map.  같은 연속 입력 + AMCL 절대 위치(amcl_pose)
+#                          + 스캔-지도 정합(scan_match_pose) 융합. map → odom TF 발행. 납치 복구 시 점프할 수 있다.
 #   하나의 EKF 에 AMCL 을 섞어 odom → base 를 발행하면 odom 프레임이 점프해 Nav2 로컬 플래너와
 #   센서 누적이 깨지므로 두 노드로 나눈다. 레이아웃은 robot_localization 동봉 예제
 #   /opt/ros/humble/share/robot_localization/params/dual_ekf_navsat_example.yaml 을 따른다.
-# 목표 정확도: 정지 3cm / 직선 5cm / 회전 8cm 이내
+# 목표 정확도: 정지 3cm / 직선 5cm / 회전 8cm 이내 (측정: docs/algorithms/slam.md §6.3)
 #
-# 런치 파일 작성 시 지켜야 할 것 (amr_localization/launch/localization.launch.py, 아직 미작성):
-#   - 두 노드 모두 이 파일 하나를 --params-file 로 넘긴다. 파라미터 키가 /**/<노드이름> 이므로
-#     어떤 네임스페이스(/amr_01 등) 아래에서 띄워도 해당 노드에 적용된다 (Humble 에서 검증함.
-#     키를 노드 이름만 쓰면 네임스페이스 안에서는 적용되지 않는다).
-#   - 노드 이름은 ekf_node 실행 시 name='ekf_filter_node_odom' / 'ekf_filter_node_map' 으로 지정한다.
-#   - 두 노드 모두 기본 출력 토픽이 odometry/filtered 이므로 map 노드는
-#     remappings=[('odometry/filtered', 'odometry/filtered_map')] 로 바꿔야 한다.
-#   - AMCL 설정(아직 미작성)에서는 tf_broadcast: false 로 둔다. map → odom 은 ekf_filter_node_map 이
-#     발행한다. 둘 다 발행하면 odom 프레임이 두 부모를 갖고 TF 가 요동한다.
-#   - 프레임 이름에 robot_localization 은 네임스페이스 접두사를 붙여 주지 않는다. 다중 로봇(명세 4.9,
-#     5대)에서는 odom_frame / base_link_frame 을 amr_01/odom, amr_01/base_footprint 처럼 런치에서
-#     파라미터 치환으로 주입한다. map_frame 은 모든 로봇이 공유하는 "map" 그대로 둔다
-#     (map → amr_01/odom, map → amr_02/odom … 자식이 서로 다르므로 TF 충돌이 없다).
-#     아래 값은 단일 로봇 기본값이다.
-#   - 토픽은 상대 이름(wheel_odom, imu/data, amcl_pose)이라 네임스페이스 아래로 해석된다.
-#     퍼블리셔(오도메트리 노드, Gazebo IMU 플러그인, AMCL)도 같은 네임스페이스에서 상대 이름으로
-#     발행해야 한다. 퍼블리셔 설정(config/sensors.yaml 의 topic 값)도 상대 이름으로 맞춘다.
+# 런치(amr_localization/launch/localization.launch.py)가 지키는 것:
+#   - 두 노드 모두 이 파일 하나를 파라미터 파일로 받는다. 키가 /**/<노드이름> 이라 어떤 네임스페이스
+#     (/amr_01 등) 아래에서도 적용된다 (키를 노드 이름만 쓰면 네임스페이스 안에서는 적용되지 않는다).
+#   - 노드 이름 ekf_filter_node_odom / ekf_filter_node_map, map 노드 출력은 odometry/filtered_map 으로 리맵.
+#   - 두 노드의 서비스(set_pose, toggle, enable)는 같은 네임스페이스에서 겹치므로 <노드이름>/<서비스> 로 리맵
+#     (kidnap_monitor_node 가 복구 시 ekf_filter_node_map/set_pose 를 부른다).
+#   - AMCL 은 tf_broadcast: false. map → odom 은 ekf_filter_node_map 만 발행한다.
+#   - 프레임: robot_localization 은 네임스페이스 접두사를 붙여 주지 않으므로 런치가 odom_frame /
+#     base_link_frame 을 <prefix>odom, <prefix>base_footprint 로 덮어쓴다 (map_frame 은 공용 "map").
+#     아래 값은 단일 로봇·접두어 없는 기본값이다.
+#   - 토픽은 상대 이름(wheel_odom, imu/data, amcl_pose, scan_match_pose)이라 로봇 네임스페이스로 해석된다.
 #   - use_sim_time 은 런치에서 넘긴다 (Gazebo /clock).
 #
-# 공분산 설정 근거 (명세 4.3 "각 입력의 공분산 행렬 근거 문서화")
-#   측정 공분산 R 은 이 파일이 아니라 각 메시지의 covariance 필드에서 읽는다. 따라서 값의 출처는
-#   퍼블리셔이며, 퍼블리셔가 config/sensors.yaml 의 노이즈 파라미터로 채워야 한다:
-#     wheel_odom.twist.covariance     ← wheel_encoder.slip_noise_stddev 0.01  → σ²=1e-4 (vx, vy, vyaw)
-#     imu/data.angular_velocity_cov   ← imu.gyro_noise_stddev 0.0002 rad/s  → σ²=4e-8
-#     imu/data.linear_acceleration_cov← imu.accel_noise_stddev 0.017 m/s²   → σ²≈2.9e-4
-#     amcl_pose.pose.covariance       ← AMCL 파티클 분포에서 매 갱신 계산 (수렴 시 작아지고 납치 시 커진다)
-#   융합하는 변수의 covariance 를 0 으로 비워 두면 robot_localization 이 임의의 작은 값으로 대체해
-#   그 센서를 과신하므로 반드시 채운다.
+# 공분산 설정 근거 (명세 4.3 "각 입력의 공분산 행렬 근거 문서화") — 상세 유도·수치는 ekf.md §3
+#   측정 공분산 R 은 이 파일이 아니라 각 메시지의 covariance 필드에서 읽는다 (0 이면 robot_localization 이
+#   작은 값으로 대체해 그 센서를 과신한다). 출처:
+#     wheel_odom.twist.covariance      ← wheel_odometry_node: 발행 구간 T 의 바퀴 변위 분산
+#                                        σ_i²(T) = σ_s² ℓ_ref Σ|Δs_i| + k|ΣΔs_i| + δ²/6 (거리당 슬립 + 양자화) 을
+#                                        Var v = (σ_R²+σ_L²)/(4T²), Var ω = (σ_R²+σ_L²)/(b²T²) 로 전파.
+#                                        vy: 비홀로노믹 구속 신뢰도 σ_vy0 = 0.02 m/s (wheel_odometry.yaml)
+#     imu/data 각속도·가속도 공분산     ← imu_filter_node: σ² + SE² (sensors.yaml 잡음 + 기동 바이어스 추정 표준오차)
+#     amcl_pose.pose.covariance        ← AMCL 파티클 분포의 표본 공분산 (수렴 시 작고 납치 시 커진다)
+#     scan_match_pose.pose.covariance  ← scan_matcher_node: κ s² (JᵀWJ)⁻¹ (정합 헤시안 역 × 상관 팽창 κ, 하한)
 #   프로세스 노이즈 Q, 초기 공분산 P0 는 이 파일에서 15x15 전체 행렬(225개, 행 우선)로 준다.
 #   robot_localization 3.5.x 는 길이를 검사하지 않아 15개만 주면 힙 쓰레기값을 읽어 출력이 전부 NaN 이
-#   된다 (실제 발생했던 결함). 값은 robot_localization 기본값에서 출발한다. 실측(Ground Truth 대비
-#   RMSE, 명세 4.3) 후 튜닝하고 그 근거는 docs/algorithms/ekf.md 에 남긴다.
-#   상태 순서: x y z roll pitch yaw vx vy vz vroll vpitch vyaw ax ay az
+#   된다 (실제 발생했던 결함). 상태 순서: x y z roll pitch yaw vx vy vz vroll vpitch vyaw ax ay az
 #   two_d_mode 에서 z roll pitch vz vroll vpitch az 는 0 으로 고정되므로 해당 성분은 의미가 없다.
 
 # ---------------------------------------------------------------------------
@@ -206,6 +204,23 @@
     pose0_differential: false
     pose0_relative: false
     pose0_queue_size: 5
+
+    # --- 입력 4: 스캔-지도 정합 (scan_matcher_node, map 프레임 절대 자세, 스캔마다 10 Hz) ---
+    # 정지·저속에서 AMCL 파티클 평균의 cm 흔들림 대신 지도 대비 mm 수준 자세 (slam.md §4.3). 공분산은
+    # 정합 헤시안 역 × κ: 통로처럼 한 방향만 구속되면 그 방향 분산이 커져 그 성분만 약하게 반영된다.
+    # 이상치 거부 5σ (Mahalanobis): 다른 국소 분지로 잘못 맞은 정합을 버린다. AMCL(pose0)은 거부 문턱 없이
+    # 두어 납치 복구 점프를 받아들이고, 복구 직후에는 kidnap_monitor 가 set_pose 로 EKF 를 옮기며 정합은
+    # 위치 상실 동안 멈춘다 (localization/lost).
+    pose1: scan_match_pose
+    pose1_config: [true,  true,  false,    # x, y
+                   false, false, true,     # yaw
+                   false, false, false,
+                   false, false, false,
+                   false, false, false]
+    pose1_differential: false
+    pose1_relative: false
+    pose1_queue_size: 5
+    pose1_rejection_threshold: 5.0
 
     # --- 프로세스 노이즈 공분산 Q (15x15, 대각, robot_localization 기본값) ---
     # x, y 의 Q 가 AMCL 을 얼마나 빨리 따라갈지 정한다. 합성 실측(AMCL 2Hz, 보고 공분산 σ=0.2m):

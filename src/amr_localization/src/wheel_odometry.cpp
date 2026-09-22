@@ -15,6 +15,17 @@ namespace
 // 매 입력 발행하고, 100 Hz 입력 / 50 Hz 발행에서는 정확히 한 개 걸러 발행한다.
 constexpr double kScheduleTolerance = 0.25;
 
+/// 바퀴별 인코더 파라미터: 슬립 기준 회전각 φ_ref = ℓ_ref / r_i
+/// (거리당 슬립 분산이 공분산 모델과 일치하도록).
+EncoderParams wheelEncoderParams(const WheelOdometryParams & p, double radius)
+{
+  EncoderParams e = p.encoder;
+  if (radius > 0.0 && p.noise.slip_reference_distance > 0.0) {
+    e.slip_reference_angle = p.noise.slip_reference_distance / radius;
+  }
+  return e;
+}
+
 Eigen::Matrix2d parameterCovariance(const DiffDriveGeometry & g, double rel_stddev)
 {
   Eigen::Matrix2d s = Eigen::Matrix2d::Zero();
@@ -28,8 +39,8 @@ Eigen::Matrix2d parameterCovariance(const DiffDriveGeometry & g, double rel_stdd
 
 WheelOdometry::WheelOdometry(const WheelOdometryParams & params)
 : params_(params),
-  left_encoder_(params.encoder, params.seed),
-  right_encoder_(params.encoder, params.seed + 1),
+  left_encoder_(wheelEncoderParams(params, params.geometry.left_wheel_radius), params.seed),
+  right_encoder_(wheelEncoderParams(params, params.geometry.right_wheel_radius), params.seed + 1),
   covariance_(params.geometry.wheel_separation)
 {
   if (!params_.geometry.valid()) {
@@ -49,6 +60,7 @@ void WheelOdometry::resetInterval(double stamp)
   acc_dphi_left_ = acc_dphi_right_ = 0.0;
   acc_slip_var_left_ = acc_slip_var_right_ = 0.0;
   interval_ticks_left_ = interval_ticks_right_ = 0;
+  interval_ambiguous_ = 0;
 }
 
 void WheelOdometry::resetPose(const Pose2D & pose)
@@ -82,7 +94,8 @@ void WheelOdometry::setParameterCovariance(const Eigen::Matrix2d & sigma_psi)
 }
 
 bool WheelOdometry::update(
-  double stamp, double left_angle, double right_angle, WheelOdometryOutput & out)
+  double stamp, double left_angle, double right_angle, WheelOdometryOutput & out,
+  double left_velocity, double right_velocity)
 {
   if (initialized_ && stamp < last_stamp_ - 1e-9) {
     // 시뮬레이션 리셋 등 시간 역행: 모든 상태를 버리고 새로 시작한다
@@ -97,8 +110,9 @@ bool WheelOdometry::update(
   {
     return false;
   }
-  const EncoderReading left = left_encoder_.update(left_angle);
-  const EncoderReading right = right_encoder_.update(right_angle);
+  const double gap = initialized_ ? stamp - last_stamp_ : 0.0;
+  const EncoderReading left = left_encoder_.update(left_angle, left_velocity, gap);
+  const EncoderReading right = right_encoder_.update(right_angle, right_velocity, gap);
   if (!initialized_ || !left.valid || !right.valid) {
     initialized_ = true;
     last_stamp_ = stamp;
@@ -112,8 +126,17 @@ bool WheelOdometry::update(
   const double ds_right = g.right_wheel_radius * right.delta_angle;
   const BodyIncrement inc = wheelDisplacementsToIncrement(ds_left, ds_right, g.wheel_separation);
 
-  const double var_left = stepDisplacementVariance(params_.noise, ds_left);
-  const double var_right = stepDisplacementVariance(params_.noise, ds_right);
+  // 분기 모호·불가능 점프: 그 증분을 믿지 않도록 한 바퀴 둘레² 를 더한다
+  const double rev_left = 2.0 * M_PI * g.left_wheel_radius;
+  const double rev_right = 2.0 * M_PI * g.right_wheel_radius;
+  const double extra_left = left.ambiguous ? rev_left * rev_left : 0.0;
+  const double extra_right = right.ambiguous ? rev_right * rev_right : 0.0;
+  if (left.ambiguous || right.ambiguous) {
+    ++interval_ambiguous_;
+    ++ambiguous_total_;
+  }
+  const double var_left = stepDisplacementVariance(params_.noise, ds_left) + extra_left;
+  const double var_right = stepDisplacementVariance(params_.noise, ds_right) + extra_right;
   covariance_.propagate(
     pose_.theta, inc, left.delta_angle, right.delta_angle, var_left, var_right);
   pose_ = integrate(pose_, inc, params_.integration);
@@ -122,9 +145,11 @@ bool WheelOdometry::update(
   acc_ds_right_ += ds_right;
   acc_dphi_left_ += left.delta_angle;
   acc_dphi_right_ += right.delta_angle;
-  const double sigma_s2 = params_.noise.slip_noise_stddev * params_.noise.slip_noise_stddev;
-  acc_slip_var_left_ += sigma_s2 * ds_left * ds_left;
-  acc_slip_var_right_ += sigma_s2 * ds_right * ds_right;
+  // 슬립 분산 (물리 슬립 k 는 구간 합 |ΣΔs| 로 따로): σ_s² ℓ_ref |Δs| + 모호 구간 가산
+  const double slip_per_m = params_.noise.slip_noise_stddev * params_.noise.slip_noise_stddev *
+    params_.noise.slip_reference_distance;
+  acc_slip_var_left_ += slip_per_m * std::abs(ds_left) + extra_left;
+  acc_slip_var_right_ += slip_per_m * std::abs(ds_right) + extra_right;
   interval_ticks_left_ += left.delta_ticks;
   interval_ticks_right_ += right.delta_ticks;
   last_stamp_ = stamp;
@@ -173,6 +198,7 @@ bool WheelOdometry::update(
   out.ticks_right = right.ticks;
   out.tick_rate_left = static_cast<double>(interval_ticks_left_) / interval;
   out.tick_rate_right = static_cast<double>(interval_ticks_right_) / interval;
+  out.ambiguous_steps = interval_ambiguous_;
   resetInterval(stamp);
   return true;
 }

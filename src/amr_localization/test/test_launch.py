@@ -47,9 +47,12 @@ def test_shared_parameters_from_workspace_config():
     assert shared['wheel']['publish_rate'] == pytest.approx(50.0)
     assert shared['imu']['gyro_noise_stddev'] == pytest.approx(0.0002)
     assert shared['scan']['range_max'] == pytest.approx(25.0)
+    # 섀도우 단계의 잡음 조건은 LiDAR 잡음 모델(sensors.yaml noise_stddev)을 따른다
+    assert shared['scan']['shadow_range_noise_stddev'] == pytest.approx(0.03)
     assert shared['lidar_offset'] == pytest.approx([0.15, 0.0, 0.0])
+    assert shared['range_noise'] == pytest.approx(0.03)
     assert mod.shared_parameters('/nonexistent') == {
-        'wheel': {}, 'imu': {}, 'scan': {}, 'lidar_offset': None}
+        'wheel': {}, 'imu': {}, 'scan': {}, 'lidar_offset': None, 'range_noise': None}
 
 
 @pytest.mark.parametrize('mode, expected', [
@@ -58,7 +61,8 @@ def test_shared_parameters_from_workspace_config():
               'wheel_odometry_node']),
     ('localization', ['amcl', 'amcl_map_adapter', 'ekf_node', 'ekf_node', 'imu_filter_node',
                       'kidnap_monitor_node', 'lifecycle_manager', 'lifecycle_manager',
-                      'map_server', 'scan_filter_node', 'wheel_odometry_node']),
+                      'map_server', 'scan_filter_node', 'scan_matcher_node',
+                      'wheel_odometry_node']),
 ])
 def test_modes_build_expected_nodes(mode, expected):
     mod = load_module()
@@ -72,6 +76,8 @@ def test_localization_without_map_server_or_monitor():
                                      robot_name=''))
     names = executables(actions)
     assert 'map_server' not in names and 'kidnap_monitor_node' not in names
+    off = executables(mod._setup(context_for(mod, use_scan_matcher='false')))
+    assert 'scan_matcher_node' not in off and 'amcl' in off
 
 
 def plain(value):

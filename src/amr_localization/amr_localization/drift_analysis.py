@@ -75,19 +75,23 @@ def net_rotation(yaw: np.ndarray) -> float:
     return float(np.sum(wrap(np.diff(yaw)))) if yaw.size > 1 else 0.0
 
 
-def predicted_straight(length: float, speed: float, sigma_s: float, separation: float,
-                       dt: float) -> Dict[str, float]:
-    """직진 L 의 폐형 표준편차 (x, y, θ)."""
-    k = sigma_s ** 2 * abs(speed) * dt
+def predicted_straight(length: float, sigma_s: float, separation: float,
+                       ref_distance: float = 0.01) -> Dict[str, float]:
+    """
+    직진 L 의 폐형 표준편차 (x, y, θ).
+
+    거리당 슬립 Var(Δs_i) = k|Δs_i|, k = σ_s² ℓ_ref (속도·주기와 무관, kinematics.md §4.1).
+    """
+    k = sigma_s ** 2 * ref_distance
     return {'sigma_x': math.sqrt(k * length / 2.0),
             'sigma_y': math.sqrt(2.0 * k * length ** 3 / (3.0 * separation ** 2)),
             'sigma_yaw': math.sqrt(2.0 * k * length / separation ** 2)}
 
 
-def predicted_rotation(angle: float, yaw_rate: float, sigma_s: float, separation: float,
-                       dt: float) -> Dict[str, float]:
-    """제자리 회전 Θ 의 폐형 헤딩 표준편차."""
-    k = sigma_s ** 2 * abs(yaw_rate) * separation / 2.0 * dt
+def predicted_rotation(angle: float, sigma_s: float, separation: float,
+                       ref_distance: float = 0.01) -> Dict[str, float]:
+    """제자리 회전 Θ 의 폐형 헤딩 표준편차 (바퀴마다 |Θ|b/2 굴림 → Var θ = k|Θ|/b)."""
+    k = sigma_s ** 2 * ref_distance
     return {'sigma_yaw': math.sqrt(k * abs(angle) / separation)}
 
 
@@ -257,20 +261,20 @@ def summarize(runs: Sequence[RunMetrics], meta: Optional[Dict[str, float]] = Non
                           f"{e['heading_scale']:.5f} → r_eff = {e['wheel_radius_eff']:.5f} m "
                           f"(공칭 {meta['wheel_radius']}), b_eff = {e['separation_eff']:.5f} m "
                           f"(공칭 {meta['separation']})"]
-    if meta and all(k in meta for k in ('sigma_s', 'separation', 'dt')):
-        lines += ['', '## 폐형 예측 (슬립 잡음만, 체계 오차 0)', '']
+    if meta and all(k in meta for k in ('sigma_s', 'separation')):
+        ref = meta.get('slip_reference_distance', 0.01)
+        lines += ['', f'## 폐형 예측 (거리당 슬립 잡음만 σ_s {meta["sigma_s"]}, ℓ_ref {ref} m, '
+                      '체계 오차 0)', '']
         for r in runs:
-            if r.scenario == 'straight' and 'linear_speed' in meta:
-                p = predicted_straight(r.path_length, meta['linear_speed'], meta['sigma_s'],
-                                       meta['separation'], meta['dt'])
+            if r.scenario == 'straight':
+                p = predicted_straight(r.path_length, meta['sigma_s'], meta['separation'], ref)
                 lines.append(f"- straight {r.run}: L={r.path_length:.2f} m → σ_x "
                              f"{p['sigma_x']:.4f} m, σ_y {p['sigma_y']:.4f} m, σ_θ "
                              f"{math.degrees(p['sigma_yaw']):.3f} deg")
                 break
         for r in runs:
-            if r.scenario == 'rotate' and 'angular_speed' in meta:
-                p = predicted_rotation(r.rotation, meta['angular_speed'], meta['sigma_s'],
-                                       meta['separation'], meta['dt'])
+            if r.scenario == 'rotate':
+                p = predicted_rotation(r.rotation, meta['sigma_s'], meta['separation'], ref)
                 lines.append(f"- rotate {r.run}: Θ={r.rotation:.2f} rad → σ_θ "
                              f"{math.degrees(p['sigma_yaw']):.3f} deg")
                 break
@@ -311,13 +315,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument('--sigma-s', type=float, default=0.01, help='슬립 잡음 σ_s (폐형 예측)')
     ap.add_argument('--separation', type=float, default=0.36, help='바퀴 간격 b [m]')
     ap.add_argument('--wheel-radius', type=float, default=0.0825, help='바퀴 반지름 r [m]')
-    ap.add_argument('--dt', type=float, default=0.02, help='인코더 주기 [s]')
-    ap.add_argument('--linear-speed', type=float, default=0.5)
-    ap.add_argument('--angular-speed', type=float, default=0.5)
+    ap.add_argument('--slip-reference-distance', type=float, default=0.01,
+                    help='슬립 기준 굴림 거리 ℓ_ref [m] (wheel_odometry.yaml)')
     args = ap.parse_args(argv)
     meta = {'sigma_s': args.sigma_s, 'separation': args.separation,
-            'wheel_radius': args.wheel_radius, 'dt': args.dt,
-            'linear_speed': args.linear_speed, 'angular_speed': args.angular_speed}
+            'wheel_radius': args.wheel_radius,
+            'slip_reference_distance': args.slip_reference_distance}
     runs = analyze_directory(Path(args.input), meta)
     if not runs:
         print(f'no runs in {args.input}', file=sys.stderr)

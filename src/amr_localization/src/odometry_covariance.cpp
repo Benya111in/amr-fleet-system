@@ -38,7 +38,8 @@ StepJacobians exactArcJacobians(double theta, const BodyIncrement & increment, d
 double stepDisplacementVariance(const WheelNoiseParams & noise, double ds)
 {
   const double sigma = noise.slip_noise_stddev;
-  return sigma * sigma * ds * ds + noise.slip_distance_coeff * std::abs(ds);
+  return (sigma * sigma * noise.slip_reference_distance + noise.slip_distance_coeff) *
+         std::abs(ds);
 }
 
 double quantizationVariance(double tick_distance)

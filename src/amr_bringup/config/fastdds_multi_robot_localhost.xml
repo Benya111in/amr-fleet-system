@@ -2,6 +2,7 @@
 <!--
   ROS_LOCALHOST_ONLY=1 용 변형: fastdds_multi_robot.xml 과 같고 UDPv4 만 127.0.0.1 로 묶는다 (호스트 밖으로
   디스커버리가 나가지 않게 — 사용자 전송을 주면 rmw 의 기본 localhost 전송 설정이 대체되기 때문).
+  /dev/shm 가 2 GiB 보다 작으면 이 파일 대신 fastdds_multi_robot_noshm.xml 을 쓴다 (launch_utils.dds_profile_name).
 
   Fast DDS 참가자 기본 프로파일 — 시스템 전체 (multi_robot.launch.py / system.launch.py 가 모든 하위 프로세스에 준다).
 

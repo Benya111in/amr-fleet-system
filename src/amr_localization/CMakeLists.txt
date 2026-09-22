@@ -66,6 +66,7 @@ ament_python_install_package(${PROJECT_NAME})
 install(PROGRAMS
   scripts/amcl_map_adapter
   scripts/kidnap_monitor_node
+  scripts/scan_matcher_node
   scripts/odom_drift_experiment
   scripts/drift_report
   scripts/map_quality

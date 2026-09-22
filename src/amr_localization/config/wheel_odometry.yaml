@@ -10,18 +10,30 @@
     left_wheel_radius: 0.0        # [m] >0 이면 좌 바퀴만 덮어씀 (UMBmark 보정 결과 E_d 반영용), 0 = wheel_radius
     right_wheel_radius: 0.0       # [m] 위와 같음 (우)
     wheel_separation: 0.36        # [m] 바퀴 중심 간 거리 b. 오차 δb/b 는 회전각 스케일 오차가 된다
-    # [무차원] 유효 간격 = b × 배율 (launch 가 덮어쓰지 않는 보정값). Gazebo 드리프트 실험(제자리 2π × 3 회,
-    #   부하 평균 < 20)에서 wheel_odom 회전이 GT 보다 0.565 % 크게 나왔다 (Θ_odom/Θ_gt = 1.00565 ± 0.0003,
-    #   접지 패치·캐스터 마찰로 실제 회전 중심 간격이 기하값보다 큼) → b_eff = 0.36202 m. 실기는 UMBmark
-    #   으로 다시 식별한다 (docs/algorithms/kinematics.md §7.3). 1.0 = 기하값 그대로
+    # [무차원] 유효 간격 = b × 배율 (launch 가 덮어쓰지 않는 보정값). Gazebo 드리프트 실험(제자리 2π × 3 회)에서
+    #   wheel_odom 회전이 GT 보다 크게 나오는 체계 오차(접지 패치·캐스터 마찰로 실제 회전 중심 간격이 기하값보다
+    #   큼)를 회전 배율 Θ_odom/Θ_gt 로 식별한 값 → b_eff = b × 배율. 통합 월드(바퀴 토크 한계 3.0 N·m)에서 다시
+    #   재면 잔여 회전 배율 0.99969 → 1.0053 (1 바퀴 0.11°) 이지만 odom EKF 헤딩은 자이로가 정하므로 그대로 둔다
+    #   (docs/algorithms/kinematics.md §7.2). 실기는 UMBmark 로 다시 식별한다. 1.0 = 기하값 그대로
     wheel_separation_multiplier: 1.00565
 
     # --- 인코더 모델 [공유: sensors.yaml wheel_encoder.*] ---
     ticks_per_revolution: 4096    # [tick/rev] 명세 하한. 1 틱 = 2πr/N = 0.127 mm
-    slip_noise_stddev: 0.01       # [무차원] 주기마다 바퀴 변위에 곱하는 (1 + N(0, σ)) 의 σ
+    slip_noise_stddev: 0.01       # [무차원] σ_s: 기준 굴림 ℓ_ref 에서의 상대 슬립 σ. 거리당 모델 —
+                                  #      바퀴 변위 Δs 에 N(0, σ_s² ℓ_ref |Δs|) 를 더한다 (Δs = ℓ_ref 에서
+                                  #      (1 + N(0, σ_s)) 곱과 같음). 누적 분산은 굴린 거리에만 비례하고
+                                  #      속도·publish_rate 와 무관하다 (거리 1 m 당 σ² = σ_s² ℓ_ref = 1e-6 m²)
+    slip_reference_distance: 0.01 # [m] ℓ_ref: σ_s 를 정의한 굴림 거리 = 0.5 m/s × 50 Hz 한 주기 (이전 주기당 모델이
+                                  #      드리프트 실험(0.5 m/s)에서 NEES ≈ 3 으로 검증된 조건 → 그 조건의 통계 유지)
     publish_rate: 50.0            # [Hz] 인코더 샘플 = 발행 주기. joint_states(최대 1 kHz)는 이 주기로 솎는다.
-                                  #      EKF(50 Hz)와 같게 두어 지연 최소. 올리면 슬립 잡음이 주기당 적용되므로
-                                  #      같은 거리의 누적 잡음이 커진다(σ_s 는 "주기당" 정의)
+                                  #      EKF(50 Hz)와 같게 두어 지연 최소. 슬립 잡음은 거리당이라 이 값을
+                                  #      바꿔도 같은 거리의 누적 잡음은 같다 (트위스트 σ 는 1/T 로 커진다)
+    # 다회전 카운터 (kinematics.md §2): Gazebo JointStatePublisher 의 조인트 각은 감기지 않는 누적각 → false.
+    # true 면 (−π, π] 입력으로 보고 joint_states velocity × 공백으로 2π 분기를 고른다.
+    joint_position_wrapped: false
+    max_wheel_speed: 30.0         # [rad/s] ω_max = (v_max 2.0 + ω_max 1.5 × b/2)/r ≈ 27.5 에 여유. 공백 Δt 에서
+                                  #      |Δφ| > ω_max Δt + π 인 점프나 (감긴 입력·속도 없음) 분기 모호 구간은
+                                  #      그 구간 변위 분산에 (2πr)² 를 더한다 (EKF 가 믿지 않게)
     enable_quantization: true     # false: 양자화 끔 (분석/비교용)
     enable_slip_noise: true       # false: 슬립 잡음 끔 (분석/비교용)
     noise_seed: 0                 # 0 = 매 실행 무작위, >0 = 재현 가능한 고정 seed

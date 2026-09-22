@@ -8,11 +8,15 @@
 namespace amr_localization
 {
 
+namespace
+{
+constexpr double kTwoPi = 2.0 * M_PI;
+}  // namespace
+
 WheelEncoderModel::WheelEncoderModel(const EncoderParams & params, std::uint64_t seed)
 : params_(params),
   tick_angle_(0.0),
-  rng_(seed),
-  noise_(0.0, params.slip_noise_stddev > 0.0 ? params.slip_noise_stddev : 1.0)
+  rng_(seed)
 {
   if (params_.ticks_per_revolution <= 0) {
     throw std::invalid_argument("ticks_per_revolution must be positive");
@@ -20,7 +24,13 @@ WheelEncoderModel::WheelEncoderModel(const EncoderParams & params, std::uint64_t
   if (params_.slip_noise_stddev < 0.0) {
     throw std::invalid_argument("slip_noise_stddev must be non-negative");
   }
-  tick_angle_ = 2.0 * M_PI / static_cast<double>(params_.ticks_per_revolution);
+  if (!(params_.slip_reference_angle > 0.0)) {
+    throw std::invalid_argument("slip_reference_angle must be positive");
+  }
+  if (!(params_.max_wheel_speed > 0.0)) {
+    throw std::invalid_argument("max_wheel_speed must be positive");
+  }
+  tick_angle_ = kTwoPi / static_cast<double>(params_.ticks_per_revolution);
 }
 
 std::int64_t WheelEncoderModel::quantizeAngle(double angle) const
@@ -31,41 +41,67 @@ std::int64_t WheelEncoderModel::quantizeAngle(double angle) const
 void WheelEncoderModel::reset()
 {
   initialized_ = false;
+  last_velocity_ = std::numeric_limits<double>::quiet_NaN();
 }
 
-EncoderReading WheelEncoderModel::update(double joint_angle)
+double WheelEncoderModel::unwrapDelta(
+  double raw_delta, double velocity, double dt, bool & ambiguous) const
+{
+  ambiguous = false;
+  const double reach = params_.max_wheel_speed * dt;   // 공백 동안 가능한 최대 회전
+  if (!params_.wrapped_input) {
+    // 연속 누적각: 차가 곧 회전량. 불가능한 점프(조인트 리셋 등)만 표시한다.
+    ambiguous = dt > 0.0 && std::abs(raw_delta) > reach + M_PI;
+    return raw_delta;
+  }
+  if (dt > 0.0 && std::isfinite(velocity)) {
+    // 감긴 입력: 속도 힌트(사다리꼴 적분)에 가장 가까운 2π 분기
+    const double predicted = std::isfinite(last_velocity_) ?
+      0.5 * (last_velocity_ + velocity) * dt : velocity * dt;
+    const double k = std::round((predicted - raw_delta) / kTwoPi);
+    return raw_delta + kTwoPi * k;
+  }
+  // 힌트 없음: (−π, π] 로 접는다. 공백이 π/ω_max 를 넘으면 분기가 모호하다.
+  ambiguous = dt > 0.0 && reach > M_PI;
+  return std::remainder(raw_delta, kTwoPi);
+}
+
+EncoderReading WheelEncoderModel::update(double joint_angle, double velocity, double dt)
 {
   EncoderReading out;
   if (!initialized_) {
     initialized_ = true;
     last_raw_angle_ = joint_angle;
+    last_velocity_ = velocity;
     unwrapped_angle_ = joint_angle;
     ticks_ = quantizeAngle(unwrapped_angle_);
     out.ticks = ticks_;
     return out;
   }
 
-  // 감긴 각도 대비: 주기 차를 (−π, π] 로 접는다
-  // (50 Hz 에서 최대 바퀴 속도 24 rad/s 라도 주기당 0.48 rad 라 모호하지 않다).
-  double raw_delta = joint_angle - last_raw_angle_;
-  raw_delta = std::remainder(raw_delta, 2.0 * M_PI);
+  bool ambiguous = false;
+  const double delta = unwrapDelta(joint_angle - last_raw_angle_, velocity, dt, ambiguous);
   last_raw_angle_ = joint_angle;
-  unwrapped_angle_ += raw_delta;
+  last_velocity_ = velocity;
+  unwrapped_angle_ += delta;
 
   const std::int64_t new_ticks = quantizeAngle(unwrapped_angle_);
   out.delta_ticks = new_ticks - ticks_;
   ticks_ = new_ticks;
   out.ticks = ticks_;
-  out.true_delta_angle = raw_delta;
+  out.true_delta_angle = delta;
+  out.ambiguous = ambiguous;
 
   const double measured = params_.quantize ?
-    static_cast<double>(out.delta_ticks) * tick_angle_ : raw_delta;
-  double eps = 0.0;
+    static_cast<double>(out.delta_ticks) * tick_angle_ : delta;
+  double noise = 0.0;
   if (params_.slip_noise && params_.slip_noise_stddev > 0.0) {
-    eps = noise_(rng_);
+    // 거리당 슬립: Var η = σ_s² φ_ref |Δφ| (난수는 매 갱신 하나 — seed 재현성)
+    noise = params_.slip_noise_stddev *
+      std::sqrt(params_.slip_reference_angle * std::abs(measured)) * noise_(rng_);
   }
-  out.slip_factor = 1.0 + eps;
-  out.delta_angle = measured * out.slip_factor;
+  out.delta_angle = measured + noise;
+  out.slip_factor = measured != 0.0 ? out.delta_angle / measured : 1.0;
   out.valid = true;
   return out;
 }

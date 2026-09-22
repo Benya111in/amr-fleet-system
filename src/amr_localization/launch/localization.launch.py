@@ -11,7 +11,7 @@ r"""
                         odom         : 전처리 3 노드 + ekf_filter_node_odom 만 (드리프트 실험·단위 확인)
                         slam         : + slam_toolbox (map→odom 발행, /map 발행)
                         localization : + map_server(루트, 선택) + amcl + ekf_filter_node_map
-                                       + kidnap_monitor_node
+                                       + kidnap_monitor_node + scan_matcher_node (map EKF pose1)
     robot_name        네임스페이스 (기본 amr_01, '' 이면 네임스페이스 없음)
     frame_prefix      프레임 접두어 (기본 'auto' = robot_name + '/', robot_name 이 '' 면 '')
     use_sim_time      (기본 true)
@@ -20,6 +20,8 @@ r"""
     start_map_server  루트 map_server + lifecycle_manager_map 기동 (기본 true; 다중 로봇은 한 번만)
     initial_x/y/yaw   AMCL 초기 자세 = 스폰 자세 [m, rad]
     use_kidnap_monitor (기본 true), kidnap_fallback_cmd_vel ('' 기본, 단독 시험만 cmd_vel)
+    use_scan_matcher  (기본 true) 스캔-지도 점-대-면 정합을 map EKF 에 자세 측정으로 넣는다
+                        (docs/algorithms/slam.md §4.3; false 면 AMCL 만)
     amcl_half_cell_fix  (기본 true) amcl_map_adapter 가 /map 을 원점 반 셀 보정해 map_amcl 로 재발행하고
                         AMCL 은 그것을 구독한다 (nav2_amcl 반올림 규약 편향 보정, docs/algorithms/slam.md §4)
     bias_estimation_time  IMU 기동 바이어스 추정 시간 [s] ('' = imu_filter.yaml 값)
@@ -42,6 +44,10 @@ from launch_ros.actions import Node
 import yaml
 
 MODES = ('slam', 'localization', 'odom')
+# lifecycle_manager bond 시간 상한 [s] (기동 대기 + 운용 중 heartbeat). 통합 실측: 5대 + 공유 호스트 과부하
+# (load 60~230)에서 4 s(map 기본)·10 s(amcl) 가 넘어 "unable to be reached by bond → Aborting bringup" 이
+# 났다. 운용 중 bond 가 끊기면 관리 노드 전체를 내리므로 넉넉히 둔다 (navigation.launch.py 와 같은 값)
+BOND_TIMEOUT_S = 30.0
 
 
 def _ws_path(*parts: str) -> str:
@@ -65,7 +71,7 @@ def shared_parameters(config_dir: str) -> dict:
     enc = sensors.get('wheel_encoder', {})
     imu = sensors.get('imu', {})
     lidar = sensors.get('lidar', {})
-    out = {'wheel': {}, 'imu': {}, 'scan': {}, 'lidar_offset': None}
+    out = {'wheel': {}, 'imu': {}, 'scan': {}, 'lidar_offset': None, 'range_noise': None}
     for src, dst in (('wheel_radius', 'wheel_radius'), ('wheel_separation', 'wheel_separation')):
         if src in robot:
             out['wheel'][dst] = float(robot[src])
@@ -81,6 +87,9 @@ def shared_parameters(config_dir: str) -> dict:
     for key in ('range_min', 'range_max'):
         if key in lidar:
             out['scan'][key] = float(lidar[key])
+    if 'noise_stddev' in lidar:
+        out['scan']['shadow_range_noise_stddev'] = float(lidar['noise_stddev'])
+        out['range_noise'] = float(lidar['noise_stddev'])
     ext = lidar.get('extrinsic')
     if isinstance(ext, dict):
         out['lidar_offset'] = [float(ext.get('x', 0.0)), float(ext.get('y', 0.0)),
@@ -160,7 +169,8 @@ def _setup(context, *args, **kwargs):
                      [{'yaml_filename': map_yaml, 'topic_name': 'map', 'frame_id': 'map',
                        **common}], namespace=''),
                 node('nav2_lifecycle_manager', 'lifecycle_manager', 'lifecycle_manager_map',
-                     [{'autostart': True, 'node_names': ['map_server'], **common}],
+                     [{'autostart': True, 'node_names': ['map_server'],
+                       'bond_timeout': BOND_TIMEOUT_S, **common}],
                      namespace=''),
             ]
         initial = {f'initial_pose.{k}': float(LaunchConfiguration(f'initial_{k}').perform(context))
@@ -177,7 +187,8 @@ def _setup(context, *args, **kwargs):
                    'base_frame_id': base_frame, 'initial_pose.z': 0.0, **initial, **amcl_map,
                    **common}]),
             node('nav2_lifecycle_manager', 'lifecycle_manager', 'lifecycle_manager_localization',
-                 [{'autostart': True, 'node_names': ['amcl'], 'bond_timeout': 10.0, **common}]),
+                 [{'autostart': True, 'node_names': ['amcl'], 'bond_timeout': BOND_TIMEOUT_S,
+                   **common}]),
         ]
         if _flag(context, 'use_kidnap_monitor'):
             kidnap = {'ekf_set_pose_service': 'ekf_filter_node_map/set_pose',
@@ -188,6 +199,14 @@ def _setup(context, *args, **kwargs):
                 kidnap['lidar_offset'] = shared['lidar_offset']
             actions.append(node('amr_localization', 'kidnap_monitor_node', 'kidnap_monitor_node',
                                 [os.path.join(pkg_config, 'kidnap_monitor.yaml'), kidnap]))
+        if _flag(context, 'use_scan_matcher'):
+            matcher = {'base_frame': base_frame, **common}
+            if shared['lidar_offset'] is not None:
+                matcher['lidar_offset'] = shared['lidar_offset']
+            if shared['range_noise'] is not None:
+                matcher['range_noise'] = shared['range_noise']
+            actions.append(node('amr_localization', 'scan_matcher_node', 'scan_matcher_node',
+                                [os.path.join(pkg_config, 'scan_matcher.yaml'), matcher]))
     return actions
 
 
@@ -208,6 +227,8 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('initial_yaw', default_value='0.0'),
         DeclareLaunchArgument('use_kidnap_monitor', default_value='true'),
         DeclareLaunchArgument('kidnap_fallback_cmd_vel', default_value=''),
+        DeclareLaunchArgument('use_scan_matcher', default_value='true',
+                              description='스캔-지도 정합 → map EKF pose1'),
         DeclareLaunchArgument('amcl_half_cell_fix', default_value='true',
                               description='AMCL 에 원점 반 셀 보정 맵(map_amcl)을 준다'),
         DeclareLaunchArgument('bias_estimation_time', default_value=''),

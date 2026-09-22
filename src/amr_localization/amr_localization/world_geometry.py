@@ -2,10 +2,12 @@ r"""
 월드 SDF → 스캔 평면 단면 점유격자 (맵 품질 평가의 지면 진실, rclpy 비의존).
 
     ros2 run amr_localization world_to_map --world src/amr_simulation/worlds/warehouse.sdf \
-        --models src/amr_simulation/models --height 0.38 --resolution 0.05 --out maps/warehouse_gt
+        --models src/amr_simulation/models --resolution 0.05 --out maps/warehouse_gt
 
 gpu_lidar 는 visual 지오메트리를 측정하므로 각 정적 모델의 <visual> 을 스캔 평면 높이 z = h 에서
-자른 단면을 래스터화한다. 지원: box, cylinder, sphere (메시는 건너뛰고 목록을 보고).
+자른 단면을 래스터화한다. h 기본값 = config/robot_params.yaml robot.base_link_height (0.18) +
+config/sensors.yaml lidar.extrinsic.z (0.02) = 0.20 m (차체 안 슬롯 LiDAR, scan_plane_height).
+지원: box, cylinder, sphere (메시는 건너뛰고 목록을 보고).
 포즈 합성: world ← (include/model pose) ← link pose ← visual pose (roll/pitch 포함 일반 3D 회전).
 셀 중심 (x, y, h) 가 도형 내부인지 역변환으로 판정하므로 회전된 도형도 정확히 처리한다.
 동적 모델(지게차 등)과 actor 는 --exclude 이름 접두어로 뺀다.
@@ -21,8 +23,33 @@ from typing import List, Optional, Sequence, Tuple
 import xml.etree.ElementTree as ET
 
 import numpy as np
+import yaml
 
 DEFAULT_EXCLUDE = ('ground_plane', 'forklift', 'worker', 'amr_')
+# 설정 파일을 못 읽을 때의 스캔 평면 높이 [m] (base_link_height 0.18 + lidar z 0.02)
+DEFAULT_SCAN_HEIGHT = 0.20
+
+
+def scan_plane_height(config_dir: Optional[str] = None) -> float:
+    """
+    스캔 평면(LiDAR)의 지면 높이 [m] = robot.base_link_height + lidar.extrinsic.z (config 단일 출처).
+
+    config_dir 기본값은 $ROS_WS/config (없으면 /ros2_ws/config). 파일·키가 없으면 DEFAULT_SCAN_HEIGHT.
+    """
+    base = Path(config_dir or os.path.join(os.environ.get('ROS_WS', '/ros2_ws'), 'config'))
+
+    def params(name):
+        path = base / name
+        if not path.is_file():
+            return {}
+        data = yaml.safe_load(path.read_text(encoding='utf-8')) or {}
+        return data.get('/**', {}).get('ros__parameters', {})
+    try:
+        height = float(params('robot_params.yaml')['robot']['base_link_height'])
+        z = float(params('sensors.yaml')['lidar']['extrinsic']['z'])
+    except (KeyError, TypeError, ValueError):
+        return DEFAULT_SCAN_HEIGHT
+    return height + z
 
 
 def rpy_matrix(roll: float, pitch: float, yaw: float) -> np.ndarray:
@@ -213,7 +240,7 @@ def write_map(raster: Raster, stem: Path) -> Tuple[Path, Path]:
     yml.write_text(
         f'image: {pgm.name}\nmode: trinary\nresolution: {raster.resolution}\n'
         f'origin: [{raster.origin_x}, {raster.origin_y}, 0.0]\nnegate: 0\n'
-        f'occupied_thresh: 0.65\nfree_thresh: 0.25\n', encoding='utf-8')
+        f'occupied_thresh: 0.65\nfree_thresh: 0.19\n', encoding='utf-8')
     return pgm, yml
 
 
@@ -223,7 +250,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument('--world', required=True)
     ap.add_argument('--models', action='append', default=[],
                     help='model:// 검색 경로 (여러 번 가능, 기본: IGN_GAZEBO_RESOURCE_PATH)')
-    ap.add_argument('--height', type=float, default=0.38, help='스캔 평면 높이 [m]')
+    ap.add_argument('--height', type=float, default=None,
+                    help='스캔 평면 높이 [m] (기본: config 의 base_link_height + lidar z)')
+    ap.add_argument('--config-dir', default=None, help='최상위 config (기본 ROS_WS/config)')
     ap.add_argument('--resolution', type=float, default=0.05)
     ap.add_argument('--bounds', type=float, nargs=4, default=[-30.5, 30.5, -20.5, 20.5],
                     metavar=('XMIN', 'XMAX', 'YMIN', 'YMAX'))
@@ -234,9 +263,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                             if p]
     loader = WorldLoader([Path(p) for p in paths], args.exclude or DEFAULT_EXCLUDE)
     shapes = loader.load_world(Path(args.world))
-    raster = rasterize(shapes, args.height, args.resolution, tuple(args.bounds))
+    height = scan_plane_height(args.config_dir) if args.height is None else args.height
+    raster = rasterize(shapes, height, args.resolution, tuple(args.bounds))
     pgm, yml = write_map(raster, Path(args.out))
-    print(f'{len(shapes)} shapes, {int(raster.occupied.sum())} occupied cells → {pgm}, {yml}')
+    print(f'{len(shapes)} shapes, height {height:.3f} m, '
+          f'{int(raster.occupied.sum())} occupied cells → {pgm}, {yml}')
     for s in loader.skipped:
         print(f'skipped: {s}')
     return 0
