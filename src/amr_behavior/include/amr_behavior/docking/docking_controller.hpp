@@ -7,8 +7,8 @@
 // 좌표 (도크 프레임 D): 원점 = 도킹 완료 시 base_link 위치 (마커 면에서 법선 방향으로 standoff),
 // x 축 = 로봇이 마커를 향해 진행하는 방향. 로봇 자세 (x_r, y_r, ψ) 에서
 //   e_x = -x_r (남은 종방향 거리, +면 아직 덜 감), e_y = y_r (횡오차), ψ (방위 오차).
-// 판정: √(e_x² + e_y²) ≤ position_tolerance 이고 |ψ| ≤ angle_tolerance 가 settle_frames
-// 연속이면 성공.
+// 판정: 종방향 도달(stop_distance)·방위 도달(heading_stop_tolerance) 뒤 √(e_x² + e_y²) ≤
+// position_tolerance 이고 |ψ| ≤ angle_tolerance 가 settle_frames 연속이면 성공.
 //
 // 제어 법칙 두 가지 (params.law):
 //   kProportional — 비례 시각 서보: v = k_d·e_x, 전방 주시점 방향 ψ_d = atan2(-e_y, L) 로
@@ -50,6 +50,9 @@ struct Params
   /// 종방향 도달 판정 [m]: |e_x| 가 이 안에 들어와야 전진을 멈추고 판정한다 (허용오차 경계가 아닌
   /// 목표점까지 들어가 추정 오차 여유를 둔다). 도달 해제는 stop_distance + 2·linear_deadband.
   double stop_distance{0.008};
+  /// 방위 도달 판정 [rad]: 판정 전에 제자리 정렬로 |ψ̂| 를 이 안까지 줄인다 (1° 경계에서
+  /// 멈추지 않는다 — stop_distance 의 방위판). 도달 해제는 angle_tolerance 를 넘을 때.
+  double heading_stop_tolerance{0.00873};
   double align_threshold{0.35};       ///< 진행 방향 오차가 이보다 크면 제자리 정렬 (align)
   // 속도 상한
   double max_linear_speed{0.15};      ///< approach 상한 [m/s]
@@ -153,6 +156,12 @@ public:
   const DockErrors & errors() const {return errors_;}
   /// feedback distance_remaining: 위치 오차 (추정이 없으면 NaN).
   double distanceRemaining() const {return errors_.position();}
+  /// 추적 중인 마커 추정 (base_link, 관측이 없었으면 nullopt). 도킹 예외 사각형용.
+  std::optional<MarkerObservation> markerEstimate() const
+  {
+    return tracker_.hasEstimate() ? std::optional<MarkerObservation>(tracker_.estimate()) :
+           std::nullopt;
+  }
   /// 마지막 시도 실패 사유 (marker_lost / search_timeout / attempt_timeout / overshoot / lateral /
   /// canceled).
   const std::string & failureReason() const {return failure_reason_;}
@@ -180,6 +189,7 @@ private:
   int settle_count_{0};
   int lateral_stall_count_{0};
   bool arrived_{false};   ///< 종방향 도달 (stop_distance, 히스테리시스)
+  bool heading_arrived_{false};   ///< 방위 도달 (heading_stop_tolerance, 히스테리시스)
   Command last_cmd_;
   DockErrors errors_;
   std::string failure_reason_;

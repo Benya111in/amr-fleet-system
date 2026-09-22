@@ -30,6 +30,8 @@ struct TaskTreeConfig
   unsigned relocalization_timeout_ms{30000};
   unsigned charge_timeout_ms{3600000};
   unsigned charge_retry_delay_ms{10000};
+  /// 실패 보고 뒤 ERROR 유지 [ms]: fleet_adapter 가 2 Hz 로 샘플해도 RobotState ERROR 가 보이게
+  unsigned error_hold_ms{1500};
   // 인식 조건
   std::string perception_class{"box"};
   double perception_max_distance{2.0};   ///< [m]
@@ -43,17 +45,16 @@ struct TaskTreeConfig
   double perception_spin_angle{0.52};    ///< [rad] 인식 복구 회전 (≈ 30°)
   double dock_backup_dist{0.3};          ///< [m] 도킹 재시도 전 후진
   double marker_max_age{1.0};            ///< [s] 재시도 전 마커 가시 판정
-  double undock_dist{0.5};               ///< [m] 충전 후 이탈 후진
-  // 위치
+  double undock_dist{1.55};              ///< [m] 적재·하역·충전 뒤 이탈 후진 (도크 staging 까지)
+  // 위치 (충전소는 SelectCharger 가 실행 중에 고른다: charger_goal / charger_dock_id)
   geometry_msgs::msg::PoseStamped waiting_pose;   ///< 복귀(대기 구역) 자세
-  geometry_msgs::msg::PoseStamped charger_goal;   ///< 충전소 staging 자세
-  std::string charger_dock_id;                    ///< 충전소 도크 id ("" = 도킹 생략)
 };
 
 /// 루트 블랙보드에 설정 키를 쓴다 (타입은 BT 포트 타입과 일치: int / unsigned / double / string).
 void writeConfig(const TaskTreeConfig & config, BT::Blackboard & blackboard);
 
-/// writeConfig 가 루트에 쓰는 설정 키 + 실행기 상태 키(task_step, fail_reason, last_dock_*).
+/// writeConfig 가 루트에 쓰는 설정 키 + 실행기 상태 키(task_step, charge_step, fail_reason,
+/// charger_*, pickup_perceive_turn, last_dock_*).
 const std::vector<std::string> & globalKeys();
 
 /// xml_path(메인 트리, <include> 포함)로 트리를 만든다. 루트 블랙보드는 config 로 초기화된다.

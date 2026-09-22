@@ -28,6 +28,7 @@ namespace phase
 {
 constexpr const char * kIdle = "IDLE";
 constexpr const char * kMoving = "MOVING";
+constexpr const char * kPerceiving = "PERCEIVING";
 constexpr const char * kDocking = "DOCKING";
 constexpr const char * kLoading = "LOADING";
 constexpr const char * kUnloading = "UNLOADING";
@@ -35,6 +36,7 @@ constexpr const char * kReturning = "RETURNING";
 constexpr const char * kCharging = "CHARGING";
 constexpr const char * kError = "ERROR";
 constexpr const char * kRecovering = "RECOVERING";
+constexpr const char * kUndocking = "UNDOCKING";
 /// 알려진 단계인지 (SetPhase 입력 검증용).
 bool isKnown(const std::string & name);
 }  // namespace phase
@@ -55,6 +57,24 @@ struct DockSpec
   double x{0.0};
   double y{0.0};
   double yaw{0.0};   ///< [rad] 마커를 바라보는 방향
+  /// [rad] staging 위치에서 물품이 카메라 시야에 드는 방위 (없으면 staging 방위 그대로 인식)
+  std::optional<double> perceive_yaw;
+};
+
+/// 적재한 물품의 출처 (하역 실패 시 되돌려 놓을 곳).
+struct PayloadOrigin
+{
+  std::string item_type;
+  geometry_msgs::msg::PoseStamped goal;   ///< 적재 도크 staging 자세 (map)
+  std::string dock_id;                    ///< 적재 도크 ("" = 도킹 없이 적재)
+};
+
+/// 다른 로봇의 충전소 점유 (/fleet/charger_claims 심장박동).
+struct ChargerClaim
+{
+  std::string charger;
+  double since{0.0};   ///< 점유 시작 [s] (같은 /clock)
+  double heard{0.0};   ///< 마지막 수신 [s]
 };
 
 /// 인식 조건 질의 (IsObjectDetected 포트).
@@ -71,13 +91,17 @@ struct AcceptPolicy
 {
   double battery_low_percent{20.0};   ///< 이 미만이면 거절 (충전 우선)
   bool accept_while_returning{false};  ///< RETURNING 중에도 수락할지 (기본: IDLE 에서만)
+  /// false(기본): 적재·하역 자세가 등록 도크와 맞지 않으면 "invalid:no_dock:<pickup|dropoff>" 거절.
+  /// true: 도킹 없는 작업으로 받아 Nav2 도착 자세에서 적재/하역한다 (경고 로그).
+  bool allow_undocked_tasks{false};
 };
 
 /// 작업 수락 결과.
 struct AcceptDecision
 {
   bool accepted{false};
-  /// "accepted" / "busy:<id>" / "estop" / "lost" / "battery_low" / "invalid:<이유>"
+  /// "accepted" / "busy:<id>" / "estop" / "lost" / "battery_low" / "blocked:payload" /
+  /// "invalid:<이유>"
   std::string message;
 };
 
@@ -89,6 +113,8 @@ struct ExecutorHooks
   std::function<void(const std::string &)> publish_payload_attach;  ///< "" = 분리
   std::function<void(double)> publish_payload_mass;                 ///< [kg]
   std::function<void(bool)> publish_charging;
+  /// 자기 충전소 점유 (charger "" = 해제, since = 점유 시작 [s])
+  std::function<void(const std::string &, double)> publish_charger_claim;
   std::function<void(const std::string &)> log_info;
   std::function<void(const std::string &)> log_warn;
 };
@@ -137,6 +163,22 @@ public:
   /// 마지막 마커 관측 이후 경과 [s]. 한 번도 없으면 +inf.
   double dockMarkerAge() const;
 
+  // ---------------------------------------------------------------- 충전소 할당
+  /// 후보 충전소 (docks 표의 id). robot_index 만큼 돌려 로봇마다 첫 선택이 다르게 한다.
+  void setChargers(const std::vector<std::string> & ids, int robot_index, double claim_timeout);
+  std::vector<std::string> chargerPreference() const;
+  /// 다른 로봇의 점유 심장박동 (charger "" = 해제). 자기 robot_id 는 무시한다.
+  void updateChargerClaim(const std::string & robot, const std::string & charger, double since);
+  /// 충전소 선택: 자기 점유가 여전히 유효하면 그대로, 아니면 선호 순서의 첫 빈 충전소를 점유한다.
+  /// 먼저 점유한(since 가 이른, 같으면 id 가 작은) 로봇이 이긴다. 빈 곳이 없으면 nullopt.
+  /// keep_current = true 면 자기 점유를 무조건 유지한다 (이미 도킹한 뒤 — 충전 중에는 양보하지
+  /// 않는다).
+  /// 점유가 바뀔 때만 publish_charger_claim 을 부른다 (심장박동은 노드 타이머).
+  std::optional<DockSpec> selectCharger(bool keep_current = false);
+  void releaseCharger();
+  std::string chargerClaim() const;
+  double chargerClaimSince() const;
+
   // ---------------------------------------------------------------- 작업
   AcceptDecision evaluateTask(const amr_msgs::msg::Task & task) const;
   /// 정책을 통과하면 IN_PROGRESS 로 바꿔 보관하고 task_status 를 발행한다.
@@ -147,13 +189,22 @@ public:
   bool reportStatus(uint8_t status, const std::string & reason);
   /// 마지막 종료 작업의 결과/사유 (로그·테스트용).
   std::string lastFailureReason() const;
+  /// 작업이 끝난 뒤 대기 구역 복귀가 남았는지 (COMPLETED/FAILED 보고 시 설정, 복귀 뒤 해제).
+  /// E-stop 으로 복귀가 끊겨도 재개 후 다시 복귀한다.
+  bool returnPending() const;
+  void clearReturnPending();
 
   // ---------------------------------------------------------------- 출력
   void setPhase(const std::string & name);   ///< 바뀔 때만 발행
   std::string phase() const;
-  void attachPayload(const std::string & item_type, double mass);
+  void attachPayload(
+    const std::string & item_type, double mass, const PayloadOrigin & origin = PayloadOrigin());
   void detachPayload();
   std::string attachedPayload() const;
+  /// 작업 없이 실린 물품(하역 실패 뒤)이고 되돌려 놓기를 아직 시도하지 않았으면 그 출처.
+  std::optional<PayloadOrigin> strandedPayload() const;
+  /// 되돌려 놓기 시도 완료 (성공이면 detach 로 이미 비었고, 실패면 물품을 실은 채 작업을 막는다).
+  void markPayloadReturnAttempted();
   void setCharging(bool enable);
   bool charging() const;
 
@@ -162,6 +213,7 @@ public:
 
 private:
   static double yawOf(const geometry_msgs::msg::PoseStamped & pose);
+  std::string resolveDockLocked(const geometry_msgs::msg::PoseStamped & pose) const;
 
   Clock clock_;
   ExecutorHooks hooks_;
@@ -187,9 +239,18 @@ private:
 
   std::optional<amr_msgs::msg::Task> task_;
   std::string last_failure_reason_;
+  bool return_pending_{false};
   std::string phase_;
   std::string payload_;
+  PayloadOrigin payload_origin_;
+  bool payload_return_attempted_{false};
   bool charging_{false};
+
+  std::vector<std::string> charger_preference_;
+  double claim_timeout_{3.0};
+  std::map<std::string, ChargerClaim> claims_;   ///< 다른 로봇 → 점유
+  std::string charger_claim_;                    ///< 자기 점유 ("" = 없음)
+  double charger_claim_since_{0.0};
 };
 
 }  // namespace amr_behavior

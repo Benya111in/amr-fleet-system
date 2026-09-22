@@ -1,26 +1,45 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   Perceive: 적재 위치에서 물품 인식 확인 (복구 ② 인식 실패).
+    인자: perceive_turn [rad] — staging 방위에서 물품 쪽으로 돌 각 (도크 표 perceive_yaw − staging yaw).
+          도크 물품은 접근선 양옆(±1 m)에 있어 staging 방위의 카메라(반화각 43.5°)에는 들지 않는다.
     설정: perception_attempts, perception_timeout_ms, perception_class, perception_max_distance
 
-  perception/detected_objects 에 perception_class 이고 거리 ≤ perception_max_distance 인 객체가
-  perception_timeout_ms 안에 나타나면 SUCCESS. 아니면 RecoverPerception (후진 → 회전으로 시야 변경) 후 재확인,
-  perception_attempts 회 모두 실패하면 FAILURE (→ 메인 트리 perception_failed).
+  executor/phase = PERCEIVING (명세 "대기-이동-인식-작업-복귀" 의 인식 단계를 드러낸다) →
+  물품 쪽으로 제자리 회전(FaceItems) → perception/detected_objects 에 perception_class 이고 거리 ≤
+  perception_max_distance 인 객체가 perception_timeout_ms 안에 나타나면 SUCCESS. 아니면 RecoverPerception
+  (후진 → 회전으로 시야 변경) 후 재확인, perception_attempts 회 모두 실패하면 FAILURE (→ 메인 트리
+  perception_failed). 확인하면 원래 방위로 되돌아 도킹한다(FaceDock). 회전은 교통 hold 를 따른다.
   Timeout 아래에는 조건 노드만 둔다 (v3 Timeout 은 타이머 스레드에서 자식을 halt 한다).
 -->
 <root>
   <BehaviorTree ID="Perceive">
-    <RetryUntilSuccessful name="PerceptionAttempts" num_attempts="{perception_attempts}">
-      <Fallback name="DetectOrRecover">
-        <Timeout name="DetectionWindow" msec="{perception_timeout_ms}">
-          <KeepRunningUntilSuccess name="WaitForObject">
-            <IsObjectDetected class_name="{perception_class}" max_distance="{perception_max_distance}"/>
-          </KeepRunningUntilSuccess>
-        </Timeout>
-        <ForceFailure name="CountAttempt">
-          <SubTreePlus ID="RecoverPerception" __autoremap="true"/>
-        </ForceFailure>
-      </Fallback>
-    </RetryUntilSuccessful>
+    <Sequence name="PerceiveSteps">
+      <SetPhase phase="PERCEIVING"/>
+      <ReactiveSequence name="FaceItems">
+        <SubTreePlus ID="TrafficGate" __autoremap="true"/>
+        <ForceSuccess>
+          <Spin name="TurnToItems" spin_dist="{perceive_turn}"/>
+        </ForceSuccess>
+      </ReactiveSequence>
+      <RetryUntilSuccessful name="PerceptionAttempts" num_attempts="{perception_attempts}">
+        <Fallback name="DetectOrRecover">
+          <Timeout name="DetectionWindow" msec="{perception_timeout_ms}">
+            <KeepRunningUntilSuccess name="WaitForObject">
+              <IsObjectDetected class_name="{perception_class}" max_distance="{perception_max_distance}"/>
+            </KeepRunningUntilSuccess>
+          </Timeout>
+          <ForceFailure name="CountAttempt">
+            <SubTreePlus ID="RecoverPerception" __autoremap="true"/>
+          </ForceFailure>
+        </Fallback>
+      </RetryUntilSuccessful>
+      <ReactiveSequence name="FaceDock">
+        <SubTreePlus ID="TrafficGate" __autoremap="true"/>
+        <ForceSuccess>
+          <Spin name="TurnBackToDock" spin_dist="{perceive_turn}" reverse="true"/>
+        </ForceSuccess>
+      </ReactiveSequence>
+    </Sequence>
   </BehaviorTree>
 </root>

@@ -17,7 +17,8 @@ namespace phase
 bool isKnown(const std::string & name)
 {
   static const std::vector<std::string> kAll = {
-    kIdle, kMoving, kDocking, kLoading, kUnloading, kReturning, kCharging, kError, kRecovering};
+    kIdle, kMoving, kPerceiving, kDocking, kLoading, kUnloading, kReturning, kCharging, kError,
+    kRecovering, kUndocking};
   return std::find(kAll.begin(), kAll.end(), name) != kAll.end();
 }
 }  // namespace phase
@@ -119,6 +120,11 @@ double ExecutorContext::yawOf(const geometry_msgs::msg::PoseStamped & pose)
 std::string ExecutorContext::resolveDock(const geometry_msgs::msg::PoseStamped & pose) const
 {
   std::lock_guard<std::mutex> lock(mutex_);
+  return resolveDockLocked(pose);
+}
+
+std::string ExecutorContext::resolveDockLocked(const geometry_msgs::msg::PoseStamped & pose) const
+{
   const double yaw = yawOf(pose);
   std::string best;
   double best_dist = std::numeric_limits<double>::infinity();
@@ -284,6 +290,11 @@ AcceptDecision ExecutorContext::evaluateTask(const amr_msgs::msg::Task & task) c
   if (task_) {
     return {false, "busy:" + task_->task_id};
   }
+  if (!payload_.empty()) {
+    // 하역 실패로 물품이 실린 채면 새 물품을 위에 싣지 않는다
+    // (되돌려 놓거나 clear_payload 로 비운 뒤에 받는다)
+    return {false, "blocked:payload"};
+  }
   const bool idle = phase_.empty() || phase_ == phase::kIdle;
   const bool returning = phase_ == phase::kReturning && policy_.accept_while_returning;
   if (!idle && !returning) {
@@ -300,6 +311,15 @@ AcceptDecision ExecutorContext::evaluateTask(const amr_msgs::msg::Task & task) c
   }
   if (!payloads_.empty() && payloads_.find(toLower(task.item_type)) == payloads_.end()) {
     return {false, "invalid:item_type"};
+  }
+  if (!policy_.allow_undocked_tasks) {
+    // 등록 도크와 맞지 않는 자세를 조용히 도킹 생략으로 처리하지 않는다 (명세: 도킹 완료 후 적재)
+    if (resolveDockLocked(task.pickup_pose).empty()) {
+      return {false, "invalid:no_dock:pickup"};
+    }
+    if (resolveDockLocked(task.dropoff_pose).empty()) {
+      return {false, "invalid:no_dock:dropoff"};
+    }
   }
   return {true, "accepted"};
 }
@@ -363,6 +383,7 @@ bool ExecutorContext::reportStatus(uint8_t status, const std::string & reason)
     if (terminal) {
       last_failure_reason_ = status == amr_msgs::msg::Task::STATUS_FAILED ? reason : "";
       task_.reset();
+      return_pending_ = true;
     }
   }
   if (publish) {
@@ -380,6 +401,18 @@ std::string ExecutorContext::lastFailureReason() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
   return last_failure_reason_;
+}
+
+bool ExecutorContext::returnPending() const
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  return return_pending_;
+}
+
+void ExecutorContext::clearReturnPending()
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  return_pending_ = false;
 }
 
 // ------------------------------------------------------------------ 출력
@@ -405,12 +438,17 @@ std::string ExecutorContext::phase() const
   return phase_;
 }
 
-void ExecutorContext::attachPayload(const std::string & item_type, double mass)
+void ExecutorContext::attachPayload(
+  const std::string & item_type, double mass,
+  const PayloadOrigin & origin)
 {
   ExecutorHooks hooks;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     payload_ = item_type;
+    payload_origin_ = origin;
+    payload_origin_.item_type = item_type;
+    payload_return_attempted_ = false;
     hooks = hooks_;
   }
   if (hooks.publish_payload_attach) {
@@ -430,6 +468,146 @@ std::string ExecutorContext::attachedPayload() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
   return payload_;
+}
+
+std::optional<PayloadOrigin> ExecutorContext::strandedPayload() const
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (payload_.empty() || task_ || payload_return_attempted_) {
+    return std::nullopt;
+  }
+  return payload_origin_;
+}
+
+void ExecutorContext::markPayloadReturnAttempted()
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  payload_return_attempted_ = !payload_.empty();
+}
+
+// ------------------------------------------------------------------ 충전소 할당
+void ExecutorContext::setChargers(
+  const std::vector<std::string> & ids, int robot_index,
+  double claim_timeout)
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  charger_preference_.clear();
+  const int n = static_cast<int>(ids.size());
+  for (int i = 0; i < n; ++i) {
+    charger_preference_.push_back(ids[static_cast<size_t>(((robot_index % n) + n + i) % n)]);
+  }
+  claim_timeout_ = claim_timeout;
+}
+
+std::vector<std::string> ExecutorContext::chargerPreference() const
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  return charger_preference_;
+}
+
+void ExecutorContext::updateChargerClaim(
+  const std::string & robot, const std::string & charger,
+  double since)
+{
+  const double t = now();
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (robot.empty() || robot == robot_id_) {
+    return;
+  }
+  if (charger.empty()) {
+    claims_.erase(robot);
+    return;
+  }
+  claims_[robot] = ChargerClaim{charger, since, t};
+}
+
+std::optional<DockSpec> ExecutorContext::selectCharger(bool keep_current)
+{
+  const double t = now();
+  std::function<void(const std::string &, double)> publish;
+  std::optional<DockSpec> chosen;
+  std::string claim;
+  double since = 0.0;
+  bool announce = false;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const std::string previous = charger_claim_;
+    // 다른 로봇이 (유효하게) 먼저 점유한 충전소인지
+    auto taken = [&](const std::string & id, double my_since) {
+        for (const auto & kv : claims_) {
+          const ChargerClaim & c = kv.second;
+          if (c.charger != id || t - c.heard > claim_timeout_) {
+            continue;
+          }
+          if (c.since < my_since || (c.since == my_since && kv.first < robot_id_)) {
+            return true;
+          }
+        }
+        return false;
+      };
+    auto spec = [&](const std::string & id) -> std::optional<DockSpec> {
+        for (const auto & d : docks_) {
+          if (d.id == id) {
+            return d;
+          }
+        }
+        return std::nullopt;
+      };
+    const bool keep = !charger_claim_.empty() &&
+      (keep_current || !taken(charger_claim_, charger_claim_since_));
+    if (keep) {
+      chosen = spec(charger_claim_);   // 자기 점유 유지 (E-stop 뒤 재개 포함)
+    } else {
+      charger_claim_.clear();
+      for (const auto & id : charger_preference_) {
+        if (taken(id, t)) {
+          continue;
+        }
+        chosen = spec(id);
+        if (chosen) {
+          charger_claim_ = id;
+          charger_claim_since_ = t;
+          break;
+        }
+      }
+    }
+    claim = charger_claim_;
+    since = charger_claim_since_;
+    announce = claim != previous;   // 새 점유(또는 잃은 점유의 해제)를 바로 알린다
+    publish = hooks_.publish_charger_claim;
+  }
+  if (publish && announce) {
+    publish(claim, since);
+  }
+  return chosen;
+}
+
+void ExecutorContext::releaseCharger()
+{
+  std::function<void(const std::string &, double)> publish;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (charger_claim_.empty()) {
+      return;
+    }
+    charger_claim_.clear();
+    publish = hooks_.publish_charger_claim;
+  }
+  if (publish) {
+    publish("", 0.0);
+  }
+}
+
+std::string ExecutorContext::chargerClaim() const
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  return charger_claim_;
+}
+
+double ExecutorContext::chargerClaimSince() const
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  return charger_claim_since_;
 }
 
 void ExecutorContext::setCharging(bool enable)

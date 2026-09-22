@@ -3,6 +3,7 @@
   복구 서브트리 3종 (명세 4.8 "3가지 이상의 에러 상황에 대한 자동 복구").
   각 서브트리는 호출하는 쪽에서 ForceFailure 로 감싸 "시도 1회 소진" 으로 센다.
   개별 복구 동작의 실패(서버 없음 등)는 ForceSuccess 로 흡수해 다음 재시도를 막지 않는다.
+  복구 동작(회전·후진·재접근)도 로봇을 움직이므로 TrafficGate 뒤에 둔다 (hold 동안 멈췄다가 다시 시작).
 
   RecoverNavigation  설정: recovery_spin_angle [rad], recovery_wait_s [s]
   RecoverPerception  설정: recovery_backup_dist [m], perception_spin_angle [rad]
@@ -10,47 +11,56 @@
 -->
 <root>
   <BehaviorTree ID="RecoverNavigation">
-    <Sequence name="RecoverNavigationSteps">
-      <SetPhase phase="RECOVERING"/>
-      <ForceSuccess>
-        <Parallel name="ClearBothCostmaps" success_threshold="2" failure_threshold="1">
-          <ClearCostmap name="ClearGlobalCostmap" service_name="global_costmap/clear_entirely_global_costmap"/>
-          <ClearCostmap name="ClearLocalCostmap" service_name="local_costmap/clear_entirely_local_costmap"/>
-        </Parallel>
-      </ForceSuccess>
-      <ForceSuccess>
-        <Spin spin_dist="{recovery_spin_angle}"/>
-      </ForceSuccess>
-      <ForceSuccess>
-        <Wait wait_duration="{recovery_wait_s}"/>
-      </ForceSuccess>
-    </Sequence>
+    <ReactiveSequence name="GuardedRecoverNavigation">
+      <SubTreePlus ID="TrafficGate" __autoremap="true"/>
+      <Sequence name="RecoverNavigationSteps">
+        <SetPhase phase="RECOVERING"/>
+        <ForceSuccess>
+          <Parallel name="ClearBothCostmaps" success_threshold="2" failure_threshold="1">
+            <ClearCostmap name="ClearGlobalCostmap" service_name="global_costmap/clear_entirely_global_costmap"/>
+            <ClearCostmap name="ClearLocalCostmap" service_name="local_costmap/clear_entirely_local_costmap"/>
+          </Parallel>
+        </ForceSuccess>
+        <ForceSuccess>
+          <Spin spin_dist="{recovery_spin_angle}"/>
+        </ForceSuccess>
+        <ForceSuccess>
+          <Wait wait_duration="{recovery_wait_s}"/>
+        </ForceSuccess>
+      </Sequence>
+    </ReactiveSequence>
   </BehaviorTree>
 
   <BehaviorTree ID="RecoverPerception">
-    <Sequence name="RecoverPerceptionSteps">
-      <SetPhase phase="RECOVERING"/>
-      <ForceSuccess>
-        <BackUp backup_dist="{recovery_backup_dist}" backup_speed="0.1"/>
-      </ForceSuccess>
-      <ForceSuccess>
-        <Spin spin_dist="{perception_spin_angle}"/>
-      </ForceSuccess>
-    </Sequence>
+    <ReactiveSequence name="GuardedRecoverPerception">
+      <SubTreePlus ID="TrafficGate" __autoremap="true"/>
+      <Sequence name="RecoverPerceptionSteps">
+        <SetPhase phase="RECOVERING"/>
+        <ForceSuccess>
+          <BackUp backup_dist="{recovery_backup_dist}" backup_speed="0.1"/>
+        </ForceSuccess>
+        <ForceSuccess>
+          <Spin spin_dist="{perception_spin_angle}"/>
+        </ForceSuccess>
+      </Sequence>
+    </ReactiveSequence>
   </BehaviorTree>
 
   <BehaviorTree ID="RecoverDocking">
-    <Sequence name="RecoverDockingSteps">
-      <SetPhase phase="RECOVERING"/>
-      <ForceSuccess>
-        <BackUp backup_dist="{dock_backup_dist}" backup_speed="0.1"/>
-      </ForceSuccess>
-      <Fallback name="ReacquireMarker">
-        <IsDockMarkerVisible max_age="{marker_max_age}"/>
+    <ReactiveSequence name="GuardedRecoverDocking">
+      <SubTreePlus ID="TrafficGate" __autoremap="true"/>
+      <Sequence name="RecoverDockingSteps">
+        <SetPhase phase="RECOVERING"/>
         <ForceSuccess>
-          <NavigateToPose name="ReapproachStaging" goal="{approach_pose}" skip_if_empty="true"/>
+          <BackUp backup_dist="{dock_backup_dist}" backup_speed="0.1"/>
         </ForceSuccess>
-      </Fallback>
-    </Sequence>
+        <Fallback name="ReacquireMarker">
+          <IsDockMarkerVisible max_age="{marker_max_age}"/>
+          <ForceSuccess>
+            <NavigateToPose name="ReapproachStaging" goal="{approach_pose}" skip_if_empty="true"/>
+          </ForceSuccess>
+        </Fallback>
+      </Sequence>
+    </ReactiveSequence>
   </BehaviorTree>
 </root>

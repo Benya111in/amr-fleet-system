@@ -1,12 +1,25 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Yield: 교통 관리자의 traffic/hold 동안 양보 (MoveTo 의 TrafficGate 가 호출).
+  TrafficGate: 로봇을 움직이는 단계(주행·도킹·복구 동작·이탈·돌아보기)의 교통 hold 게이트.
+    hold 가 없으면 SUCCESS, 있으면 Yield 를 RUNNING → 이 게이트를 둔 ReactiveSequence 가 뒤의 동작을
+    halt(goal 취소)하고, 해제되면 동작을 다시 시작한다. 정지 단계(인식 대기·적재·하역·충전)에는 두지 않는다.
+
+  Yield: 교통 관리자의 traffic/hold 동안 양보.
     인자: yield_pose (traffic/yield_pose, frame_id 가 비면 제자리 대기)
 
   양보 자세가 있으면 그곳으로 이동한 뒤, hold 가 풀릴 때까지 RUNNING.
-  해제 판정은 호출한 ReactiveFallback 이 매 tick IsTrafficHold 로 하므로 이 서브트리는 끝나지 않아도 된다.
+  해제 판정은 TrafficGate 의 ReactiveFallback 이 매 tick IsTrafficHold 로 하므로 이 서브트리는 끝나지 않아도 된다.
 -->
 <root>
+  <BehaviorTree ID="TrafficGate">
+    <ReactiveFallback name="TrafficHoldCheck">
+      <Inverter>
+        <IsTrafficHold yield_pose="{yield_pose}"/>
+      </Inverter>
+      <SubTreePlus ID="Yield" yield_pose="{yield_pose}" __autoremap="true"/>
+    </ReactiveFallback>
+  </BehaviorTree>
+
   <BehaviorTree ID="Yield">
     <Sequence name="YieldSteps">
       <ForceSuccess>

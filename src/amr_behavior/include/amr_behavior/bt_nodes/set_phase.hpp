@@ -20,7 +20,8 @@ public:
   static BT::PortsList providedPorts()
   {
     return {BT::InputPort<std::string>(
-        "phase", "IDLE/MOVING/DOCKING/LOADING/UNLOADING/RETURNING/CHARGING/ERROR/RECOVERING")};
+        "phase",
+        "IDLE/MOVING/PERCEIVING/DOCKING/LOADING/UNLOADING/RETURNING/CHARGING/ERROR/RECOVERING")};
   }
 
   BT::NodeStatus tick() override
