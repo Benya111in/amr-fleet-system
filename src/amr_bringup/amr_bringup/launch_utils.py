@@ -8,6 +8,7 @@
       → world_gate release : 모든 모델 확인 → 재개
         → 로봇마다 스택 localization / navigation / perception / behavior (설치돼 있을 때만)
     fleet_manager.launch.py / dashboard.launch.py / evaluation.launch.py (런치 시작 즉시)
+    맨 앞: FASTRTPS_DEFAULT_PROFILES_FILE 이 비면 config/fastdds_multi_robot(_localhost).xml
 
 include 는 모두 GroupAction(scoped) 으로 감싸고 인자는 문자열로 확정해 넘긴다. Humble 의
 IncludeLaunchDescription 은 launch 인자를 부모 범위에 그대로 남기고, DeclareLaunchArgument 는 값이 이미
@@ -28,7 +29,8 @@ from ament_index_python.packages import get_package_share_directory, PackageNotF
 from amr_bringup import fleet_spawn, world_gate
 from amr_bringup.fleet_spawn import FleetSpawn, RobotSpec
 from launch.actions import (DeclareLaunchArgument, ExecuteProcess, GroupAction,
-                            IncludeLaunchDescription, LogInfo, RegisterEventHandler)
+                            IncludeLaunchDescription, LogInfo, RegisterEventHandler,
+                            SetEnvironmentVariable)
 from launch.event_handlers import OnProcessExit
 from launch.launch_context import LaunchContext
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -79,6 +81,22 @@ def common_arguments() -> List[DeclareLaunchArgument]:
                               description="fleet 할당 전략 ('' = fleet.yaml)"),
         DeclareLaunchArgument('dashboard_port', default_value='',
                               description="대시보드 HTTP 포트 ('' = dashboard.yaml)"),
+        DeclareLaunchArgument('localization_mode', default_value='localization',
+                              description='localization 스택 mode (localization | slam | odom). '
+                                          'slam 은 매핑 — 루트 map_server·AMCL 대신 slam_toolbox'),
+        # WORKAROUND(amr_navigation): navigate_to_pose.xml(TTC 판)은 RateController 를
+        # ReactiveFallback 아래에 두어, 형제가 SUCCESS 를 낼 때마다 halt → IDLE → 다음 tick 에
+        # first_time 으로 다시 계획한다 (BT tick 마다 재계획: /plan 22 Hz, FollowPath 선점
+        # "Aborting handle" 수백 회, 목표 방향 정렬 실패 — 통합 실측). 고쳐질 때까지 기본은 TTC 조건
+        # 없는 Nav2 표준 구조 BT (use_ttc_bt:=false). auto 면 패키지 기본 동작
+        DeclareLaunchArgument('nav_ttc_bt', default_value='false',
+                              description='navigation.launch.py use_ttc_bt '
+                                          '(false | true | auto) — false 는 TTC 재계획 BT 결함 우회'),
+        # 이름이 'map' 이면 안 된다: 포함한 런치가 부모 범위의 launch 인자를 그대로 보므로(모듈 설명)
+        # localization.launch.py 의 map 기본값이 '' 로 가려져 map_server 가 지도 없이 뜬다 (실측)
+        DeclareLaunchArgument('map_yaml', default_value='',
+                              description="루트 map_server 지도 YAML ('' = localization.launch.py 기본 "
+                                          '$ROS_WS/maps/warehouse.yaml)'),
     ]
     args += [DeclareLaunchArgument(name, default_value='true',
                                    description=f'{name[5:]} 런치 포함') for name in GLOBALS]
@@ -100,6 +118,9 @@ class Options:
     eval_run_name: str = ''
     allocation_strategy: str = ''
     dashboard_port: str = ''
+    localization_mode: str = 'localization'
+    map_yaml: str = ''
+    nav_ttc_bt: str = 'false'
 
     @property
     def world_name(self) -> str:
@@ -118,7 +139,10 @@ def read_options(context: LaunchContext, entry: str) -> Options:
                    eval_run_name=arg('eval_run_name').strip()
                    or f'{entry}_{datetime.now():%Y%m%d_%H%M%S}',
                    allocation_strategy=arg('allocation_strategy').strip(),
-                   dashboard_port=arg('dashboard_port').strip())
+                   dashboard_port=arg('dashboard_port').strip(),
+                   localization_mode=arg('localization_mode').strip() or 'localization',
+                   map_yaml=arg('map_yaml').strip(),
+                   nav_ttc_bt=arg('nav_ttc_bt').strip().lower() or 'false')
 
 
 def launch_file(pkg: str, name: str) -> Tuple[Optional[str], str]:
@@ -171,13 +195,18 @@ def spawn_action(robot: RobotSpec, spawn: FleetSpawn, opts: Options) -> GroupAct
         'use_sim_time': text(opts.use_sim_time)})
 
 
-def stack_arguments(robot: RobotSpec, prefix: str, opts: Options, first: bool) -> Dict[str, str]:
+GROOT_BASE_PORT = 1666     # amr_behavior behavior.yaml groot.publisher_port 기본값 (server = +1)
+
+
+def stack_arguments(robot: RobotSpec, prefix: str, opts: Options, index: int) -> Dict[str, str]:
     """
     스택 런치에 주는 공통 인자. 스택마다 쓰는 이름이 달라 같은 값을 여러 이름으로 준다.
 
     선언하지 않은 인자는 무시된다. robot_name/namespace = 네임스페이스, prefix/frame_prefix = TF 접두어
     (단일 로봇은 명시적 ''), initial_* = 스폰 자세(AMCL 초기 자세), waiting_pose = 스폰 자세(로봇마다 다른
-    대기 위치), start_map_server = 첫 로봇만 true (루트 map_server 1개, multi_robot.md §4).
+    대기 위치), start_map_server = 첫 로봇만 true (루트 map_server 1개, multi_robot.md §4),
+    groot_*_port = 로봇마다 다른 Groot ZMQ 포트 (한 호스트에서 같은 포트를 두 번 bind 할 수 없다 —
+    index i 는 1666 + 2i / 1667 + 2i, 단일 로봇은 behavior.yaml 기본값과 같은 1666 / 1667).
     """
     return {
         'robot_name': robot.name, 'namespace': robot.name,
@@ -185,8 +214,27 @@ def stack_arguments(robot: RobotSpec, prefix: str, opts: Options, first: bool) -
         'use_sim_time': text(opts.use_sim_time),
         'initial_x': repr(robot.x), 'initial_y': repr(robot.y), 'initial_yaw': repr(robot.yaw),
         'waiting_pose': f'{robot.x!r},{robot.y!r},{robot.yaw!r}',
-        'start_map_server': text(first),
+        'start_map_server': text(index == 0),
+        'groot_publisher_port': str(GROOT_BASE_PORT + 2 * index),
+        'groot_server_port': str(GROOT_BASE_PORT + 2 * index + 1),
     }
+
+
+def stack_extra_arguments(label: str, opts: Options) -> Dict[str, str]:
+    """
+    스택 하나에만 주는 인자 (다른 스택에 새지 않게).
+
+    localization: mode(slam 매핑)·map. navigation: use_ttc_bt (nav_ttc_bt 인자, 기본 false — 모듈의
+    WORKAROUND 주석).
+    """
+    if label == 'navigation':
+        return {'use_ttc_bt': opts.nav_ttc_bt}
+    if label != 'localization':
+        return {}
+    extra = {'mode': opts.localization_mode}
+    if opts.map_yaml:
+        extra['map'] = opts.map_yaml
+    return extra
 
 
 def stack_actions(robots: Sequence[RobotSpec], prefixed: bool, opts: Options) -> List:
@@ -202,7 +250,8 @@ def stack_actions(robots: Sequence[RobotSpec], prefixed: bool, opts: Options) ->
                                    f'robots {names} run without it'))
             continue
         out.append(LogInfo(msg=f'[bringup] {label}: {pkg}/launch/{name} × {len(robots)}'))
-        out += [include_path(path, stack_arguments(r, frame_prefix(r, prefixed), opts, i == 0))
+        out += [include_path(path, {**stack_arguments(r, frame_prefix(r, prefixed), opts, i),
+                                    **stack_extra_arguments(label, opts)})
                 for i, r in enumerate(robots)]
     return out
 
@@ -300,11 +349,44 @@ def spawn_sequence(robots: Sequence[RobotSpec], spawn: FleetSpawn, opts: Options
     ]
 
 
+DDS_PROFILE_VAR = 'FASTRTPS_DEFAULT_PROFILES_FILE'
+
+
+def dds_profile_name(environ=os.environ) -> str:
+    """ROS_LOCALHOST_ONLY=1 이면 UDPv4 를 127.0.0.1 로 묶은 변형 (사용자 전송이 rmw 의 localhost 설정을 대체한다)."""
+    if environ.get('ROS_LOCALHOST_ONLY', '0').strip() == '1':
+        return 'fastdds_multi_robot_localhost.xml'
+    return 'fastdds_multi_robot.xml'
+
+
+def dds_environment() -> List:
+    """
+    Fast DDS 기본 프로파일 (config/fastdds_multi_robot*.xml, 머리말 참고).
+
+    1) builtin.mutation_tries 400: 5대 전체 스택은 참가자가 ≈150 개인데 Fast DDS 2.6 은 수신 포트를 100 번까지만
+    바꿔 시도해 101 번째 이후 참가자가 그래프에서 빠진다. 2) SHM 세그먼트 16 MB: 카메라 영상이 기본 0.5 MB 에
+    들어가지 않아 UDP 조각으로 떨어진다 (쓰는 쪽 = 이미지 브리지도 같은 프로파일이어야 한다).
+    사용자가 이미 프로파일을 줬으면 건드리지 않는다.
+    """
+    if os.environ.get(DDS_PROFILE_VAR):
+        return [LogInfo(msg=f'[bringup] {DDS_PROFILE_VAR} 유지: {os.environ[DDS_PROFILE_VAR]}')]
+    try:
+        path = os.path.join(get_package_share_directory('amr_bringup'), 'config',
+                            dds_profile_name())
+    except PackageNotFoundError:
+        return []
+    if not os.path.isfile(path):
+        return []
+    return [SetEnvironmentVariable(DDS_PROFILE_VAR, path),
+            LogInfo(msg=f'[bringup] {DDS_PROFILE_VAR}={path} (참가자 100 개 초과·영상 SHM)')]
+
+
 def bringup_actions(robots: Sequence[RobotSpec], spawn: FleetSpawn, opts: Options,
                     prefixed: bool) -> List:
     """월드 + 로봇 N대 + 전역 노드 전체 (위 모듈 설명의 순서)."""
     fleet_spawn.check_separation(robots, spawn.min_separation_m)
-    return (world_actions(opts)
+    return (dds_environment()
+            + world_actions(opts)
             + [description_action(r, frame_prefix(r, prefixed), opts) for r in robots]
             + spawn_sequence(robots, spawn, opts,
                              after_spawn=lambda: stack_actions(robots, prefixed, opts))

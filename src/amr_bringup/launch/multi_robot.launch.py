@@ -16,6 +16,12 @@
                   (기본 true) 로봇별 스택. 패키지와 launch/<스택>.launch.py 가 런치 시점에 설치돼 있을 때만
                   포함하고, 없으면 "skipped: package not built yet" 을 남기고 넘어간다
     eval_run_name / allocation_strategy / dashboard_port   ('' = 각 패키지 기본값)
+    localization_mode  localization(기본) | slam | odom — localization 스택 mode
+                  (slam = 매핑: map_server·AMCL 대신 slam_toolbox)
+    map_yaml      루트 map_server 지도 YAML ('' = $ROS_WS/maps/warehouse.yaml, map 프레임 = 월드 좌표)
+    nav_ttc_bt    navigation use_ttc_bt (기본 false — TTC 재계획 BT 가 tick 마다 재계획하는 결함
+                  우회, launch_utils 주석)
+Groot ZMQ 포트는 로봇 i(0부터)마다 1666 + 2i / 1667 + 2i (task_executor_node, 같은 호스트에서 포트 충돌 방지).
 
 로봇 이름 = 네임스페이스 = Gazebo 모델 이름 (amr_01 …), TF 프레임 접두어 '<이름>/' — URDF 링크와 Gazebo 센서
 frame_id 모두 (description.launch.py prefix). /tf, /tf_static, /clock, /map, /fleet/* 만 전역

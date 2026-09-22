@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Fast DDS 참가자 기본 프로파일 — 시스템 전체 (multi_robot.launch.py / system.launch.py 가 모든 하위 프로세스에 준다).
+
+  1) 참가자 수 (multi_robot.md §9). 통합 실측 (2026-09-22, Fast DDS 2.6.12): 참가자는 수신 포트(메타 유니캐스트
+     7410 + 250 d + 2 p 와 사용자 유니캐스트·SHM 포트)를 p = 0 부터 차례로 시도하며, 이미 쓰이면
+     builtin.mutation_tries(기본 100) 번까지만 다음 포트로 바꿔 본다. 5대 multi_robot.launch.py 는 ROS 프로세스가
+     149 개라 101 번째 이후 참가자는 수신 포트를 얻지 못하고 (컨테이너 /proc/net/udp: 메타 포트 101 개,
+     /dev/shm fastrtps_port 101 개) 그래프에서 빠진다 — 증상: amr_02 lifecycle_manager_navigation 이 "Waiting for
+     service planner_server/get_state" 를 10 분 넘게 반복, map_server bond 실패, ros2 CLI 가 노드 0 개.
+     해결: 시도 횟수를 늘려 p 가 100 을 넘어도 포트를 잡게 한다. p ≥ 120 의 포트는 다음 도메인(d + 1) 범위와
+     겹치므로 같은 네트워크 이름공간(호스트 또는 컨테이너)에서 인접 도메인을 동시에 쓰지 않는다.
+  2) 영상 전송 (amr_perception config/fastdds_large_messages.xml 과 같은 전송, perception.md §1·§8.2). 640×480
+     RGB(921 KB)·깊이(1.2 MB) 한 장이 기본 SHM 세그먼트(0.5 MB)에 들어가지 않아 UDP 조각 전송으로 떨어지고 best
+     effort 에서는 조각 하나만 잃어도 표본이 버려진다. 세그먼트 크기는 **쓰는 쪽**(ros_gz 이미지 브리지)이 정하므로
+     시스템 전체에 준다. 실측: Gazebo 카메라 → yolo_node 처리율 0.32–0.54 (브리지 기본) → 1.00 (브리지 SHM 16 MB).
+     SHM 은 같은 IPC 이름공간 안에서만 쓰이고(compose: ipc: host), 원격 호스트는 UDPv4 로 간다.
+
+  같은 그래프에 붙는 외부 도구(ros2 CLI, 통합 테스트 프로브)도 참가자가 100 개를 넘으면 같은 변수를 줘야 보인다
+  (scripts/run_integration.sh 가 준다). 사용자가 FASTRTPS_DEFAULT_PROFILES_FILE 을 이미 줬으면 bringup 은 건드리지 않는다.
+  ROS_LOCALHOST_ONLY=1 이면 UDPv4 를 127.0.0.1 로 묶은 fastdds_multi_robot_localhost.xml 을 쓴다.
+-->
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <transport_descriptors>
+    <transport_descriptor>
+      <transport_id>shm_large</transport_id>
+      <type>SHM</type>
+      <segment_size>16777216</segment_size>
+    </transport_descriptor>
+    <transport_descriptor>
+      <transport_id>udp_default</transport_id>
+      <type>UDPv4</type>
+    </transport_descriptor>
+  </transport_descriptors>
+  <participant profile_name="amr_system" is_default_profile="true">
+    <rtps>
+      <builtin>
+        <mutation_tries>400</mutation_tries>
+      </builtin>
+      <useBuiltinTransports>false</useBuiltinTransports>
+      <userTransports>
+        <transport_id>shm_large</transport_id>
+        <transport_id>udp_default</transport_id>
+      </userTransports>
+    </rtps>
+  </participant>
+</profiles>
