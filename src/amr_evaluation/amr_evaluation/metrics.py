@@ -3,8 +3,8 @@
 
 - 위치 추정 오차: GT 를 추정 시각에 선형 보간(외삽 금지)한 뒤 위치·헤딩 오차
 - 경로 추종 CTE: GT 위치에서 계획 경로(폴리라인) 최근접 선분까지의 부호 있는 수직 거리
-- 응답 시간: 작업 명령 시각 → 첫 움직임 시각
-- CPU 사용률: /proc/stat 두 스냅샷의 차분
+- 응답 시간: 작업 명령 시각 → 첫 움직임 시각 (명령보다 늦게 도착한 움직임 이력도 소급해 짝짓는다)
+- CPU 사용률: /proc/stat 두 스냅샷의 차분 (프로세스·cgroup 귀속은 cpu_accounting)
 - 요약 통계: mean / RMSE / max / p95, SE(2) 정렬
 """
 
@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 import math
 from typing import Deque, Dict, List, Optional, Sequence, Tuple
 
+from amr_evaluation import clocks
 from amr_evaluation import segments
 import numpy as np
 
@@ -204,6 +205,7 @@ class CrossTrackResult:
     planned_x: float         # 최근접 경로점
     planned_y: float
     segment_index: int       # 최근접 선분 (정점 i → i+1); 정점 하나뿐이면 0
+    clamped: bool = False    # 최근접점이 시작점 앞/끝점 너머로 잘림 → 거리가 수직이 아니라 종방향
 
 
 def cross_track_error(points: np.ndarray, px: float, py: float) -> Optional[CrossTrackResult]:
@@ -212,7 +214,9 @@ def cross_track_error(points: np.ndarray, px: float, py: float) -> Optional[Cros
 
     각 선분에 대해 사영 매개변수를 [0, 1] 로 잘라 최근접점을 구하고(양 끝 처리), 거리가 가장
     짧은 선분을 고른다. 부호는 그 선분의 진행 방향 벡터와의 외적 z 성분: 좌측이 +.
-    빈 경로면 None, 정점 하나면 그 점까지의 거리(부호 +).
+    최근접점이 첫 선분의 t < 0 (시작점 앞) 이나 마지막 선분의 t > 1 (끝점 너머) 에서 잘렸으면
+    clamped=True — 그 거리는 경로 방향 거리라서 CTE 로 쓰면 안 된다 (cte_logger 가 버린다).
+    빈 경로면 None, 정점 하나면 그 점까지의 거리(부호 +, clamped=True).
     """
     pts = np.asarray(points, dtype=float).reshape(-1, 2)
     n = len(pts)
@@ -221,14 +225,14 @@ def cross_track_error(points: np.ndarray, px: float, py: float) -> Optional[Cros
     p = np.array([px, py], dtype=float)
     if n == 1:
         d = float(np.linalg.norm(p - pts[0]))
-        return CrossTrackResult(d, float(pts[0, 0]), float(pts[0, 1]), 0)
+        return CrossTrackResult(d, float(pts[0, 0]), float(pts[0, 1]), 0, True)
     a = pts[:-1]
     d = pts[1:] - a
     seg_len2 = np.einsum('ij,ij->i', d, d)
     rel = p - a
     dots = np.einsum('ij,ij->i', rel, d)
-    t = np.where(seg_len2 > 1e-12, dots / np.maximum(seg_len2, 1e-12), 0.0)
-    t = np.clip(t, 0.0, 1.0)
+    t_raw = np.where(seg_len2 > 1e-12, dots / np.maximum(seg_len2, 1e-12), 0.0)
+    t = np.clip(t_raw, 0.0, 1.0)
     closest = a + t[:, None] * d
     dist = np.linalg.norm(p - closest, axis=1)
     i = int(np.argmin(dist))
@@ -241,26 +245,34 @@ def cross_track_error(points: np.ndarray, px: float, py: float) -> Optional[Cros
                 break
     cross = direction[0] * rel[i][1] - direction[1] * rel[i][0]
     sign = 1.0 if cross >= 0.0 else -1.0
-    return CrossTrackResult(sign * float(dist[i]), float(closest[i, 0]), float(closest[i, 1]), i)
+    eps = 1e-9
+    clamped = bool((i == 0 and t_raw[i] < -eps) or (i == n - 2 and t_raw[i] > 1.0 + eps))
+    return CrossTrackResult(sign * float(dist[i]), float(closest[i, 0]), float(closest[i, 1]), i,
+                            clamped)
 
 
 @dataclass
 class ResponseRow:
-    """response_time.csv 한 행 (명세 열 + 추가 열 cmd_id)."""
+    """response_time.csv 한 행 (명세 열 + 추가 열)."""
 
     cmd_time: float
     response_time: float
     latency_ms: float
     cmd_id: str = ''
+    cmd_source: str = ''                # 명령 시각의 원천 (dispatch | event | request | goal)
+    rtf: float = float('nan')           # 응답 시점의 실시간 계수 Δsim/Δwall (시뮬 시계가 아니면 1)
+    latency_wall_ms: float = float('nan')   # 벽시계 환산 지연 = latency_ms / rtf
 
     def as_list(self) -> list:
-        return [self.cmd_time, self.response_time, self.latency_ms, self.cmd_id]
+        return [self.cmd_time, self.response_time, self.latency_ms, self.cmd_id,
+                self.cmd_source, self.rtf, self.latency_wall_ms]
 
 
 @dataclass
 class _PendingCommand:
     t: float
     cmd_id: str
+    source: str = ''
 
 
 class ResponseTimeMatcher:
@@ -268,48 +280,104 @@ class ResponseTimeMatcher:
     명령 시각과 "첫 움직임" 시각을 짝지어 지연을 계산한다.
 
     움직임 판정: |v| ≥ linear_threshold 또는 |w| ≥ angular_threshold.
-    require_rest=True 면 명령 도착 시점에 이미 움직이고 있던 경우(직전 운동 샘플이 움직임)
-    는 측정하지 않는다 (명세의 "명령 수신 ~ 로봇 반응" 은 정지 상태에서 출발하는 지연).
-    timeout [s] 안에 움직임이 없으면 미응답으로 버리고 개수만 센다.
+    명령 시각 t_c 는 명령 메시지의 스탬프라서 수신이 늦을 수 있다 (예: 작업 이벤트가 로봇 출발보다
+    늦게 도착). 그래서 최근 history_sec 동안의 운동 샘플을 보관해 두고 t_c 시점의 상태를 소급해 본다:
+    - require_rest=True 면 t_c 직전 샘플이 이미 움직임인 명령은 측정하지 않는다 (skipped_moving;
+      명세의 "명령 수신 ~ 로봇 반응" 은 정지 상태에서 출발하는 지연).
+    - t_c 이후의 첫 움직임 샘플이 이미 있으면 바로 행을 만든다 (take_ready 로 꺼낸다).
+    timeout [s] 안에 움직임이 없으면 미응답(timed_out). 명령과 움직임 스탬프의 시계 영역(벽시계 에포크
+    vs 시뮬 시간)이 다르거나 max_skew [s] 넘게 떨어져 있으면 짝지을 수 없으므로 clock_mismatch 로 센다
+    (한쪽만 use_sim_time 인 경우). 운동 스탬프가 reset_jump [s] 넘게 거꾸로 가면(시뮬 리셋) 대기 명령과
+    이력을 비우고 resets 를 센다.
     """
 
     def __init__(self, linear_threshold: float = 0.05, angular_threshold: float = 0.1,
-                 require_rest: bool = True, timeout: float = 10.0):
+                 require_rest: bool = True, timeout: float = 10.0, max_skew: float = 3600.0,
+                 history_sec: Optional[float] = None, reset_jump: float = 1.0):
         self.linear_threshold = linear_threshold
         self.angular_threshold = angular_threshold
         self.require_rest = require_rest
         self.timeout = timeout
+        self.max_skew = max_skew
+        self.history_sec = max(timeout, 1.0) if history_sec is None else history_sec
+        self.reset_jump = reset_jump
         self._pending: List[_PendingCommand] = []
-        self._last_moving = False
+        self._hist: Deque[Tuple[float, bool]] = deque()   # (t, moving) 운동 샘플
+        self._ready: List[ResponseRow] = []
         self.skipped_moving = 0
         self.timed_out = 0
+        self.clock_mismatch = 0
+        self.resets = 0
 
     def is_moving(self, v: float, w: float) -> bool:
         return abs(v) >= self.linear_threshold or abs(w) >= self.angular_threshold
 
-    def add_command(self, t: float, cmd_id: str = '') -> bool:
-        """명령 등록. 측정 대상으로 받아들였으면 True."""
-        if self.require_rest and self._last_moving:
+    @property
+    def last_motion_time(self) -> Optional[float]:
+        return self._hist[-1][0] if self._hist else None
+
+    def _row(self, cmd: _PendingCommand, t: float) -> ResponseRow:
+        return ResponseRow(cmd.t, t, (t - cmd.t) * 1000.0, cmd.cmd_id, cmd.source)
+
+    def add_command(self, t: float, cmd_id: str = '', source: str = '') -> bool:
+        """명령 등록. 측정 대상으로 받아들였으면 True (이미 응답한 경우 행은 take_ready 로)."""
+        cmd = _PendingCommand(t, cmd_id, source)
+        last = self.last_motion_time
+        if last is not None and (clocks.clock_domain(t) != clocks.clock_domain(last)
+                                 or abs(t - last) > self.max_skew):
+            self.clock_mismatch += 1
+            return False
+        if self._hist and t < self._hist[0][0]:
+            # 보관 이력보다 오래된 명령: 명령 시점의 상태를 알 수 없다
+            self.timed_out += 1
+            return False
+        before = [m for (ts, m) in self._hist if ts <= t]
+        if self.require_rest and before and before[-1]:
             self.skipped_moving += 1
             return False
-        self._pending.append(_PendingCommand(t, cmd_id))
+        for ts, moving in self._hist:
+            if ts >= t and moving:
+                self._ready.append(self._row(cmd, ts))
+                return True
+        self._pending.append(cmd)
         return True
+
+    def take_ready(self) -> List[ResponseRow]:
+        """add_command 가 이력에서 바로 확정한 행을 꺼낸다."""
+        rows, self._ready = self._ready, []
+        return rows
 
     def add_motion(self, t: float, v: float, w: float) -> List[ResponseRow]:
         """운동 샘플 입력. 이 샘플로 응답이 확정된 명령들의 행을 돌려준다."""
-        rows: List[ResponseRow] = []
+        rows = self.take_ready()
+        last = self.last_motion_time
+        if last is not None and t < last:
+            if last - t <= self.reset_jump:
+                return rows                      # 순서가 약간 뒤바뀐 샘플은 무시
+            self.resets += 1                     # 시뮬 리셋: 이력·대기 명령 폐기
+            self._hist.clear()
+            self._pending = []
         moving = self.is_moving(v, w)
+        self._hist.append((t, moving))
+        while self._hist and t - self._hist[0][0] > self.history_sec:
+            self._hist.popleft()
         still_pending: List[_PendingCommand] = []
         for cmd in self._pending:
+            if (clocks.clock_domain(cmd.t) != clocks.clock_domain(t)
+                    or abs(t - cmd.t) > self.max_skew):
+                self.clock_mismatch += 1
+                continue
             if t - cmd.t > self.timeout:
                 self.timed_out += 1
                 continue
+            if cmd.t - t > self.timeout:
+                self.clock_mismatch += 1         # 운동보다 timeout 넘게 "미래" 인 명령
+                continue
             if moving and t >= cmd.t:
-                rows.append(ResponseRow(cmd.t, t, (t - cmd.t) * 1000.0, cmd.cmd_id))
+                rows.append(self._row(cmd, t))
                 continue
             still_pending.append(cmd)
         self._pending = still_pending
-        self._last_moving = moving
         return rows
 
     @property

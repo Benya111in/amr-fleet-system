@@ -51,14 +51,15 @@ class PoseErrorLogger(EvalLoggerNode):
         self.get_logger().info(
             f"GT {self.p_str('gt_topic')} ↔ 추정 {self.p_str('est_topic')} 오차 기록")
 
-    def now_sec(self) -> float:
-        return self.get_clock().now().nanoseconds * 1e-9
-
     def on_ground_truth(self, msg: Odometry) -> None:
-        self.pairer.add_ground_truth(odom_to_sample(msg, self.now_sec()))
+        sample = odom_to_sample(msg, self.now_sec())
+        self.check_clock('ground_truth', sample.t)
+        self.pairer.add_ground_truth(sample)
 
     def on_estimate(self, msg: Odometry) -> None:
-        self.pairer.add_estimate(odom_to_sample(msg, self.now_sec()))
+        sample = odom_to_sample(msg, self.now_sec())
+        self.check_clock('estimate', sample.t)
+        self.pairer.add_estimate(sample)
 
     def flush(self) -> None:
         for row in self.pairer.flush():

@@ -56,3 +56,47 @@ def test_csv_writer_rejects_wrong_width_and_formats_bool(tmp_path):
 def test_write_text(tmp_path):
     p = io.write_text(tmp_path / 'a' / 'report.md', '# hi\n')
     assert p.read_text(encoding='utf-8') == '# hi\n'
+
+
+def test_csv_writer_never_overwrites(tmp_path):
+    path = tmp_path / 'cte.csv'
+    io.CsvWriter(path, ['a']).close()
+    with pytest.raises(FileExistsError):
+        io.CsvWriter(path, ['a'])
+    assert io.unique_path(path) == tmp_path / 'cte_1.csv'
+    io.CsvWriter(tmp_path / 'cte_1.csv', ['a']).close()
+    assert io.unique_path(path) == tmp_path / 'cte_2.csv'
+    assert io.unique_path(tmp_path / 'new.csv') == tmp_path / 'new.csv'
+
+
+@pytest.mark.parametrize('ns, expected', [
+    ('/', 'pose_error.csv'), ('', 'pose_error.csv'), ('/amr_01', 'pose_error_amr_01.csv'),
+    ('amr_01/', 'pose_error_amr_01.csv'), ('/fleet/amr_02', 'pose_error_fleet_amr_02.csv'),
+])
+def test_namespaced_name(ns, expected):
+    assert io.namespaced_name('pose_error.csv', ns) == expected
+    assert io.namespaced_name('noext', '/r1') == 'noext_r1'
+
+
+def test_metric_files_multi_robot(tmp_path):
+    for name in ('cte.csv', 'cte_amr_01.csv', 'cte_amr_01_1.csv', 'cte.png', 'cte_x.txt',
+                 'cpu.csv', 'ctex.csv'):
+        (tmp_path / name).write_text('timestamp\n')
+    assert [p.name for p in io.metric_files(tmp_path, io.CTE_FILE)] == \
+        ['cte.csv', 'cte_amr_01.csv', 'cte_amr_01_1.csv']
+    assert io.metric_files(tmp_path, io.POSE_FILE) == []
+
+
+def test_read_csv_skips_truncated_rows(tmp_path):
+    path = tmp_path / 'pose_error.csv'
+    path.write_text('timestamp,error,segment\n1.0,0.01,직선\n2.0,0.02\n3.0,0.03,직선,extra\n'
+                    '4.0,0.04,정지\n5.0,0.0', encoding='utf-8')
+    skipped = []
+    rows = io.read_csv(path, skipped)
+    assert [r['timestamp'] for r in rows] == [1.0, 4.0]
+    assert skipped == [3, 4, 6]
+    assert io.read_csv(path) == rows
+    assert io.read_header(path) == ['timestamp', 'error', 'segment']
+    empty = tmp_path / 'empty.csv'
+    empty.write_text('')
+    assert io.read_header(empty) == [] and io.read_csv(empty) == []

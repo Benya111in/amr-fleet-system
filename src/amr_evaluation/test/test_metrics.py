@@ -168,35 +168,42 @@ def test_pairer_without_gt_returns_nothing():
 SEG = np.array([[0.0, 0.0], [10.0, 0.0]])
 
 
-@pytest.mark.parametrize('p, cte, planned', [
-    ((5.0, 1.0), 1.0, (5.0, 0.0)),        # 좌측 +
-    ((5.0, -1.0), -1.0, (5.0, 0.0)),      # 우측 −
-    ((5.0, 0.0), 0.0, (5.0, 0.0)),        # 경로 위
-    ((12.0, 0.0), 2.0, (10.0, 0.0)),      # 끝점 너머 (진행 방향 연장선, 부호 +)
-    ((12.0, 1.0), math.hypot(2.0, 1.0), (10.0, 0.0)),
-    ((-3.0, -1.0), -math.hypot(3.0, 1.0), (0.0, 0.0)),   # 시작점 앞, 우측
+@pytest.mark.parametrize('p, cte, planned, clamped', [
+    ((5.0, 1.0), 1.0, (5.0, 0.0), False),        # 좌측 +
+    ((5.0, -1.0), -1.0, (5.0, 0.0), False),      # 우측 −
+    ((5.0, 0.0), 0.0, (5.0, 0.0), False),        # 경로 위
+    ((10.0, 0.3), 0.3, (10.0, 0.0), False),      # 끝점 바로 옆 (t = 1) 은 수직 거리
+    ((12.0, 0.0), 2.0, (10.0, 0.0), True),       # 끝점 너머 (종방향 거리 → clamped)
+    ((12.0, 1.0), math.hypot(2.0, 1.0), (10.0, 0.0), True),
+    ((-3.0, -1.0), -math.hypot(3.0, 1.0), (0.0, 0.0), True),   # 시작점 앞, 우측
 ])
-def test_cross_track_error_single_segment(p, cte, planned):
+def test_cross_track_error_single_segment(p, cte, planned, clamped):
     res = metrics.cross_track_error(SEG, *p)
     assert res.cte == pytest.approx(cte)
     assert (res.planned_x, res.planned_y) == pytest.approx(planned)
     assert res.segment_index == 0
+    assert res.clamped is clamped
 
 
 def test_cross_track_error_polyline_corner_and_sign():
     pts = np.array([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]])
     res = metrics.cross_track_error(pts, 1.5, 0.5)     # 두 번째 선분(위쪽 진행) 의 우측
     assert res.cte == pytest.approx(-0.5)
-    assert res.segment_index == 1
+    assert res.segment_index == 1 and not res.clamped
     assert (res.planned_x, res.planned_y) == pytest.approx((1.0, 0.5))
     res = metrics.cross_track_error(pts, 0.5, 0.2)
     assert res.cte == pytest.approx(0.2) and res.segment_index == 0
+    # 모서리 바깥 (중간 정점에서 잘림) 은 경로 끝이 아니므로 clamped 아님
+    res = metrics.cross_track_error(pts, 1.3, -0.3)
+    assert not res.clamped
+    assert metrics.cross_track_error(pts, 1.0, 1.5).clamped       # 끝점 너머
 
 
 def test_cross_track_error_degenerate_paths():
     assert metrics.cross_track_error(np.zeros((0, 2)), 1.0, 1.0) is None
     single = metrics.cross_track_error(np.array([[0.0, 0.0]]), 3.0, 4.0)
     assert single.cte == 5.0 and (single.planned_x, single.planned_y) == (0.0, 0.0)
+    assert single.clamped
     # 길이 0 선분은 이웃 선분의 방향으로 부호를 정한다
     pts = np.array([[0.0, 0.0], [0.0, 0.0], [1.0, 0.0]])
     res = metrics.cross_track_error(pts, -1.0, 0.1)
@@ -210,14 +217,16 @@ def test_cross_track_error_degenerate_paths():
 def test_response_matcher_basic_latency():
     m = metrics.ResponseTimeMatcher(linear_threshold=0.05, angular_threshold=0.1)
     assert m.add_motion(0.0, 0.0, 0.0) == []
-    assert m.add_command(1.0, 'task_a')
+    assert m.add_command(1.0, 'task_a', 'dispatch')
+    assert m.take_ready() == []
     assert m.add_motion(1.05, 0.01, 0.0) == []
     rows = m.add_motion(1.12, 0.1, 0.0)
     assert len(rows) == 1
-    assert rows[0].cmd_id == 'task_a'
+    assert rows[0].cmd_id == 'task_a' and rows[0].cmd_source == 'dispatch'
     assert rows[0].latency_ms == pytest.approx(120.0)
-    assert rows[0].as_list() == [1.0, 1.12, rows[0].latency_ms, 'task_a']
-    assert m.pending == 0
+    assert rows[0].as_list()[:5] == [1.0, 1.12, rows[0].latency_ms, 'task_a', 'dispatch']
+    assert math.isnan(rows[0].as_list()[5]) and math.isnan(rows[0].as_list()[6])
+    assert m.pending == 0 and m.last_motion_time == pytest.approx(1.12)
 
 
 def test_response_matcher_require_rest_and_angular_motion():
@@ -236,12 +245,71 @@ def test_response_matcher_require_rest_and_angular_motion():
     assert loose.add_motion(0.1, 1.0, 0.0)[0].latency_ms == 0.0
 
 
+def test_response_matcher_late_command_uses_history():
+    """작업 이벤트가 로봇 출발보다 늦게 도착해도 명령 시각 기준으로 소급해 잰다."""
+    m = metrics.ResponseTimeMatcher()
+    for i in range(10):                         # 0.0 ~ 0.18 s 정지
+        m.add_motion(i * 0.02, 0.0, 0.0)
+    for i in range(10, 20):                     # 0.20 s 부터 주행
+        m.add_motion(i * 0.02, 0.3, 0.0)
+    assert m.add_command(0.05, 'late_event')    # 명령 시각 0.05 s (그때는 정지) → 첫 움직임 0.20 s
+    rows = m.take_ready()
+    assert len(rows) == 1 and rows[0].latency_ms == pytest.approx(150.0)
+    assert m.pending == 0
+    # 명령 시각에 이미 움직이던 경우는 제외
+    assert not m.add_command(0.25, 'moving')
+    assert m.skipped_moving == 1
+    # 보관 이력보다 오래된 명령은 판정 불가 → 무응답으로 센다
+    short = metrics.ResponseTimeMatcher(history_sec=0.1)
+    for i in range(20):
+        short.add_motion(i * 0.02, 0.0, 0.0)
+    assert not short.add_command(0.01)
+    assert short.timed_out == 1
+
+
 def test_response_matcher_timeout():
     m = metrics.ResponseTimeMatcher(timeout=2.0)
     m.add_command(5.0, 'never')
     assert m.add_motion(6.0, 0.0, 0.0) == []
     assert m.add_motion(7.5, 0.0, 0.0) == []
     assert m.timed_out == 1 and m.pending == 0
+
+
+def test_response_matcher_clock_domain_mismatch():
+    # fleet 는 use_sim_time:=false (벽시계 에포크), GT 는 시뮬 시간 → 짝짓지 않고 센다
+    m = metrics.ResponseTimeMatcher(timeout=10.0)
+    m.add_motion(100.0, 0.0, 0.0)
+    assert not m.add_command(1.79e9, 'wall_clock_task')
+    assert m.clock_mismatch == 1 and m.pending == 0
+    # 움직임보다 먼저 온 명령도 첫 움직임 샘플에서 걸러진다 (영원히 대기하지 않는다)
+    m2 = metrics.ResponseTimeMatcher(timeout=10.0)
+    m2.add_command(1.79e9, 'early')
+    rows = []
+    for i in range(100):
+        rows += m2.add_motion(100.0 + i * 0.02, 0.5, 0.0)
+    assert rows == [] and m2.pending == 0 and m2.clock_mismatch == 1
+    # 같은 영역이어도 timeout 넘게 "미래" 인 명령은 불일치로 버린다
+    m3 = metrics.ResponseTimeMatcher(timeout=2.0)
+    m3.add_command(50.0, 'future')
+    m3.add_motion(10.0, 0.0, 0.0)
+    assert m3.clock_mismatch == 1 and m3.pending == 0
+    # max_skew 를 넘게 떨어진 같은 영역 스탬프
+    m4 = metrics.ResponseTimeMatcher(max_skew=100.0)
+    m4.add_motion(10.0, 0.0, 0.0)
+    assert not m4.add_command(500.0)
+    assert m4.clock_mismatch == 1
+
+
+def test_response_matcher_time_reversal():
+    m = metrics.ResponseTimeMatcher()
+    m.add_motion(50.0, 0.0, 0.0)
+    m.add_command(50.5, 'before_reset')
+    assert m.add_motion(49.8, 0.0, 0.0) == []       # 작은 역행(≤ 1 s)은 무시
+    assert m.resets == 0 and m.pending == 1
+    m.add_motion(1.0, 0.0, 0.0)                      # 시뮬 리셋
+    assert m.resets == 1 and m.pending == 0 and m.last_motion_time == 1.0
+    assert m.add_command(1.5, 'after_reset')
+    assert len(m.add_motion(1.7, 0.2, 0.0)) == 1
 
 
 # --- CPU ---
