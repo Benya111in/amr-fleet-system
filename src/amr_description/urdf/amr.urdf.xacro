@@ -2,7 +2,7 @@
 <!--
   차동 구동 AMR 최상위 xacro (명세 4장 1절 "로봇 모델링"/"센서 시스템 구성", 4장 2절 TF)
 
-  모든 치수/질량/관성/동역학 제한/센서 사양/토픽·프레임 이름은 최상위 config/*.yaml 에서 읽는다
+  모든 치수/질량/관성/동역학 제한/구동계/센서 사양/토픽·프레임 이름은 최상위 config/*.yaml 에서 읽는다
   (xacro.load_yaml). 여기에 숫자를 중복 기재하지 않는다 — YAML 을 고치면 재빌드 없이 재런치만으로
   반영된다 (런치 시점에 xacro 가 다시 평가됨).
 
@@ -12,29 +12,36 @@
                  (다중 로봇: "amr_02/" — docs/architecture/multi_robot.md §2)
     config_dir   robot_params.yaml / sensors.yaml 이 있는 디렉토리
                  기본 "" → $ROS_WS/config (ROS_WS 미설정 시 /ros2_ws/config)
-    payload_mass cargo_link 질량 [kg] (스폰 시점 적재 질량 반영)                  기본 0.0
+    payload      적재물 종류 none | small | medium | large                       기본 none
+                 크기·질량은 robot_params.yaml payload.<종류>.{size, mass} — 데크 위 실제 크기 박스
+    payload_mass 적재 질량 [kg] 덮어쓰기. 음수(기본 -1)면 payload 종류의 질량.
+                 payload 없이 질량만 주면 그 질량을 담을 수 있는 가장 작은 종류의 박스로 모델링한다
+                 (예 payload_mass:=25 → large 박스). 0 이면 적재물 없음
+    self_visibility_bit
+                 자기 차체 시각체의 가시성 비트 번호 (0~27). 기본 "" → robot_name 끝 숫자 n 에서
+                 4 + (n − 1) mod 20 (amr_01 → 4, amr_05 → 8). amr_gazebo.xacro "자기 차체 제외" 참조
 
   모듈
     amr_inertial.xacro   관성 텐서 매크로 (YAML 대각 성분 / 박스 해석식)
     amr_materials.xacro  RViz/Gazebo 재질
-    amr_base.xacro       base_footprint, base_link, 구동 바퀴, 캐스터, cargo_link
+    amr_base.xacro       base_footprint, base_link, 구동 바퀴, 캐스터, cargo_link(+적재 박스)
     amr_sensors.xacro    lidar_link, camera_link(+optical 프레임 2개), imu_link
-    amr_gazebo.xacro     Gazebo Fortress 시스템 플러그인 + 센서 정의
+    amr_gazebo.xacro     Gazebo Fortress 시스템 플러그인 + 센서 정의 + 자기 차체 가시성 비트
 
   단독 실행 예
-    xacro amr.urdf.xacro config_dir:=/ros2_ws/config robot_name:=amr_02 prefix:=amr_02/ | check_urdf /dev/stdin
+    xacro amr.urdf.xacro config_dir:=/ros2_ws/config robot_name:=amr_02 prefix:=amr_02/ payload:=large | check_urdf /dev/stdin
 -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="amr">
 
   <xacro:arg name="robot_name" default="amr_01"/>
   <xacro:arg name="prefix" default=""/>
   <xacro:arg name="config_dir" default=""/>
-  <xacro:arg name="payload_mass" default="0.0"/>
+  <xacro:arg name="payload" default="none"/>
+  <xacro:arg name="payload_mass" default="-1"/>
+  <xacro:arg name="self_visibility_bit" default=""/>
 
   <xacro:property name="robot_name" value="$(arg robot_name)"/>
   <xacro:property name="prefix" value="$(arg prefix)"/>
-  <xacro:property name="payload_mass_arg" value="$(arg payload_mass)"/>
-  <xacro:property name="payload_mass" value="${float(payload_mass_arg)}"/>
 
   <!-- config_dir 미지정 시 컨테이너 규약($ROS_WS/config)으로 폴백 -->
   <xacro:property name="config_dir_arg" value="$(arg config_dir)"/>
@@ -47,6 +54,8 @@
   <xacro:property name="sensor_yaml" value="${xacro.load_yaml(config_dir + '/sensors.yaml')}"/>
   <xacro:property name="robot"   value="${robot_yaml['/**']['ros__parameters']['robot']}"/>
   <xacro:property name="limits"  value="${robot_yaml['/**']['ros__parameters']['limits']}"/>
+  <xacro:property name="drive"   value="${robot_yaml['/**']['ros__parameters']['drive']}"/>
+  <xacro:property name="payloads" value="${robot_yaml['/**']['ros__parameters']['payload']}"/>
   <xacro:property name="sensors" value="${sensor_yaml['/**']['ros__parameters']}"/>
   <xacro:property name="lidar"   value="${sensors['lidar']}"/>
   <xacro:property name="cam"     value="${sensors['camera_link']}"/>   <!-- RGB/Depth 공용 본체 링크 -->
@@ -73,6 +82,9 @@
   <xacro:property name="base_inertia"     value="${robot['base_inertia']}"/>       <!-- [ixx, iyy, izz] -->
   <xacro:property name="wheel_inertia"    value="${robot['wheel_inertia']}"/>      <!-- [ixx, iyy(축), izz] -->
   <xacro:property name="caster_inertia"   value="${robot['caster_inertia']}"/>     <!-- 구: ixx = iyy = izz -->
+  <!-- 구동계 (robot_params.yaml drive: 모터·감속기 모델 → 바퀴 조인트 <limit effort velocity>) -->
+  <xacro:property name="wheel_effort_limit"   value="${drive['wheel_effort_limit']}"/>
+  <xacro:property name="wheel_velocity_limit" value="${drive['wheel_velocity_limit']}"/>
 
   <!-- ===== 파생 기하 (YAML 규약: base_link = 차체 박스 중심, 지면 위 base_link_height) ===== -->
   <!-- 바퀴/캐스터 조인트 z: 바닥이 정확히 지면(base_footprint z=0)에 닿도록 반지름 - base_link_height -->
@@ -87,15 +99,41 @@
     구(sphere) 충돌은 접점은 정확하지만 차체 밖으로 6 cm 튀어나와 쓰지 않는다.
   -->
   <xacro:property name="wheel_contact_width" value="0.002"/>
-  <xacro:property name="body_top_z"    value="${body_height / 2.0}"/>
+  <xacro:property name="body_top_z"    value="${body_height / 2.0}"/>   <!-- 데크(차체 상면), base_link 기준 -->
+
   <!--
-    적재물 표시 박스: 차체 상면 위, 풋프린트의 2/3 크기. 높이는 차체 상면 ~ LiDAR 스캔 평면 간격의 절반으로
-    제한한다 (현재 0.05 / 2 = 0.025 m). 더 높으면 360도 LiDAR 가 자기 적재물을 장애물로 보고(스캔 평면이
-    지면 +0.38 m, 차체 상면 +0.33 m) 카메라 모듈도 가린다 → 안전 노드가 풋프린트 안 장애물로 오판한다.
+    적재물 (cargo_link 아래 박스). 명세 8장 물품 표의 실제 크기·질량으로 데크 중앙에 놓는다 → 질량 중심 높이가 맞다.
+    LiDAR(지면 +0.20)와 카메라(+0.25)가 데크(+0.33) 아래에 있어 어떤 크기의 박스도 센서를 가리지 않는다.
   -->
-  <xacro:property name="cargo_length"  value="${body_length * 2.0 / 3.0}"/>
-  <xacro:property name="cargo_width"   value="${body_width * 2.0 / 3.0}"/>
-  <xacro:property name="cargo_height"  value="${(lidar['extrinsic']['z'] - body_top_z) / 2.0}"/>
+  <xacro:property name="payload_type_arg" value="$(arg payload)"/>
+  <xacro:property name="payload_mass_arg" value="${float('$(arg payload_mass)')}"/>
+  <xacro:property name="payload_type"
+                  value="${payload_type_arg if payload_type_arg not in ('', 'none')
+                           else 'none' if payload_mass_arg &lt;= 0.0
+                           else 'small' if payload_mass_arg &lt;= payloads['small']['mass']
+                           else 'medium' if payload_mass_arg &lt;= payloads['medium']['mass']
+                           else 'large'}"/>
+  <xacro:property name="payload_mass"
+                  value="${0.0 if payload_type == 'none'
+                           else payload_mass_arg if payload_mass_arg &gt;= 0.0
+                           else float(payloads[payload_type]['mass'])}"/>
+  <xacro:property name="cargo_size"
+                  value="${payloads[payload_type]['size'] if payload_type != 'none' else [0.0, 0.0, 0.0]}"/>
+
+  <!--
+    자기 차체 가시성 비트 (amr_gazebo.xacro "자기 차체 제외"). 이 로봇의 모든 시각체는 visibility_flags = 1 << bit 만
+    갖고, 이 로봇의 LiDAR·카메라는 visibility_mask = 0xFFFFFFFF − (1 << bit) 로 그 비트만 뺀다 → 자기 몸은 안 보이고
+    다른 로봇(다른 비트)과 월드(기본 플래그 0xFFFFFFFF)는 보인다. 동시에 뜨는 로봇끼리 비트가 달라야 한다
+    (기본 규칙은 이름 끝 숫자 기준 20대까지 고유; 0~3 비트는 ign-rendering GUI/선택 표시용과 겹치지 않게 비워 둔다).
+  -->
+  <xacro:property name="self_visibility_bit_arg" value="$(arg self_visibility_bit)"/>
+  <xacro:property name="robot_name_digits" value="${robot_name[len(robot_name.rstrip('0123456789')):]}"/>
+  <xacro:property name="self_visibility_bit"
+                  value="${int(self_visibility_bit_arg) if self_visibility_bit_arg != ''
+                           else 4 + (int(robot_name_digits) - 1) % 20 if robot_name_digits != ''
+                           else 4}"/>
+  <xacro:property name="self_visibility_flags" value="${1 &lt;&lt; self_visibility_bit}"/>
+  <xacro:property name="self_blind_mask" value="${4294967295 - self_visibility_flags}"/>
 
   <xacro:include filename="$(find amr_description)/urdf/amr_inertial.xacro"/>
   <xacro:include filename="$(find amr_description)/urdf/amr_materials.xacro"/>
