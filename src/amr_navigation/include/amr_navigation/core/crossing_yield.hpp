@@ -82,6 +82,8 @@ double travelTime(double d, double v0, double a, double v_max);
 /// 기준 경로 위 교차 구간과 가상 정지선. path 는 로봇 근처부터의 코스트맵 프레임 경로,
 /// cum_s 는 그 누적 호길이, s_robot 은 로봇의 경로 투영 호길이, v_robot 은 현재 전진 속도.
 /// 장애물 여러 개면 속도 상한이 가장 낮은(가장 이른 정지선) 것이 결과가 된다.
+/// 다만 이미 들어선 통로가 있으면 그 kCommitted 가 정지선보다 우선한다
+/// (남의 차선 안에 서지 않는다 — 장애물 순서와 무관한 결론).
 YieldResult evaluateYield(
   const std::vector<Pose2D> & path, const std::vector<double> & cum_s, const Pose2D & robot,
   double s_robot, double v_robot, const std::vector<DynamicObstacle> & obstacles,

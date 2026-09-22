@@ -49,8 +49,10 @@ TEST(CrossingYield, TravelTimeAcceleratesToCap)
   EXPECT_NEAR(travelTime(2.5, 0.0, 1.0, 1.0), 1.0 + 2.0, 1e-9);
   // 이미 상한이면 등속
   EXPECT_NEAR(travelTime(3.0, 1.0, 1.0, 1.0), 3.0, 1e-9);
-  // 가속이 0 이면 현재 속도로
-  EXPECT_NEAR(travelTime(2.0, 0.5, 0.0, 1.0), 2.0, 1e-9);
+  // 가속이 0 이면 현재 속도로 (상한까지 올라간다고 보면 도달 시각을 낙관해 양보를 건너뛴다)
+  EXPECT_NEAR(travelTime(2.0, 0.5, 0.0, 1.0), 4.0, 1e-9);
+  // 가속도 속도도 0 이면 영영 못 간다
+  EXPECT_GT(travelTime(1.0, 0.0, 0.0, 1.0), 1e6);
 }
 
 TEST(CrossingYield, CrossingGivesStopLineOutsideCorridor)
@@ -151,6 +153,31 @@ TEST(CrossingYield, InsideTheZoneIsCommittedNotStopped)
   const YieldResult r = evaluateYield(path, cum, robot, s, 0.5, {o}, cfg);
   EXPECT_EQ(r.state, YieldState::kCommitted);
   EXPECT_FALSE(std::isfinite(r.speed_limit));
+}
+
+TEST(CrossingYield, CommittedBeatsAnotherObstaclesStopLineInEitherOrder)
+{
+  YieldConfig cfg;
+  cfg.lookahead = 8.0;
+  const double th = -std::atan2(4.0, 8.0);
+  const auto path = straightPath(0.0, 0.0, 12.0, th);
+  const auto cum = cumulativeLength(path);
+  const double s = 6.0;
+  const Pose2D robot{s * std::cos(th), s * std::sin(th), th};
+  const DynamicObstacle inside{3.0, -3.0, 1.0, 0.0, 0.25};   // 이 통로 안에 이미 들어섰다
+  const DynamicObstacle ahead{8.0, -6.0, 0.0, 1.0, 0.25};    // 앞을 가로지른다 (혼자면 정지선)
+  ASSERT_EQ(
+    evaluateYield(path, cum, robot, s, 0.5, {inside}, cfg).state, YieldState::kCommitted);
+  ASSERT_EQ(evaluateYield(path, cum, robot, s, 0.5, {ahead}, cfg).state, YieldState::kYield);
+  // 둘을 같이 주면 순서와 무관하게 "빠져나간다" 가 이긴다 — 정지선을 지키면 남의 차선 안에 선다
+  for (const std::vector<DynamicObstacle> & obs :
+    {std::vector<DynamicObstacle>{inside, ahead}, std::vector<DynamicObstacle>{ahead, inside}})
+  {
+    const YieldResult r = evaluateYield(path, cum, robot, s, 0.5, obs, cfg);
+    EXPECT_EQ(r.state, YieldState::kCommitted);
+    EXPECT_FALSE(std::isfinite(r.speed_limit));
+    EXPECT_FALSE(std::isfinite(r.stop_distance));
+  }
 }
 
 TEST(CrossingYield, SameLaneLeaderIsNotAStopLineCase)

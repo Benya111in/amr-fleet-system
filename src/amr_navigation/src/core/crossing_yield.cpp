@@ -45,8 +45,11 @@ double travelTime(double d, double v0, double a, double v_max)
   }
   const double v = std::max(0.0, v0);
   const double vmax = std::max(1e-6, v_max);
-  if (a <= 0.0 || v >= vmax) {
-    return d / std::max(v, vmax);
+  if (a <= 0.0) {
+    return d / std::max(v, 1e-9);   // 가속이 없으면 지금 속도 그대로 (정지면 영영 못 간다)
+  }
+  if (v >= vmax) {
+    return d / v;
   }
   const double d_acc = (vmax * vmax - v * v) / (2.0 * a);
   if (d <= d_acc) {
@@ -172,16 +175,34 @@ YieldResult evaluateYield(
     }
 
     // --- 충돌 예상: 통로 밖 정지선 또는 이미 들어선 상태 ---
+    // 이미 어느 통로 안이면(kCommitted) 다른 장애물의 정지선보다 그쪽이 우선한다:
+    // 정지선을 지키려고 지금 서면 서 있는 자리가 남의 차선이다 (시나리오 08 접촉이 그 모양).
+    // 먼저 빠져나가고, 그 사이 다른 장애물은 VO/TTC 가 막는다.
+    // 우선순위를 못 박아 장애물 순서에 결과가 달라지지 않게 한다.
     const bool committed = d_in <= 0.0 || c.inside(robot.x, robot.y);
-    const double limit = committed ? kInf :
-      SpeedProfile::maxSpeedForStop(
-      std::max(0.0, d_in - cfg.stop_margin), cfg.decel, cfg.jerk, cfg.latency);
-    const bool governs = committed ?
-      (out.state == YieldState::kClear) : (limit < out.speed_limit);
-    if (governs) {
-      out.state = committed ? YieldState::kCommitted : YieldState::kYield;
+    if (committed) {
+      if (out.state != YieldState::kCommitted || d_out > out.zone_exit) {
+        out.state = YieldState::kCommitted;      // 빠져나가는 데 가장 오래 걸리는 통로를 남긴다
+        out.speed_limit = kInf;
+        out.stop_distance = kInf;
+        out.zone_entry = d_in;
+        out.zone_exit = d_out;
+        out.obstacle_in = t_in;
+        out.obstacle_out = t_out;
+        out.obstacle = static_cast<std::ptrdiff_t>(idx);
+      }
+      continue;
+    }
+    if (out.state == YieldState::kCommitted) {
+      continue;                                  // 빠져나가는 중에는 정지선을 걸지 않는다
+    }
+    const double stop_distance = std::max(0.0, d_in - cfg.stop_margin);
+    const double limit =
+      SpeedProfile::maxSpeedForStop(stop_distance, cfg.decel, cfg.jerk, cfg.latency);
+    if (limit < out.speed_limit) {
+      out.state = YieldState::kYield;
       out.speed_limit = limit;
-      out.stop_distance = committed ? kInf : std::max(0.0, d_in - cfg.stop_margin);
+      out.stop_distance = stop_distance;
       out.zone_entry = d_in;
       out.zone_exit = d_out;
       out.obstacle_in = t_in;
