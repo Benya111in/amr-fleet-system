@@ -194,8 +194,10 @@ bool DockingServerNode::wrongMarker(double t) const
   if (expected_marker_id_ < 0 || last_marker_id_time_ < 0.0) {
     return false;   // 도크 id 를 모르거나 검출기가 id 를 내지 않는다 (이전 규약과 호환)
   }
-  // id 를 내는 검출기인데 최근 id 가 없거나 다르면 버린다 (fail-safe)
-  return t - last_marker_id_time_ > marker_id_max_age_ || last_marker_id_ != expected_marker_id_;
+  if (t - last_marker_id_time_ > marker_id_max_age_) {
+    return false;   // id 가 오래됐다 → 확인 생략 (자세만 쓴다)
+  }
+  return last_marker_id_ != expected_marker_id_;   // 최근 id 가 다른 마커면 버린다
 }
 
 rclcpp_action::GoalResponse DockingServerNode::onGoal(
@@ -247,11 +249,20 @@ void DockingServerNode::onMarker(const geometry_msgs::msg::PoseStamped::SharedPt
   if (!active_ && !session_active_) {
     return;
   }
-  if (wrongMarker(now().seconds())) {
+  const double now_s = now().seconds();
+  if (wrongMarker(now_s)) {
     RCLCPP_WARN_THROTTLE(
       get_logger(), *get_clock(), 5000, "마커 id %d ≠ 도크 마커 %d → 관측 버림", last_marker_id_,
       expected_marker_id_);
     return;
+  }
+  if (expected_marker_id_ >= 0 && last_marker_id_time_ >= 0.0 &&
+    now_s - last_marker_id_time_ > marker_id_max_age_)
+  {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 5000,
+      "마커 id 가 %.2f s 오래됨 → id 확인 생략 (도크 %d)", now_s - last_marker_id_time_,
+      expected_marker_id_);
   }
   geometry_msgs::msg::Pose pose = msg->pose;
   const std::string & frame = msg->header.frame_id;

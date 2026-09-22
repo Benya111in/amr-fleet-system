@@ -15,26 +15,32 @@ fleet/dashboard/evaluation 끔.
 
 from dataclasses import replace
 
-from amr_bringup import fleet_spawn
-from amr_bringup import launch_utils as lu
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 
-_ORIG_EXTRA = lu.stack_extra_arguments
+# amr_bringup 는 함수 안에서 들여온다: 이 디렉터리는 pytest 가 훑고 launch_testing 플러그인이
+# *.launch.py 를 수집하므로, amr_bringup 이 없는 단독 패키지 체크아웃에서 모듈 수준 import 가
+# 실패하면 amr_behavior 의 python 시험이 통째로 수집되지 않는다 (실측).
 
 
-def _extra(label, opts):
-    out = dict(_ORIG_EXTRA(label, opts))
-    if label == 'perception':
-        out.update({'use_yolo': 'false', 'use_localizer': 'false', 'use_markers': 'false'})
-    return out
+def _patch_perception(lu):
+    """인지 스택에서 YOLO·객체 위치·표시 노드만 끈다 (도킹 체인과 무관, 부하만 줄인다)."""
+    original = lu.stack_extra_arguments
 
+    def _extra(label, opts):
+        out = dict(original(label, opts))
+        if label == 'perception':
+            out.update({'use_yolo': 'false', 'use_localizer': 'false', 'use_markers': 'false'})
+        return out
 
-lu.stack_extra_arguments = _extra
+    lu.stack_extra_arguments = _extra
 
 
 def _setup(context):
+    from amr_bringup import fleet_spawn
+    from amr_bringup import launch_utils as lu
+    _patch_perception(lu)
     opts = lu.read_options(context, 'dock')
     spawn = fleet_spawn.load_fleet_spawn(LaunchConfiguration('robots_file').perform(context))
     x, y, yaw = (float(LaunchConfiguration(k).perform(context)) for k in ('x', 'y', 'yaw'))
@@ -46,6 +52,7 @@ def _setup(context):
 
 
 def generate_launch_description():
+    from amr_bringup import launch_utils as lu
     args = [DeclareLaunchArgument('x', default_value='-25.5'),
             DeclareLaunchArgument('y', default_value='15.0'),
             DeclareLaunchArgument('yaw', default_value='3.14159')]

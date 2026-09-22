@@ -16,6 +16,7 @@ void writeConfig(const TaskTreeConfig & c, BT::Blackboard & bb)
   bb.set<unsigned>("perception_timeout_ms", c.perception_timeout_ms);
   bb.set<unsigned>("relocalization_timeout_ms", c.relocalization_timeout_ms);
   bb.set<unsigned>("charge_timeout_ms", c.charge_timeout_ms);
+  bb.set<unsigned>("task_timeout_ms", c.task_timeout_ms);
   bb.set<unsigned>("charge_retry_delay_ms", c.charge_retry_delay_ms);
   bb.set<unsigned>("error_hold_ms", c.error_hold_ms);
   bb.set<std::string>("perception_class", c.perception_class);
@@ -45,7 +46,7 @@ const std::vector<std::string> & globalKeys()
 {
   static const std::vector<std::string> kKeys = {
     "nav_attempts", "perception_attempts", "dock_attempts", "dock_max_retries",
-    "perception_timeout_ms", "relocalization_timeout_ms", "charge_timeout_ms",
+    "perception_timeout_ms", "relocalization_timeout_ms", "charge_timeout_ms", "task_timeout_ms",
     "charge_retry_delay_ms", "error_hold_ms", "perception_class", "perception_max_distance",
     "battery_low_percent", "battery_resume_percent", "recovery_spin_angle", "recovery_wait_s",
     "recovery_backup_dist", "perception_spin_angle", "dock_backup_dist", "marker_max_age",

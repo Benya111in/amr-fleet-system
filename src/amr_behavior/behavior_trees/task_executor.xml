@@ -48,7 +48,10 @@
                               pickup_dock_id="{pickup_dock_id}" dropoff_dock_id="{dropoff_dock_id}"
                               pickup_perceive_turn="{pickup_perceive_turn}"/>
               <Fallback name="TaskOrFail">
-                <!-- 진행 단계를 task_step 에 저장: E-stop halt 후 끝낸 단계(적재 등)를 반복하지 않는다 -->
+                <!-- 진행 단계를 task_step 에 저장: E-stop halt 후 끝낸 단계(적재 등)를 반복하지 않는다.
+                     Timeout: 작업 하나가 task_timeout_ms 를 넘으면 halt → 아래 실패 경로 (멈춘 채
+                     영원히 MOVING 으로 남지 않는다, 통합 시나리오 11) -->
+                <TaskDeadline name="TaskDeadline" msec="{task_timeout_ms}" fail_reason="{fail_reason}">
                 <ResumableSequence name="PickAndPlace" progress_key="task_step">
                   <SetFailReason reason="nav_failed" fail_reason="{fail_reason}">
                     <SubTreePlus ID="MoveTo" goal="{pickup_goal}" phase="MOVING" __autoremap="true"/>
@@ -73,6 +76,7 @@
                   <SubTreePlus ID="Undock" __autoremap="true"/>
                   <ReportTaskStatus status="COMPLETED"/>
                 </ResumableSequence>
+                </TaskDeadline>
                 <!-- 주행 불가 · 인식 실패 · 도킹 3회 실패: 에러 보고 후 대체 작업(물품 되돌려 놓기 · 대기 구역 복귀) -->
                 <Sequence name="FailTask">
                   <SetPhase phase="ERROR"/>

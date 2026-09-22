@@ -10,7 +10,7 @@
 | --- | --- | --- | --- |
 | BehaviorTree.CPP 로 작업 로직 | BehaviorTree.CPP **v3** (`behaviortree_cpp_v3` 3.8), `behavior_trees/*.xml` | `test_task_tree` | 충족 |
 | '대기-이동-인식-작업-복귀' | Idle → `MoveTo` → `Perceive`(물품 쪽 돌아보기) → `DockAt` → `Load` → `Undock` → `MoveTo` → `DockAt` → `Unload` → `Undock` → `MoveTo(waiting_pose)` | 단계 순서 시험 (§9.1), Gazebo 종단 1회 (§9.3) | §9.3 결과 참고 |
-| 노드 ≥ 15 (Action/Condition/Control/Decorator) | 트리에 쓰인 노드 타입 **42종** (Action 15 · Condition 10 · Control 6 · Decorator 11, SubTreePlus 제외), 그중 자체 구현 28종 | `TreeUsesAtLeastFifteenRegisteredNodeTypes`, `bt_tool nodes` | 충족 |
+| 노드 ≥ 15 (Action/Condition/Control/Decorator) | 트리에 쓰인 노드 타입 **43종** (Action 15 · Condition 10 · Control 6 · Decorator 12, SubTreePlus 제외), 그중 자체 구현 29종 | `TreeUsesAtLeastFifteenRegisteredNodeTypes`, `bt_tool nodes` | 충족 |
 | 재사용 서브트리, 작업 추가 용이 | 서브트리 13개 (`MoveTo` 는 픽업·하역·복귀·충전·물품 되돌려 놓기에서, `TrafficGate` 는 움직이는 모든 단계에서 재사용) | §3 | 충족 (새 작업 종류는 Task.msg 에 종류 필드가 없어 §8 조율 항목) |
 | 복구 ≥ 3 | ① 주행 불가 ② 인식 실패 ③ 도킹 3회 실패 + E-stop 일시정지/재개, 교통 hold 양보, 위치 상실 대기, 배터리 충전, 하역 실패 물품 되돌려 놓기 | §4, 시나리오 시험 | 충족 |
 | Groot 시각화·문서화 | `BT::PublisherZMQ`(로봇 i 에 :1666+2i/:1667+2i), `BT::FileLogger`(.fbl), `bt_tool flatten`(Groot 편집기용 단일 XML + 팔레트), 이 문서의 Mermaid | §9.2 (bringup 경로로 3대 동시 bind 확인) | 충족 |
@@ -114,6 +114,9 @@ flowchart TD
   IOB --> PB["SetPhase ERROR<br/>PayloadBlocked"]:::act
 ```
 
+`PickAndPlace` 전체는 `TaskDeadline`(`task_timeout_ms`, 기본 15 분, 실행기 시계 = sim time)으로 감싼다: 상한을 넘으면
+진행 중인 동작을 halt 하고 `task_timeout` 으로 실패 보고 후 복귀한다. 통합 시나리오 11 에서 위치 상실로 Nav2 가 취소된 뒤
+실행기가 MOVING 에 1340 s 머물러 작업이 끝나지도 실패하지도 않았고, 플릿은 그 로봇을 계속 점유로 봤다.
 `PickAndPlace` 의 각 단계는 `SetFailReason`(nav_failed / perception_failed / dock_failed / load_failed)으로 감싸 실패 사유를
 `fail_reason` 에 남긴다 (그림에서는 생략).
 
@@ -290,6 +293,7 @@ test_perceive_yaw_points_the_camera_at_the_dock_items` 가 확인한다(staging 
 | Control | `ResumableSequence` | resumable_sequence.hpp | in: progress_key |
 | Decorator | `KeepRunningUntilSuccess` | keep_running_until_success.hpp | — (v3 에 없는 KeepRunningUntilFailure 의 대칭) |
 | Decorator | `SetFailReason` | set_fail_reason.hpp | in: reason / out: fail_reason |
+| Decorator | `TaskDeadline` | task_deadline.hpp | in: msec (실행기 시계) / out: fail_reason = `task_timeout` |
 | Decorator | `ChargingSession` | charging_session.hpp | Pub `charging/enable` (자식 실행 중에만 true, halt·종료 시 false) |
 
 내장: `Sequence`, `Fallback`, `ReactiveSequence`, `ReactiveFallback`, `Parallel`, `RetryUntilSuccessful`, `Timeout`, `Inverter`,
