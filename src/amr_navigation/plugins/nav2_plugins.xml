@@ -1,0 +1,11 @@
+<library path="amr_navigation_plugins">
+  <class type="amr_navigation::AStarPlanner" base_class_type="nav2_core::GlobalPlanner">
+    <description>8-연결 비용 인지 A* (옥타일 휴리스틱, 이진 힙) + 여유거리 보존 숏컷·경사 하강 평활화</description>
+  </class>
+  <class type="amr_navigation::DWAController" base_class_type="nav2_core::Controller">
+    <description>Dynamic Window Approach: 동적 창 샘플링, 원호 롤아웃, 풋프린트 충돌, Velocity Obstacle 샘플 제외, 동적 장애물 TTC 비용</description>
+  </class>
+  <class type="amr_navigation::PurePursuitController" base_class_type="nav2_core::Controller">
+    <description>속도 적응 look-ahead Pure Pursuit (곡률·목표 감속, 제자리 회전, 명령 원호 충돌 검사)</description>
+  </class>
+</library>

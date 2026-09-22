@@ -1,0 +1,35 @@
+# velocity_profiler_node 파라미터 (components.md §3.3, 명세 4.5 속도 제어)
+# 한계값(limits.*)과 질량(robot.*)은 config/robot_params.yaml 을 함께 로드해 읽는다 (여기서 복제하지 않는다).
+# 게인 튜닝 절차·결과: docs/algorithms/path_tracking.md "PID 게인 튜닝" (tools/pid_tuning 격자 탐색)
+/**:
+  ros__parameters:
+    rate: 50.0                   # [Hz] 출력 주기 (Nav2 velocity_smoother 20 Hz 보다 촘촘 — 저크 이산화 오차 ↓)
+    cmd_timeout: 0.5             # [s] cmd_vel_nav 가 끊기면 목표 0 (감속 프로파일로 정지)
+    odom_timeout: 0.2            # [s] odometry/filtered 가 끊기면 PI 끄고 피드포워드만
+    idle_publish_time: 1.0       # [s] 정지 상태가 이만큼 이어지면 발행 중단 (다른 cmd 발행자 방해 금지)
+    jerk_limit_enabled: true     # false 면 사다리꼴(가속 한계만) — 비교 실험용
+    max_angular_jerk: 6.0        # [rad/s³] 제자리 회전 각저크 (α 2.0 까지 0.33 s)
+    preserve_curvature: true     # ω_ref = (ω*/v*)·v_ref — 선속도 프로파일 중에도 경로 곡률 유지
+    curvature_min_speed: 0.05    # [m/s] 이하면 제자리 회전으로 보고 각속도를 따로 저크 제한
+    use_pid: true
+    use_reference_model: true    # PI 오차 = 기준 모델 응답 − 측정 (모델 추종 2-자유도)
+    model_time_constant: 0.08    # [s] DiffDrive 속도 서보 + EKF 1차 지연 (플랜트 식별값으로 갱신)
+    model_delay: 0.04            # [s] 순수 지연 (프로파일러 1 주기 + 브리지·EKF)
+    pid:
+      linear:
+        kp: 0.4                  # 격자 탐색 선택값 (명목 오버슈트 0 %, 불일치 27 종 최악 4.6 %, 명령 잡음 0.0057 m/s)
+        ki: 2.0                  # [1/s]
+        kd: 0.0                  # 미분 없음 (측정 잡음 증폭 회피)
+        setpoint_weight: 1.0
+        tracking_time: 0.447     # [s] 역계산 안티와인드업 T_t = √(kp/ki)
+      angular:
+        kp: 0.4
+        ki: 2.0
+        kd: 0.0
+        setpoint_weight: 1.0
+        tracking_time: 0.447
+    max_linear_correction: 0.2   # [m/s] PI 보정 폭 (피드포워드 ± 이 값)
+    max_angular_correction: 0.3  # [rad/s]
+    resync_threshold_v: 0.4      # [m/s] 기준−측정 차가 이보다 크면 필터를 측정으로 재동기화 (안전 노드 개입 후)
+    resync_threshold_w: 0.6      # [rad/s]
+    stop_deadband: 0.001         # [m/s] 목표·기준이 이 안이면 정확히 0 출력

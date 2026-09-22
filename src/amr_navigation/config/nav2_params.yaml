@@ -1,0 +1,384 @@
+# Nav2 파라미터 템플릿 — amr_navigation (components.md §3.3 / §5.3 / §6, multi_robot.md §4)
+#
+# 이 파일은 템플릿이다. navigation.launch.py 가
+#   1) nav2_common ReplaceString 으로 '<prefix>' → 프레임 접두어 (다중 로봇: 'amr_01/', 단일: '')
+#   2) nav2_common RewrittenYaml(root_key=<robot_name>) 으로 네임스페이스 키를 씌우고 use_sim_time·BT 경로를 덮어쓴다.
+# 토픽은 모두 로봇 네임스페이스 아래이고, /map 과 /tf 만 공유한다 (multi_robot.md: /tf 리맵 금지).
+# 주의: Humble 의 Costmap2DROS 는 '<ns>/<costmap 이름>' 네임스페이스의 자식 노드라서, 레이어가 구독하는
+#   상대 토픽 'scan_filtered' 는 /amr_01/local_costmap/scan_filtered 로 풀린다 (실측: ros2 topic info).
+#   그래서 코스트맵 레이어 토픽만 '<robot_ns>/…' 로 적고 런치가 '<robot_ns>' → '/amr_01' 로 바꿔 절대 이름을
+#   만든다 (네임스페이스 없음이면 '' → '/scan_filtered'). 서버 노드 자체의 토픽(odom_topic 등)은 상대 이름.
+# 로봇 한계(속도·가속·저크)는 config/robot_params.yaml 의 limits.* 가 단일 출처다: 런치가 controller_server 에
+# robot_params.yaml 을 함께 넘기고, DWA/PurePursuit 플러그인은 자기 파라미터가 없으면 limits.* 를 쓴다.
+# 튜닝 근거: docs/algorithms/{astar,dwa,path_tracking,costmap}.md
+#
+# 풋프린트 산술 (docs/algorithms/costmap.md): 0.60 x 0.40 m 사각형, padding 0
+#   r_ins = 0.20 m, r_circ = √(0.30² + 0.20²) = 0.361 m
+#   0.60 m 통로(로봇 폭 + 0.20) 중앙: 벽까지 0.30 m → c = 252·exp(−s·(0.30 − 0.20))
+#     전역 s = 2.0 → 206, 지역 s = 3.0 → 186 (둘 다 < 253 INSCRIBED → 통과 가능)
+
+planner_server:
+  ros__parameters:
+    use_sim_time: True
+    expected_planner_frequency: 1.0          # [Hz] BT RateController 1 Hz 재계획과 같게 (경고 기준)
+    planner_plugins: ["AStar", "NavFn", "Smac"]   # planner_id (components.md §5.3)
+    AStar:
+      plugin: "amr_navigation::AStarPlanner"
+      cost_weight: 2.0                 # κ: 간선 가중 ℓ·(1 + κ·c/252). 0 = 최단거리, 2.0 = Smac cost_travel_multiplier 와 같게
+                                       #    (비교 공정성). 크게 하면 장애물에서 멀어지지만 길어진다 (astar.md 튜닝 표)
+      allow_unknown: True              # 미지(255) 셀 통행 허용 (SLAM 지도 가장자리 미지 영역 관통 허용)
+      unknown_cost: 252                # 미지 셀을 이 비용으로 취급 (가장 비싼 통행 가능 셀과 같게 → 미지 회피)
+      tolerance: 0.25                  # [m] 목표가 막혔을 때 대체 목표 탐색 반경 (NavFn/Smac 과 같은 값)
+      max_iterations: 0                # 확장 수 상한 (0 = 셀 수, 즉 무제한)
+      max_planning_time: 0.4           # [s] 탐색 마감. 명세 "재계획 500 ms 이내" 에서 평활화·통신 여유 0.1 s
+      allow_corner_cutting: False      # 대각 이동 시 두 직교 이웃이 모두 통행 가능해야 함 (모서리 스침 방지)
+      allow_start_in_inscribed: True   # 시작이 INSCRIBED(253) 안이면 그 구역을 빠져나오는 동안만 통행 허용
+      use_final_approach_orientation: False   # False: 마지막 자세 방향 = 목표 방향
+      smoother:
+        enable_shortcut: True
+        shortcut_max_length: 10.0      # [m] 숏컷 현 길이 상한 (긴 현이 비용 적분을 과소평가하는 것을 방지)
+        shortcut_cost_ratio: 0.05      # δ: 현 비용 ≤ (1+δ)·원래 격자 경로 비용일 때만 채택
+        clearance_cost_margin: 10      # [cost] 현 최대 셀 비용 ≤ 구간 최대 비용 + 10 (≈ 여유거리 1 셀 손실 허용)
+        output_spacing: 0.05           # [m] 출력 경로 점 간격 (= 코스트맵 해상도)
+        enable_smoothing: True
+        w_data: 0.2                    # 데이터 항 (숏컷 경로에 붙잡아 두는 힘)
+        w_smooth: 0.3                  # 평활 항 (이웃 평균 쪽으로). 0 < w_data + 2 w_smooth < 2 에서 수렴
+        w_clearance: 0.3               # 여유 항 (비용 기울기 반대 방향, 셀 단위 스텝 × 비용 초과율)
+        clearance_cost_threshold: 100  # 이 비용(여유 ≈ 0.66 m) 이상인 점만 밀어낸다
+        max_iterations: 100            # Gauss–Seidel 스윕 수 상한
+        tolerance: 0.0001              # [m] 스윕 총 이동량이 이보다 작으면 수렴
+    NavFn:                             # 비교군 1 (명세 4.4 "NavFn 또는 Smac 과 비교")
+      plugin: "nav2_navfn_planner/NavfnPlanner"
+      tolerance: 0.25
+      use_astar: False
+      allow_unknown: True
+    Smac:                              # 비교군 2: Smac 2D (8-연결 A*, Euclid 휴리스틱, 자체 평활기)
+      plugin: "nav2_smac_planner/SmacPlanner2D"
+      tolerance: 0.25
+      downsample_costmap: False
+      downsampling_factor: 1
+      allow_unknown: True
+      max_iterations: 1000000
+      max_on_approach_iterations: 1000
+      max_planning_time: 2.0           # [s]
+      cost_travel_multiplier: 2.0      # AStar.cost_weight 와 같은 κ
+      use_final_approach_orientation: False
+      smoother:
+        max_iterations: 1000
+        w_smooth: 0.3
+        w_data: 0.2
+        tolerance: 1.0e-10
+
+controller_server:
+  ros__parameters:
+    use_sim_time: True
+    controller_frequency: 20.0         # [Hz] 명세 20 Hz 제어 주기 (DWA 동적 창 Δt = 0.05 s)
+    min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.5
+    min_theta_velocity_threshold: 0.001
+    failure_tolerance: 1.0             # [s] 플러그인 예외 후 0 속도로 버티는 시간 → 넘으면 FollowPath 실패(BT 복구)
+    odom_topic: odometry/filtered      # 상대 이름 (ekf_filter_node_odom)
+    progress_checker_plugin: "progress_checker"
+    goal_checker_plugins: ["general_goal_checker"]
+    controller_plugins: ["DWA", "PurePursuit", "DWB", "RPP"]   # controller_id (DWB·RPP 는 비교용)
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.3    # [m]
+      movement_time_allowance: 20.0    # [s] 동적 장애물 대기(정지) 시간을 허용
+    general_goal_checker:
+      plugin: "nav2_controller::SimpleGoalChecker"
+      stateful: True
+      xy_goal_tolerance: 0.10          # [m] 도킹 전 접근 정밀도 (정밀 도킹 2 cm 는 docking_server 담당)
+      yaw_goal_tolerance: 0.05         # [rad]
+    DWA:
+      plugin: "amr_navigation::DWAController"
+      # 속도 한계: 운용 최고속도 1.0 m/s (하드웨어 한계 limits.max_linear_velocity 2.0 은 safety 의 여유거리
+      # 속도 제한상 전방 2.6 m 이상 비었을 때만 허용 → 창고 통로에서는 1.0 이 실효 상한). 가속·저크는 limits.*
+      max_vel_x: 1.0                   # [m/s]
+      min_vel_x: 0.0                   # [m/s] 후진은 BackUp 복구 동작만 (DWA 샘플에서 제외)
+      # max_vel_theta / acc_lim_x / decel_lim_x / acc_lim_theta / jerk_lim_x 는 두지 않는다 →
+      # robot_params.yaml limits.{max_angular_velocity, max_linear_acceleration, max_angular_acceleration,
+      # max_linear_jerk} 가 기본값 (단일 출처). 실험 시에만 여기서 덮어쓴다.
+      vx_samples: 11                  # 동적 창 v 샘플 수 (창 폭 0.10 m/s → 0.01 m/s 해상도)
+      vth_samples: 31                  # ω 샘플 수 (창 폭 0.20 rad/s → 0.0067 rad/s 해상도)
+      sim_dt: 0.1                      # [s] 롤아웃 간격
+      sim_time_min: 1.5                # [s] T_sim(v) = clip(|v|/a + 0.5, min, max) — 정지거리 이상을 본다
+      sim_time_max: 2.5                # [s]
+      commit_time: 0.2                 # [s] 명령 유지 후 제동 시작 (Δt_c + 반응 지연)
+      approach_latency: 0.3            # [s] 목표 접근 v_des = d_stop⁻¹(d_goal) 의 명령→실속도 지연 t_c.
+                                       #     하류 저크 필터의 램프 지연 a/2j 0.25 + 서보 0.04~0.12 ≈ 0.3.
+                                       #     체인 시뮬레이션 튜닝 표 (path_tracking.md §1.4): 0.1 → 9 cm 통과,
+                                       #     0.3 → 0.2 cm, 사다리꼴 √(2ad) → 40 cm 통과
+      window_reset_v: 0.3              # [m/s] 직전 명령과 측정 차가 이보다 크면 창 중심 = 측정
+      window_reset_w: 0.5              # [rad/s]
+      heading_weight: 0.6              # 비용 가중치 (항별 [0,1] 정규화). tracking_sim 격자 탐색 결과 (dwa.md §4.1):
+      clearance_weight: 1.0            #   (0.8/1.2, 전체 롤아웃 평가) → (0.6/2.0, 앞 0.8 s): 곡선 CTE 평균 U 턴 3.7 → 0.5 cm,
+                                       #   S 자 16.1 → 0.9 cm, 주행 시간 오차 17.6 → 1.5 %
+      velocity_weight: 0.4
+      path_weight: 2.0
+      oscillation_weight: 0.5
+      dynamic_weight: 1.5
+      path_eval_time: 0.8              # [s] 헤딩·경로 항은 롤아웃 앞 0.8 s 만 평가 (충돌·여유는 전체 T_sim):
+                                       #     1.5 s 등곡률 원호가 S 자 경로의 평균 곡률로 안쪽을 가로지르는 것 방지
+      heading_lookahead_gain: 0.4      # ℓ(v) = clip(0.4 v + 0.3, 0.4, 1.2) [m] 헤딩 목표점 거리 (평가 끝점 기준)
+      heading_lookahead_offset: 0.3
+      heading_lookahead_min: 0.4
+      heading_lookahead_max: 1.2
+      path_band: 0.8                   # [m] 경로 이탈 비용 정규화 폭
+      goal_align_distance: 0.08        # [m] 목표 정렬(제자리 회전) 시작 거리 (≤ xy_goal_tolerance)
+      goal_overshoot_margin: 0.1       # [m] 목표 너머 충돌 검사 여유
+      path_horizon: 6.0                # [m] 코스트맵 프레임으로 옮길 경로 길이 (로컬 코스트맵 반폭)
+      no_valid_patience: 10            # 유효 샘플 없음이 이 주기 수 이어지고 정지 상태면 예외 → BT 복구
+      use_dynamic_obstacles: True      # perception/tracked_obstacles 예측 위치 → TTC₀ 비용
+      use_velocity_obstacles: True     # VO 원뿔 안 샘플 제외 (명세 4.7)
+      prediction_time: 5.0             # [s] TTC₀ 예측 지평
+      dynamic_margin: 0.5              # [m] TTC₀ 접촉 여유 = safety.critical_zone_distance
+      vo_time_horizon: 2.0             # [s] VO 절단 시간 τ
+      vo_margin: 0.3                   # [m] VO 합성 반경 여유 = safety.emergency_stop_distance
+      vo_max_range: 6.0                # [m]
+      dynamic_speed_threshold: 0.2     # [m/s] 이보다 느린 트랙은 정적(코스트맵이 처리) — 추적기 is_dynamic 기준과 같게
+      obstacle_radius: 0.25            # [m] 트랙 덮개 반경 (TrackedObstacle 에 반경 필드 없음)
+      track_timeout: 0.5               # [s] 트랙 메시지 유효 시간
+      robot_radius: -1.0               # [m] ≤ 0 이면 풋프린트 외접 반경 (0.361)
+      robot_mass: 47.6                 # [kg] 공차 총중량 (payload/mass 가속 스케일 기준)
+      allow_unknown: True
+      transform_tolerance: 0.2         # [s]
+    PurePursuit:
+      plugin: "amr_navigation::PurePursuitController"
+      desired_linear_vel: 1.0          # [m/s] 순항 속도
+      lookahead_time: 0.8              # [s] L = clamp(k·v, L_min, L_max): ω_n = √2/k 로 속도 무관 (path_tracking.md)
+      min_lookahead_dist: 0.4          # [m] 저속 하한 (위치추정 잡음 증폭 억제)
+      max_lookahead_dist: 1.8          # [m]
+      # max_angular_vel / max_angular_accel / max_linear_accel / max_linear_decel / max_linear_jerk 는
+      # robot_params.yaml limits.* 가 기본값 (단일 출처)
+      max_lateral_accel: 0.8           # [m/s²] 곡률 감속 v ≤ √(a_lat/|κ|) (적재물 안정)
+      min_approach_linear_velocity: 0.05
+      approach_latency: 0.3            # [s] 목표 정지 접근의 명령→실속도 지연 (DWA 와 같은 근거·튜닝 표)
+      curvature_window: 0.25           # [m] 이산 곡률 추정 창
+      use_rotate_to_heading: True
+      rotate_to_heading_min_angle: 0.785   # [rad] look-ahead 방향 오차가 이보다 크고 거의 정지면 제자리 회전
+      rotate_to_heading_max_v: 0.1     # [m/s]
+      goal_align_distance: 0.08        # [m]
+      goal_yaw_tolerance: 0.02         # [rad]
+      use_chord_correction: False      # CC-PP 확장 (브리프 path-tracking §4.1). 이상 플랜트에서는 곡선 CTE 1.74 → 0.24 cm 이나
+                                       # 실제 체인(프로파일러 + 서보 지연, tracking_sim)에서는 이득 없음 (U 턴 0.4 vs 0.6 cm)
+                                       # → 기본 PP 사용, 옵션으로 유지 (path_tracking.md §1.5)
+      chord_gain: 1.0
+      use_collision_detection: True
+      collision_check_time: 1.0        # [s] 명령 원호 충돌 검사 시간 (최소; 제동 시간이 더 길면 그만큼)
+      robot_mass: 47.6
+      transform_tolerance: 0.2
+    DWB:                               # 비교군: Nav2 DWB (TEB 는 Humble 바이너리 없음 → dwa.md)
+      plugin: "dwb_core::DWBLocalPlanner"
+      debug_trajectory_details: False
+      min_vel_x: 0.0
+      min_vel_y: 0.0
+      max_vel_x: 1.0
+      max_vel_y: 0.0
+      max_vel_theta: 1.5
+      min_speed_xy: 0.0
+      max_speed_xy: 1.0
+      min_speed_theta: 0.0
+      acc_lim_x: 1.0
+      acc_lim_y: 0.0
+      acc_lim_theta: 2.0
+      decel_lim_x: -1.0
+      decel_lim_y: 0.0
+      decel_lim_theta: -2.0
+      vx_samples: 11
+      vy_samples: 1
+      vtheta_samples: 31
+      sim_time: 1.7
+      linear_granularity: 0.05
+      angular_granularity: 0.025
+      transform_tolerance: 0.2
+      xy_goal_tolerance: 0.10
+      trans_stopped_velocity: 0.25
+      short_circuit_trajectory_evaluation: True
+      stateful: True
+      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
+      BaseObstacle.scale: 0.02
+      PathAlign.scale: 32.0
+      PathAlign.forward_point_distance: 0.1
+      GoalAlign.scale: 24.0
+      GoalAlign.forward_point_distance: 0.1
+      PathDist.scale: 32.0
+      GoalDist.scale: 24.0
+      RotateToGoal.scale: 32.0
+      RotateToGoal.slowing_factor: 5.0
+      RotateToGoal.lookahead_time: -1.0
+    RPP:                               # 비교군: Nav2 Regulated Pure Pursuit (path_tracking.md 비교)
+      plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
+      desired_linear_vel: 1.0
+      lookahead_dist: 0.8
+      min_lookahead_dist: 0.4
+      max_lookahead_dist: 1.8
+      lookahead_time: 0.8
+      rotate_to_heading_angular_vel: 1.5
+      transform_tolerance: 0.2
+      use_velocity_scaled_lookahead_dist: True
+      min_approach_linear_velocity: 0.05
+      approach_velocity_scaling_dist: 0.6
+      use_collision_detection: True
+      max_allowed_time_to_collision_up_to_carrot: 1.0
+      use_regulated_linear_velocity_scaling: True
+      use_cost_regulated_linear_velocity_scaling: False
+      regulated_linear_scaling_min_radius: 0.9
+      regulated_linear_scaling_min_speed: 0.25
+      use_rotate_to_heading: True
+      allow_reversing: False
+      rotate_to_heading_min_angle: 0.785
+      max_angular_accel: 2.0
+      max_robot_pose_search_dist: 10.0
+      use_interpolation: True
+
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      use_sim_time: True
+      update_frequency: 10.0           # [Hz] = LiDAR 10 Hz (동적 장애물 반영 주기)
+      publish_frequency: 2.0
+      global_frame: <prefix>odom
+      robot_base_frame: <prefix>base_footprint
+      rolling_window: True
+      width: 12                        # [m] 2 m/s × 2.5 s = 5 m 롤아웃 + 여유 (반폭 6 m)
+      height: 12
+      resolution: 0.05                 # [m] 전역 지도와 같은 해상도
+      footprint: "[[0.30, 0.20], [0.30, -0.20], [-0.30, -0.20], [-0.30, 0.20]]"   # robot_params 0.60 x 0.40
+      footprint_padding: 0.0           # 패딩 0.01 이면 r_ins 0.21 → 0.60 m 통로 중앙 비용 상승 (costmap.md)
+      track_unknown_space: False
+      always_send_full_costmap: True
+      plugins: ["obstacle_layer", "voxel_layer", "inflation_layer"]
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        observation_sources: scan
+        scan:
+          topic: <robot_ns>/scan_filtered   # scan_filter_node 출력 (위 주의: 절대 이름으로 치환)
+          data_type: "LaserScan"
+          marking: True
+          clearing: True
+          observation_persistence: 0.0 # [s] 최신 스캔만 사용 → 지나간 동적 장애물 셀은 다음 스캔 레이트레이싱으로 즉시 지움
+          expected_update_rate: 0.3    # [s] = safety.sensor_timeouts.lidar. 넘으면 코스트맵 비최신 → 제어 정지 (LiDAR 고장 = 안전 정지)
+          obstacle_max_range: 10.0     # [m]
+          obstacle_min_range: 0.0
+          raytrace_max_range: 12.0     # [m] 마킹보다 길게 → 먼 곳의 유령 셀도 지운다
+          raytrace_min_range: 0.0
+          inf_is_valid: False
+      voxel_layer:
+        plugin: "nav2_costmap_2d::VoxelLayer"
+        enabled: True
+        publish_voxel_map: False
+        origin_z: 0.0
+        z_resolution: 0.125            # [m] 16 × 0.125 = 2.0 m 높이까지 (선반·지게차 포크 등 LiDAR 평면 밖 장애물)
+        z_voxels: 16
+        max_obstacle_height: 2.0
+        mark_threshold: 0
+        observation_sources: depth
+        depth:
+          topic: <robot_ns>/camera/depth/points_filtered   # pointcloud_filter_node 출력
+          data_type: "PointCloud2"
+          marking: True
+          clearing: True
+          min_obstacle_height: 0.05    # [m] 바닥 잡음 제거
+          max_obstacle_height: 2.0
+          observation_persistence: 0.0
+          expected_update_rate: 0.0    # 카메라 고장은 저속 운행(safety degraded_mode) 대상 → 코스트맵 최신성 판정에서 제외
+          obstacle_max_range: 4.0      # [m] 깊이 잡음 σ ∝ d² (sensors.yaml) → 4 m 이내만 마킹
+          raytrace_max_range: 5.0
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0       # [1/m] 지역: 가파른 감쇠 → 통로 중앙 186, DWA 여유 비용이 벽 근처에서만 작동
+        inflation_radius: 0.8          # [m] 2 m/s 정지거리 이상은 여유 비용이 아닌 충돌 검사·속도 제한이 담당
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      use_sim_time: True
+      update_frequency: 5.0            # [Hz] 전역 재계획 1 Hz 보다 충분히 빠르게
+      publish_frequency: 1.0
+      global_frame: map
+      robot_base_frame: <prefix>base_footprint
+      resolution: 0.05
+      footprint: "[[0.30, 0.20], [0.30, -0.20], [-0.30, -0.20], [-0.30, 0.20]]"
+      footprint_padding: 0.0
+      track_unknown_space: True
+      always_send_full_costmap: True
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      filters: ["keepout_filter"]
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: True
+        map_topic: /map                # 공유 지도 (multi_robot.md: map 프레임·토픽은 하나)
+        trinary_costmap: True          # 1…252 값은 inflation 에서만 → 비용↔거리 역함수 성립 (astar.md)
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        observation_sources: scan
+        scan:
+          topic: <robot_ns>/scan_filtered
+          data_type: "LaserScan"
+          marking: True
+          clearing: True
+          observation_persistence: 0.0
+          expected_update_rate: 0.3
+          obstacle_max_range: 8.0      # [m] 전역 재계획에 반영할 새 장애물 범위
+          raytrace_max_range: 10.0
+          inf_is_valid: False
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 2.0       # [1/m] 완만한 감쇠: 넓은 통로에서는 중앙으로, 0.60 m 통로 중앙은 206 (통과)
+        inflation_radius: 1.2          # [m] 비용이 34 까지 내려가는 거리 — A* 가 좁은 통로보다 넓은 통로를 선호
+      keepout_filter:
+        plugin: "nav2_costmap_2d::KeepoutFilter"
+        enabled: True
+        filter_info_topic: <robot_ns>/costmap_filter_info   # traffic_manager_node 발행 (이진 마스크 0/100 → 0/254)
+
+behavior_server:
+  ros__parameters:
+    use_sim_time: True
+    costmap_topic: local_costmap/costmap_raw
+    footprint_topic: local_costmap/published_footprint
+    cycle_frequency: 10.0
+    behavior_plugins: ["spin", "backup", "drive_on_heading", "wait"]
+    spin:
+      plugin: "nav2_behaviors/Spin"
+    backup:
+      plugin: "nav2_behaviors/BackUp"
+    drive_on_heading:
+      plugin: "nav2_behaviors/DriveOnHeading"
+    wait:
+      plugin: "nav2_behaviors/Wait"
+    global_frame: <prefix>odom
+    robot_base_frame: <prefix>base_footprint
+    transform_tolerance: 0.2
+    simulate_ahead_time: 2.0
+    max_rotational_vel: 1.0
+    min_rotational_vel: 0.4
+    rotational_acc_lim: 2.0
+
+bt_navigator:
+  ros__parameters:
+    use_sim_time: True
+    global_frame: map
+    robot_base_frame: <prefix>base_footprint
+    odom_topic: odometry/filtered
+    bt_loop_duration: 10               # [ms]
+    default_server_timeout: 20         # [ms]
+    # default_nav_to_pose_bt_xml / default_nav_through_poses_bt_xml / plugin_lib_names 는 런치가 넣는다
+    # (amr_behavior 설치 여부에 따라 TTC 조건 포함판 또는 대체판)
+
+bt_navigator_navigate_to_pose_rclcpp_node:
+  ros__parameters:
+    use_sim_time: True
+
+bt_navigator_navigate_through_poses_rclcpp_node:
+  ros__parameters:
+    use_sim_time: True
+
+lifecycle_manager_navigation:
+  ros__parameters:
+    use_sim_time: True
+    autostart: True
+    bond_timeout: 4.0
+    node_names: ["planner_server", "controller_server", "behavior_server", "bt_navigator"]
