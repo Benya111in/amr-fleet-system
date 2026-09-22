@@ -1,0 +1,199 @@
+# amr_perception 노드 파라미터 (명세 9장: 설정 외부화, 재빌드 없이 변경)
+#
+# launch/perception.launch.py 가 [config/robot_params.yaml, config/sensors.yaml, 이 파일, 런치 오버라이드]
+# 순서로 넘긴다 (뒤가 앞을 덮는다). 공용 값은 단일 출처를 따른다:
+#   - robot.*, limits.*, safety.*  → config/robot_params.yaml (safety_node 가 그대로 읽는다)
+#   - depth_camera.*, lidar.noise_stddev → config/sensors.yaml (pointcloud_filter / localizer / tracker)
+# 이 파일에는 인지 노드 고유 값만 둔다. 키 형식: 이름 — 의미 [단위] (기본값) 근거.
+# 노드 이름 키는 /**/ 로 네임스페이스(/amr_01 …)와 무관하게 매칭한다. 프레임 접두사(frame_prefix)는
+# 런치 인자로 주입한다 (docs/architecture/multi_robot.md §2).
+# 알고리즘 유도와 튜닝 근거: docs/algorithms/perception.md, docs/algorithms/tracking.md
+
+/**/yolo_node:
+  ros__parameters:
+    weights: yolov8n_warehouse.pt  # 미세조정 가중치 (scripts/generate_dataset.py gazebo → scripts/train.py --out). 상대 이름이면
+                                 # share/amr_perception/models → $ROS_WS/src/amr_perception/models 순으로 찾는다.
+                                 # COCO 가중치는 창고 월드에서 검출 0 건(perception.md §8.3) 이라 미세조정본이 기본이다
+    fallback_weights: yolov8n.pt # weights 가 없을 때 쓸 COCO 가중치 (scripts/download_models.sh). 경고 로그를 남긴다
+    device: auto                 # auto | cuda | cuda:N | cpu. auto = CUDA 가능하면 GPU (명세 GPU 30 FPS 경로)
+    imgsz: 640                   # [px] GPU 추론 입력 크기 = 카메라 폭 (축소 없이 원해상도)
+    cpu_imgsz: 320               # [px] CPU 백엔드 입력 크기 (연산량 640 의 1/4). 실측 종단 FPS (30 Hz 입력, perception.md §8):
+                                 # 정상 부하(load ≈ 10/32) 320 → 30.0 (SHM 프로파일) / 25.3 (기본 UDP), 과부하(load ≈ 90/32)
+                                 # 320 → 8.0, 256 → 12.1. 과부하 호스트에서는 256 으로 낮춘다 (브리프 규칙 "320 미달이면 256")
+    conf_thresh: 0.35            # 점수 하한. 0.25(ultralytics 기본)보다 높여 창고 선반 무늬 오검출을 줄였다
+    iou: 0.5                     # NMS IoU
+    half: true                   # FP16 (GPU 만). RTX 계열에서 추론 지연 약 40 % 감소, 정확도 차이 무시 가능
+    max_det: 50                  # 이미지당 최대 검출 수
+    torch_threads: 2             # GPU 모드 torch CPU 스레드 수. 과부하 호스트에서 기본(코어 수 32) 은 스레드 경합으로
+                                 # 추론 중앙값 21 ms → 2 스레드 8 ms. 정상 부하에서는 차이 없음 (2.2 / 2.1 ms, perception.md §8)
+    cpu_threads: 2               # CPU 백엔드 torch 스레드 수 (브리프 rev2.1: 125 core-ms/프레임 @320 → 10 FPS 에 1.25 코어)
+    fast_path: true              # predict() 래퍼 대신 cv2 레터박스 + 융합 모델 forward + NMS (GPU·CPU 공통)
+    async_inference: false       # true: 수신(역직렬화)과 추론을 두 스레드로 겹친다 (최신 1 장 슬롯). SHM 프로파일이면 동기도
+                                 # 30.0 FPS 라 불필요하고, 과부하 호스트에서는 GIL 경합으로 오히려 느려(25.2 → 22.7 FPS) 기본은 동기
+    classes_file: ''             # 빈 값 = share/amr_perception/config/classes.yaml (클래스 매핑)
+    publish_annotated: false     # perception/detections_image 디버그 영상 (대역폭 때문에 기본 끔)
+    log_detections: true         # 명세 8장 예시 형식 로그 "Detected: Box (id=0), Confidence: 0.92" (2 s 스로틀)
+    stats_period: 5.0            # [s] FPS·지연 로그 주기
+
+/**/object_localizer_node:
+  ros__parameters:
+    target_frame: map            # 출력 프레임 (components.md 계약). 접두사 없는 전역 map
+    fallback_frames: [odom, base_link]  # map TF 가 없을 때 차례로 시도 (SLAM 전·AMCL 수렴 전)
+    base_frame: base_link        # 거리(distance) 기준 프레임
+    sync_slop: 0.017             # [s] detections_2d ↔ depth 근사 동기 허용 차 = RGB 반주기 (30 Hz).
+                                 # 깊이 15 Hz 가 트리거 → 3D 출력은 ≤ 15 Hz
+    sync_queue: 10
+    tf_timeout: 0.05             # [s]
+    roi_frac: 0.5                # bbox 중앙 50 %×50 % 에서 깊이 표본 — 가장자리 배경 픽셀을 피한다
+    min_valid_fraction: 0.3      # ROI 유효 깊이 픽셀 비율 하한. 미만이면 그 검출은 3D 로 내보내지 않는다
+    add_quadratic_noise: true    # sensors.yaml 결정: 시뮬레이터는 noise_base 만 넣으므로 k·d² 항을 여기서 가산
+    iid_pixels: true             # 픽셀 잡음 독립 가정 (시뮬레이션). 실기(공간 상관 깊이)는 false → m_eff = 1
+    kappa: 0.05                  # bbox 중심 지터 = 폭의 5 % (σ_u = κ·w). 합성 val 에서 재추정 대상
+    sigma_skew_px: 0.0           # [px] RGB-깊이 시각차에 의한 픽셀 흔들림 (동기 시뮬레이션 0)
+    mad_k: 3.0                   # 인라이어 게이트 = 3·1.4826·MAD (정규 3σ)
+    seed: 0                      # 노이즈 난수 시드 (0 = 비결정)
+    use_pose_covariance: true    # odometry/filtered_map 의 (x, y, yaw) 공분산을 map 위치 공분산에 더한다
+    log_transforms: true         # 명세 8장 예시 "Transform 2D(320, 240) to 3D(map frame: …)" 로그
+    # 표면→중심 광선 오프셋 [μ_δ, σ_δ] [m] (연구 브리프 perception-tracking §3.1 의 직사각형 요각 균일 모델).
+    # box 는 bbox 폭으로 추정한 가로 폭에 가까운 소/중/대를 고른다.
+    camera_offset:
+      box_small: [0.136, 0.026]
+      box_medium: [0.250, 0.034]
+      box_large: [0.306, 0.039]
+      person: [0.12, 0.04]
+      sign: [0.02, 0.02]
+      forklift: [0.5, 0.15]
+      amr: [0.271, 0.052]
+      default: [0.0, 0.05]
+
+/**/detection_marker_node:
+  ros__parameters:
+    lifetime: 1.0                # [s] 입력이 끊기면 마커가 사라지는 시간 (3D 출력 15 Hz 의 15 주기)
+    text_height: 0.25            # [m] 텍스트 글자 높이
+    capitalize_class: true       # 명세 8장 예시 "Class: Box, …" 형식
+
+/**/aruco_detector_node:
+  ros__parameters:
+    enabled: true                # 도킹 중에만 켜려면 false 로 띄우고 perception/aruco/enable(SetBool) 로 켠다
+    dictionary: DICT_4X4_50      # amr_simulation dock_marker 텍스처와 같은 사전 (id 0~3 도크, 4~6 충전)
+    marker_size: 0.18            # [m] 흑백 영역 한 변 (6 셀 × 0.03 m, dock_marker/model.sdf)
+    marker_ids: [-1]             # 허용 id (-1 = 전부)
+    preferred_id: -1             # 여러 개가 보이면 이 id 우선, 없으면 가장 가까운 마커
+    min_side_px: 12.0            # [px] 이보다 작게 보이면 자세를 풀지 않는다 (0.18 m 마커 ≈ 5 m)
+    ambiguity_px: 1.0            # [px] IPPE 두 해의 재투영 오차 차가 이 이하면 모호 → 연직 사전정보로 선택
+    use_upright_prior: true      # 마커는 수직 판 (dock_marker) → 광학 프레임의 연직 위 방향으로 해 선택
+    base_frame: base_link        # 출력 프레임
+    tf_timeout: 0.1              # [s]
+    publish_debug_image: false   # perception/aruco_image
+
+/**/pointcloud_filter_node:
+  ros__parameters:
+    max_range: 5.0               # [m] 거리 컷 = 지역 costmap voxel layer obstacle_max_range
+    leaf_size: 0.05              # [m] voxel 한 변 = costmap 해상도 (0 = 다운샘플 없음, 노이즈 검증용)
+    add_noise: true              # 깊이에 N(0, (k·Z²)²) 가산 (k = sensors.yaml depth_camera.noise_quadratic_coeff)
+    pixel_step: 2                # 픽셀 부표본 간격. 640×480 → 76,800 점 (voxel 5 cm 에서 손실 없음, CPU 1/4)
+    min_points_per_voxel: 2      # voxel 최소 점 수 — 고립 잡음 점(원거리 k·d² 꼬리) 제거
+    seed: 0                      # 노이즈 난수 시드 (0 = 비결정)
+
+/**/obstacle_tracker_node:
+  ros__parameters:
+    tracking_frame: odom         # 추적 프레임 — AMCL 보정 점프가 가짜 속도가 되지 않도록 연속인 odom 에서 추적
+    output_frame: map            # 출력 프레임 (components.md 계약)
+    base_frame: base_link
+    tf_timeout: 0.05             # [s]
+    plan_timeout: 5.0            # [s] 이보다 오래된 plan 은 TTC 에 쓰지 않는다 (직선 운동 가정으로 대체)
+    odom_timeout: 0.5            # [s] 자기 속도(odometry/filtered_map) 유효 시간
+    map_occupied_threshold: 65   # /map 점유 판정 (nav2 map_server occupied_thresh 0.65 와 같은 기준)
+    publish_markers: true
+    segmentation:
+      lambda_deg: 10.0           # [deg] 적응형 브레이크포인트(ABD) 보조각 λ (Borges & Aldon, 전형값 10~15°)
+      sigma_r: 0.03              # [m] LiDAR 거리 σ (sensors.yaml lidar.noise_stddev 를 함께 넘기면 그 값)
+      merge_min_gap: 0.10        # [m] 같은 물체 조각 병합 간격 (사람 두 다리 간격 ≤ 0.3 m 는 ABD 가 대부분 잇는다)
+      min_points_near: 3         # far_range 이내 클러스터 최소 점 수 (잡음 1~2 점 제거)
+      min_points_far: 2          # far_range 밖 (0.5° 간격, 6 m 에서 폭 0.1 m = 2 빔)
+      far_range: 6.0             # [m]
+      max_extent: 1.5            # [m] 이보다 긴 세그먼트는 가장 큰 내부 간격에서 재분할 (지게차 ≈ 1.2 m 보존)
+      max_range: 12.0            # [m] 추적 거리 상한 (지역 costmap 과 요구 확정 거리 10.5 m 기준)
+      background_radius: 0.10    # [m] /map 점유 셀까지 이 거리 이내 점 = 정적 배경 (셀 5 cm + σ 3σ≈0.09)
+      overlap_radius: 0.25       # [m] 지도 중첩률 계산 반경
+    cluster_model:
+      bias_mu: 0.15              # [m] 보이는 표면 → 물체 중심 시선 편향 μ_δ (미지 클래스 평균)
+      sigma_delta: 0.10          # [m] 편향 잔차 σ_δ — 측정 R 의 시선 성분 지배항
+      sigma_lat: 0.03            # [m] 가로 형상 잡음
+      sigma_floor: 0.02          # [m] 성분별 σ 하한
+      sigma_seg: 0.03            # [m] 프레임 간 분할 지터 (LS 속도 검정용 R_jitter)
+      min_radius: 0.10           # [m] 외접원 반경 하한
+      sigma_occluded: 0.20       # [m] 부분 가림 클러스터(각도 경계 옆 빔이 더 가까움)의 가로 σ 가산 —
+                                 # 보이는 조각의 중심 치우침(물체 반폭 수준)을 흡수해 게이트 탈락·ID 교체를 막는다
+      occlusion_margin: 0.30     # [m] 이웃 빔이 이만큼 더 가까우면 그 경계는 가려진 것
+    kf:
+      q: 0.25                    # [m²/s³] CWNA 가속도 스펙트럼 밀도: 1 s 동안 속도 변화 σ = √q = 0.5 m/s
+                                 # (작업자 보행 가감속 0.5 m/s² 수준). NEES 로 일관성 확인 (tracking.md §2)
+      init_velocity_std: 1.5     # [m/s] 탄생 속도 σ = 명세 장애물 최고속 1.5 m/s
+    association:
+      gate_chi2: 9.21            # χ²₂(0.99) 마할라노비스 게이트
+      pd_visible: 0.9            # 검출 확률 (가시)
+      pd_occluded: 0.5           # 검출 확률 (다른 클러스터 뒤 또는 far_detection_range 밖)
+      far_detection_range: 8.0   # [m]
+      lambda_birth: 0.01         # [1/m²] 탄생(새 물체·오경보) 공간 밀도 λ_B → 탄생 비용 −2 ln λ_B = 9.2
+      v_phys: 3.0                # [m/s] 물리 속도 상한 (게이트 보조: 점프 ≤ v_phys·Δt + 3√λmax(S))
+    lifecycle:
+      confirm_hits: 3            # 최근 confirm_window 스캔 중 히트 수 → 확정 (3/5 = 0.3 s 이내 확정 가능)
+      confirm_window: 5
+      min_confirm_age: 0.2       # [s]
+      max_misses: 5              # 확정 트랙 연속 미탐 허용 (0.5 s)
+      max_misses_occluded: 15    # 예측 위치가 더 가까운 물체 뒤에 가려진 동안의 허용 (1.5 s — 기둥 뒤 통과)
+    dynamic:
+      window: 10                 # [스캔] LS 속도 기울기 창 = 1 s
+      min_samples: 4
+      chi2: 13.82                # χ²₂(0.999) — 정지 물체 오탐률 0.1 %/검정
+      v_min: 0.15                # [m/s] 최소 동적 속도 (명세 장애물 최저 0.3 m/s 의 절반)
+      consecutive: 2             # 연속 발화 수 → is_dynamic
+      release: 5                 # 연속 미발화 수 → 해제
+    output:
+      heading_min_speed: 0.1     # [m/s] 이보다 느리면 직전 방향 유지 (방향 σ 가 π 에 가까워진다)
+      confidence_beta: [-2.0, 4.0, -0.5, 1.0]  # 로지스틱 신뢰도 계수 (절편, 히트율, ln(tr P_pp/σ_ref²), 클래스)
+      confidence_sigma_ref: 0.3  # [m]
+      publish_tentative: false   # 미확정 트랙도 발행 (디버그)
+    ttc:
+      horizon: 5.0               # [s] 예측 지평 (> τ_warn 3.0 s)
+      step: 0.1                  # [s] 격자 (이후 이분법 12 회로 25 µs 정밀도)
+      k_sigma: 1.0               # 불확실성 팽창 배수 (연결 방향 σ_o(τ))
+      sigma_cap: 0.5             # [m] 팽창 상한 — 먼 미래의 공분산 폭주로 TTC 가 0 에 붙는 것을 막는다
+      robot_radius: 0.361        # [m] 풋프린트 외접원 √(0.3² + 0.2²)
+      min_robot_speed: 0.2       # [m/s] 경로 추종 가정 최소 속도 (정지 직후에도 경로 위 충돌을 예측)
+      max_path_deviation: 1.0    # [m] 로봇이 경로에서 이보다 멀면 경로 대신 현재 방향 직선
+
+/**/safety_node:
+  ros__parameters:
+    rate: 50.0                   # [Hz] 출력 주기 (components.md: 50 Hz, 0.3 m 정지 지연 ≤ 20 ms)
+    stop_release_distance: 0.50  # [m] 0.3 m 근접 정지 래치의 자동 해제 거리 (sequences.md §2 히스테리시스)
+    zone_hysteresis: 0.05        # [m] WARNING/CRITICAL 완화 방향 히스테리시스 (스캔 σ 0.03 의 약 1.7배)
+    command_timeout: 0.5         # [s] cmd_vel_smoothed 가 이보다 오래되면 0 (상위 노드 정지 대비)
+    estop_release_requires_reset: true  # E-stop 래치는 입력 false + safety/reset_estop 둘 다 있어야 해제
+    reset_grace: 1.0             # [s] reset 이 false 보다 먼저 도착한 경우 false 를 기다리는 시간
+    zone_region: omni            # omni: 모든 방향 점으로 존 판정 (robot_params distance_reference 그대로) |
+                                 # motion: 진행 방향 전방만 존 판정, 측·후방은 lateral_stop_distance 로만 정지
+    lateral_stop_distance: 0.05  # [m] (motion 모드)
+    self_filter_margin: 0.02     # [m] 풋프린트보다 이만큼 안쪽 점은 자기 차체 반사로 무시
+    allow_escape: true           # 근접 정지 중 장애물에서 멀어지는 명령은 CRITICAL 상한으로 통과 (갇힘 방지)
+    escape_horizon: 0.5          # [s] 탈출 판정 예측 시간
+    exclusion_stop_distance: 0.10  # [m] 도킹 예외 다각형(safety/dock_exclusion) 안 점의 정지 거리
+    exclusion_timeout: 0.3       # [s] 예외 다각형 유효 시간 (도킹 노드가 계속 발행해야 유지)
+    ttc:
+      enabled: true
+      critical: 2.15             # [s] τ_crit = reaction_latency + v_max/a = 0.15 + 2.0/1.0 (sequences.md §2)
+      max_age: 0.5               # [s] 이보다 오래된 tracked_obstacles 의 TTC 는 무시
+    # 센서 생존 감시: 타임아웃은 robot_params.yaml safety.sensor_timeouts, 대응(stop|degraded)은 여기.
+    sensor_actions:
+      lidar: stop                # LiDAR 고장 → 안전 정지 (거리 존 판정 불가)
+      wheel_encoder: stop        # 엔코더 고장 → 안전 정지 (오도메트리·속도 제어 불가)
+      imu: degraded              # IMU 고장 → degraded_mode_max_speed 저속 (EKF 가 휠만으로 유지)
+      rgb_camera: degraded       # 카메라 고장 → 저속 (인식 불가, LiDAR 안전망 유지)
+      depth_camera: degraded
+    sensor_topics:               # 감시 토픽 (카메라는 이미지와 같은 주기의 가벼운 camera_info 로 감시)
+      lidar: scan_filtered
+      wheel_encoder: wheel_odom
+      imu: imu/data
+      rgb_camera: camera/camera_info
+      depth_camera: camera/depth/camera_info

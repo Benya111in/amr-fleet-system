@@ -1,0 +1,35 @@
+# 검출 클래스 매핑 (yolo_node, amr_perception/class_mapping.py) — 명세 4.6 "화물, 사람, 표지판 등 3종 이상"
+#
+# classes          출력 클래스. 순서 = 출력 class_id (DetectedObject.class_id, Detection2D.id)
+# model_class_map  모델 클래스 이름 → 출력 클래스. 여기 없는 모델 클래스는 버린다 (추론 단계 classes= 필터)
+#                  이름 기준이라 COCO 사전학습 가중치(yolov8n.pt)와 합성/Gazebo 데이터로 미세조정한 가중치
+#                  (scripts/train.py → yolov8n_warehouse.pt, 클래스 이름 box/person/sign) 에 같은 파일이 맞는다.
+# min_score        클래스별 최소 점수 (yolo_node conf_thresh 위에 추가로 거른다)
+#
+# COCO(80) 에는 "화물 상자" 클래스가 없다 → box 는 미세조정 가중치가 주 경로다. suitcase 는 COCO 가중치로
+# 돌릴 때의 임시 대용(proxy)이며 점수 하한을 높여 오검출을 줄인다. 미세조정 가중치에는 suitcase 가 없어 무시된다.
+
+classes:
+  - box
+  - person
+  - sign
+
+model_class_map:
+  # 미세조정 가중치 (generate_dataset.py / train.py) — 이름이 같으면 그대로 통과
+  box: box
+  person: person
+  sign: sign
+  # COCO 사전학습 가중치 — 아래 coco_ids 참고
+  stop sign: sign
+  suitcase: box
+
+min_score:
+  box: 0.35
+  person: 0.35
+  sign: 0.35
+
+# COCO id 참고 (ultralytics coco.yaml 이름과 테스트가 대조한다)
+coco_ids:
+  person: 0
+  stop sign: 11
+  suitcase: 28

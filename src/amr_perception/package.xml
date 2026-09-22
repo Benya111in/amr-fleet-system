@@ -3,12 +3,16 @@
 <package format="3">
   <name>amr_perception</name>
   <version>0.1.0</version>
-  <description>YOLOv8 객체 인식, 2D->3D 변환, 동적 장애물 추적</description>
+  <description>YOLOv8 객체 인식, Pinhole 2D->3D 변환, ArUco 도킹 마커, 깊이 점군 필터, LiDAR 동적 장애물 추적(KF + TTC), 안전 게이트</description>
   <maintainer email="enhyunss@gmail.com">enhyunss</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
   <buildtool_depend>ament_cmake_python</buildtool_depend>
+  <buildtool_depend>eigen3_cmake_module</buildtool_depend>
+
+  <build_depend>eigen</build_depend>
+  <build_export_depend>eigen</build_export_depend>
 
   <depend>rclpy</depend>
   <depend>rclcpp</depend>
@@ -19,10 +23,26 @@
   <depend>image_transport</depend>
   <depend>tf2_ros</depend>
   <depend>amr_msgs</depend>
+  <depend>tf2</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>diagnostic_msgs</depend>
+
+  <exec_depend>message_filters</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <!-- ultralytics(YOLOv8), torch 는 pip 로 이미지에 설치된다 (docker/Dockerfile 고정 버전) -->
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
   <test_depend>ament_cmake_pytest</test_depend>
+  <test_depend>ament_cmake_gtest</test_depend>
   <test_depend>python3-pytest</test_depend>
   <test_depend>python3-pytest-cov</test_depend>
 
