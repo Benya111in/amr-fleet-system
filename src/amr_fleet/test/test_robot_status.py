@@ -21,6 +21,8 @@ from amr_fleet.robot_status import (
     ('error', STATUS_ERROR), ('lost', STATUS_ERROR),
     ('idle', STATUS_IDLE), ('waiting', STATUS_IDLE), ('', STATUS_IDLE), (None, STATUS_IDLE),
     ('  moving  ', STATUS_MOVING), ('something_new', STATUS_IDLE),
+    # 작업 중 단계는 배정 대상(IDLE)이 아니다 (리뷰: RECOVERING 이 IDLE 로 보였다)
+    ('PERCEIVING', STATUS_MOVING), ('RECOVERING', STATUS_MOVING),
 ])
 def test_phase_mapping(phase, expected):
     assert map_status(False, phase) == expected
