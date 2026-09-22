@@ -66,6 +66,23 @@ class WaitForGraph:
         """(src, dst, reason) 목록 (정렬)."""
         return sorted((s, d, r) for s, ds in self._succ.items() for d, r in ds.items())
 
+    def predecessors_closure(self, targets: Iterable[str], reason: Optional[str] = None
+                             ) -> Set[str]:
+        """주어진 노드(targets)에 (reason 간선만 따라) 이르는 노드. targets 자신은 간선으로 다시 닿을 때만."""
+        pred: Dict[str, List[str]] = {}
+        for s, ds in self._succ.items():
+            for d, r in ds.items():
+                if reason is None or r == reason:
+                    pred.setdefault(d, []).append(s)
+        out: Set[str] = set()
+        stack = list(targets)
+        while stack:
+            for p in pred.get(stack.pop(), ()):
+                if p not in out:
+                    out.add(p)
+                    stack.append(p)
+        return out
+
     def adjacency(self) -> Dict[str, List[str]]:
         """노드 → 후속 목록."""
         return {n: self.successors(n) for n in self.nodes()}

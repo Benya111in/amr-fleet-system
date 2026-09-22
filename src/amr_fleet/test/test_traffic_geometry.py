@@ -7,7 +7,7 @@ import pytest
 
 from amr_fleet.traffic_geometry import (
     GridSpec, angle_diff, as_path, cumulative_length, disc_mask, distance_to_path, points_at,
-    points_in_polygon, polygon_area, project, sub_path, wrap_angle,
+    points_in_polygon, polygon_area, polygon_distance, project, sub_path, wrap_angle,
 )
 
 L_PATH = np.array([[0.0, 0.0], [4.0, 0.0], [4.0, 3.0]])
@@ -59,6 +59,17 @@ def test_polygon_helpers():
     assert polygon_area(sq) == pytest.approx(4.0)
     inside = points_in_polygon(np.array([[1, 1], [3, 1], [-0.1, 1], [1, 1.9]]), sq)
     assert inside.tolist() == [True, False, False, True]
+
+
+def test_polygon_distance():
+    def box(x0, y0, x1, y1):
+        return np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], dtype=float)
+    a = box(0, 0, 2, 5)
+    assert polygon_distance(a, box(4, 0, 6, 5)) == pytest.approx(2.0)          # 통로를 따라 이웃
+    assert polygon_distance(a, box(4, 6, 6, 8)) == pytest.approx(math.sqrt(5))  # 대각선
+    assert polygon_distance(a, box(2, 1, 3, 2)) == 0.0                         # 맞닿음
+    assert polygon_distance(a, box(1, 1, 3, 2)) == 0.0                         # 겹침 (꼭짓점 안)
+    assert polygon_distance(box(-1, 2, 3, 3), box(0.5, -1, 1.5, 6)) == 0.0     # 십자 (꼭짓점 밖, 변 교차)
 
 
 def test_grid_spec_and_disc_mask():

@@ -5,18 +5,25 @@
                 빈 대기 포켓으로 보낸다 (traffic/yield_pose + traffic/hold=true). 나머지는 그대로 진행.
                 포켓 = traffic_zones.yaml 의 pockets (기본) 또는 auto_pockets 면 자동 탐색 셀: 주행 가능,
                 구역(통로·교차로) 밖, 다른 로봇의 남은 경로에서 pocket_clearance_m 이상.
-                다른 로봇 몸체를 지나지 않는 격자 Dijkstra 로 "도달 가능한 가장 가까운" 곳을 고른다.
+                다른 로봇 몸체와 다른 로봇이 보유·점유한 구역을 지나지 않는 격자 Dijkstra 로 "도달 가능한
+                가장 가까운" 곳을 고른다 (그 경로 = Pocket.route — traffic_manager 가 경로 위 빈 구역의
+                토큰을 희생 로봇에 미리 부여한다). 스스로 움직일 수 없는 로봇(E-stop · 오류 · 관측 끊김)은
+                희생 로봇이 되지 않는다.
 전략 2 ALT_PATH 대체 경로 탐색: 희생 로봇의 목표 경로 중 자기 몸 앞쪽 ~ 분쟁 구간 끝(+extend) 을
                 keepout_half_width_m 폭으로, 상대 로봇 몸체 주변을 그 로봇 전용 keepout_mask 에
                 lethal(100) 로 칠한다. Nav2 KeepoutFilter 가 전역 경로를 다시 찾는다(플래너 코드 불변).
                 마스크 가드: 자기 몸 주변은 비우고, 상대가 목표 자리에 있거나 목표가 분쟁 구간 안이면
                 마스크를 만들지 않으며, 마스크를 칠한 지도에서 목표가 닿지 않으면(거친 격자 연결 성분)
                 플래너 실패를 기다리지 않고 곧바로 희생 로봇을 바꾼다.
+                상대가 모두 움직일 수 없는 로봇(E-stop · 오류 · 관측 끊김)이면 그 로봇이 걸친 구역 전체도
+                칠한다 (그 구역 토큰은 풀리지 않으니 구역을 돌아가는 경로만 의미가 있다).
 에스컬레이션    포켓 없음 · escalate_after_s 동안 상대가 전혀 못 움직임(사이클 지속) · yield_timeout_s 초과
                 → 전략 2. 전략 2 에서 replan_grace_s 안에 마스크를 피하는 경로가 없으면(또는
                 alt_path_timeout_s 초과) 다음 순위 로봇으로 희생자를 바꿔(우선순위 역전) 전략 1 부터 다시.
                 후보 소진 · deadlock_max_s 초과 · 무진전 해소 시도 max_attempts_per_robot 초과 → UNRESOLVED
                 (ERROR 알림, 운영자/작업 재할당 몫). cooldown_s 뒤 같은 로봇 집합을 새로 시도한다.
+                움직일 수 없는 로봇이 낀 사건의 UNRESOLVED 는 그 로봇들이 다시 움직일 수 있거나 관측에서
+                빠질 때까지 다시 열지 않는다 (E-stop 로봇 하나로 cooldown_s 마다 교착 · 실패를 되풀이하지 않게).
 해소 판정      (1) 희생 로봇이 아닌 주행 로봇이 모두 분쟁 영역(탐지 시 로봇 위치 반경
                 contested_radius_m, 걸쳐 있던 구역)을 벗어났고 남은 경로 pass_check_m 안에 다시 들어오지
                 않고, (2) 희생 로봇을 지금 풀어 원래 목표 경로로 보내도 release_horizon_s 안에 그들과
@@ -31,7 +38,9 @@ import dataclasses
 import heapq
 import math
 import re
-from typing import Any, Deque, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import (
+    Any, Deque, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set, Tuple,
+)
 
 import numpy as np
 from scipy import ndimage
@@ -106,6 +115,8 @@ class RobotView:
     deadline: Optional[float] = None
     zones: FrozenSet[str] = frozenset()   # 몸체가 걸친 구역
     intent: Optional[np.ndarray] = None   # 목표(작업) 경로. 양보 중에는 포켓 경로가 아닌 원래 경로
+    mobile: bool = True                   # 명령을 받아 움직일 수 있다 (E-stop · 오류 · 관측 끊김이면 False)
+    stale: bool = False                   # 관측이 끊겨 마지막 자세에 멈춘 장애물로 본다
 
     @property
     def xy(self) -> Tuple[float, float]:
@@ -145,6 +156,7 @@ class Pocket:
     y: float
     yaw: float = 0.0
     cost_m: float = 0.0
+    route: Tuple[Tuple[float, float], ...] = dataclasses.field(default=(), compare=False)
 
 
 POCKET_ID_RE = re.compile(r'^[A-Za-z0-9_.-]{1,64}$')
@@ -192,17 +204,28 @@ class TraversabilityGrid:
 
     passable = 로봇 중심이 지날 수 있는 셀 (벽까지 ≥ passage_radius, 블록 안 한 셀이라도 — 좁은 통로 보존),
     trav     = 포켓을 둘 수 있는 셀 (벽까지 ≥ 외접 반경, 블록 안 모든 셀 — 제자리 회전 가능),
-    zone_mask = 구역(통로 · 교차로) 셀 — 자동 포켓 제외.
+    zone_mask = 구역(통로 · 교차로) 셀 — 자동 포켓 제외,
+    zone_labels = 셀 → zone_ids 번호 (-1 = 구역 없음) — 보유 구역 우회 · 간격 검사.
     """
 
     def __init__(self, spec: GridSpec, traversable: np.ndarray,
                  zone_mask: Optional[np.ndarray] = None,
-                 passable: Optional[np.ndarray] = None):
+                 passable: Optional[np.ndarray] = None,
+                 zone_labels: Optional[np.ndarray] = None,
+                 zone_ids: Sequence[str] = ()):
         self.spec = spec
         self.trav = traversable.astype(bool)
         self.passable = self.trav.copy() if passable is None else passable.astype(bool) | self.trav
-        self.zone_mask = (np.zeros_like(self.trav) if zone_mask is None
+        self.zone_ids = list(zone_ids)
+        self.zone_labels = (np.full(self.trav.shape, -1, dtype=np.int32) if zone_labels is None
+                            else zone_labels.astype(np.int32))
+        self.zone_mask = (self.zone_labels >= 0 if zone_mask is None
                           else zone_mask.astype(bool))
+
+    def zones_mask(self, zone_ids: Iterable[str]) -> np.ndarray:
+        """지정한 구역의 셀 (height, width) bool (모르는 id 는 무시)."""
+        idx = [k for k, z in enumerate(self.zone_ids) if z in set(zone_ids)]
+        return np.isin(self.zone_labels, idx)
 
     @classmethod
     def from_occupancy(cls, occupied: np.ndarray, spec: GridSpec, robot_radius: float,
@@ -220,8 +243,15 @@ class TraversabilityGrid:
 
         trav = blocks(clear >= robot_radius).all(axis=(1, 3))
         passable = blocks(clear >= pr).any(axis=(1, 3))
-        zmask = zone_map.mask(ds) if zone_map is not None and len(zone_map) else None
-        return cls(ds, trav, zmask, passable)
+        if zone_map is None or not len(zone_map):
+            return cls(ds, trav, None, passable)
+        ids = zone_map.ids()
+        gx, gy = ds.centers()
+        at = zone_map.zones_at(np.stack([gx.ravel(), gy.ravel()], axis=1))
+        index = {z: k for k, z in enumerate(ids)}
+        labels = np.array([-1 if z is None else index[z] for z in at],
+                          dtype=np.int32).reshape(h, w)
+        return cls(ds, trav, None, passable, labels, ids)
 
 
 def near_points_mask(spec: GridSpec, points: Iterable[Sequence[float]],
@@ -242,13 +272,16 @@ def find_yield_pocket(tgrid: TraversabilityGrid, start: Tuple[float, float],
                       other_robots: Sequence[Tuple[float, float]],
                       avoid_paths: Sequence[np.ndarray], cfg: ResolutionConfig,
                       pockets: Sequence[Pocket] = (),
-                      reserved: Sequence[Tuple[float, float]] = ()) -> Optional[Pocket]:
+                      reserved: Sequence[Tuple[float, float]] = (),
+                      blocked: Optional[np.ndarray] = None) -> Optional[Pocket]:
     """
     출발점에서 다른 로봇 몸체를 지나지 않고 갈 수 있는 가장 가까운 포켓 (경로 비용 기준).
 
     pockets 가 있으면 그중에서, 없으면(또는 auto_pockets 이고 지정 포켓이 모두 불가면) 자동 탐색.
     포켓 조건: 주행 가능, 구역 밖(자동만), 다른 로봇·예약 포켓에서 2r + margin 이상,
     avoid_paths 의 점에서 pocket_clearance_m 이상. 반경 pocket_search_radius_m 안에서만 찾는다.
+    blocked: 지나지 못하는 셀 (다른 로봇이 보유·점유한 구역). 돌려주는 Pocket.route = 출발점 → 포켓
+    격자 경로 (월드 좌표).
     """
     spec = tgrid.spec
     r = cfg.robot_radius
@@ -259,6 +292,8 @@ def find_yield_pocket(tgrid: TraversabilityGrid, start: Tuple[float, float],
     bodies = near_points_mask(spec, other_robots, 2.0 * r)
     own = disc_mask(spec, [start], r + spec.resolution)
     impassable = ~tgrid.passable | (bodies & ~own)
+    if blocked is not None:
+        impassable |= blocked
     impassable[sy, sx] = False
     step = max(0.5 * spec.resolution, 0.05)
     samples = [p[:, :2] for p in (_resample(q, step) for q in avoid_paths) if p is not None]
@@ -280,7 +315,20 @@ def find_yield_pocket(tgrid: TraversabilityGrid, start: Tuple[float, float],
 
     res = spec.resolution
     dist = {(sx, sy): 0.0}
+    parent: Dict[Tuple[int, int], Tuple[int, int]] = {}
     heap = [(0.0, sx, sy)]
+
+    def route(cx: int, cy: int, end: Tuple[float, float]) -> Tuple[Tuple[float, float], ...]:
+        cells = [(cx, cy)]
+        while cells[-1] in parent:
+            cells.append(parent[cells[-1]])
+        pts = [(float(start[0]), float(start[1]))]
+        for ix, iy in reversed(cells[:-1]):
+            wx, wy = spec.cell_to_world(ix, iy)
+            pts.append((float(wx), float(wy)))
+        pts.append((float(end[0]), float(end[1])))
+        return tuple(pts)
+
     moves = [(1, 0, 1.0), (-1, 0, 1.0), (0, 1, 1.0), (0, -1, 1.0),
              (1, 1, math.sqrt(2)), (1, -1, math.sqrt(2)), (-1, 1, math.sqrt(2)),
              (-1, -1, math.sqrt(2))]
@@ -290,11 +338,12 @@ def find_yield_pocket(tgrid: TraversabilityGrid, start: Tuple[float, float],
             continue
         if (cx, cy) in targets:
             p = targets[(cx, cy)]
-            return Pocket(p.pocket_id, p.x, p.y, p.yaw, d)
+            return Pocket(p.pocket_id, p.x, p.y, p.yaw, d, route(cx, cy, (p.x, p.y)))
         if use_auto and not auto_ok[cy, cx]:
             wx, wy = spec.cell_to_world(cx, cy)
             yaw = math.atan2(float(wy) - start[1], float(wx) - start[0]) if d > 0 else 0.0
-            return Pocket('auto', float(wx), float(wy), yaw, d)
+            return Pocket('auto', float(wx), float(wy), yaw, d,
+                          route(cx, cy, (float(wx), float(wy))))
         for dx, dy, c in moves:
             nx, ny = cx + dx, cy + dy
             if not (0 <= nx < spec.width and 0 <= ny < spec.height) or impassable[ny, nx]:
@@ -303,6 +352,7 @@ def find_yield_pocket(tgrid: TraversabilityGrid, start: Tuple[float, float],
             if nd > cfg.pocket_search_radius_m or nd >= dist.get((nx, ny), math.inf):
                 continue
             dist[(nx, ny)] = nd
+            parent[(nx, ny)] = (cx, cy)
             heapq.heappush(heap, (nd, nx, ny))
     return None
 
@@ -366,7 +416,8 @@ def _from_position(path: Optional[np.ndarray], x: float, y: float) -> Optional[n
 def build_keepout_mask(victim: RobotView, blockers: Sequence[Tuple[float, float]],
                        cfg: ResolutionConfig, zone_map: Optional[ZoneMap] = None,
                        contested_zones: Iterable[str] = (),
-                       spec: Optional[GridSpec] = None) -> Optional[KeepoutMask]:
+                       spec: Optional[GridSpec] = None,
+                       block_zones: Iterable[str] = ()) -> Optional[KeepoutMask]:
     """
     희생 로봇의 분쟁 구간 keepout 마스크. 목표 경로가 없거나 목표가 분쟁 구간 안이면 None.
 
@@ -374,6 +425,7 @@ def build_keepout_mask(victim: RobotView, blockers: Sequence[Tuple[float, float]
       분쟁 구간 끝까지를 keepout_half_width_m 폭으로 (분쟁 구간 끝 = 경로 근처 상대 로봇 투영점,
       분쟁 구역 첫 방문 출구 중 가장 먼 곳 + keepout_extend_m, 단 목표 앞 반폭 + r + margin 에서 자른다)
     - 상대 로봇 몸체 주변 (r + margin)
+    - block_zones 구역 전체 (움직일 수 없는 상대가 걸친 구역 — 목표가 그 안이면 None)
     - 희생 로봇 자기 몸 주변은 비운다 (시작 셀이 lethal 이면 플래너가 실패한다)
     spec 이 있으면 그 격자(지도 전체), 없으면 분쟁 구간을 감싸는 작은 격자에 그린다.
     """
@@ -384,6 +436,9 @@ def build_keepout_mask(victim: RobotView, blockers: Sequence[Tuple[float, float]
     goal = path[-1]
     if any(math.hypot(bx - goal[0], by - goal[1]) < 2.0 * r + m for bx, by in blockers):
         return None       # 상대가 목표 자리에 있다 — 목표를 막는 마스크는 플래너만 실패시킨다
+    block_zones = sorted(set(block_zones)) if zone_map is not None else []
+    if block_zones and zone_map.zone_at(float(goal[0]), float(goal[1])) in block_zones:
+        return None       # 목표가 막힌 구역 안
     cum = cumulative_length(path)
     total = float(cum[-1])
     s0 = min(total, r + m)
@@ -421,6 +476,8 @@ def build_keepout_mask(victim: RobotView, blockers: Sequence[Tuple[float, float]
               else np.zeros((spec.height, spec.width), dtype=bool))
     if blockers:
         lethal |= disc_mask(spec, blockers, r + m)
+    if block_zones:
+        lethal |= zone_map.mask(spec, block_zones)
     lethal &= ~disc_mask(spec, [victim.xy], r + m)
     return KeepoutMask(spec, np.where(lethal, LETHAL, 0).astype(np.int8))
 
@@ -459,6 +516,8 @@ class WorldView:
     tgrid: Optional[TraversabilityGrid] = None
     pockets: Sequence[Pocket] = ()
     mask_spec: Optional[GridSpec] = None      # keepout 마스크 격자 (지도 전체). None = 작은 격자
+    held_zones: Mapping[str, FrozenSet[str]] = dataclasses.field(default_factory=dict)
+    # ↑ 로봇 → 보유(토큰) · 점유(몸체) 구역. 희생 로봇의 포켓 경로가 남의 구역을 지나지 않게 한다
 
 
 @dataclasses.dataclass
@@ -480,6 +539,7 @@ class Incident:
     mask: Optional[KeepoutMask] = None
     attempts: List[str] = dataclasses.field(default_factory=list)
     original_paths: Dict[str, Optional[np.ndarray]] = dataclasses.field(default_factory=dict)
+    immobile: Tuple[str, ...] = ()               # 스스로 못 움직이는 로봇 (희생 로봇 후보 아님)
 
     @property
     def victim(self) -> str:
@@ -525,6 +585,7 @@ class IncidentManager:
         self._robot_attempts: Dict[str, int] = {}
         self._anchor: Dict[str, float] = {}           # 마지막 사건 때 목표 경로 남은 길이
         self._cooldown: Dict[FrozenSet[str], float] = {}
+        self._stuck: Dict[FrozenSet[str], FrozenSet[str]] = {}   # 실패한 집합 → 움직일 수 없던 로봇
         self.history: Deque[Dict[str, object]] = collections.deque(maxlen=self.HISTORY_MAX)
 
     # --- 조회 ---
@@ -540,6 +601,10 @@ class IncidentManager:
         """UNRESOLVED 직후 같은 로봇 집합은 cooldown_s 동안 다시 열지 않는다."""
         until = self._cooldown.get(frozenset(robots))
         return until is not None and now < until
+
+    def suppressed(self) -> Set[str]:
+        """움직일 수 없는 로봇 때문에 실패해 다시 열지 않는 사건의 로봇."""
+        return {r for sig in self._stuck for r in sig}
 
     def attempts_of(self, robot_id: str) -> int:
         """로봇의 무진전 해소 시도 수."""
@@ -576,9 +641,12 @@ class IncidentManager:
         """확정된 교착으로 사건을 연다 → DEADLOCK (+ 곧바로 전략 시작 또는 UNRESOLVED)."""
         views = world.robots
         members = tuple(sorted(r for r in robots if r in views))
-        victims = sorted(members, key=lambda r: views[r].rank(), reverse=True)
-        inc = Incident(self._next_id, members, kind, now, victims,
+        # 희생 로봇 = 스스로 움직일 수 있는 로봇만 (E-stop · 오류 · 관측 끊김 로봇에 양보 명령은 의미 없다)
+        victims = sorted((r for r in members if views[r].mobile), key=lambda r: views[r].rank(),
+                         reverse=True)
+        inc = Incident(self._next_id, members, kind, now, victims or list(members),
                        {r: views[r].xy for r in members}, set(contested_zones))
+        inc.immobile = tuple(r for r in members if not views[r].mobile)
         inc.original_paths = {r: views[r].intent_path() for r in members}
         self._next_id += 1
         for r in members:
@@ -588,6 +656,8 @@ class IncidentManager:
                 self._anchor[r] = rem
         detected = self._event(EV_DEADLOCK, inc, now, f'교착 {kind}: {" ↔ ".join(members)}',
                                victim=inc.victim)
+        if not victims:
+            return [detected] + self._unresolved(inc, now, 'no_mobile_victim')
         worst = max(members, key=lambda r: self._robot_attempts[r])
         if self._robot_attempts[worst] > self.cfg.max_attempts_per_robot:
             return [detected] + self._unresolved(inc, now, f'attempts({worst})')
@@ -604,6 +674,10 @@ class IncidentManager:
     def step(self, now: float, world: WorldView) -> List[ResolutionEvent]:
         """모든 사건을 한 주기 진행."""
         self.observe_progress(world)
+        for sig, imm in list(self._stuck.items()):
+            if any(r not in world.robots or world.robots[r].mobile for r in imm):
+                del self._stuck[sig]              # 다시 움직일 수 있다 → 새로 시도해도 된다
+                self._cooldown.pop(sig, None)
         events: List[ResolutionEvent] = []
         for inc in self.active():
             events += self._step_one(inc, now, world)
@@ -726,8 +800,11 @@ class IncidentManager:
             others_xy = [views[r].xy for r in views if r != victim]
             reserved = [(i.pocket.x, i.pocket.y) for i in self._active.values()
                         if i is not inc and i.pocket is not None]
+            held = set().union(*(zs for r, zs in world.held_zones.items() if r != victim)) \
+                - set(views[victim].zones)
+            blocked = world.tgrid.zones_mask(held) if held else None
             pocket = find_yield_pocket(world.tgrid, views[victim].xy, others_xy, avoid,
-                                       self.cfg, world.pockets, reserved)
+                                       self.cfg, world.pockets, reserved, blocked)
         if pocket is None:
             return self._start_alt(inc, now, world, 'no_pocket')
         self._begin(inc, now, world, YIELD)
@@ -743,8 +820,12 @@ class IncidentManager:
         mask = None
         if v is not None and v.active:
             blockers = [p for r, p in inc.contested_points.items() if r != victim]
+            others = [views[r] for r in inc.robots if r != victim and r in views]
+            stuck = set()
+            if others and not any(o.mobile for o in others):
+                stuck = set().union(*(o.zones for o in others))    # 풀리지 않는 구역은 돌아간다
             mask = build_keepout_mask(v, blockers, self.cfg, world.zone_map,
-                                      inc.contested_zones, world.mask_spec)
+                                      inc.contested_zones, world.mask_spec, stuck)
             intent = v.intent_path()
             if mask is not None and world.tgrid is not None and intent is not None and \
                     not route_exists(world.tgrid, v.xy, (float(intent[-1, 0]),
@@ -793,6 +874,9 @@ class IncidentManager:
     def _unresolved(self, inc: Incident, now: float, reason: str) -> List[ResolutionEvent]:
         self._active.pop(inc.incident_id, None)
         self._cooldown[inc.signature] = now + self.cfg.cooldown_s
+        if inc.immobile:
+            self._cooldown[inc.signature] = math.inf
+            self._stuck[inc.signature] = frozenset(inc.immobile)
         for r in inc.robots:            # cooldown 뒤 새로 시도할 수 있게 (운영자 알림은 이미 나간다)
             self.reset_robot(r)
         dt = now - inc.detected_at
@@ -809,6 +893,8 @@ class IncidentManager:
         values = {'incident': str(inc.incident_id), 'robots': ','.join(inc.robots),
                   'type': inc.kind, 'attempts': '>'.join(inc.attempts),
                   'zones': ','.join(sorted(inc.contested_zones))}
+        if inc.immobile:
+            values['immobile'] = ','.join(inc.immobile)
         values.update({k: str(v) for k, v in extra.items()})
         return ResolutionEvent(kind, inc, now, message, values)
 

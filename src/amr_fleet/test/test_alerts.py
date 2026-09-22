@@ -16,13 +16,13 @@ def test_is_deadlock_event(name, expected):
 
 def test_alert_names_follow_fleet_prefix():
     names = [v for k, v in vars(alerts).items() if k.startswith('ALERT_')]
-    assert len(names) == 12 and len(set(names)) == 12
+    assert len(names) == 13 and len(set(names)) == 13
     assert all(n.startswith('fleet/') and n.split('/')[1].isupper() for n in names)
     assert alerts.TRAFFIC_DEADLOCK == 'traffic/DEADLOCK'
     assert alerts.TRAFFIC_RESOLVED == 'traffic/RESOLVED'
     # 교통 이벤트 이름은 traffic/<TYPE>, 그중 DEADLOCK 만 교착 카운트 대상
     traffic = [v for k, v in vars(alerts).items() if k.startswith('TRAFFIC_')]
-    assert len(set(traffic)) == 5 and all(n.startswith('traffic/') for n in traffic)
+    assert len(set(traffic)) == 6 and all(n.startswith('traffic/') for n in traffic)
     assert [n for n in traffic if alerts.is_deadlock_event(n)] == ['traffic/DEADLOCK']
 
 

@@ -7,18 +7,23 @@ traffic_manager_node — 중앙 교통 관리 · 교착 탐지/해소 (component
        /amr_XX/robot_state (amr_msgs/RobotState)                  로봇마다
 - Sub  /fleet/task_events (amr_msgs/Task)                         작업 우선순위 · 마감 (task_id 로 찾는다)
 - Pub  /amr_XX/traffic/hold (std_msgs/Bool, latched)              우선순위 양보 · 구역 대기 · 교차 양보
-- Pub  /amr_XX/traffic/yield_pose (geometry_msgs/PoseStamped)     대기 포켓 (hold=true 와 함께)
+- Pub  /amr_XX/traffic/yield_pose (geometry_msgs/PoseStamped, latched)  대기 포켓. 새 포켓은 hold=true 보다
+       한 주기 먼저 내고(hold=true 는 다음 주기), 양보가 끝나면 hold 뒤에 frame_id 가 빈 PoseStamped
+       (= 포켓 없음)를 낸다. 실행기 규칙: hold=true 이고 frame_id 있는 포켓이 있으면 포켓으로, 없으면
+       제자리 정지 (늦게 뜬 실행기도 latched 두 토픽으로 같은 상태를 받는다)
 - Pub  /amr_XX/keepout_mask (nav_msgs/OccupancyGrid, latched)     전략 2 — 분쟁 구간 lethal(100), 해소 후 0
 - Pub  /amr_XX/costmap_filter_info (nav2_msgs/CostmapFilterInfo, latched)
        type=0 (keepout), filter_mask_topic=/amr_XX/keepout_mask (절대 이름 — Nav2 costmap 노드의
        네임스페이스에서 상대 이름이 풀리면 /amr_XX/global_costmap/keepout_mask 가 된다), base 0, multiplier 1
 - Pub  /fleet/traffic_events (DiagnosticArray)
-       traffic/DEADLOCK · RESOLVED · ESCALATED · UNRESOLVED · STALL
+       traffic/DEADLOCK · RESOLVED · ESCALATED · UNRESOLVED · STALL · STALE
        (fleet_manager_node 는 traffic/DEADLOCK 만 deadlock_count 에 센다)
-- Pub  /fleet/alerts (DiagnosticArray)          fleet/DEADLOCK (탐지 ERROR · 해소 OK · 해소 실패 ERROR)
+- Pub  /fleet/alerts (DiagnosticArray)          fleet/DEADLOCK (탐지 ERROR · 해소 OK · 해소 실패 ERROR),
+       fleet/TRAFFIC_STALE (토큰 보유 로봇 관측 끊김 WARN · lost ERROR · 재수신 OK)
 
 update_rate_hz(2 Hz) 마다 관측을 모아 TrafficManager.update() 한 번 → 바뀐 명령만 발행한다.
-관측 시각은 수신 시각(노드 시계)이고 obs_timeout_s 보다 오래된 로봇은 이번 주기에서 뺀다.
+관측 시각은 수신 시각(노드 시계)이다. obs_timeout_s 보다 오래된 로봇은 빼지 않고 마지막 자세에 멈춘
+장애물로 둔다(토큰 유지, fail closed — traffic_manager 참고).
 로직은 순수 모듈(traffic_manager · traffic_prediction · traffic_zones · deadlock · traffic_resolution)이
 갖고 이 노드는 ROS 입출력과 타이머만 맡는다. 모든 콜백은 예외를 삼키고 fleet/INTERNAL_ERROR 로 알린다.
 """
@@ -186,6 +191,8 @@ class TrafficManagerNode(Node):
             f'traffic_manager 시작: mode={self.cfg.mode}, robots={sorted(self._robots)}, '
             f'rate={rate:g} Hz, zones={self.tm.describe_zones()}, pockets={len(self.tm.pockets)} '
             f'({self.cfg.zones_file or "파일 없음"})')
+        self._warned = 0
+        self._log_layout_warnings()
 
     # ------------------------------------------------------------------ 파라미터
     def _declare_params(self) -> None:
@@ -202,6 +209,11 @@ class TrafficManagerNode(Node):
 
     def _param(self, name: str):
         return self.get_parameter(name).value
+
+    def _log_layout_warnings(self) -> None:
+        for msg in self.tm.layout_warnings[self._warned:]:
+            self.get_logger().warn(msg)
+        self._warned = len(self.tm.layout_warnings)
 
     # ------------------------------------------------------------------ 유틸
     def _now(self) -> float:
@@ -238,7 +250,8 @@ class TrafficManagerNode(Node):
         self.create_subscription(RobotState, f'{base}/robot_state',
                                  functools.partial(self._on_state, rid), 10)
         r.pub_hold = self.create_publisher(Bool, f'{base}/traffic/hold', LATCHED_QOS)
-        r.pub_yield = self.create_publisher(PoseStamped, f'{base}/traffic/yield_pose', 10)
+        r.pub_yield = self.create_publisher(PoseStamped, f'{base}/traffic/yield_pose',
+                                            LATCHED_QOS)
         r.pub_mask = self.create_publisher(OccupancyGrid, f'{base}/keepout_mask', LATCHED_QOS)
         r.pub_info = self.create_publisher(CostmapFilterInfo, f'{base}/costmap_filter_info',
                                            LATCHED_QOS)
@@ -250,7 +263,8 @@ class TrafficManagerNode(Node):
         info.base = 0.0
         info.multiplier = 1.0
         r.pub_info.publish(info)
-        self._publish_hold(r, False)          # 늦게 뜬 실행기도 확실한 초기값(false)을 받는다
+        self._publish_hold(r, False)          # 늦게 뜬 실행기도 확실한 초기값(false · 포켓 없음)을 받는다
+        self._publish_pose(r, None, info.header.stamp)
 
     @_guarded
     def _on_plan(self, rid: str, msg: Path) -> None:
@@ -300,6 +314,7 @@ class TrafficManagerNode(Node):
         self.get_logger().info(
             f'/map {info.width}x{info.height} @ {info.resolution:g} m 반영 '
             f'({(time.monotonic() - t0) * 1e3:.0f} ms): 구역 {self.tm.describe_zones()}')
+        self._log_layout_warnings()
         for r in self._robots.values():       # 지도 전체 크기 빈 마스크 (KeepoutFilter 가 마스크를 기다린다)
             if r.keepout is None:
                 r.pub_mask.publish(mask_to_msg(empty_mask(self.tm.mask_spec), self.frame_id,
@@ -342,18 +357,29 @@ class TrafficManagerNode(Node):
                 r.pub_mask.publish(mask_to_msg(empty_mask(spec), self.frame_id, stamp))
                 self.get_logger().info(f'{r.robot_id} keepout 해제')
             r.keepout = cmd.keepout
+        hold = cmd.hold
         if cmd.yield_pose is not None and cmd.yield_pose != r.yield_pose:
-            x, y, yaw = cmd.yield_pose
-            msg = PoseStamped()
+            self._publish_pose(r, cmd.yield_pose, stamp)
+            if hold and not r.hold:
+                hold = False      # 포켓 먼저: hold=true 는 다음 주기 (다른 토픽 간 전달 순서는 보장이 없다)
+        if hold != r.hold:
+            self._publish_hold(r, hold, cmd.reason)
+        if cmd.yield_pose is None and r.yield_pose is not None:
+            self._publish_pose(r, None, stamp)       # 양보 끝: hold 뒤에 포켓 해제
+        r.yield_pose = cmd.yield_pose
+
+    def _publish_pose(self, r: _Robot, pose: Optional[Tuple[float, float, float]], stamp) -> None:
+        """traffic/yield_pose (latched). pose=None 이면 frame_id 가 빈 메시지 = 포켓 없음."""
+        msg = PoseStamped()
+        msg.header.stamp = stamp
+        msg.pose.orientation.w = 1.0
+        if pose is not None:
+            x, y, yaw = pose
             msg.header.frame_id = self.frame_id
-            msg.header.stamp = stamp
             msg.pose.position.x, msg.pose.position.y = float(x), float(y)
             msg.pose.orientation.z = math.sin(0.5 * yaw)
             msg.pose.orientation.w = math.cos(0.5 * yaw)
-            r.pub_yield.publish(msg)          # hold=true 보다 먼저 — 실행기가 hold 를 보고 포켓을 찾는다
-        r.yield_pose = cmd.yield_pose
-        if cmd.hold != r.hold:
-            self._publish_hold(r, cmd.hold, cmd.reason)
+        r.pub_yield.publish(msg)
 
     def _publish_hold(self, r: _Robot, hold: bool, reason: str = '') -> None:
         r.pub_hold.publish(Bool(data=bool(hold)))

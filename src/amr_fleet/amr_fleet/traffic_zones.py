@@ -12,14 +12,23 @@
 - both : 둘 다 (겹치면 yaml 우선)
 
 진입 토큰 — 모든 구역의 용량은 1대 (corridor 는 같은 방향 추종만 여러 대 허용 가능)
-- 로봇이 구역 진입점 approach_distance_m 앞에 오면 토큰을 요청한다. 구역 출구와 다음 구역 입구가
+- 로봇이 구역 진입점 approach_distance_m (1차선 통로는 corridor_approach_m — 나오는 로봇이 입구에서
+  비켜 갈 자리를 남긴다) 앞에 오면 토큰을 요청한다. 구역 출구와 다음 구역 입구가
   chain_gap_m 이하로 붙어 있으면(교차로 → 통로 등) 묶어서 한 번에 받는다 ("교차로 안에서 서지 않기").
+- 구역 안에서 기다리지 않기: 몸체가 구역 k 에 걸친 로봇은 k 와 묶이지 않은 다음 구역을 k 를 빠져나온
+  뒤에야 요청한다 (request_chain 의 occupied). 배치는 spacing_conflicts 로 확인한다 — 두 구역 사이
+  간격 g 가 chain_gap_m < g < (두 구역 요청 거리 중 큰 값) + 로봇 반경 이면 묶이지도 않고 사이에 설
+  자리도 없다.
 - 부여 순서 = (기아 상태 먼저) → 작업 우선순위 높은 순 → 마감 이른 순 → 오래 기다린 순 → robot_id.
 - 기아 방지: 먼저 요청한 로봇이 (엄격히) 나중 요청 로봇에게 max_bypass 번 추월당하면 "기아" 로
   표시되어 그 구역은 기아 로봇에게 예약된다 (기아 로봇끼리는 요청 순서 → 우선순위). 같은 주기에 함께
   요청한 로봇끼리는 우선순위 순서가 추월이 아니다. 따라서 한 로봇보다 먼저 부여받는 다른 로봇 수는
   max_bypass + (n - 1) 이하 — 대기 상한 = 그 수 × 구역 최대 점유 시간.
+  전제: 모든 점유가 유한하다 (보유자가 결국 구역을 빠져나온다). E-stop · 오류 · 관측 끊김(stale) 로봇이
+  구역 안에 멈추면 점유 시간이 무한이라 상한이 없다 — 그때는 traffic_manager 의 토큰 대기 감시
+  (STALL → UNRESOLVED) 와 BLOCKED 사건이 맡는다.
 - 반납: 구역에 들어갔다가 몸체가 완전히 나오면, 또는 경로가 더는 그 구역을 지나지 않으면.
+  frozen(관측이 끊긴 로봇)은 반납하지 않는다 (fail closed).
 """
 
 from __future__ import annotations
@@ -28,20 +37,29 @@ import collections
 import dataclasses
 import math
 import re
-from typing import Any, Deque, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import (
+    Any, Collection, Deque, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple, Union,
+)
 
 import numpy as np
 from scipy import ndimage
 import yaml
 
 from amr_fleet.traffic_geometry import (
-    GridSpec, cumulative_length, points_at, points_in_polygon, polygon_area,
+    GridSpec, cumulative_length, points_at, points_in_polygon, polygon_area, polygon_distance,
 )
 
 INTERSECTION = 'intersection'
 CORRIDOR = 'corridor'
 ZONE_KINDS = (INTERSECTION, CORRIDOR)
 ZONE_ID_RE = re.compile(r'^[A-Za-z0-9_.-]{1,64}$')
+Approach = Union[float, Mapping[str, float]]      # 요청 거리: 한 값 또는 구역별
+
+
+def _approach(approach_m: Approach, zone_id: str) -> float:
+    if isinstance(approach_m, Mapping):
+        return float(approach_m[zone_id])
+    return float(approach_m)
 
 
 @dataclasses.dataclass
@@ -139,6 +157,52 @@ def load_layout(path: str, corridor_same_direction: bool = False
     if not isinstance(pockets, (list, tuple)):
         raise ValueError(f'{path}: pockets 는 목록이어야 한다')
     return zones, list(pockets)
+
+
+def spacing_conflicts(zones: Sequence[Zone], approach_m: Approach, chain_gap_m: float,
+                      robot_radius: float) -> List[Tuple[str, str, float]]:
+    """
+    다각형 구역 쌍 중 간격 g 가 chain_gap_m < g < approach + robot_radius 인 것 [(id, id, g)].
+
+    approach = 두 구역 요청 거리 중 큰 값 (approach_m 은 한 값 또는 구역 id → 값).
+    g = 두 다각형 사이 최단 거리 (경로를 따라 잰 출구 → 입구 간격의 하한). 이 두 구역을 잇따라 지나는
+    로봇은 다음 구역을 요청할 때(입구 approach_m 앞) 몸체가 아직 앞 구역에 걸쳐 있는데 묶음(chain_gap_m)도
+    아니다 → 거절되면 앞 구역 토큰을 쥔 채 그 안에서 선다 (반대 방향 로봇과 토큰 ↔ 토큰 교착).
+    """
+    polys = [z for z in zones if z.polygon is not None]
+    out: List[Tuple[str, str, float]] = []
+    for i, a in enumerate(polys):
+        for b in polys[i + 1:]:
+            g = polygon_distance(a.polygon, b.polygon)
+            hi = max(_approach(approach_m, a.zone_id), _approach(approach_m, b.zone_id))
+            if chain_gap_m < g < hi + robot_radius:
+                out.append((a.zone_id, b.zone_id, g))
+    return out
+
+
+def grid_spacing_conflicts(labels: np.ndarray, ids: Sequence[str], resolution: float,
+                           approach_m: Approach, chain_gap_m: float, robot_radius: float,
+                           only: Optional[Collection[str]] = None
+                           ) -> List[Tuple[str, str, float]]:
+    """
+    spacing_conflicts 의 격자판 (지도 유도 구역용). labels: 셀 → ids 번호 (-1 = 구역 없음).
+
+    간격은 가장 가까운 두 셀 중심 거리 − 한 칸 (셀 해상도 근사). only 가 있으면 그 구역이 낀 쌍만 본다.
+    """
+    present = [k for k in range(len(ids)) if np.any(labels == k)]
+    out: List[Tuple[str, str, float]] = []
+    for n, i in enumerate(present):
+        dist = None
+        for j in present[n + 1:]:
+            if only is not None and ids[i] not in only and ids[j] not in only:
+                continue
+            if dist is None:
+                dist = ndimage.distance_transform_edt(labels != i) * resolution
+            g = max(0.0, float(dist[labels == j].min()) - resolution)
+            hi = max(_approach(approach_m, ids[i]), _approach(approach_m, ids[j]))
+            if chain_gap_m < g < hi + robot_radius:
+                out.append((ids[i], ids[j], g))
+    return out
 
 
 class ZoneMap:
@@ -329,18 +393,28 @@ def zone_visits(path: np.ndarray, zone_map: ZoneMap, step: float = 0.2,
     return visits
 
 
-def request_chain(visits: Sequence[ZoneVisit], approach_m: float,
-                  chain_gap_m: float) -> List[ZoneVisit]:
+def request_chain(visits: Sequence[ZoneVisit], approach_m: Approach,
+                  chain_gap_m: float, occupied: Collection[str] = ()) -> List[ZoneVisit]:
     """
     지금 요청할 구역 묶음 (같은 구역의 재방문은 한 번만).
 
-    아직 들어가지 않은(s_in > 0) 첫 방문이 approach_m 안이면 그것부터, 다음 방문 입구가 앞 방문
+    아직 들어가지 않은(s_in > 0) 첫 방문이 approach_m(한 값 또는 구역별) 안이면 그것부터, 다음 방문 입구가 앞 방문
     출구에서 chain_gap_m 이하면 이어 붙인다. 없으면 [].
+    occupied = 몸체가 지금 걸친 구역. 그중 첫 방문이 아닌 구역 k 가 있으면 첫 방문이 k 와 묶일 때
+    (k 출구 → 첫 방문 입구 ≤ chain_gap_m, 중심이 이미 k 를 나왔으면 첫 방문 입구까지 거리로 본다)만
+    요청한다 — 묶이지 않은 다음 구역은 k 를 빠져나온 뒤에 요청해서 k 안에서 기다리지 않는다.
     """
     upcoming = [v for v in visits if v.s_in > 1e-6]
-    if not upcoming or upcoming[0].s_in > approach_m:
+    if not upcoming or upcoming[0].s_in > _approach(approach_m, upcoming[0].zone_id):
         return []
-    chain = [upcoming[0]]
+    first = upcoming[0]
+    inside = set(occupied) - {first.zone_id}
+    if inside:
+        exit_s = max((v.s_out for v in visits if v.zone_id in inside and v.s_in <= 1e-6),
+                     default=0.0)
+        if first.s_in - exit_s > chain_gap_m:
+            return []
+    chain = [first]
     for v in upcoming[1:]:
         if v.s_in - chain[-1].s_out > chain_gap_m:
             break
@@ -418,6 +492,38 @@ class ZoneTokenManager:
         """로봇이 보유한 구역."""
         return sorted(z for z, h in self._holders.items() if robot_id in h)
 
+    def entered_by(self, robot_id: str) -> List[str]:
+        """로봇이 보유하고 이미 들어간 구역."""
+        return sorted(z for r, z in self._entered
+                      if r == robot_id and robot_id in self._holders.get(z, {}))
+
+    def holdings(self) -> Dict[str, Tuple[str, ...]]:
+        """로봇 → 보유 구역 (보유가 있는 로봇만)."""
+        out: Dict[str, List[str]] = {}
+        for z, hs in self._holders.items():
+            for r in hs:
+                out.setdefault(r, []).append(z)
+        return {r: tuple(sorted(zs)) for r, zs in out.items()}
+
+    def reserve(self, now: float, robot_id: str, zones: Sequence[str],
+                directions: Optional[Mapping[str, Direction]] = None) -> bool:
+        """
+        대기 없이 곧바로 부여 (양보 로봇의 포켓 경로 등). 묶음 전체가 호환될 때만 원자적으로 부여한다.
+
+        이미 보유한 구역 · 모르는 구역은 건너뛴다. 기아 예약은 보지 않는다 (호출자가 보유 구역을 피한
+        경로만 넘긴다). 부여했으면 True.
+        """
+        directions = directions or {}
+        need = [z for z in dict.fromkeys(zones)
+                if z in self._same_dir and robot_id not in self._holders.get(z, {})]
+        if not all(self._compatible(z, robot_id, directions.get(z)) for z in need):
+            return False
+        for z in need:
+            self._holders.setdefault(z, {})[robot_id] = directions.get(z)
+        if need:
+            self.grant_log.append((now, robot_id, tuple(need)))
+        return True
+
     def forget(self, robot_id: str) -> None:
         """로봇의 보유·대기 기록 삭제."""
         for h in self._holders.values():
@@ -441,13 +547,14 @@ class ZoneTokenManager:
 
     def update(self, now: float, requests: Mapping[str, TokenRequest],
                occupancy: Mapping[str, Set[str]], upcoming: Mapping[str, Set[str]],
-               directions: Optional[Mapping[str, Mapping[str, Direction]]] = None
-               ) -> Dict[str, TokenDecision]:
+               directions: Optional[Mapping[str, Mapping[str, Direction]]] = None,
+               frozen: Collection[str] = ()) -> Dict[str, TokenDecision]:
         """
         한 주기 처리: 반납 → 점유 등록 → 요청 갱신 → 부여 → 추월 집계.
 
         occupancy: 로봇 → 지금 몸체가 걸친 구역, upcoming: 로봇 → 남은 경로가 지나는 구역,
-        directions: 로봇 → 구역별 통과 방향 (점유 등록용, 없으면 요청의 방향).
+        directions: 로봇 → 구역별 통과 방향 (점유 등록용, 없으면 요청의 방향),
+        frozen: 보유를 그대로 두는 로봇 (관측이 끊긴 로봇 — 어디 있는지 모르니 반납하지 않는다).
         """
         directions = directions or {}
         # 1) 반납: 들어갔다 나왔거나, 경로가 더는 지나지 않는 구역
@@ -456,6 +563,8 @@ class ZoneTokenManager:
                 occ = zone_id in occupancy.get(rid, ())
                 if occ:
                     self._entered.add((rid, zone_id))
+                elif rid in frozen:
+                    continue
                 elif (rid, zone_id) in self._entered or zone_id not in upcoming.get(rid, ()):
                     del hs[rid]
                     self._entered.discard((rid, zone_id))

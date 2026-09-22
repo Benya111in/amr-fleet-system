@@ -13,7 +13,8 @@
     passage_radius: 0.22           # 로봇 중심이 지날 수 있는 벽까지 거리 (반폭 0.20 + 여유). 좁은 통로 0.60 m 보존
     nominal_speed: 1.0             # [m/s] 예측 속도 (fleet.yaml nominal_speed 와 같은 값)
     goal_tolerance_m: 0.3          # 남은 경로가 이보다 짧으면 도착 (주행 중 아님)
-    obs_timeout_s: 3.0             # 오도메트리가 이보다 오래되면 이번 주기에서 뺀다
+    obs_timeout_s: 3.0             # 오도메트리가 이보다 오래되면 stale: 빼지 않고 마지막 자세에 멈춘 장애물 · 토큰 유지 (fail closed)
+    lost_timeout_s: 5.0            # 이보다 오래되면 lost: 마지막 몸체가 걸친 구역 토큰만 남긴다 (fleet.yaml robot_state_timeout_s 와 같은 값)
     max_path_m: 60.0               # 남은 경로를 이만큼만 본다
     zones_file: ""                 # "" = share/amr_fleet/config/traffic_zones.yaml (구역 · 대기 포켓)
     prediction:                    # 경로 충돌 예측 (traffic_prediction)
@@ -30,8 +31,10 @@
     zones:                         # 교차로 · 병목(1차선 통로) 진입 토큰 (traffic_zones)
       source: yaml                 # yaml | map (/map 에서 자동 유도) | both | none
       tokens: true                 # false = 토큰 끔 (예측 · 교착 해소만)
-      approach_distance_m: 2.5     # 구역 입구 이 거리 앞에서 토큰 요청 (못 받으면 hold)
+      approach_distance_m: 1.5     # 구역 입구 이 거리 앞에서 토큰 요청 (못 받으면 hold). 1 m/s 에서 주기 0.5 s + 지연 0.1 s + 제동 0.5 m = 1.1 m < 1.5 m
+      corridor_approach_m: 2.5     # 1차선 통로(corridor)의 요청 거리: 입구에서 더 멀리 기다려 나오는 로봇이 비켜 갈 자리를 남긴다
       chain_gap_m: 1.5             # 출구-다음 입구가 이보다 가까운 구역은 묶어 한 번에 받는다 (교차로 안에서 서지 않기)
+      spacing_check: reject        # 구역 간격이 chain_gap_m 초과 · approach_distance_m + robot_radius 미만인 쌍 → reject(시작 거부) | warn(경고만)
       max_bypass: 2                # 먼저 기다린 로봇을 나중 요청이 이만큼 추월하면 그 구역을 기아 로봇에 예약
       corridor_same_direction: true  # 1차선 통로에 같은 방향 추종 진입 허용 (yaml 항목별 same_direction 우선)
       narrow_width_m: 1.5          # map 유도: 이 폭보다 좁은 통과 가능 영역 = 1차선 통로
@@ -53,6 +56,8 @@
       detour_reset_m: 2.0          # 남은 길이가 이만큼 늘면(큰 우회 재계획) 정체 기준을 새로 잡는다
       idle_block_s: 5.0            # 유휴(주차) 로봇 때문에 이만큼 서 있으면 BLOCKED
       livelock_radius_m: 3.0       # 이 거리 안에 모인 정체 로봇 ≥ 2 → LIVELOCK
+      token_wait_stall_s: 30.0     # 구역 토큰을 이만큼 기다리면 traffic/STALL (막는 로봇 · 그 상태 — ESTOP · LOADING · stale 등)
+      wait_max_s: 120.0            # 토큰 대기 · 1대 정체가 이만큼 이어지면 traffic/UNRESOLVED (fleet/DEADLOCK ERROR, 운영자 몫)
     resolution:                    # 해소 전략 (traffic_resolution)
       auto_pockets: true           # 지정 포켓이 모두 불가하면 자동 포켓 (구역 밖 · 경로 밖 빈 셀)
       pocket_search_radius_m: 12.0  # 포켓까지 경로 길이 상한 (다른 로봇 몸체를 지나지 않는 격자 Dijkstra)
