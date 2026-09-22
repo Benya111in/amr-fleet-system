@@ -2,6 +2,7 @@
 
 > 명세 4장 10절 "문서화" 산출물. **설계 문서 — 구현 시 갱신.**
 > 기준: `src/*/package.xml` (3c1813a), `src/amr_msgs` 정의, `config/*.yaml`, 명세 4장 1~10절.
+> 구현 반영: `amr_description`·`amr_simulation` (3.1절, 5.1절 — 시뮬레이션 리뷰 반영, 실측 포함).
 > 시퀀스 다이어그램은 [sequences.md](sequences.md), TF 트리는 [README.md](README.md),
 > 다중 로봇 네임스페이스 설계는 [multi_robot.md](multi_robot.md) 참고.
 
@@ -77,8 +78,8 @@ flowchart TB
 | 패키지 | 내부 의존 | 주요 외부 의존 (`package.xml`) | 빌드 타입 |
 | --- | --- | --- | --- |
 | `amr_msgs` | — | std_msgs, geometry_msgs, builtin_interfaces, rosidl_default_generators | ament_cmake (rosidl) |
-| `amr_description` | — | urdf, xacro, robot_state_publisher, joint_state_publisher | ament_cmake |
-| `amr_simulation` | amr_description | ros_gz_sim, ros_gz_bridge | ament_cmake |
+| `amr_description` | — | urdf, xacro, robot_state_publisher, joint_state_publisher (+ exec: rclpy, std_msgs, tf2_msgs, ros_gz_sim/bridge/image) | ament_cmake (+ `scripts/gz_world.py`) |
+| `amr_simulation` | amr_description (+ exec: amr_msgs) | ros_gz_sim, ros_gz_bridge (+ exec: rclpy, nav_msgs, std_msgs, std_srvs, visualization_msgs) | ament_cmake + python |
 | `amr_localization` | amr_msgs | nav2_amcl, slam_toolbox, robot_localization, sensor_msgs, nav_msgs, tf2_ros | ament_cmake + python |
 | `amr_navigation` | amr_msgs | nav2_core, nav2_costmap_2d, nav2_msgs, nav_msgs, geometry_msgs, tf2_ros | ament_cmake + python |
 | `amr_perception` | amr_msgs | sensor_msgs, vision_msgs, visualization_msgs, cv_bridge, image_transport, tf2_ros | ament_cmake + python |
@@ -89,7 +90,7 @@ flowchart TB
 
 설계상 필요하지만 현재 `package.xml` 에 없는 의존 (구현 시 추가):
 
-- `amr_simulation`: `rclpy`, `ros_gz_interfaces`, `std_msgs`, `geometry_msgs` (`payload_manager_node`, `obstacle_animator_node`)
+- `amr_simulation`: `ros_gz_interfaces` (`payload_manager_node` — 설계, 미구현)
 - `amr_fleet`: `amr_bringup` (exec, `multi_robot.launch.py` 가 `system.launch.py` 를 로봇별로 include), `nav_msgs`, `diagnostic_msgs`, `std_msgs`, `python3-scipy`, `python3-networkx`
 - `amr_perception`: `nav_msgs`, `std_msgs`, `std_srvs`, `python3-numpy` (+ `ultralytics`, `torch` 는 pip)
 - `amr_behavior`: `geometry_msgs`, `std_msgs`, `tf2_ros`. `behaviortree_cpp`(v4) 대신 `behaviortree_cpp_v3` 권장 — Humble 의 `nav2_behavior_tree` 가 v3 에 링크되므로 한 프로세스에 두 버전을 섞지 않는다
@@ -109,16 +110,32 @@ flowchart TB
 | --- | --- | --- | --- | --- |
 | `robot_state_publisher` | C++ | ext | xacro → `robot_description`, 고정 조인트 TF (`base_link→센서`), 바퀴 조인트 TF | — |
 | `joint_state_publisher` | Python | ext | RViz 단독 확인용. 시뮬레이션에서는 Gazebo `joint_states` 를 쓰므로 미기동 | — |
-| Gazebo Fortress (`ign gazebo`) | — | ext | 60×40 m 월드, 센서 노이즈(SDF `<noise>`), DiffDrive/JointStatePublisher/OdometryPublisher/LinearBattery/DetachableJoint 시스템 플러그인 (이미지에 존재 확인) | — |
-| `ros_gz_bridge` (`parameter_bridge`) | C++ | ext | gz ↔ ROS2 토픽 브리지 (센서, `cmd_vel`, `joint_states`, `battery_state`, `ground_truth/odom`, `/clock`) | — |
-| `obstacle_animator_node` | Python | own | 작업자/지게차 5개 이상을 직선·곡선·무작위 패턴, 0.3~1.5 m/s 로 구동 (gz `cmd_vel`) | 저주기(10 Hz) 스크립트 로직 |
-| `payload_manager_node` | Python | own | 적재/하역 이벤트: 박스 모델 spawn + DetachableJoint 부착으로 질량 변화 반영, 충전 이벤트 | gz 서비스 호출 위주, 성능 무관 |
+| Gazebo Fortress (`ign gazebo`) | — | ext | 내부 60×40 m 월드(천장·표지판 25개·ArUco 7개), 센서 노이즈(SDF `<noise>`), 로봇: DiffDrive/JointStatePublisher/OdometryPublisher 시스템 플러그인. **배터리 플러그인(LinearBattery)은 쓰지 않는다** — `battery_state` 는 시뮬레이터가 내지 않는다(8절). 동적 장애물은 월드 SDF 가 스스로 움직인다: 사람 actor 6개(SDF `<script><trajectory>`), 지게차·셔틀 AMR 물리 모델(DiffDrive 램프 + TriggeredPublisher 왕복) | — |
+| `ros_gz_bridge` (`parameter_bridge`) | C++ | ext | gz ↔ ROS2 토픽 브리지 (센서, `cmd_vel`, `joint_states`, `odom_gz`, `ground_truth/odom`, `/clock`, 지게차·셔틀 `/sim/<이름>/odom`) | — |
+| `gz_world.py` (amr_description) | Python | own | 스폰(create 서비스 대기 → 중복 검사 → 생성 → scene/info 로 생성 확인, 실패 시 런치 종료)과 일시정지 해제(전 로봇 확인 후) | `ign service` CLI 호출 위주 |
+| `obstacle_truth_node` | Python | own | 동적 장애물 지면 진실: actor 궤적을 Gazebo 와 같은 스플라인으로 sim time 보간 + 지게차·셔틀 오도메트리 → `/sim/dynamic_obstacles` (명세 4.7 추적기 평가) | 50 Hz, 1 코어의 약 22 % (실측) |
+| `collision_monitor_node` | Python | own | 로봇 발자국 ↔ 동적 장애물(사람 원, 차량 사각형, 다른 로봇) 부호 거리, 접촉(< 0 m) 사건 계수 (명세 4.7 "30회 충돌 0건") | ground_truth 50 Hz, 1 코어의 약 22 % (2대, 실측) |
+| `payload_manager_node` | Python | own | (설계, 미구현) 주행 중 적재/하역 이벤트: 박스 모델 spawn + DetachableJoint 부착으로 질량 변화 반영, 충전 이벤트. 현재는 스폰 시점 적재(xacro `payload`)만 있다 | gz 서비스 호출 위주, 성능 무관 |
+
+월드·센서 실측 (Fortress 6.18 헤드리스, `amr-fleet-system:wf-final`, 2026-09-22):
+
+- 월드: 벽 안쪽 60 × 40 m, 천장 8 m(아래 방향 평면 — 위에서 보는 GUI 에는 안 보임) + 하이베이 12 + 약한 태양광, 바닥 알베도 0.35.
+  로봇 카메라 하단(바닥 0.35~0.6 m 앞) 평균 밝기 241/255(이전) → 173/255, 포화 픽셀 0.1 %.
+- 표지판 25개(`models/sign`: 도크 1/2/A/B, 입·출고 구역, 충전 구역·C1~C3, 대기 구역, 랙 열 A/B/C 끝면, 기둥 지게차 주의, 좁은 통로 주의,
+  비상구+문). 렌더 확인: 글자 정방향, 좌우 반전 없음. 사전학습 COCO 모델에는 표지판 클래스가 없어(stop sign 뿐) 인지팀 미세조정 대상.
+- 작업자: 사람 비율 메시(1.79 m) + 형광 황록 안전조끼 + 반사띠. 사전학습 YOLOv8n/s(COCO) `person`, 창고 안 `worker_crossing` 정면/후면:
+  3~12 m 검출률 100 %(v8n 은 3 m 정면 1프레임 누락), 신뢰도 3~8 m 0.77~0.90, 9~12 m 0.64~0.86. 2 m 이하는 머리가 화각(수직 ±35°)
+  밖이라 40~60 %. 이전 박스 모델은 0 %. 오검출: 랙에 `bench`(v8n 16회/139프레임), 상자에 `skateboard` — 미세조정 때 음성 예시로 쓴다.
+- LiDAR(지면 +0.20): 자기 차체 반환 0 (2·6대), 옆 로봇·도크 바닥 중형(0.30)·대형(0.40) 박스는 기대 거리 ±3 mm, 소형(0.15)은 안 보임(깊이 카메라 0.86 m 에서 보임).
+- 일시정지 기동: 2대·6대 모두 첫 scan 이 sim 0.0 s 에서 0.100 s 간격 (폭주 없음).
+- RTF: 전체 월드 + 2대(센서 전부 + 지면 진실·충돌 판정 노드) sim/wall 0.94 (79 s, 호스트 부하 4~12/32 코어), 0.85 (부하 14~23).
+  Gazebo 서버 1.8~2.2 코어.
 
 ### 3.2 amr_localization
 
 | 노드 | 언어 | 형태 | 역할 | 언어 근거 |
 | --- | --- | --- | --- | --- |
-| `wheel_odometry_node` | C++ | own | `joint_states` → 4096 tick 양자화 + 슬립 노이즈(`sensors.yaml wheel_encoder`) → **순기구학 직접 구현** → `wheel_odom` 50 Hz | 50 Hz × 5대, EKF 입력 지연 최소화 |
+| `wheel_odometry_node` | C++ | own | `joint_states`(물리 스텝마다 1 kHz) → 50 Hz 서브샘플 + 4096 tick 양자화 + 슬립 노이즈(`sensors.yaml wheel_encoder`) → **순기구학 직접 구현** → `wheel_odom` 50 Hz | 1 kHz 입력 × 5대, EKF 입력 지연 최소화 |
 | `imu_filter_node` | C++ | own | `imu/data_raw` → 저역 통과 + 바이어스 보정 → `imu/data` 100 Hz | 100 Hz |
 | `scan_filter_node` | C++ | own | `scan` → 거리/각도 필터 + 아웃라이어 제거 → `scan_filtered` 10 Hz | 720 pt × 10 Hz × 5대 |
 | `slam_toolbox` (`async_slam_toolbox_node`) | C++ | ext | 매핑 모드 전용. `scan_filtered` → `/map`, `map→odom` TF. 저장은 `map_saver_cli` | — |
@@ -194,8 +211,9 @@ flowchart LR
   subgraph sim["amr_simulation"]
     gz["Gazebo Fortress<br/>warehouse.sdf"]
     bridge["ros_gz_bridge"]
-    animator["obstacle_animator_node"]
-    payload["payload_manager_node"]
+    truth["obstacle_truth_node"]
+    colmon["collision_monitor_node"]
+    payload["payload_manager_node<br/>(설계)"]
   end
   subgraph desc["amr_description"]
     rsp["robot_state_publisher"]
@@ -240,7 +258,8 @@ flowchart LR
   end
 
   gz <-->|"gz transport"| bridge
-  animator -->|"gz cmd_vel (actor)"| gz
+  bridge -->|"/sim/forklift_main/odom<br/>/sim/shuttle_amr/odom"| truth & colmon
+  bridge -->|"ground_truth/odom"| colmon
   payload -.->|"SpawnEntity / DetachableJoint"| gz
   bridge -->|"joint_states"| wodom & rsp
   bridge -->|"imu/data_raw"| imuf
@@ -248,7 +267,6 @@ flowchart LR
   bridge -->|"camera/image_raw<br/>camera/camera_info"| yolo & aruco
   bridge -->|"camera/depth/image_raw"| objloc & pcf
   bridge -->|"camera/depth/camera_info"| pcf
-  bridge -->|"battery_state"| adapter
   wodom -->|"wheel_odom"| ekfo & ekfm
   imuf -->|"imu/data"| ekfo & ekfm
   scanf -->|"scan_filtered"| amcl & planner & ctrl & tracker & safety
@@ -293,6 +311,9 @@ flowchart LR
 
 한 로봇 안에서 `cmd_vel` 발행자는 **`safety_node` 하나**뿐이다. 그 앞단은 Nav2 관례(`cmd_vel_nav` → `cmd_vel_smoothed` → `cmd_vel`)를 따르고, `velocity_smoother` 와 `collision_monitor` 자리를 직접 구현 노드로 채운다.
 `cmd_vel_nav` 에는 `controller_server`, `behavior_server`, `docking_server_node` 세 발행자가 있으나 BT 가 상호 배타로 실행하므로 동시에 발행하지 않는다 (Nav2 docking 서버와 같은 방식).
+가감속 한계의 역할 분담 (결정): 정상 가감속 1.0 m/s²·저크 2.0 m/s³ 는 `velocity_profiler_node` 가 프로파일로 지킨다. Gazebo DiffDrive 는
+가속 1.0 / **감속 3.0 m/s²**(`robot_params.yaml limits.emergency_deceleration`)를 컨트롤러 한계로만 건다. E-Stop 때 `safety_node` 는 프로파일러를
+우회해 `cmd_vel` 0 을 바로 내고, 실제 제동은 구동 토크 한계로 정해진다 (실측 2.0 m/s → 0: 0 kg 1.23 m, 25 kg 1.79 m — 5.1절 표).
 
 ```mermaid
 flowchart LR
@@ -315,10 +336,11 @@ flowchart LR
 | `map → <r>/odom` | `ekf_filter_node_map` (주행 모드) / `slam_toolbox` (매핑 모드) | AMCL 은 발행하지 않음 |
 | `<r>/odom → <r>/base_footprint` | `ekf_filter_node_odom` | |
 | `<r>/base_footprint → <r>/base_link` | `robot_state_publisher` (고정) | |
-| `<r>/base_link → <r>/{lidar,camera,imu}_link`, `*_optical_frame` | `robot_state_publisher` (고정, `sensors.yaml` extrinsic) | |
-| `<r>/base_link → <r>/{left,right}_wheel_link` | `robot_state_publisher` (`joint_states`) | |
+| `<r>/base_link → <r>/{lidar,camera,imu,cargo}_link`, `*_optical_frame` | `robot_state_publisher` (고정, `sensors.yaml` extrinsic) | |
+| `<r>/base_link → <r>/{left,right}_wheel_link` | `robot_state_publisher` (`joint_states` 1 kHz 입력, `publish_frequency` 20 Hz 상한) | |
+| (선택) `<r>/odom → <r>/base_footprint` | Gazebo DiffDrive (`spawn.launch.py bridge_odom_tf:=true`) | EKF 이전 초기 매핑용. EKF 와 동시 사용 금지 |
 
-`<r>` = 로봇 prefix (`amr_01` …). 프레임 prefix 주입 방식은 [multi_robot.md](multi_robot.md) 참고.
+`<r>` = 로봇 prefix (`amr_01` …). 접두어는 xacro `prefix` 인자가 링크 이름에 직접 넣는다 (`robot_state_publisher` `frame_prefix` 미사용 — [multi_robot.md](multi_robot.md) §2).
 
 ---
 
@@ -332,22 +354,67 @@ QoS 약어: `sensor` = best-effort depth 5, `reliable` = reliable volatile depth
 
 | 방향 | 이름 | 타입 | 주기 / QoS | 비고 |
 | --- | --- | --- | --- | --- |
-| Pub | `scan` | `sensor_msgs/msg/LaserScan` | 10 Hz, sensor | 720 샘플, σ=0.03 m (SDF noise). `sensors.yaml lidar.topic` |
-| Pub | `imu/data_raw` | `sensor_msgs/msg/Imu` | 100 Hz, sensor | 바이어스+가우시안 노이즈 (SDF). 필터 후 `imu/data` |
-| Pub | `camera/image_raw` | `sensor_msgs/msg/Image` | 30 Hz, sensor | 640×480 RGB |
-| Pub | `camera/camera_info` | `sensor_msgs/msg/CameraInfo` | 30 Hz, sensor | Pinhole 내부 파라미터 |
-| Pub | `camera/depth/image_raw` | `sensor_msgs/msg/Image` | 15 Hz, sensor | 32FC1. 시뮬레이터는 `noise_base` σ 0.005 m 만 적용(SDF 네이티브). 거리 제곱 항 k·d² (k = 0.002 m⁻¹) 은 `pointcloud_filter_node` 가 가산 → 합성 σ(d) = sqrt(0.005² + (0.002·d²)²) (`sensors.yaml depth_camera`) |
-| Pub | `camera/depth/camera_info` | `sensor_msgs/msg/CameraInfo` | 15 Hz, sensor | `sensors.yaml depth_camera.info_topic`. 점군 역투영 + `safety_node` 생존 감시 |
-| Pub | `camera/depth/points` | `sensor_msgs/msg/PointCloud2` | 15 Hz, sensor | **기본 브리지 안 함**(디버그 시만). 좌표가 optical 이 아닌 본체 규약으로 나와 그대로 쓸 수 없다 (`sensors.yaml` 주석) |
-| Pub | `joint_states` | `sensor_msgs/msg/JointState` | 50 Hz, reliable | 바퀴 조인트 위치/속도 (인코더 원천) |
-| Pub | `battery_state` | `sensor_msgs/msg/BatteryState` | 1 Hz, reliable | LinearBatteryPlugin |
+| Pub | `scan` | `sensor_msgs/msg/LaserScan` | 10 Hz, reliable | 720 샘플, σ=0.03 m (SDF noise). 스캔 평면 지면 +0.20 m (차체 안 슬롯, 자기 차체는 Gazebo 가시성 비트로 제외). `sensors.yaml lidar.topic` |
+| Pub | `imu/data_raw` | `sensor_msgs/msg/Imu` | 100 Hz, reliable | 바이어스+가우시안 노이즈 (SDF). 필터 후 `imu/data` |
+| Pub | `camera/image_raw` | `sensor_msgs/msg/Image` | 30 Hz, reliable | 640×480 RGB, 시간 노이즈 σ ≈ 0.007 (정규화, `sensors.yaml rgb_camera`). 광학 중심 지면 +0.25 m (전면 창) |
+| Pub | `camera/camera_info` | `sensor_msgs/msg/CameraInfo` | 30 Hz, reliable | Pinhole 내부 파라미터 |
+| Pub | `camera/depth/image_raw` | `sensor_msgs/msg/Image` | 15 Hz, reliable | 32FC1. 시뮬레이터는 `noise_base` σ 0.005 m 만 적용(SDF 네이티브). 거리 제곱 항 k·d² (k = 0.002 m⁻¹) 은 `pointcloud_filter_node` 가 가산 → 합성 σ(d) = sqrt(0.005² + (0.002·d²)²) (`sensors.yaml depth_camera`) |
+| Pub | `camera/depth/camera_info` | `sensor_msgs/msg/CameraInfo` | 15 Hz, reliable | `sensors.yaml depth_camera.info_topic`. 점군 역투영 + `safety_node` 생존 감시 |
+| Pub | `camera/depth/points` | `sensor_msgs/msg/PointCloud2` | 15 Hz, reliable (lazy) | **기본 브리지 안 함**(디버그 시만). 좌표가 optical 이 아닌 본체 규약으로 나와 그대로 쓸 수 없다 (`sensors.yaml` 주석) |
+| Pub | `joint_states` | `sensor_msgs/msg/JointState` | **1 kHz**(물리 스텝마다), reliable | 바퀴 조인트 위치/속도 (인코더 원천). Fortress JointStatePublisher 는 주기 옵션이 없다 → 소비자가 서브샘플 (`robot_state_publisher` 는 `publish_frequency` 20 Hz 상한으로 /tf 발행) |
+| Pub | `odom_gz` | `nav_msgs/msg/Odometry` | 50 Hz, reliable | DiffDrive 자체 오도메트리 (비교용) |
+| Pub | `/tf` (선택) | `tf2_msgs/msg/TFMessage` | 50 Hz | `spawn.launch.py bridge_odom_tf:=true` 일 때만: DiffDrive `odom→base_footprint`. EKF 이전 초기 매핑용 — EKF 와 동시 사용 금지 |
 | Pub | `ground_truth/odom` | `nav_msgs/msg/Odometry` | 50 Hz, reliable | OdometryPublisher, 노이즈 없음. **평가 전용** (RMSE/CTE/도킹 오차) |
 | Pub | `/clock` | `rosgraph_msgs/msg/Clock` | 전역 | `use_sim_time: true` |
-| Sub | `cmd_vel` | `geometry_msgs/msg/Twist` | reliable | Gazebo DiffDrive 입력 |
+| Sub | `cmd_vel` | `geometry_msgs/msg/Twist` | reliable | Gazebo DiffDrive 입력. 한계(envelope): 속도 2.0 / 가속 1.0 / **감속 3.0**(`limits.emergency_deceleration`, E-Stop) m/s², 회전 1.5 rad/s, 2.0 rad/s². 정상 감속 1.0 은 `velocity_profiler_node` 몫 |
 
-`obstacle_animator_node`: Pub gz `/model/<actor>/cmd_vel` (`geometry_msgs/msg/Twist`, 브리지 경유), 파라미터 `patterns`, `speed_range: [0.3, 1.5]`, `seed`.
+QoS: `parameter_bridge`·`image_bridge` 발행자는 모두 reliable (volatile, depth 10) 이다 (실측 `ros2 topic info -v`). 구독자는 best-effort(`sensor`)로 받아도 연결된다.
 
-`payload_manager_node`:
+구동계 (`robot_params.yaml drive`): 바퀴 조인트 토크 3.0 N·m / 속도 28 rad/s 한계라 적재 질량이 가속·제동에 드러난다.
+Gazebo 실측 (평지, cmd_vel 스텝, ground_truth 50 Hz):
+
+| 적재 | 가속 0→2.0 m/s | 2.0 m/s 에서 0 지령 (E-Stop, 반응 지연 제외) | −1.0 m/s² 램프 추종 최대 오차 |
+| --- | --- | --- | --- |
+| 0 kg | 1.000 m/s² (한계) | 1.65 m/s², 1.23 s, 1.23 m | 0.015 m/s |
+| 10 kg (중형 50×40×30) | 1.000 m/s² (한계) | 1.39 m/s², 1.45 s, 1.46 m | 0.016 m/s |
+| 25 kg (대형 60×50×40) | 0.843 m/s² | 1.13 m/s², 1.79 s, 1.79 m | 0.017 m/s |
+
+(이전: 토크 한계가 없어 0/25/200 kg 이 같은 곡선, 감속 한계 1.0 이라 E-Stop 도 2.0 m 제동.)
+
+동적 장애물 (월드 SDF 가 스스로 움직임 — 이전 설계의 `obstacle_animator_node` 는 만들지 않는다):
+
+| 이름 | 종류 | 속도 | 패턴 | 지면 진실 |
+| --- | --- | --- | --- | --- |
+| `worker_straight_slow` / `worker_straight_fast` / `worker_crossing` / `worker_slow_south` | 사람 actor | 0.5 / 1.2 / 1.0 / 0.3 m/s | 직선 왕복 (끝에서 0.6 m/s² 감속 → 제자리 회전 → 가속) | SDF 궤적 보간 |
+| `worker_curve` | 사람 actor | 0.8 m/s | 반지름 3.5 m 원 | SDF 궤적 보간 |
+| `worker_random` | 사람 actor | 0.6 m/s | 격자 무작위 보행 (seed 42, 424 s 루프) | SDF 궤적 보간 |
+| `forklift_main` | 물리 모델 2.5 t | 1.5 m/s | 메인 통로 왕복, 반전 시 1.0 m/s² 로 1.5 s 감속 + 1.5 s 가속 (실측 반전 ±20.03 m) | gz OdometryPublisher → `/sim/forklift_main/odom` |
+| `shuttle_amr` ("다른 로봇") | 물리 모델 0.6×0.4 m | 1.0 m/s | 교차 통로 x=9 왕복 y −6..11, 0.8 m/s² 램프 | gz OdometryPublisher → `/sim/shuttle_amr/odom` |
+
+`obstacle_truth_node` (amr_simulation, 시뮬레이션 전용):
+
+| 방향 | 이름 | 타입 | 주기 / QoS | 비고 |
+| --- | --- | --- | --- | --- |
+| Sub | `/sim/forklift_main/odom`, `/sim/shuttle_amr/odom` | `nav_msgs/msg/Odometry` | 50 Hz | `warehouse.launch.py` 의 `obstacle_bridge` (config/obstacle_bridge.yaml) |
+| Pub | `/sim/dynamic_obstacles` | `visualization_msgs/msg/MarkerArray` | 50 Hz, reliable | 장애물마다 마커 1개: `ns` = 이름, `id` = 고정 번호, 사람 CYLINDER(지름 0.6) / 차량 CUBE(발자국), frame `world` |
+| Pub | `/sim/dynamic_obstacles/tracks` | `amr_msgs/msg/TrackedObstacleArray` | 50 Hz, reliable | 추적기 출력과 같은 형식의 정답 (`track_id` = 마커 id, 월드 속도, 이동 방향) |
+| Pub | `/sim/dynamic_obstacles/info` | `std_msgs/msg/String` | latched | JSON `[{id, name, kind, radius|footprint, height}]` |
+
+정확도 (실측, 로봇 LiDAR 와 비교): 사람 actor 는 스캔 거리 잔차가 이동 방향과 무관하게 IQR ±2 cm, 시각 어긋남 ≤ 0.02 s;
+셔틀은 정면 빔 거리 오차 −2.4 cm, 가로지르는 창이 GT y = ±0.30(차체 반길이) 과 스캔 주기(0.1 s) 안에서 일치.
+
+`collision_monitor_node` (amr_simulation, 시뮬레이션 전용):
+
+| 방향 | 이름 | 타입 | 주기 / QoS | 비고 |
+| --- | --- | --- | --- | --- |
+| Sub | `/<r>/ground_truth/odom`, `/sim/<모델>/odom` | `nav_msgs/msg/Odometry` | 50 Hz | 로봇 목록 = 파라미터 `robots` (런치 `monitor_robots`) |
+| Pub | `/<r>/collision_monitor/min_distance` | `std_msgs/msg/Float64` | 50 Hz | 가장 가까운 장애물까지 부호 거리 [m] (겹치면 음수) |
+| Pub | `/<r>/collision_monitor/contacts` | `std_msgs/msg/UInt32` | 변할 때 + 1 Hz | 접촉 사건 누적 (거리 < 0, 0.05 m 이상 벌어져야 다음 사건) |
+| Pub | `/sim/collision_monitor/events` | `std_msgs/msg/String` | 사건마다 | JSON `{t, robot, obstacle, distance}` |
+| Pub | `/sim/collision_monitor/summary` | `std_msgs/msg/String` | 1 Hz | JSON 로봇별 `{contacts, min_distance, current, nearest, per_obstacle_min}` |
+| SrvS | `/sim/collision_monitor/reset` | `std_srvs/srv/Trigger` | | 시험 1회마다 누적 초기화 (명세 4.7 30회 시험) |
+
+`payload_manager_node` (설계, 미구현 — 현재 적재는 스폰 시점 xacro `payload`/`payload_mass` 인자):
 
 | 방향 | 이름 | 타입 | 비고 |
 | --- | --- | --- | --- |
@@ -576,8 +643,10 @@ POST 는 `Origin` 이 있으면 `Host` 와 같아야 하고(403), `api_token` �
 
 | 파일 | 소비 노드 |
 | --- | --- |
-| `config/robot_params.yaml` | xacro (footprint/wheel), `wheel_odometry_node`, `velocity_profiler_node`, DWA/PurePursuit 플러그인, `safety_node`(safety.*), `payload_manager_node`(payload.*) |
-| `config/sensors.yaml` | xacro (extrinsic, 노이즈 SDF), `scan_filter_node`, `imu_filter_node`, `wheel_odometry_node`(ticks, slip), `pointcloud_filter_node`(depth 노이즈 k·d²), `object_localizer_node` |
+| `config/robot_params.yaml` | xacro (footprint/wheel/drive 토크·속도 한계/payload 크기·질량/emergency_deceleration), `wheel_odometry_node`, `velocity_profiler_node`, DWA/PurePursuit 플러그인, `safety_node`(safety.*), `collision_monitor_node`(footprint), `payload_manager_node`(payload.*) |
+| `config/sensors.yaml` | xacro (extrinsic, 노이즈 SDF, RGB `gz_noise_stddev`), spawn.launch.py(브리지 토픽), `scan_filter_node`, `imu_filter_node`, `wheel_odometry_node`(ticks, slip), `pointcloud_filter_node`(depth 노이즈 k·d²), `object_localizer_node` |
+| `src/amr_simulation/config/dynamic_obstacles.yaml` | `obstacle_truth_node`, `collision_monitor_node` (사람 반지름, 차량 발자국) |
+| `src/amr_bringup/config/fleet_spawn.yaml` | 다중 로봇 런치 (스폰 자세, [multi_robot.md](multi_robot.md) §5; `test_spawn_poses.py` 가 월드와 대조) |
 | `config/ekf.yaml` | `ekf_filter_node_odom`, `ekf_filter_node_map` |
 | `src/amr_navigation/config/nav2_params.yaml` | Nav2 서버 전부, A*/DWA/PurePursuit 플러그인 파라미터 |
 | `src/amr_localization/config/{amcl,slam_toolbox}.yaml` | `amcl`, `slam_toolbox` |
@@ -603,5 +672,7 @@ ros2 topic hz /amr_01/cmd_vel        # 50 Hz, 발행자 1개 (ros2 topic info -v
 ## 8. 미결 사항
 
 - TEB 비교(명세 4장 4절): 이미지에 `teb_local_planner` 없음. 별도 설치하거나 `nav2_mppi_controller`/`nav2_dwb_controller` 로 비교 대상을 바꿀지 결정 필요
-- `imu/data_raw`(브리지) → `imu/data`(필터) 규칙은 REP-145 를 따른 것. `sensors.yaml imu.topic: imu/data` 는 필터 출력을 가리키는 것으로 해석했다
-- 휠 인코더 노이즈(양자화·슬립)는 Gazebo 에 플러그인이 없어 `wheel_odometry_node` 입력단에서 모델링한다. 시뮬레이션 패키지로 옮길지 검토
+- `imu/data_raw`(브리지) → `imu/data`(필터) 규칙은 REP-145 를 따른 것. `sensors.yaml imu.topic` 은 브리지 출력 `imu/data_raw` 이고, 필터 출력 `imu/data` 는 `imu_filter_node` 가 정한다
+- 휠 인코더 노이즈(양자화·슬립)는 `wheel_odometry_node` 입력단에서 소프트웨어로 모델링한다 (결정). Fortress 에 엔코더 센서는 없고, 물리 슬립은 WheelSlip 시스템이 있지만 드리프트 분석 대상 노이즈를 파라미터로 통제하려고 쓰지 않는다
+- `battery_state`: 시뮬레이터가 발행하지 않는다 (LinearBattery 미사용). 대시보드·BT `IsBatteryOk` 입력을 누가 낼지(예: 주행 거리 기반 방전 모델 노드) 결정 필요
+- 주행 중 적재/하역 질량 변경(`payload_manager_node`, DetachableJoint)은 미구현. 스폰 시점 적재만 된다

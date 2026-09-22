@@ -11,11 +11,22 @@
 - `config/sensors.yaml` 의 `<센서>.extrinsic: {x, y, z, roll, pitch, yaw}` 가 **유일한 원본**이다.
   값은 `base_link` 기준 센서 **본체 링크**(body convention, REP-103: x 전방 / y 좌 / z 상)의 자세다.
 
-| 링크 | extrinsic (m, rad) | 메시지 `frame_id` (다중 로봇은 앞에 `<prefix>`) |
-| --- | --- | --- |
-| `lidar_link` | (0.15, 0, 0.20, 0, 0, 0) | `lidar_link` |
-| `camera_link` | (0.18, 0, 0.25, 0, 0, 0) | RGB `camera_optical_frame`, Depth `camera_depth_optical_frame` |
-| `imu_link` | (0, 0, 0.10, 0, 0, 0) | `imu_link` |
+| 링크 | extrinsic (m, rad) | 지면 높이 | 메시지 `frame_id` (다중 로봇은 앞에 `<prefix>`) |
+| --- | --- | --- | --- |
+| `lidar_link` | (0.15, 0, 0.02, 0, 0, 0) | 0.20 m (차체 안 슬롯) | `lidar_link` |
+| `camera_link` | (0.29, 0, 0.07, 0, 0, 0) | 0.25 m (전면 창, 차체 전면 1 cm 안쪽) | RGB `camera_optical_frame`, Depth `camera_depth_optical_frame` |
+| `imu_link` | (0, 0, 0.10, 0, 0, 0) | 0.28 m | `imu_link` |
+
+`base_link` 는 차체 박스 중심(지면 +0.18 m, `robot_params.yaml robot.base_link_height`)이다. 배치 결정 근거(데크 아래라 적재물이 가리지
+않음, 0.20 m 넘는 바닥 물체를 LiDAR 가 봄)는 `config/sensors.yaml` 주석에 있다.
+
+**자기 차체 제외.** LiDAR 가 차체 안 슬롯에 있어 스캔 평면이 차체 박스를 지난다.
+- 시뮬레이션: Gazebo 가시성 비트로 자기 로봇 시각체만 센서에서 뺀다 — 로봇의 모든 링크 시각체 `visibility_flags = 1 << b`,
+  그 로봇의 gpu_lidar/카메라 `visibility_mask = 0xFFFFFFFF − (1 << b)`, b = 로봇마다 다른 비트(`urdf/amr_gazebo.xacro`).
+  실측(Fortress 6.18, 2·6대): 자기 발자국 안 반환 0, 옆 로봇 차체는 정확한 거리로 보임(1.547 m, 기대 1.55), 바닥 중형 박스 보임,
+  소형 박스(0.15 m)는 스캔 평면 아래라 LiDAR 에 없고 깊이 카메라에만 보임(0.86 m). 물리 충돌에는 영향이 없다.
+- 실제 로봇: 슬롯을 받치는 기둥이 가리는 각도 구간을 도면·정지 스캔으로 구해 `scan_filter_node` 의 `angle_mask` 로 뺀다
+  (4장 체크리스트). 시뮬레이션에는 기둥이 없으므로 이 마스크는 실기 전환 때만 필요하다.
 
 - 카메라 광학 프레임(`camera_optical_frame`, `camera_depth_optical_frame`)은 `camera_link` 의 **고정 자식**이며
   rpy = (−π/2, 0, −π/2) 로만 회전한다 (REP-103 optical: z 전방 / x 우 / y 하). 쿼터니언 (x, y, z, w) = (−0.5, 0.5, −0.5, 0.5).
@@ -31,8 +42,8 @@
 
 ```bash
 ros2 run tf2_tools view_frames -o logs/frames                             # logs/frames.pdf, logs/frames.gv
-ros2 run tf2_ros tf2_echo amr_01/base_link amr_01/lidar_link              # Translation [0.150, 0.000, 0.200], RPY [0, 0, 0]
-ros2 run tf2_ros tf2_echo amr_01/base_link amr_01/camera_link             # [0.180, 0.000, 0.250]
+ros2 run tf2_ros tf2_echo amr_01/base_link amr_01/lidar_link              # Translation [0.150, 0.000, 0.020], RPY [0, 0, 0]
+ros2 run tf2_ros tf2_echo amr_01/base_link amr_01/camera_link             # [0.290, 0.000, 0.070]
 ros2 run tf2_ros tf2_echo amr_01/camera_link amr_01/camera_optical_frame  # [0, 0, 0], Quaternion [-0.500, 0.500, -0.500, 0.500]
 ros2 run tf2_ros tf2_echo amr_01/base_link amr_01/imu_link                # [0.000, 0.000, 0.100]
 ros2 topic echo /amr_01/scan --once | grep frame_id                       # amr_01/lidar_link — 메시지 frame_id 도 TF 와 같아야 한다
@@ -55,7 +66,7 @@ ros2 topic echo /amr_01/camera/camera_info --once | grep frame_id         # amr_
 2. 60 스캔 기록: `ros2 bag record -o logs/calibration/lidar_wall /amr_01/scan /amr_01/ground_truth/odom`.
 3. 스캔마다 |각도| ≤ 30° 이고 range 가 유한한 빔을 `lidar_link` 평면 점 (x = r cos θ, y = r sin θ) 으로 바꾼다.
 4. 총최소제곱 직선 적합(PCA: 공분산 최소 고유벡터 = 법선 n, 중심 c). 측정 거리 d_meas = |c · n|, 벽 법선 방향 ψ_meas = atan2(n_y, n_x).
-5. 기대값: GT 로봇 자세 ⊕ extrinsic(0.15, 0, 0.20) 로 LiDAR 원점을 월드로 옮겨 벽 평면까지 거리 d_exp, GT yaw 로 ψ_exp 를 계산.
+5. 기대값: GT 로봇 자세 ⊕ extrinsic(0.15, 0, 0.02) 로 LiDAR 원점을 월드로 옮겨 벽 평면까지 거리 d_exp, GT yaw 로 ψ_exp 를 계산.
 6. Δd = d_meas − d_exp 는 벽 법선 방향의 장착 오프셋 오차, Δψ 는 장착 yaw 오차다. 정면(벽 법선 = +x)에서 Δd 는 x 오프셋,
    로봇을 90° 돌려 벽을 옆에 두면 Δd 가 y 오프셋이 된다. 직교하는 두 벽이 만나는 **코너**를 쓰면 한 자세로 x, y, yaw 를 동시에 얻는다.
 
@@ -82,12 +93,12 @@ K 를 하드코딩하지 말고 **반드시 `camera_info` 를 구독**해서 읽
 
 ### 2.3 Depth ↔ RGB 정렬 검사
 
-시뮬레이션에서는 두 카메라의 extrinsic(0.18, 0, 0.25) 과 해상도·FOV 가 같으므로 픽셀 (u, v) 가 1:1 대응한다.
+시뮬레이션에서는 두 카메라의 extrinsic(0.29, 0, 0.07) 과 해상도·FOV 가 같으므로 픽셀 (u, v) 가 1:1 대응한다.
 
 1. `ros2 run tf2_ros tf2_echo amr_01/camera_optical_frame amr_01/camera_depth_optical_frame` → 항등 변환이어야 한다.
 2. 카메라 정면, GT 거리 d 인 위치에 박스(명세 8장 물품)를 둔다. RGB 에서 박스 중심 픽셀 (u, v)(YOLO bbox 중심 또는 수동)를 잡고
    `/amr_01/camera/depth/image_raw` 의 같은 (u, v) 깊이를 읽는다.
-3. 기대 깊이 = d − 0.18(카메라 x 오프셋) − 박스 반두께. 허용 오차 = 읽는 토픽의 노이즈 σ: 브리지 직후의 `camera/depth/image_raw` 에는 시뮬레이터 네이티브 항
+3. 기대 깊이 = d − 0.29(카메라 x 오프셋) − 박스 반두께. 허용 오차 = 읽는 토픽의 노이즈 σ: 브리지 직후의 `camera/depth/image_raw` 에는 시뮬레이터 네이티브 항
    `noise_base` 0.005 m 만 들어 있으므로 0.005 m; 전처리 후 점군(`camera/depth/points_filtered`)이면 합성 σ(d) = sqrt(0.005² + (0.002·d²)²)
    (`sensors.yaml depth_camera`; d = 2 m 이면 sqrt(0.005² + 0.008²) ≈ 0.0094 m). 자세한 구분은 2.6.
 4. 박스 좌우 에지 열(column) 이 RGB 와 Depth 에서 2 px 이내로 일치해야 한다.
@@ -164,6 +175,10 @@ z 축 b_az 는 g_ref 오차가 그대로 실리므로(0.01 m/s² 만 틀려도 6
   (시뮬레이터는 네이티브 가우시안만 적용). ② 전처리 노드 `pointcloud_filter_node`(voxel 다운샘플을 `leaf_size: 0` 으로 끔) 출력
   `camera/depth/points_filtered` 에서 같은 픽셀의 점 깊이 표준편차가 합성 σ(d) = sqrt(0.005² + (0.002·d²)²) ± 20 %
   (d = 1 m → 0.0054, 2 m → 0.0094, 3 m → 0.0187 m).
+- RGB: 정지 장면 40 프레임의 픽셀별 시간 표준편차(포화 픽셀 제외). 목표 `rgb_camera.noise_stddev` 0.007(정규화). Gazebo 의 영상 노이즈는
+  ogre2 후처리 셰이더라 설정값 ≠ 영상 σ 이고(설정 0.007 은 8 bit 양자화에 묻혀 0) 밝기에 따라 달라서, 보정값
+  `gz_noise_stddev` 0.062 를 SDF 에 넣는다 (보정 곡선은 `sensors.yaml` 주석). 실측(충전 스테이션 앞 장면): 평균 0.0061,
+  밝기 0~64 에서 0.027, 64~128 에서 0.0098, 128~192 에서 0.0048, 192~255 에서 0.0033. 실제 CMOS 처럼 어두운 곳이 더 거칠다.
 - SDF 주의: LiDAR 와 카메라(RGB·depth)는 `<noise><type>gaussian</type>...</noise>`(자식 요소), IMU 만 `<noise type="gaussian">`(속성)이다
   (sdformat 1.9: `lidar.sdf`/`camera.sdf` vs `imu.sdf`). 섞어 쓰면 Gazebo 가 "XML Attribute[type] in element[noise] not defined" 경고를 내며
   노이즈가 적용되지 않을 수 있다 (사전 확인에서 관찰).
@@ -175,9 +190,11 @@ z 축 b_az 는 g_ref 오차가 그대로 실리므로(0.01 m/s² 만 틀려도 6
 | 항목 | 설정값 / 공칭 | 측정값 | 허용 오차 | 판정 | 로그 | 일자 / 담당 |
 | --- | --- | --- | --- | --- | --- | --- |
 | TF == URDF == sensors.yaml | `tf2_echo` 4종 (1.2) | | 0 | | `logs/frames.pdf` | |
-| LiDAR extrinsic Δd / Δψ | (0.15, 0, 0.20) | 사전 확인 Δd = +0.0005 m | 0.01 m / 0.5° | | `lidar_extrinsic.csv` | |
+| LiDAR extrinsic Δd / Δψ | (0.15, 0, 0.02) | 사전 확인 Δd = +0.0005 m (이전 높이, 수평 오프셋 동일) | 0.01 m / 0.5° | | `lidar_extrinsic.csv` | |
 | LiDAR 노이즈 σ | 0.030 m | 0.0299 (감사) / 0.0285 (사전) | ±10 % | | `lidar_wall/` | |
 | 카메라 fx, fy, cx, cy | 337.2, 337.2, 320, 240 | 337.21, 337.21, 320, 240 (사전) | 1 px / RMS 0.3 px(실기) | | `camera_intrinsics.csv` | |
+| RGB 노이즈 σ (정규화) | 0.007 (`gz_noise_stddev` 0.062) | 0.0061 평균, 밝기별 0.0033~0.027 (2026-09-22) | 목표 ±30 % (밝기 128~255 기준) | | `rgb_noise.csv` | |
+| 도킹 마커 자세 (C3, 0.84 m, 노이즈 포함) | 광학 z 0.84, x 0 | 40/40 검출, 위치 오차 평균 0.37 cm, yaw 평균 +0.13° (프레임별 σ 1.58°) | 2 cm / 1° (명세 8장) | | `aruco_pose.csv` | |
 | Depth ↔ RGB 정렬 | 항등 변환, Δ ≤ σ | | 2 px, 0.005 m(`image_raw`) / σ(d)(점군) | | `depth_rgb_align.csv` | |
 | IMU 가속도 바이어스 (x, y; z 는 참고) | 모델 |b| ≈ 0.10 (σ 0.001) | | SE 2.2e-4 (60 s) | | `imu_bias.csv` | |
 | IMU 자이로 바이어스 (x, y, z) | 모델 |b| ≈ 0.01 (σ 7.5e-6) | | SE 2.6e-6 (60 s) | | `imu_bias.csv` | |
@@ -199,6 +216,7 @@ Depth 정렬      : [timestamp, u, v, depth_meas, depth_exp, delta]
 ## 4. 실제 로봇 전이 체크리스트
 
 - [ ] 센서 드라이버가 같은 토픽·`frame_id`(`scan`/`lidar_link`, `imu/data_raw`/`imu_link`, `camera/*`/`camera_optical_frame`)로 발행한다.
+- [ ] 차체 안 LiDAR 슬롯 기둥이 가리는 각도 구간을 측정해 `scan_filter_node` `angle_mask` 에 넣었다 (정지 상태 60 스캔에서 range < 차체 외곽인 빔 = 자기 차체). 시뮬레이션은 가시성 비트로 이미 빠져 있어 이 마스크가 없다.
 - [ ] `sensors.yaml` extrinsic 을 실측(도면 + 2.1 벽 검사)으로 갱신하고 1.2 검증을 다시 통과했다.
 - [ ] 카메라 `camera_info` 가 체커보드 결과로 채워졌다 (2.2). Depth 정렬 확인(2.3).
 - [ ] IMU 바이어스를 파일 값으로 고정할지, 기동 시 자동 추정할지 결정했다 (2.4).
@@ -206,5 +224,7 @@ Depth 정렬      : [timestamp, u, v, depth_meas, depth_exp, delta]
 
 ## 5. 미확정 항목
 
-- 시뮬레이션 사전 확인은 저장소 URDF 가 아직 없어 독립 SDF 로 수행했다. 저장소 xacro 가 생기면 같은 절차로 재측정해 3장 표를 채운다.
+- 시뮬레이션 사전 확인(LiDAR 벽, 카메라 내부 파라미터)은 저장소 URDF 가 생기기 전 독립 SDF 로 수행했다. 저장소 xacro(`src/amr_description/urdf/`)가
+  생겼고 센서 높이를 바꿨으므로(LiDAR 지면 +0.20, 카메라 +0.25) 같은 절차로 재측정해 3장 표를 채운다. RGB 노이즈·도킹 마커 행은 새 배치에서 잰 값이다.
+- 도킹 마커 자세의 프레임별 yaw 표준편차(1.58°)가 명세 1° 보다 커서, 도킹 노드는 여러 프레임을 평균하거나 필터링해야 한다.
 - 토픽 이름(`imu/data_raw` → `imu/data`, `ground_truth/odom`)은 [components.md](components.md) §5 의 인터페이스 명세를 따른다. IMU 필터의 파라미터 이름(`accel_bias`, `gyro_bias`, `bias_estimation_time`)과 전처리 노드의 `leaf_size: 0` 옵션은 구현 시 확정한다.
