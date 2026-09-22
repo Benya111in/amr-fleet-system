@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <utility>
 #include <limits>
 #include <vector>
 
@@ -462,6 +463,170 @@ TEST(Dwa, ClosedLoopHeadOnYields)
     "[ info ] head-on offset 0.7 m: min centre %.3f m, clearance %.3f m\n", side.min_center,
     side.min_clearance);
   EXPECT_GT(side.min_clearance, 0.0);
+}
+
+namespace
+{
+struct CrossRun
+{
+  double min_clearance{1e9};   // 로봇 사각형 ↔ 장애물 원판 최소 여유 [m] (< 0 접촉)
+  double min_center{1e9};
+  double max_cte{0.0};         // 기준 경로 대비 최대 이탈 [m]
+  double s_end{0.0};           // 끝났을 때의 경로 호길이 [m]
+  double stopped_s{0.0};       // 정지(|v| < 0.05) 누적 시간 [s]
+  double min_lane_offset_stopped{1e9};   // 정지 중 장애물 차선 축까지의 수직 거리 [m]
+  bool contact{false};
+};
+
+// 이상 플랜트(명령 즉시 반영, 20 Hz) 폐루프: 주어진 직선 경로를 따라가다 등속 장애물을 만난다.
+// 코스트맵은 비어 있고 트랙만 보인다 — 양보(정지선)·VO·TTC 만으로 판정한다.
+CrossRun crossingRun(
+  const DwaConfig & cfg, const std::vector<Pose2D> & path, DynamicObstacle o, double v0,
+  double seconds)
+{
+  const DwaPlanner dwa(cfg);
+  DwaInput in = movingInput(&path, v0);
+  in.pose = path.front();
+  CrossRun out;
+  const double su = o.speed();
+  const double bx = su > 1e-9 ? -o.vy / su : 0.0;     // 차선 축의 단위 법선
+  const double by = su > 1e-9 ? o.vx / su : 1.0;
+  const std::vector<double> cum = amr_navigation::core::cumulativeLength(path);
+  for (int k = 0; k < static_cast<int>(seconds / 0.05); ++k) {
+    in.obstacles = {o};
+    const DwaResult r = dwa.compute(
+      in, [](const Pose2D &) {return 0.0;}, [](double, double) {return 0.0;});
+    in.pose = integrateArc(in.pose, r.v, r.w, 0.05);
+    in.v_meas = in.v_last = r.v;
+    in.w_meas = in.w_last = r.w;
+    o.x += o.vx * 0.05;
+    o.y += o.vy * 0.05;
+    const double gap = rectClearance(in.pose, o);
+    out.min_clearance = std::min(out.min_clearance, gap);
+    out.min_center = std::min(out.min_center, std::hypot(o.x - in.pose.x, o.y - in.pose.y));
+    out.contact = out.contact || gap < 0.0;
+    const amr_navigation::core::Projection pr =
+      amr_navigation::core::projectOntoPath(path, {in.pose.x, in.pose.y}, 0, 0, &cum);
+    out.max_cte = std::max(out.max_cte, std::abs(pr.cte));
+    out.s_end = pr.s;
+    if (std::abs(r.v) < 0.05) {
+      out.stopped_s += 0.05;
+      out.min_lane_offset_stopped = std::min(
+        out.min_lane_offset_stopped, std::abs((in.pose.x - o.x) * bx + (in.pose.y - o.y) * by));
+    }
+  }
+  return out;
+}
+
+DwaConfig crossingConfig()
+{
+  DwaConfig c;   // nav2_params.yaml 의 DWA 값
+  c.vth_samples = 31;
+  c.weights.oscillation = 0.5;
+  c.goal_align_distance = 0.08;
+  c.robot_radius = 0.361;
+  return c;
+}
+}  // namespace
+
+TEST(Dwa, ClosedLoopCrossingYieldsOutsideCorridor)
+{
+  // 세로 차선 x = X 를 −y 로 1.0 m/s 로 가로지르는 장애물 (명세 4.7). 정지선이 없으면 VO/TTC 가
+  // "접촉 전에 설 수 있는 속도" 만 지키므로 로봇이 차선 가까이까지 들어가고(여유 0.3~0.5 m),
+  // 실제(Gazebo) 에서는 그 자리에서 멈춰 비키지 않는 actor 가 걸어 들어온다 (통합 08: 접촉 27 건,
+  // 전부 GT 로봇 속도 ≤ 0.02 m/s). 정지선을 두면 통로 밖 (R_c + stop_margin) 에 선다.
+  const auto path = straightPath(0.0, 0.0, 12.0);
+  DwaConfig on = crossingConfig();
+  DwaConfig off = crossingConfig();
+  off.yield_crossing = false;
+  const double r_c = on.robot_radius + 0.25 + on.yield_corridor_margin;   // 1.111 m
+  double worst_off = 1e9;
+  for (const auto & k : {std::make_pair(2.0, 3.0), std::make_pair(3.0, 4.0),
+      std::make_pair(4.0, 5.0), std::make_pair(5.0, 6.0)})
+  {
+    const DynamicObstacle o{k.first, k.second, 0.0, -1.0, 0.25};
+    const CrossRun bad = crossingRun(off, path, o, 1.0, 20.0);
+    const CrossRun good = crossingRun(on, path, o, 1.0, 20.0);
+    std::printf(
+      "[ info ] crossing lane x = %.0f from y = %.0f | no stop line: clearance %.3f m, lane gap "
+      "while stopped %.3f m | stop line: clearance %.3f m, lane gap %.3f m, stopped %.1f s, "
+      "max deviation %.3f m, s_end %.2f m\n", k.first, k.second, bad.min_clearance,
+      bad.min_lane_offset_stopped, good.min_clearance, good.min_lane_offset_stopped,
+      good.stopped_s, good.max_cte, good.s_end);
+    worst_off = std::min(worst_off, bad.min_clearance);
+    EXPECT_FALSE(good.contact);
+    EXPECT_GT(good.min_clearance, 0.70);            // e-stop 거리(0.30) 의 두 배 이상
+    EXPECT_GT(good.min_clearance, bad.min_clearance);
+    EXPECT_GT(good.stopped_s, 0.5);                 // 실제로 양보했다
+    EXPECT_GT(good.min_lane_offset_stopped, r_c);   // 통로 **밖**에 섰다
+    // 옆으로 돌지 않는다 (통합 08 최대 이탈 6.45 m). 실측 0.004~0.28 m — 양보·재출발 중 헤딩 항이
+    // 만드는 추종 오차뿐이고 회피 우회가 아니다.
+    EXPECT_LT(good.max_cte, 0.35);
+    EXPECT_GT(good.s_end, 11.5);                    // 지나간 뒤 원래 경로로 재출발해 끝까지
+  }
+  EXPECT_LT(worst_off, 0.55);   // 결함: 정지선이 없으면 여유가 절반 아래로 줄어든다
+}
+
+TEST(Dwa, ClosedLoopObliqueCrossingKeepsClearance)
+{
+  // 통합 08 의 배치: 경로가 작업자 횡단선을 26.6° 로 가로지른다 (A(−4,−5) → B(4,−9) ↔ y = −7 을
+  // 1.0 m/s 로 오가는 worker_crossing). 비스듬한 교차는 차선이 경로 위 ~5 m 를 차지한다.
+  const double th = -std::atan2(4.0, 8.0);
+  const auto path = straightPath(0.0, 0.0, 12.0, th);
+  const DynamicObstacle o{-0.7, -3.0, 1.0, 0.0, 0.25};   // y = −3 차선을 +x 로 1.0 m/s
+  DwaConfig on = crossingConfig();
+  DwaConfig off = crossingConfig();
+  off.yield_crossing = false;
+  const CrossRun bad = crossingRun(off, path, o, 1.0, 26.0);
+  const CrossRun good = crossingRun(on, path, o, 1.0, 26.0);
+  std::printf(
+    "[ info ] oblique crossing | no stop line: clearance %.3f m, stopped %.1f s | stop line: "
+    "clearance %.3f m, stopped %.1f s, max deviation %.3f m, s_end %.2f m\n", bad.min_clearance,
+    bad.stopped_s, good.min_clearance, good.stopped_s, good.max_cte, good.s_end);
+  EXPECT_FALSE(good.contact);
+  EXPECT_GT(good.min_clearance, 0.60);
+  EXPECT_GT(good.min_clearance, bad.min_clearance);
+  EXPECT_LT(good.max_cte, 0.30);     // 회피로 옆으로 돌지 않는다
+  EXPECT_GT(good.s_end, 11.5);       // 장애물이 지나간 뒤 끝까지 간다
+}
+
+TEST(Dwa, ClosedLoopInsideCorridorDrivesOutInsteadOfStopping)
+{
+  // 이미 차선 안에 들어선 뒤 장애물이 다가오는 경우 (통합 08: 작업자가 끝점에서 되돌아온다 —
+  // 등속 예측으로는 미리 알 수 없다). 통로 안에서는 정지선을 둘 곳이 없으므로(kCommitted) 속도
+  // 상한을 걸지 않는다 — VO/TTC 가 그대로 맡고, 빠져나가는 쪽의 TTC 가 길면 그쪽이 뽑힌다.
+  const auto path = straightPath(0.0, 0.0, 12.0);
+  const DynamicObstacle o{1.0, 2.6, 0.0, -1.0, 0.25};   // 차선 x = 1 (로봇은 이미 그 통로 안)
+  const CrossRun out = crossingRun(crossingConfig(), path, o, 1.0, 12.0);
+  std::printf(
+    "[ info ] already inside the lane: clearance %.3f m, stopped %.1f s, s_end %.2f m\n",
+    out.min_clearance, out.stopped_s, out.s_end);
+  EXPECT_FALSE(out.contact);
+  EXPECT_EQ(out.stopped_s, 0.0);     // 차선 안에서 멈추지 않는다
+  EXPECT_GT(out.min_clearance, 0.30);
+  EXPECT_GT(out.s_end, 11.5);
+}
+
+TEST(Dwa, ClosedLoopNoFalseStopWhenCorridorIsClear)
+{
+  const auto path = straightPath(0.0, 0.0, 12.0);
+  const DwaConfig c = crossingConfig();
+  // (a) 이미 지나가 멀어지는 장애물 (경로 뒤쪽 차선)
+  const CrossRun behind = crossingRun(c, path, {5.0, -1.6, 0.0, -1.0, 0.25}, 1.0, 10.0);
+  // (b) 경로와 나란히 4 m 옆을 가는 장애물
+  const CrossRun beside = crossingRun(c, path, {3.0, 4.0, 1.0, 0.0, 0.25}, 1.0, 10.0);
+  // (c) 로봇이 먼저 빠져나가는 배치 (차선 1.5 m 앞, 장애물 5 m 위)
+  const CrossRun first = crossingRun(c, path, {1.5, 5.0, 0.0, -1.0, 0.25}, 1.0, 10.0);
+  for (const auto & p : {std::make_pair("passing behind", behind),
+      std::make_pair("beside", beside), std::make_pair("robot first", first)})
+  {
+    std::printf(
+      "[ info ] no false stop (%s): s_end %.2f m, stopped %.1f s, clearance %.3f m\n", p.first,
+      p.second.s_end, p.second.stopped_s, p.second.min_clearance);
+    EXPECT_EQ(p.second.stopped_s, 0.0);      // 서지 않는다
+    EXPECT_GT(p.second.s_end, 9.0);          // 10 s 동안 거의 최고 속도로
+    EXPECT_GT(p.second.min_clearance, 0.0);
+  }
 }
 
 namespace

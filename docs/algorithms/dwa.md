@@ -68,7 +68,7 @@ s_stop(v) = v·T_c + v·t_R − j·t_R³/6 + (v − j·t_R²/2)²/(2a),  t_R = a
 
 ### 1.5 비용 함수 (최소화, 항별 [0, 1] 정규화)
 
-**J = w_h·J_head + w_c·J_clear + w_v·J_vel + w_p·J_path + w_o·J_osc + w_d·J_dyn**
+**J = w_h·J_head + w_c·J_clear + w_v·J_vel + w_p·J_path + w_o·J_osc + w_d·J_dyn + w_f·J_off**
 
 | 항 | 식 | 가중치 | 의미 |
 | --- | --- | --- | --- |
@@ -77,7 +77,8 @@ s_stop(v) = v·T_c + v·t_R − j·t_R³/6 + (v − j·t_R²/2)²/(2a),  t_R = a
 | J_vel | \|v_des − v\| / (v_max − v_min), v_des = min(v_cap, d_stop⁻¹(d_goal)) × max(0, cos α₀) | 0.4 | 빨리 가려는 힘 + 목표 접근 감속(§1.6), 경로가 옆/뒤면 감속(제자리 회전 유도) |
 | J_path | mean_{k ≤ k_E} min(\|e⊥(p_k)\| / 0.8, 1), k_E = ⌈path_eval_time / sim_dt⌉ | 2.0 | 경로 이탈 (CTE 를 직접 줄이는 항) |
 | J_osc | 전후진 반전 또는 제자리 회전 방향 반전이면 1 | 0.5 | 진동 억제 |
-| J_dyn | min(1, max(0, \|v\| − v_safe(TTC₀))/v_span + 0.3·max(0, 1 − TTC₀/T_pred)), v_safe = a·max(0, TTC₀ − 0.45 s), T_pred = 5 s | 1.5 | 예측 접촉 전에 설 수 없는 속도의 초과분 + TTC 보조항 (§2.2) |
+| J_dyn | min(1, max(0, \|v\| − v_safe(TTC₀))/v_span + λ·max(0, 1 − TTC₀/T_pred)), v_safe = a·max(0, TTC₀ − 0.45 s), T_pred = 5 s, λ = 0.3 | 1.5 | 예측 접촉 전에 설 수 없는 속도의 초과분 + TTC 보조항 (§2.2) |
+| J_off | min(1, max(0, e_max − max(0.9, \|e⊥(로봇)\|)) / 1.0), e_max = max_{k ≤ k_E} \|e⊥(p_k)\| | 3.0 | **이탈 한계 초과 벌점**. J_path 는 `path_band` 0.8 m 에서 포화해 멀리서는 되돌리는 힘이 없다 — 통합 08 에서 VO 가 경로 위 샘플을 모두 막자 로봇이 6.45 m 까지 밀려났다. 한계를 로봇의 현재 이탈로도 올려(단조 감소 포락선) 복귀 후보는 벌하지 않는다 |
 
 **추종 지평과 안전 지평의 분리 (`path_eval_time`)**: 충돌·여유 비용은 정지거리를 덮는 전체 롤아웃 T_sim(v)
 (1 m/s 에서 1.5 s)으로 보지만, 헤딩·경로 항은 앞 0.8 s 만 본다. (v, ω) 일정 원호는 곡률이 하나뿐이라, 곡률 부호가
@@ -204,6 +205,81 @@ TTC 가 짧아져도 로봇을 늦추지 못했다. 현재 식은 **예측 접�
 이긴다 (`TtcCostSlowsBeforeVoSaturates`: VO 밖이지만 TTC₀ 안인 횡단 장애물 앞에서 1.0 m/s 대신 감속을 고르고, 동적
 항을 끄면 1.0 m/s 유지). λ 항은 같은 속도에서 TTC 가 긴 방향(회피 쪽)을 고르는 보조항이다.
 
+### 2.3 횡단 양보: 예측 통로 밖 가상 정지선 (리뷰 결함 08-1)
+
+VO(§2.1)와 TTC₀(§2.2)는 **"예측 접촉 전에 설 수 있는 속도"** 만 지킨다. 그래서 로봇은 횡단 작업자의 차선
+**안에서** 멈춰 설 수 있고, 비키지 않는 사람(Gazebo actor 는 스크립트 경로만 따른다)이 그 자리로 걸어 들어온다.
+통합 시나리오 08 (30 회 왕복, `worker_crossing` y = −7 을 1.0 m/s 로 횡단) 에서 **접촉 27 건이 모두 이렇게
+났다** — 접촉 순간의 지면 진실 로봇 속도가 전부 ≤ 0.02 m/s (`contacts.csv` 의 `robot_moving` 0/27). 스스로 부딪친
+것이 아니라 **차선 안에 서 있었다**. 경로가 차선을 26.6° 로 비스듬히 지나 차선이 경로 위 5 m 를 차지하는 것이
+원인이다: 장애물 중심에서 R_d = 1.111 m 만 지키면 그 5 m 구간 **안**의 아무 곳에나 설 수 있다.
+
+고쳐야 할 것은 "얼마나 가까이 가느냐" 가 아니라 **어디에 서느냐** 다. 차가 횡단보도 앞에 서듯, 로봇은 통로
+**밖**에 서야 한다 (`core::evaluateYield`, `core/crossing_yield.{hpp,cpp}`).
+
+**통로(corridor)**: 등속 원판 장애물 o(t) = o + u·t 가 지평 T_y = 8 s 동안 쓸고 가는 영역
+
+  corridor = { q : |(q − o)·n̂| ≤ R_c,  −R_c ≤ (q − o)·û ≤ |u|·T_y + R_c },
+  û = u/|u|, n̂ = û 의 좌수직, **R_c = r_robot(0.361) + r_obs(0.25) + `yield_corridor_margin`(0.5) = 1.111 m**
+
+여유 0.5 = safety critical zone 거리 (= `dynamic_margin`).
+기준 경로가 이 영역에 드는 첫 연속 구간 [s_in, s_out] 이 **교차 구간**이고, 장애물이 그 구간을 점유하는 시각은
+α 좌표로 [t_in, t_out] = [(α_min − R_c)/|u|, (α_max + R_c)/|u|] 이다 (구간이 경로 창 `yield_lookahead` 4 m 밖으로
+이어지면 창 끝 접선으로 |β| = R_c 지점까지 외삽한다).
+
+**판정** (로봇 호길이 s_r, 속도 v, 도달 시각은 가속 a 로 v_max 까지 올리는 `core::travelTime`):
+
+| 조건 | 상태 | 결과 |
+| --- | --- | --- |
+| t_out ≤ 0 (장애물이 구간을 이미 지났다) | 통과 | 상한 없음 |
+| t_robot_out + 1 s < t_in (로봇이 먼저 빠져나간다) | 통과 | 상한 없음 |
+| t_out + 1 s < t_robot_in (장애물이 먼저 빠져나간다) | 통과 | 상한 없음 |
+| 그 밖, 로봇이 이미 통로 안 | 진입 | 상한 없음 (통로 밖에 정지선을 둘 곳이 없다 — VO/TTC 가 그대로 맡는다) |
+| 그 밖 | 양보 | **속도 상한 = d_stop⁻¹(s_in − s_r − `yield_stop_margin`)** |
+
+양보 상한은 §1.6 의 목표 접근과 같은 자리(동적 창 상한 v_cap 과 v_des)에 들어가므로, 저크·지연을 넣은 정지거리의
+역함수가 정지선에서 정확히 0 이 된다. 장애물이 지나가면 t_out ≤ 0 이 되어 상한이 풀리고, 로봇은 **원래 경로
+위에서** 그대로 재출발한다 (옆으로 돌지 않으므로 이탈도 복귀도 없다).
+
+**나란한 통로는 제외**: 교차 구간이 `yield_max_zone` (6 m, = 2R_c/sin 22.6°) 보다 길면 정지선을 두지 않는다 —
+정면 접근·같은 차선 추종처럼 통로가 경로와 나란하면 통로 **밖**에 설 곳이 없어 정지선이 뜻이 없기 때문이다
+(26.6° 비스듬한 교차는 2R_c/sin 26.6° = 4.97 m 로 들어온다). 창 끝까지 통로 안이면 |dβ/ds| < 10⁻³ 인 경우도 같이
+제외한다. 이 경우들은 VO/TTC (§2.1–2.2) 가 맡는다.
+
+**진입 상태(kCommitted)**: 작업자가 차선 끝에서 되돌아오는 것은 등속 예측으로 알 수 없어, 통로 안에 들어선 뒤
+충돌이 예상되는 경우가 남는다. 통로 밖에 정지선을 둘 곳이 없으므로 **속도 상한을 걸지 않고** VO/TTC 와 풋프린트
+충돌 검사(지역 코스트맵에는 사람도 표시된다)에 그대로 맡긴다.
+
+이 상태를 더 손대는 변형 두 가지를 통합 08 에서 실측해 **둘 다 되돌렸다** (조건: 같은 스택·같은 30 회 설정,
+호스트 load 7–86 / 32 CPU):
+
+| 변형 (모두 정지선 위에 얹은 것) | 의도 | 실측 (접촉 / 시행) |
+| --- | --- | --- |
+| **채택: 정지선만** | | **1 / 30** (`gz_08`), **4 / 30** (`gz_08e`) |
+| + 진입 시 J_dyn 의 λ 0.3 → 1.0 | TTC 가 가장 긴 쪽 = 빠져나가는 쪽을 고른다 | λ 항에 속도 보상이 없어 로봇이 차선 안으로 **0.05 m/s 로 기어 들어감** → **5 / 13** (`gz_08b`, 중단) |
+| + 통로 폭 0.5 → 0.6, `max_zone` 8, 교차 각도 규칙 | 서는 자리의 여유를 늘린다 | **1 / 6** (`gz_08c`, 중단) |
+| + 위 + 진입 시 그 장애물을 VO 제외에서 뺌 | VO 포화가 "정지" 를 고르는 것을 막는다 | **4 / 7** (`gz_08d`, 중단) |
+| 정지선(원래 값) + 진입·횡단일 때만 VO 제외에서 뺌 | 위와 같되 나란한 통로는 제외 | **2 / 2** (`gz_08f`, 중단) |
+
+통로 **안**에서의 추가 개입은 시험한 네 가지가 모두 나빠졌다 (VO 를 빼면 감속 판단이 J_dyn 하나에 남아, 되돌아오는
+액터 앞에서 오히려 늦게 선다). 그래서 채택한 것은 **정지선 하나**이고, 통로 안에서는 기존 VO/TTC 를 그대로 둔다.
+중단한 실행들은 시행 수가 적어 (2–13) 분산 안에서 해석해야 하지만, 어느 것도 기준보다 나아 보이지 않았다.
+
+**남은 문제 (명세 4.7 "접촉 0" 미달)**: 등속 예측으로는 액터의 방향 전환(차선 끝 반환, 무작위 보행의 노드 전환)을
+알 수 없어, 통로 밖에 선 뒤에도 통로가 다시 로봇을 덮는 경우가 남는다. 다음 수로 생각해 둔 것:
+(1) 추적기가 방향 전환 가능성(선회율·예측 잔차)을 함께 내면 그런 트랙의 통로를 양쪽으로 넓힌다,
+(2) 액터의 **계획된 다음 웨이포인트**를 지면 진실로 받아 "예측 가능한 횡단" 과 "방향 전환" 을 나눠 평가한다
+(하네스·시뮬레이션 쪽 요청), (3) 통로 안에서 접촉이 예상되면 후진(`min_vel_x` < 0)을 복구 동작이 아니라
+회피 수단으로 허용한다.
+
+단위 시험 — 코어 `test_crossing_yield.cpp`: `CrossingGivesStopLineOutsideCorridor` (교차 구간 기하·점유 시각·
+상한이 d_stop⁻¹ 과 일치·정지선 위에서 0), `ObstaclePassedBehindIsClear`, `ObstacleLeavesZoneBeforeRobotArrivesIsClear`,
+`CorridorThatMissesThePathIsClear` (나란한 차선·느린 트랙·창 밖), `RobotThatClearsFirstDoesNotYield`,
+`HeadOnHasNoStopLine`, `InsideTheZoneIsCommittedNotStopped`, `SameLaneLeaderIsNotAStopLineCase`,
+`ObliqueCrossingZoneIsLongerThanTheLaneWidth` (구간 길이 = 2R_c/sin 26.6°), `TravelTimeAcceleratesToCap`.
+폐루프 `Dwa.ClosedLoopCrossingYieldsOutsideCorridor` / `ClosedLoopObliqueCrossingKeepsClearance` /
+`ClosedLoopInsideCorridorDrivesOutInsteadOfStopping` / `ClosedLoopNoFalseStopWhenCorridorIsClear` — 수치는 §8.3.
+
 ## 3. Nav2 통합
 
 - 전역 경로(map) → 코스트맵 프레임(odom) 변환은 TF 한 번 조회 후 2D 강체 합성, 로봇 최근접 정점부터
@@ -211,7 +287,8 @@ TTC 가 짧아져도 로봇을 늦추지 못했다. 현재 식은 **예측 접�
   경로에서 뒤 구간으로 튀지 않음). 창 끝이 실제 목표가 아니면 목표 감속·목표 너머 검사 제외를 끈다.
 - `payload/mass` (latched) → 가속 한계 × m/(m + m_payload) (공차 47.6 kg).
 - 발행: `local_plan` (선택 궤적), `dwa/stats` [cycle_ms, n_samples, n_valid, n_collision, n_vo_rejected,
-  vo_saturated, best_ttc, v, w, d_goal, n_recentered] — 주기 시간·회피 동작·재중심 로그.
+  vo_saturated, best_ttc, v, w, d_goal, n_recentered, yield_state, yield_stop_distance] — 주기 시간·회피 동작·
+  재중심·양보 로그 (yield_state 0 통과 / 1 정지선 / 2 통로 안, stop_distance 없으면 −1, §2.3).
 - 한계값 기본값은 robot_params.yaml `limits.*` (controller_server 에 함께 로드), 운용 최고속도 `max_vel_x` 1.0 m/s.
 
 ## 4. 파라미터 (`controller_server.DWA.*`)
@@ -229,6 +306,7 @@ TTC 가 짧아져도 로봇을 늦추지 못했다. 현재 식은 **예측 접�
 | `path_eval_time` | 0.8 | s | 헤딩·경로 항 평가 지평 (§1.5; 충돌·여유는 전체 T_sim) |
 | `heading_lookahead_{gain,offset,min,max}` | 0.4 / 0.3 / 0.4 / 1.2 | s, m | ℓ(v) = clip(0.4v + 0.3, 0.4, 1.2) |
 | `path_band` | 0.8 | m | J_path 정규화 |
+| `off_path_weight` / `max_path_offset` / `off_path_band` | 3.0 / 0.9 / 1.0 | – / m / m | J_off (§1.5). 한계 0.9 m 는 명세 4.7 이탈 상한 1.0 m 안쪽 |
 | `goal_align_distance` | 0.08 | m | ≤ goal checker xy 0.10 (그래야 정렬 중 멈춰도 목표 판정) |
 | `path_horizon` | 4.0 | m | 로컬 코스트맵 반폭 (8 × 8 m) |
 | `use_dynamic_obstacles` / `use_velocity_obstacles` | true / true | | |
@@ -238,6 +316,10 @@ TTC 가 짧아져도 로봇을 늦추지 못했다. 현재 식은 **예측 접�
 | `vo_time_tie` | 0.02 | s | VO 포화 시 진입 시각 동률 폭 (§2.1) |
 | `dynamic_speed_threshold` / `dynamic_fast_speed` | 0.2 / 0.5 | m/s | 동적 트랙 = 이 속도 이상이면서 추적기 `is_dynamic` 이거나 0.5 m/s 이상 (정지 물체 트랙의 속도 잡음 0.2–0.3 m/s 제외) |
 | `dynamic_steer_gain` | 0.3 | | J_dyn 의 TTC 보조항 λ (§2.2) |
+| `yield_crossing` | true | | 횡단 양보(가상 정지선) 사용 (§2.3) |
+| `yield_corridor_margin` / `yield_stop_margin` | 0.5 / 0.25 | m | 통로 반폭 여유 (= `dynamic_margin`, critical zone) / 통로 입구 앞 정지선 여유 |
+| `yield_clear_margin` | 1.0 | s | "먼저 빠져나간다" 판정 여유 |
+| `yield_horizon` / `yield_lookahead` / `yield_max_zone` | 8.0 / 4.0 / 6.0 | s / m / m | 장애물 예측 지평 (통로 길이 = \|u\|·8 s) / 경로에서 교차 구간을 찾는 거리 (≤ `path_horizon`) / 교차 구간 길이 상한 = 횡단 각도 하한 (22.6°) |
 | `recenter_narrow` / `recenter_min_cost` / `recenter_max_shift` / `recenter_smooth` / `recenter_goal_keep` | true / 100 / 0.10 / 4 / 0.5 | – / cost / m / 점 / m | 좁은 곳 재중심 (§1.7) |
 | `obstacle_radius` / `track_timeout` | 0.25 / 0.5 | m / s | |
 | `no_valid_patience` | 10 | 주기 | |
@@ -282,6 +364,7 @@ TTC 가 짧아져도 로봇을 늦추지 못했다. 현재 식은 **예측 접�
 | 측정 | 평균 | p95 | 최대 | 예산 50 ms 대비 (최대) |
 | --- | --- | --- | --- | --- |
 | 단위 테스트 `Dwa.CycleTimeBudget` (11 × 31, 12 × 12 m, 랙 장애물) | 1.16 ms | | | |
+| 같은 시험, 횡단 양보(§2.3) 추가 후 (load 8–26) | 1.24–1.30 ms | | | 2.6 % |
 | 이상화 폐루프 (운동학 시험대), 직선·U 턴·S 자 | 0.91–0.99 ms | 1.12–1.26 ms | 1.32 ms | 2.6 % |
 | 이상화 폐루프, 0.60 m 좁은 통로 (σ 0.03 스캔, 재중심) | 1.52 ms | 2.74 ms | 3.09 ms | 6.2 % |
 | Gazebo 통합 체인, 좁은 통로 20 회 관통 (5 416 주기, 재중심 4 407 주기) | 1.67 ms | 2.77 ms | 3.90 ms | 7.8 % |
@@ -433,7 +516,41 @@ D sim_time 1.5 + 샘플 20 × 40 + PathDist 48 4/4 · **E = B + D + trans_stoppe
   `ClosedLoopCrossingKeepsVoRadius` (횡단 4 경우: 최소 중심 거리 1.111 m, 사각형 여유 0.50–0.55 m) ·
   `ClosedLoopHeadOnYields` (정면 3 m / 2 m, 출발 0.8 m/s: 가속하지 않고(최고 0.75) 최근접 순간 속도 0 — 장애물이
   비키지 않아 중심 거리는 0.01 / 0.00 m; 0.7 m 비낀 정면은 여유 0.285 m 로 지나감).
+- 횡단 양보(§2.3) 단위 시험: 코어 `test_crossing_yield.cpp` 11 개, 폐루프 `Dwa.ClosedLoopCrossingYieldsOutsideCorridor`
+  (세로 차선 4 배치, 정지선 없음 → 있음: 여유 **0.32–0.50 → 0.80–0.85 m**, 정지 중 차선 축까지 0.92 → **1.40 m**
+  = R_c 1.111 + 정지선 여유, 최대 이탈 0.004–0.28 m, 모두 장애물이 지나간 뒤 끝까지 주행),
+  `ClosedLoopObliqueCrossingKeepsClearance` (통합 08 배치 26.6°: 여유 0.51 → **0.85 m**),
+  `ClosedLoopInsideCorridorDrivesOutInsteadOfStopping`, `ClosedLoopNoFalseStopWhenCorridorIsClear`
+  (지나간 뒤·옆 차선·로봇이 먼저: 정지 0 s, 10 s 에 10.0 m).
 - 리뷰 하네스 `vo_probe` (위 §2.1 표): 이 기준에서 다시 링크해 같은 값.
 - **Gazebo 통합 체인** (배포 설정, 1.0 m/s 횡단 actor, 26 회 — [costmap.md](costmap.md) §6.3): 충돌 0, 풋프린트 ↔ actor
   최소 부호 거리 0.33 m, 원래 경로 이탈 최대 0.83 m (중앙값 0.12 m), 복귀 5 s 이내 13 / 14 (최대 8.8 s — 미달 1 회는
   VO 회피 뒤 같은 방향으로 한 바퀴 돈 경우). 이 26 회의 DWA 주기 3 309 개(r1) 중 VO 로 샘플이 빠진 주기 95, 포화 26.
+
+### 8.4 통합 시나리오 08 — 횡단 양보(§2.3) 전후 (명세 4.7)
+
+30 회 왕복(A(−4,−5) ↔ B(4,−9), `worker_crossing` y = −7 을 1.0 m/s 로 횡단), system 프로필, `--timeout-scale 2`,
+`amr-fleet-system:wf-final` 컨테이너, 32 스레드 호스트.
+
+| 실행 | 정지선 | 시행 | **접촉** | 움직이며 접촉 | 최대 이탈 [m] | 복귀 [s] | 도달 | 시작/끝 load (32 CPU), uptime |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 리뷰 전 (하네스 보고) | 없음 | 30 | **27** (13 시행) | **0** | **6.453** | **30.02** | 28/30 | 5.4 / 5.9 |
+| `logs/itest_navav/gz_08` | 있음 | 30 | **1** | 0 | **0.692** | **4.88** | **30/30** | 57.8 / 76.5, uptime 4 542 356 → 4 543 355 s |
+| `logs/itest_navav/gz_08e` (같은 설정 재현 2) | 있음 | 30 | **4** | 1 | **0.623** | 13.66 | **30/30** | 13.1 / 26.8, uptime 4 544 759 → 4 545 382 s |
+| `logs/itest_navav/gz_08g` (같은 설정 재현 3) | 있음 | 30 | **7** | 0 | 1.121 | **4.72** | **30/30** | 14.4 / 28.0, uptime 4 545 666 → 4 546 305 s |
+
+판정선: 접촉 0, 이탈 ≤ 1.0 m, 복귀 ≤ 5 s, 도달 ≥ 29, 조우 ≥ 5, 시행 ≥ 30 (세 실행 모두 조우 30/30).
+
+**해석**
+- **이탈과 도달은 해결됐다**: 최대 이탈 6.453 → **0.62 / 0.62 / 1.12 m** (기준 1.0 m: 3 실행 중 2 통과), 이탈 구간
+  26 → 3 / 6 / 9 개, 목표 도달 28/30 → **30/30 (세 실행 모두)**. 로봇이 옆으로 도는 대신 경로 위 정지선에서 서기
+  때문이다. 복귀도 30.02 → 4.88 / 13.66 / 4.72 s (3 중 2 통과).
+- **접촉은 27 → 1 / 4 / 7 로 줄었지만 0 이 아니다** (명세 4.7 **미달**). 남은 접촉 12 건 중 11 건이 GT 로봇 속도
+  ≤ 0.021 m/s, 나머지 1 건이 0.105 m/s — 즉 **여전히 "서 있는 로봇에 사람이 걸어 들어오는" 형태**다. 상대는
+  `worker_crossing` (차선 끝 x = ±6 에서 되돌아온다) 과 `worker_random` (0.6 m/s 무작위 보행, 격자 노드마다 방향이
+  바뀐다). **등속(CV) 예측으로는 방향 전환을 알 수 없어**, 정지선 앞에 섰다가 통로가 다시 덮이거나, 통로가 없다고
+  보고 들어간 뒤 통로가 생기는 경우가 남는다.
+- 같은 코드·같은 설정의 세 실행이 1 / 4 / 7 건으로 **분산이 매우 크다** (액터 위상·호스트 부하로 조우 형태가
+  달라진다. 부하가 높았던 `gz_08` 이 가장 적었다). 남은 접촉률을 유의하게 재려면 30 회가 아니라 수백 회가 필요하다.
+- 복귀 13.66 s (`gz_08e` 시행 9) 는 접촉이 난 그 시행의 값이다 — 이탈 0.62 m 구간 도중 정지선 양보로 멈춰 있어
+  복귀 시계가 계속 돈 경우다. 접촉이 없는 시행들에서는 0–4.9 s 다.

@@ -16,10 +16,11 @@
 //   4) 충돌 검사  풋프린트(FootprintChecker) — 목표 너머(d_goal + margin)는 검사하지 않는다.
 //      T_sim(v)·v ≥ s_stop(v) 이므로 "검사 구간 무충돌" 이면 Fox
 //      의 허용 속도(V_a: 충돌 전 정지 가능)도 성립.
-//   5) 동적 장애물: VO 원뿔 안의 샘플 제외(옵션) + 예측 충돌 시각 TTC₀ 비용.
+//   5) 동적 장애물: 예측 통로 밖 가상 정지선(core::evaluateYield) 으로 v_cap 을 낮추고,
+//      VO 원뿔 안의 샘플 제외(옵션) + 예측 충돌 시각 TTC₀ 비용.
 //      VO 가 창 전체를 덮으면(포화) VO 를 끄지 않고 VO 진입 시각이 가장 늦은 샘플을 고른다.
 //   6) 비용(최소화, 항별 [0,1] 정규화) J = w_h J_head + w_c J_clear
-//   + w_v J_vel + w_p J_path + w_o J_osc + w_d J_dyn
+//   + w_v J_vel + w_p J_path + w_o J_osc + w_d J_dyn + w_f J_off
 //        J_head  = |wrap(atan2(target − p_E) − θ_E)| / π,  p_E = 롤아웃의 path_eval_time
 //                  지점, target = 경로 위 p_E 투영점에서 ℓ(v) 앞
 //        J_clear = max_k max(0, c(p_k) − c(g_k)) / 252,  g_k = 같은 호길이의 기준 경로 점 (경로
@@ -32,6 +33,10 @@
 //        J_dyn   = min(1, max(0, |v| − v_safe(TTC₀)) / (v_max − v_min)
 //                         + λ·max(0, 1 − TTC₀ / T_pred)),
 //                  v_safe(TTC₀) = a·max(0, TTC₀ − T_c − a/(2j)) (예측 접촉 전에 설 수 있는 속도)
+//        J_off   = min(1, max(0, e_max − max(d_off, |e⊥(로봇)|)) / d_off_band)  — 경로 이탈 한계를
+//                  넘는 롤아웃의 추가 벌점. J_path 는 d_band 에서 포화해 멀리서는 되돌리는 힘이
+//                  없다 (리뷰 결함 08-2: 시나리오 08 최대 이탈 6.45 m). 로봇이 이미 밖이면 그
+//                  거리까지는 벌하지 않아(단조 감소 포락선) 복귀를 막지 않는다.
 //   7) 선택: 충돌 없고 VO 밖인 샘플 중 비용 최소 → 없으면(VO 포화) 충돌 없는 샘플 중
 //      VO 진입이 가장 늦은 것 → 그것도 없으면 제동 후보.
 #ifndef AMR_NAVIGATION__CORE__DWA_HPP_
@@ -43,6 +48,7 @@
 #include <utility>
 #include <vector>
 
+#include "amr_navigation/core/crossing_yield.hpp"
 #include "amr_navigation/core/geometry.hpp"
 #include "amr_navigation/core/velocity_obstacle.hpp"
 
@@ -70,6 +76,7 @@ struct DwaWeights
   double path{2.0};
   double oscillation{0.2};
   double dynamic{1.5};
+  double off_path{3.0};     // w_f: 이탈 한계 초과 벌점 (다른 어느 항보다 커야 되돌린다)
 };
 
 struct DwaConfig
@@ -91,6 +98,9 @@ struct DwaConfig
   double heading_lookahead_min{0.4};
   double heading_lookahead_max{1.2};
   double path_band{0.8};            // [m] J_path 정규화 폭
+  double max_path_offset{0.9};      // [m] J_off 가 걸리기 시작하는 이탈 (≤ 0 이면 끔).
+                                    //     명세 4.7 이탈 한계 1.0 m 안쪽
+  double off_path_band{1.0};        // [m] J_off 정규화 폭
   double path_eval_time{0.8};       // [s] 헤딩·경로 항을 볼 롤아웃 앞부분 (≤ 0 이면 전체)
   double goal_align_distance{0.15};   // [m] 이 안에서는 목표 방향 정렬(제자리 회전)
   double goal_overshoot_margin{0.1};  // [m] 목표 너머 충돌 검사 여유
@@ -108,6 +118,14 @@ struct DwaConfig
   double dynamic_steer_gain{0.3};   // λ: J_dyn 의 TTC 보조항 (같은 속도에서 TTC 가 긴 방향 선호)
   // [s] VO 포화 시 진입 시각이 이만큼 안이면 같다고 보고 비용으로 고른다
   double vo_time_tie{0.02};
+  // 횡단 양보 (가상 정지선, core::evaluateYield — 명세 4.7 "접촉 0")
+  bool yield_crossing{true};
+  double yield_corridor_margin{0.50};   // [m] 통로 반폭 여유 (= dynamic_margin, critical zone)
+  double yield_stop_margin{0.25};       // [m] 통로 입구 앞 정지선 여유
+  double yield_clear_margin{1.0};       // [s] 먼저 빠져나간다고 볼 시간 여유
+  double yield_horizon{8.0};            // [s] 장애물 예측 지평 (통로 길이 = |u|·horizon)
+  double yield_lookahead{4.0};          // [m] 경로에서 교차 구간을 찾는 최대 거리
+  double yield_max_zone{6.0};           // [m] 교차 구간 길이 상한 (넘으면 나란한 주행)
   // 좁은 곳 경로 재중심 (0 단계)
   bool recenter_narrow{true};
   double recenter_min_cost{100.0};  // 이 비용 이상인 경로 점만 (지역 s = 3: 장애물 ≈ 0.5 m 이내)
@@ -125,6 +143,7 @@ struct DwaCostTerms
   double path{0.0};
   double oscillation{0.0};
   double dynamic{0.0};
+  double off_path{0.0};
 };
 
 struct DwaCandidate
@@ -139,6 +158,7 @@ struct DwaCandidate
   bool is_brake{false};
   double ttc{std::numeric_limits<double>::infinity()};       // 원호 예측 TTC₀ (R_d)
   double vo_time{std::numeric_limits<double>::infinity()};   // VO 진입 시각 (R, τ 안), 없으면 +inf
+  double max_cte{0.0};          // 평가 구간(k ≤ k_E) 롤아웃의 최대 |경로 수직 거리| [m]
 };
 
 struct DwaInput
@@ -177,6 +197,8 @@ struct DwaResult
   bool vo_saturated{false};      // VO 가 충돌 없는 샘플을 모두 덮어 VO 진입 최지연 샘플을 골랐음
   std::size_t n_recentered{0};   // 0 단계에서 골 바닥으로 옮긴 기준 경로 점 수
   double d_goal{0.0};
+  YieldResult yield;             // 횡단 양보 판정 (가상 정지선)
+  double v_cap{0.0};             // 이 주기에 실제로 쓴 속도 상한 [m/s]
 };
 
 /// 자세의 풋프린트 비용(0~253) 또는 충돌 시 음수.
@@ -209,6 +231,8 @@ public:
   static double stoppingDistance(double v, double a, double j, double t_c);
   /// 창 중심 선택 규칙.
   std::pair<double, double> windowCenter(const DwaInput & in) const;
+  /// 설정에서 뽑은 횡단 양보 설정 (core::evaluateYield 용).
+  YieldConfig yieldConfig() const;
   /// 0 단계: 좁은 곳(양쪽이 막힌 골) 기준 경로 점을 코스트맵 골 바닥으로 옮긴 복사본.
   /// shifted: 옮긴 점 수.
   std::vector<Pose2D> recenterPath(

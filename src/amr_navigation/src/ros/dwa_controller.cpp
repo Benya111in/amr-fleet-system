@@ -111,6 +111,7 @@ void DWAController::configure(
   W.path = param(node, p + "path_weight", 2.0);
   W.oscillation = param(node, p + "oscillation_weight", 0.5);
   W.dynamic = param(node, p + "dynamic_weight", 1.5);
+  W.off_path = param(node, p + "off_path_weight", 3.0);
   double controller_frequency = 20.0;
   if (node->has_parameter("controller_frequency")) {
     node->get_parameter("controller_frequency", controller_frequency);
@@ -130,6 +131,8 @@ void DWAController::configure(
   c.heading_lookahead_min = param(node, p + "heading_lookahead_min", 0.4);
   c.heading_lookahead_max = param(node, p + "heading_lookahead_max", 1.2);
   c.path_band = param(node, p + "path_band", 0.8);
+  c.max_path_offset = param(node, p + "max_path_offset", 0.9);
+  c.off_path_band = param(node, p + "off_path_band", 1.0);
   c.path_eval_time = param(node, p + "path_eval_time", 0.8);
   c.goal_align_distance = param(node, p + "goal_align_distance", 0.08);
   c.goal_overshoot_margin = param(node, p + "goal_overshoot_margin", 0.1);
@@ -144,6 +147,12 @@ void DWAController::configure(
   c.dynamic_speed_threshold = param(node, p + "dynamic_speed_threshold", 0.2);
   c.dynamic_steer_gain = param(node, p + "dynamic_steer_gain", 0.3);
   c.vo_time_tie = param(node, p + "vo_time_tie", 0.02);
+  c.yield_crossing = param(node, p + "yield_crossing", true);
+  c.yield_corridor_margin = param(node, p + "yield_corridor_margin", 0.50);
+  c.yield_stop_margin = param(node, p + "yield_stop_margin", 0.25);
+  c.yield_clear_margin = param(node, p + "yield_clear_margin", 1.0);
+  c.yield_horizon = param(node, p + "yield_horizon", 8.0);
+  c.yield_max_zone = param(node, p + "yield_max_zone", 6.0);
   c.recenter_narrow = param(node, p + "recenter_narrow", true);
   c.recenter_min_cost = param(node, p + "recenter_min_cost", 100.0);
   c.recenter_max_shift = param(node, p + "recenter_max_shift", 0.10);
@@ -158,6 +167,8 @@ void DWAController::configure(
   track_timeout_ = param(node, p + "track_timeout", 0.5);
   robot_mass_ = param(node, p + "robot_mass", 47.6);
   path_horizon_ = param(node, p + "path_horizon", 6.0);
+  // 정지선 탐색 거리는 코스트맵 프레임으로 옮긴 경로 창을 넘을 수 없다
+  c.yield_lookahead = std::min(path_horizon_, param(node, p + "yield_lookahead", 4.0));
   no_valid_limit_ = param(node, p + "no_valid_patience", 10);
   transform_tolerance_ = param(node, p + "transform_tolerance", 0.2);
   allow_unknown_ = param(node, p + "allow_unknown", true);
@@ -361,7 +372,9 @@ geometry_msgs::msg::TwistStamped DWAController::computeVelocityCommands(
       static_cast<double>(res.n_collision), static_cast<double>(res.n_vo_rejected),
       res.vo_saturated ? 1.0 : 0.0,
       std::isfinite(res.best.ttc) ? res.best.ttc : -1.0, res.v, res.w,
-      std::isfinite(res.d_goal) ? res.d_goal : -1.0, static_cast<double>(res.n_recentered)};
+      std::isfinite(res.d_goal) ? res.d_goal : -1.0, static_cast<double>(res.n_recentered),
+      static_cast<double>(static_cast<int>(res.yield.state)),
+      std::isfinite(res.yield.stop_distance) ? res.yield.stop_distance : -1.0};
     stats_pub_->publish(st);
   }
   return cmd;

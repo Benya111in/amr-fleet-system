@@ -52,6 +52,47 @@
 동점 처리 효과 (단위 테스트 `LargeOpenGridCornerToCorner`): 1200 × 800 빈 격자 대각선 끝→끝에서 확장 **1 200 셀**
 (= 경로 길이; 양자화 전에는 float 오차 때문에 25 359 셀).
 
+### 3.1 planner_server 의 RSS 증가 (명세 4.10 장시간 안정성) — Nav2 액션 결과 보관, 우리 코드 아님
+
+통합 시나리오 14 (소크)가 15 분짜리 두 번의 실행에서 `planner_server` 를 **120 · 151 MB/h** 로 표시했다
+(87 → 125 MB 단조, 워밍업 10 분 뒤 적합 증가 10.1 MB). A* 코어 자체는 계획마다 버퍼를 재사용하고 세대
+번호로 초기화를 생략하므로(§3) 계획 횟수에 비례해 늘어날 것이 없다. 원인을 격리하려고 **저장소 밖 일회용
+하네스**로 `planner_server` 만 띄워 재봤다 (배포 `nav2_params.yaml` 의 global_costmap 블록 그대로 — 정적·팽창·
+obstacle·depth·센서 팽창·keepout 필터 — 에 합성 LiDAR 10 Hz · 깊이 점군 15 Hz 를 먹이고, 소크와 같은 지도·경로
+dock_1 ↔ dock_a 56 m).
+
+| 부하 | 경로 점 수 | RSS 처음 → 끝 | 증가 |
+| --- | --- | --- | --- |
+| `is_path_valid` 서비스 1 Hz 만 (12 분, 706 회) | 1 112 | 80.695 → 80.695 MB | **0** (12 분 동안 한 페이지도) |
+| `ComputePathToPose` 액션 1 Hz 만 (12 분, 706 회) | 1 112 | 83.06 → 159.60 MB | **108 KB / 목표** = 390 MB/h |
+| 액션 6 회/분 + 서비스 1 Hz, **AStar** (22 분, 128 회) | 1 112 | 81.18 → 90.51 MB | 104 KB / 목표, **915 s 에서 멈춤** |
+| 같은 부하, **NavFn** (같은 지도·구간) | 2 222 | 83.09 → 101.79 MB | **AStar 의 2.01 배**, 같은 915 s 에서 멈춤 |
+
+세 번째·네 번째 줄의 RSS 는 **915 s 에서 정확히 평평해진다** (그 뒤 6 분 동안 한 페이지도 늘지 않음: AStar
+90.505 MB, NavFn 101.794 MB — 계획은 계속 들어가는 중). 15 분 = `rcl_action` 의 결과 보관 기한과 같다.
+
+결론: **`ComputePathToPose` 액션 서버가 목표마다 결과(= 경로 전체)를 보관**하는 것이 원인이다 (평평해지는 시각이
+곧 보관 기한이다). `rcl_action` 의 기본 `result_timeout` 이 **15 분**이고
+(`rcl_action/action_server.h` 주석: `result_timeout = RCUTILS_S_TO_NS(15 * 60)`),
+`nav2_util::SimpleActionServer` 가 `rcl_action_server_get_default_options()` 를 그대로 쓴다. 그래서 결과는 15 분
+동안 서버에 남고, 그만큼 RSS 가 오른 뒤 **평평해진다**(유한). 서비스(`is_path_valid`)는 보관하지 않아 0 이다.
+증가량이 계획기와 무관하게 **경로 점 수에 정비례**하고 NavFn(0.025 m 간격, 2 222 점)이 우리 AStar(`output_spacing`
+0.05 m, 1 112 점)보다 2.01 배 빠르다는 것이, 우리 플러그인이 아니라 공통 경로(메시지 크기)의 문제라는 증거다.
+정상 상태 상한 = (목표 빈도) × (경로 바이트) × 900 s.
+
+**우리 쪽 완화 (이미 적용된 것)**
+- 배포 BT 는 1 Hz 무조건 재계획이 아니라 `IsPathValid` 가 실패하거나 TTC 트리거일 때만 `ComputePathToPose` 를
+  부른다 ([behavior_tree.md](behavior_tree.md), `navigate_to_pose.xml`). 그래서 소크 실측 151 MB/h 는 액션 1 Hz
+  상한 390 MB/h 의 39 % 다.
+- `smoother.output_spacing` 0.05 m 는 NavFn 의 절반 밀도다. 더 줄이려면 0.10 m 로 올리면 보관량이 반이 되지만,
+  제어기 추종 수치([path_tracking.md](path_tracking.md))를 다시 잡아야 하므로 바꾸지 않았다.
+
+**알려진 문제 (우리가 고칠 수 없는 부분)**: Humble 의 `nav2_planner` 는 액션 서버의 `result_timeout` 을 파라미터로
+열어 두지 않는다. 15 분 보관은 상한이 있는 전이(transient)라 명세 4.10 의 판정(워밍업 10 분 제외 최소제곱 기울기
+≤ 5 MB/h)은 **운용 시간이 15 분보다 충분히 길면 통과**한다 — 15 분 실행에서만 전체 구간이 상승 구간이라 120–151
+MB/h 로 보였다. **1 시간 소크 실측(§8.4): planner_server 0.83 MB/h — 판정 통과**, 그리고 이 실행의 38 프로세스
+기울기 p90 과 같은 크기라 잡음과 구분되지 않는다.
+
 ## 4. 경로 평활화 (여유거리 보존)
 
 A* 격자 경로는 8방향 지그재그(최대 8.2 % 초과 길이)이고 방향이 45° 단위로 꺾여 제어기가 추종하기 어렵다.
@@ -103,7 +144,7 @@ A* 격자 경로는 8방향 지그재그(최대 8.2 % 초과 길이)이고 방�
 | `smoother.shortcut_max_length` | 10.0 | m | 긴 현이 적분 비용을 과소평가하지 않도록 |
 | `smoother.shortcut_cost_ratio` | 0.05 | – | δ |
 | `smoother.clearance_cost_margin` | 10 | cost | 여유거리 천장 여유 |
-| `smoother.output_spacing` | 0.05 | m | = 해상도 (제어기 투영 정밀도) |
+| `smoother.output_spacing` | 0.05 | m | = 해상도 (제어기 투영 정밀도). 경로 점 수는 `planner_server` 의 액션 결과 보관량에 정비례한다 (§3.1) |
 | `smoother.w_data / w_smooth / w_clearance` | 0.2 / 0.3 / 0.3 | – | 수렴 조건 w_d + 2w_s < 2, 여유 항은 셀 단위 스텝 |
 | `smoother.clearance_cost_threshold` | 100 | cost | 이 비용(여유 ≈ 0.66 m) 이상인 점만 밀어낸다 |
 | `smoother.max_iterations / tolerance` | 100 / 1e-4 | 회 / m | |
@@ -187,3 +228,21 @@ SLAM 지도(`maps/warehouse.pgm`)에 코어 A* 를 직접 돌려 통로가 열�
 중심에서 수 cm 비낄 수 있다 — 통로 안의 실제 중심 추종은 DWA 의 지역 재중심이 맡는다 ([dwa.md](dwa.md) §1.7).
 Gazebo 관통 결과는 [costmap.md](costmap.md) §6.2. 전역 계획기가 통로 안 목표를 계획하는 경우는 단위 테스트
 `AStarPlannerPlugin.PlansThroughAisleAndHandlesErrors` (1.2 m 통로 중앙 ±0.15 m)와 `test_warehouse_map.py` 로도 본다.
+
+### 8.4 1 시간 소크의 planner_server RSS (명세 4.10)
+
+통합 시나리오 14, `--soak-hours 1`, system 프로필 + behavior, 같은 컨테이너·같은 호스트 (start/end load
+10.1 / 13.3 of 32 CPU, uptime 4 544 585 → 4 548 279 s). 시나리오 08 실행과 **동시**에 돌렸다 (다른 도메인·파티션).
+
+| 지표 | 값 | 판정 (명세 4.10) |
+| --- | --- | --- |
+| 운용 시간 | 1.0 h | ≥ 요청 ✔ |
+| **planner_server RSS 기울기** (워밍업 10 분 제외 최소제곱) | **0.83 MB/h** (증가 0.681 MB) | ≤ 5 MB/h ✔ |
+| planner_server RSS | 99.9 → 117.5 MB (초기 4 분 기동 상승 뒤 3 000–3 400 s 동안 117.27 MB 고정) | |
+| 전체 38 프로세스 기울기: 중앙값 / p90 / 최대 | **0.00 / 0.83 / 2.02 MB/h** (최대 = object_localizer_node) | 모두 ≤ 5 ✔ |
+| 크래시 · 비정상 종료 | 0 | ✔ |
+| 작업 완료 / 실패율 | 14 완료, 실패율 0.0 | ≥ 4/h, ≤ 2 % ✔ |
+
+**잡음 바닥**: 38 프로세스의 |기울기| 중앙값이 0.00 MB/h, p90 이 0.83 MB/h 다. planner_server 의 0.83 MB/h 는
+그 p90 과 같은 크기 — 즉 **이 측정의 잡음과 구분되지 않는다**. 15 분 실행에서 보인 120 · 151 MB/h 는 §3.1 의
+15 분 결과 보관이 전체 구간에서 상승 중이었기 때문이고, 1 시간을 돌리면 그 구간이 워밍업 뒤 평탄부에 묻힌다.
