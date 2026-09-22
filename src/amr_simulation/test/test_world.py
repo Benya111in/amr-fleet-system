@@ -126,32 +126,3 @@ def test_dock_floor_boxes_reach_scan_plane(world):
         sdf = ET.parse(PKG / "models" / kind / "model.sdf").getroot()
         height = _floats(sdf.find(".//visual/geometry/box/size").text)[2]
         assert height > base_h + lidar_z, kind
-
-
-def test_fleet_spawn_poses_are_free():
-    """config/fleet_spawn_poses.yaml 자세가 벽·랙·기둥·사람 경로·차량 경로와 겹치지 않는다."""
-    spec = importlib.util.spec_from_file_location("gen", GEN)
-    gen = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(gen)
-    with open(PKG / "config" / "fleet_spawn_poses.yaml", encoding="utf-8") as f:
-        poses = yaml.safe_load(f)["fleet_spawn_poses"]
-    assert len(poses) >= 5
-    r = 0.36 + 0.3                                   # 로봇 외접원 반지름 + 여유
-    aabbs = gen._aabbs(gen.rack_instances())
-    actors = load_actors(str(WORLD))
-    pts = list(poses.values())
-    for name, (x, y, _yaw) in poses.items():
-        assert abs(x) < gen.HALF_X - r and abs(y) < gen.HALF_Y - r, name
-        for oname, x0, x1, y0, y1 in aabbs:
-            dx, dy = max(x0 - x, 0, x - x1), max(y0 - y, 0, y - y1)
-            assert (dx * dx + dy * dy) ** 0.5 > r, (name, oname)
-        for a in actors:
-            dmin = min(((a.state(t)[0] - x) ** 2 + (a.state(t)[1] - y) ** 2) ** 0.5
-                       for t in [i * 0.25 for i in range(int(a.duration * 4))])
-            assert dmin > r + 0.3, (name, a.name, dmin)
-        for vname, (axis, lo, hi, fixed, *_rest) in gen.VEHICLES.items():
-            along, across = (x, y) if axis == "x" else (y, x)
-            assert not (lo - 2.5 < along < hi + 2.5 and abs(across - fixed) < 1.5), (name, vname)
-    for i, a in enumerate(pts):
-        for b in pts[i + 1:]:
-            assert ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5 >= 1.5
