@@ -3,7 +3,8 @@
 # classes          출력 클래스. 순서 = 출력 class_id (DetectedObject.class_id, Detection2D.id)
 # model_class_map  모델 클래스 이름 → 출력 클래스. 여기 없는 모델 클래스는 버린다 (추론 단계 classes= 필터)
 #                  이름 기준이라 COCO 사전학습 가중치(yolov8n.pt)와 합성/Gazebo 데이터로 미세조정한 가중치
-#                  (scripts/train.py → yolov8n_warehouse.pt, 클래스 이름 box/person/sign) 에 같은 파일이 맞는다.
+#                  (dataset_capture.py → yolo_train_eval.py → yolov8n_warehouse.pt, 클래스 이름
+#                  box/person/sign/forklift/amr — forklift·amr 는 학습에만 쓰고 여기 없으므로 버린다) 에 같은 파일이 맞는다.
 # min_score        클래스별 최소 점수 (yolo_node conf_thresh 위에 추가로 거른다)
 #
 # COCO(80) 에는 "화물 상자" 클래스가 없다 → box 는 미세조정 가중치가 주 경로다. suitcase 는 COCO 가중치로
@@ -15,7 +16,7 @@ classes:
   - sign
 
 model_class_map:
-  # 미세조정 가중치 (generate_dataset.py / train.py) — 이름이 같으면 그대로 통과
+  # 미세조정 가중치 (models/README.md) — 이름이 같으면 그대로 통과
   box: box
   person: person
   sign: sign

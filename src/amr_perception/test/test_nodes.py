@@ -33,8 +33,8 @@ from visualization_msgs.msg import Marker
 
 K = CameraIntrinsics.from_fov(640, 480, 1.518436)
 STAMP = TimeMsg(sec=100, nanosec=0)
-# base_link → camera_link (0.18, 0, 0.25) → optical rpy (-π/2, 0, -π/2)  (sensors.yaml)
-T_BASE_OPT = Transform(rpy_to_matrix(-math.pi / 2, 0.0, -math.pi / 2), np.array([0.18, 0.0, 0.25]))
+# base_link → camera_link (0.29, 0, 0.07) → optical rpy (-π/2, 0, -π/2)  (sensors.yaml)
+T_BASE_OPT = Transform(rpy_to_matrix(-math.pi / 2, 0.0, -math.pi / 2), np.array([0.29, 0.0, 0.07]))
 # map → base_link: (2, 1, 0.18), yaw 0.5
 T_MAP_BASE = Transform(rpy_to_matrix(0.0, 0.0, 0.5), np.array([2.0, 1.0, 0.18]))
 

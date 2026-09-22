@@ -4,7 +4,9 @@
 
 #include "amr_perception/scan_clustering.hpp"
 
+#include <Eigen/Cholesky>
 #include <Eigen/Eigenvalues>
+#include <Eigen/LU>
 
 #include <algorithm>
 #include <cmath>
@@ -120,6 +122,7 @@ void StaticMapDistance::build(
     return;
   }
   resolution_ = resolution;
+  origin_ = origin;
   origin_inv_ = origin.inverse();
 
   const std::size_t n = data.size();
@@ -178,6 +181,42 @@ double StaticMapDistance::distance(const Vec2 & p_map) const
   return static_cast<double>(dist_[static_cast<std::size_t>(iy) * width_ + ix]);
 }
 
+double StaticMapDistance::interpolate(const Vec2 & p_map, Vec2 * gradient) const
+{
+  const double inf = std::numeric_limits<double>::infinity();
+  if (!valid()) {
+    return inf;
+  }
+  // 셀 중심 격자 좌표 (셀 (i, j) 중심 = ((i + 0.5)·res, (j + 0.5)·res))
+  const Vec2 q = origin_inv_.apply(p_map);
+  const double u = q.x() / resolution_ - 0.5;
+  const double v = q.y() / resolution_ - 0.5;
+  const int i0 = static_cast<int>(std::floor(u));
+  const int j0 = static_cast<int>(std::floor(v));
+  if (i0 < 0 || j0 < 0 || i0 + 1 >= width_ || j0 + 1 >= height_) {
+    return inf;
+  }
+  const double fu = u - i0;
+  const double fv = v - j0;
+  auto at = [this](int i, int j) {
+      return static_cast<double>(dist_[static_cast<std::size_t>(j) * width_ + i]);
+    };
+  const double d00 = at(i0, j0);
+  const double d10 = at(i0 + 1, j0);
+  const double d01 = at(i0, j0 + 1);
+  const double d11 = at(i0 + 1, j0 + 1);
+  if (!std::isfinite(d00) || !std::isfinite(d10) || !std::isfinite(d01) || !std::isfinite(d11)) {
+    return inf;
+  }
+  if (gradient != nullptr) {
+    const Vec2 g_grid(
+      ((d10 - d00) * (1.0 - fv) + (d11 - d01) * fv) / resolution_,
+      ((d01 - d00) * (1.0 - fu) + (d11 - d10) * fu) / resolution_);
+    *gradient = origin_.rotate(g_grid);
+  }
+  return (d00 * (1.0 - fu) + d10 * fu) * (1.0 - fv) + (d01 * (1.0 - fu) + d11 * fu) * fv;
+}
+
 // ---------------------------------------------------------------- 투영/라벨
 
 std::vector<ScanPoint> projectScan(
@@ -212,6 +251,193 @@ void labelBackground(
   for (auto & p : points) {
     p.map_distance = map.distance(map_from_tracking.apply(p.position));
     p.background = p.map_distance <= background_radius;
+  }
+}
+
+namespace
+{
+/// 센서 중심 회전 보정 (tx, ty, θ): p' = R(θ)(p - c) + c + t
+Pose2D pivotCorrection(const Eigen::Vector3d & delta, const Vec2 & c)
+{
+  const Pose2D rot{0.0, 0.0, delta(2)};
+  const Vec2 t = c + Vec2(delta(0), delta(1)) - rot.rotate(c);
+  return Pose2D{t.x(), t.y(), delta(2)};
+}
+
+double medianOf(std::vector<double> v)
+{
+  if (v.empty()) {
+    return 0.0;
+  }
+  const std::size_t mid = v.size() / 2;
+  std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(mid), v.end());
+  return v[mid];
+}
+}  // namespace
+
+MapAlignment alignScanToMap(
+  const std::vector<ScanPoint> & points, const Vec2 & sensor, const StaticMapDistance & map,
+  const Pose2D & map_from_tracking, const PosePrior & prior, const SegmentationParams & params)
+{
+  MapAlignment out;
+  out.map_from_tracking = map_from_tracking;
+  out.pivot = map_from_tracking.apply(sensor);
+  const double sxy = std::max(prior.sigma_xy, 1e-3);
+  const double syaw = std::max(prior.sigma_yaw, 1e-4);
+  Eigen::Matrix3d prior_info = Eigen::Matrix3d::Zero();
+  prior_info(0, 0) = prior_info(1, 1) = 1.0 / (sxy * sxy);
+  prior_info(2, 2) = 1.0 / (syaw * syaw);
+  out.covariance = prior_info.inverse();
+  if (!map.valid()) {
+    return out;
+  }
+  // 대응 후보: 초기 거리장 값이 작은 점 (지도 구조물에 맞은 빔)
+  std::vector<Vec2> pts;
+  pts.reserve(points.size());
+  for (const auto & sp : points) {
+    const Vec2 pm = map_from_tracking.apply(sp.position);
+    if (map.distance(pm) <= params.align_max_correspondence) {
+      pts.push_back(pm);
+    }
+  }
+  out.correspondences = static_cast<int>(pts.size());
+  if (out.correspondences < params.align_min_points) {
+    return out;
+  }
+  const Vec2 c = out.pivot;
+  const double surface = 0.5 * map.resolution();  // 점유 셀 중심 ↔ 표면
+  // 측정 분산 = LiDAR 거리 σ² + 격자 양자화 res²/12 (사전분포와 같은 단위로 맞춘다)
+  const double meas_var = params.sigma_r * params.sigma_r +
+    map.resolution() * map.resolution() / 12.0;
+  // 강건 비용 (대응점 고정: 멀어진 점은 상한 잔차로 센다 → 점이 빠져 비용이 줄어드는 일이 없다)
+  const double cap = params.align_max_correspondence;
+  const double k = params.align_huber;
+  auto huber = [k](double r) {
+      const double a = std::abs(r);
+      return a <= k ? 0.5 * a * a : k * (a - 0.5 * k);
+    };
+  auto evaluate = [&](const Eigen::Vector3d & dl, Eigen::Matrix3d * Hd, Eigen::Vector3d * gd,
+      std::vector<double> * res) {
+      double cost = dl.dot(prior_info * dl);
+      if (Hd != nullptr) {
+        Hd->setZero();
+        gd->setZero();
+        res->clear();
+      }
+      const Pose2D T = pivotCorrection(dl, c);
+      const Pose2D R{0.0, 0.0, dl(2)};
+      for (const auto & p0 : pts) {
+        Vec2 grad;
+        const double d = map.interpolate(T.apply(p0), &grad);
+        const double r = std::isfinite(d) ? d - surface : cap;
+        if (!std::isfinite(d) || std::abs(r) > cap) {
+          cost += huber(cap) / meas_var;
+          continue;
+        }
+        cost += huber(r) / meas_var;
+        if (Hd != nullptr) {
+          res->push_back(r);
+          const double w = std::abs(r) <= k ? 1.0 : k / std::abs(r);
+          const Vec2 v = R.rotate(p0 - c);
+          const Eigen::Vector3d J(grad.x(), grad.y(), -grad.x() * v.y() + grad.y() * v.x());
+          *Hd += w * J * J.transpose();
+          *gd += w * J * r;
+        }
+      }
+      return cost;
+    };
+  Eigen::Vector3d delta = Eigen::Vector3d::Zero();
+  Eigen::Matrix3d H_data;
+  Eigen::Vector3d g_data;
+  std::vector<double> residuals;
+  double cost = evaluate(delta, &H_data, &g_data, &residuals);
+  bool converged = false;
+  for (int it = 0; it < params.align_iterations; ++it) {
+    const Eigen::Matrix3d H = prior_info + H_data / meas_var;
+    const Eigen::Vector3d g = prior_info * delta + g_data / meas_var;
+    Eigen::Vector3d step = -H.ldlt().solve(g);
+    // 한 번에 10 cm·1.1° 까지만 (거리장 기울기는 셀 단위로 끊기므로 큰 걸음은 넘어간다)
+    const double scale = std::min(
+      {1.0, 0.10 / std::max(step.head<2>().norm(), 1e-12),
+        0.02 / std::max(std::abs(step(2)), 1e-12)});
+    step *= scale;
+    bool accepted = false;
+    for (int half = 0; half < 6 && !accepted; ++half, step *= 0.5) {
+      Eigen::Matrix3d Hc;
+      Eigen::Vector3d gc;
+      std::vector<double> rc;
+      const double c2 = evaluate(delta + step, &Hc, &gc, &rc);
+      if (c2 <= cost) {
+        delta += step;
+        cost = c2;
+        H_data = Hc;
+        g_data = gc;
+        residuals.swap(rc);
+        accepted = true;
+      }
+    }
+    if (!accepted || (step.head<2>().norm() < 2e-4 && std::abs(step(2)) < 2e-5)) {
+      converged = true;  // 더 내려갈 곳이 없다 (지역 최소)
+      break;
+    }
+  }
+  out.attempted = pivotCorrection(delta, c);
+  if (static_cast<int>(residuals.size()) < params.align_min_points ||
+    delta.head<2>().norm() > params.align_max_translation ||
+    std::abs(delta(2)) > params.align_max_rotation)
+  {
+    return out;  // 실패: 보정 없이 사전분포 공분산
+  }
+  // 잔차 강건 σ 와 공분산 Σ = σ²(H_data + σ²Λ_prior)⁻¹ 근사: 정보 = H_data/σ² + Λ_prior
+  const double med = medianOf(residuals);
+  std::vector<double> dev;
+  dev.reserve(residuals.size());
+  for (const double r : residuals) {
+    dev.push_back(std::abs(r - med));
+  }
+  const double sigma = std::max(1.4826 * medianOf(dev), 0.01);
+  if (sigma > params.align_max_residual) {
+    return out;  // 잔차가 큰 정합 = 구조물이 맞지 않는 지역 최소 → 보정 없이 사전분포
+  }
+  const Eigen::Matrix3d info = H_data / (sigma * sigma) + prior_info;
+  out.covariance = info.inverse();
+  out.residual_sigma = sigma;
+  out.correction = pivotCorrection(delta, c);
+  out.map_from_tracking = out.correction.compose(map_from_tracking);
+  out.valid = true;
+  out.converged = converged;
+  return out;
+}
+
+void labelBackground(
+  std::vector<ScanPoint> & points, const StaticMapDistance & map, const MapAlignment & alignment,
+  const SegmentationParams & params)
+{
+  if (!map.valid()) {
+    return;
+  }
+  const double k = params.background_k_sigma;
+  const double r0 = std::max(params.background_radius, k * alignment.residual_sigma);
+  const Eigen::Matrix3d & S = alignment.covariance;
+  for (auto & sp : points) {
+    const Vec2 pm = alignment.map_from_tracking.apply(sp.position);
+    sp.map_distance = map.distance(pm);
+    if (!std::isfinite(sp.map_distance) || sp.map_distance > params.background_max_radius) {
+      sp.background = false;
+      continue;
+    }
+    // 점 변위 δp = [I, J(p - c)] δ 의 거리장 법선 성분 분산
+    Vec2 n;
+    double sigma_n2 = S(0, 0) + S(1, 1);  // 법선을 모르면 두 축 합 (보수적)
+    if (std::isfinite(map.interpolate(pm, &n)) && n.norm() > 1e-6) {
+      n.normalize();
+      const Vec2 v = pm - alignment.pivot;
+      const Eigen::Vector3d a(n.x(), n.y(), -n.x() * v.y() + n.y() * v.x());
+      sigma_n2 = a.dot(S * a);
+    }
+    const double r_bg = std::min(
+      params.background_max_radius, std::sqrt(r0 * r0 + k * k * std::max(sigma_n2, 0.0)));
+    sp.background = sp.map_distance <= r_bg;
   }
 }
 
@@ -459,11 +685,20 @@ bool isOccludedAtEdge(
 std::vector<Cluster> extractClusters(
   const LaserScanData & scan, const Pose2D & sensor_pose, const StaticMapDistance * map,
   const Pose2D & map_from_tracking, const SegmentationParams & seg,
-  const ClusterModelParams & model)
+  const ClusterModelParams & model, const PosePrior & prior, MapAlignment * alignment_out)
 {
   std::vector<ScanPoint> pts = projectScan(scan, sensor_pose, seg.max_range);
   if (map != nullptr && map->valid()) {
-    labelBackground(pts, *map, map_from_tracking, seg.background_radius);
+    if (seg.align_to_map) {
+      const MapAlignment al = alignScanToMap(
+        pts, sensor_pose.translation(), *map, map_from_tracking, prior, seg);
+      labelBackground(pts, *map, al, seg);
+      if (alignment_out != nullptr) {
+        *alignment_out = al;
+      }
+    } else {
+      labelBackground(pts, *map, map_from_tracking, seg.background_radius);
+    }
   }
   const int total_beams = static_cast<int>(scan.ranges.size());
   const double coverage = std::abs(scan.angle_increment) * total_beams;

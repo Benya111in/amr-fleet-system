@@ -2,12 +2,15 @@
 //
 // C++ 노드 rclcpp 통합 테스트: 실제 토픽·QoS·TF·서비스로 노드를 구동해 출력을 확인한다.
 //  - safety_node: 기동 전에 발행된 latched(transient_local) E-stop 수신, false 만으로는 해제 안 됨,
-//    safety/reset_estop 으로 해제, WARNING 존 0.5 m/s 상한, 0.3 m 이내 정지 + estop_active
+//    safety/reset_estop 으로 해제, WARNING 존 0.5 m/s 상한, 0.3 m 이내 STOP
+//    (estop_active 아님, 계약 C1);
+//    volatile E-stop 발행자, 거절된 reset, map 프레임 도킹 예외 다각형(C2), 깊이 점군 저상 장애물
 //  - obstacle_tracker_node: /map(transient_local) 배경 제거 + 이동 원 추적 (속도·동적·map 프레임)
 //  - pointcloud_filter_node: 깊이 이미지 + camera_info → PointCloud2 역투영
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -17,11 +20,13 @@
 #include <random>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "amr_msgs/msg/tracked_obstacle_array.hpp"
 #include "amr_perception/nodes.hpp"
 #include "diagnostic_msgs/msg/diagnostic_array.hpp"
+#include "geometry_msgs/msg/polygon_stamped.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "geometry_msgs/msg/twist.hpp"
@@ -34,6 +39,7 @@
 #include "sensor_msgs/msg/image.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
+#include "sensor_msgs/point_cloud2_iterator.hpp"
 #include "std_msgs/msg/bool.hpp"
 #include "std_msgs/msg/string.hpp"
 #include "std_msgs/msg/u_int8.hpp"
@@ -122,7 +128,7 @@ TEST_F(RosNodesTest, SafetyNodeGatesCommandsAndLatchesEstop)
   auto scan_pub = helper->create_publisher<sensor_msgs::msg::LaserScan>(
     "scan_filtered", rclcpp::SensorDataQoS());
   tf2_ros::StaticTransformBroadcaster stb(helper);
-  stb.sendTransform(makeTf("base_link", "lidar_link", 0.15, 0.0, 0.20, helper->now()));
+  stb.sendTransform(makeTf("base_link", "lidar_link", 0.15, 0.0, 0.02, helper->now()));
 
   double last_cmd = -1.0;
   int cmd_count = 0;
@@ -155,6 +161,7 @@ TEST_F(RosNodesTest, SafetyNodeGatesCommandsAndLatchesEstop)
     rclcpp::Parameter("safety.sensor_timeouts.wheel_encoder", 0.0),
     rclcpp::Parameter("safety.sensor_timeouts.rgb_camera", 0.0),
     rclcpp::Parameter("safety.sensor_timeouts.depth_camera", 0.0),
+    rclcpp::Parameter("depth_cloud.enabled", false),  // LiDAR 만 쓰는 시험 (점군 없음 → 저속 방지)
   });
   auto node = amr_perception::createSafetyNode(opts);
   rclcpp::executors::SingleThreadedExecutor exec;
@@ -218,13 +225,196 @@ TEST_F(RosNodesTest, SafetyNodeGatesCommandsAndLatchesEstop)
       exec, [&]() {return zone == "WARNING" && level == 1 && cmd_count > 0;}, 3.0, tick));
   spinUntil(exec, {}, 0.3, tick);
   EXPECT_NEAR(last_cmd, 0.5, 1e-9);
-  // 5) 0.3 m 이내 → 정지 + estop_active
+  // 5) 0.3 m 이내 → STOP (zone 3). 근접 정지는 E-stop 이 아니다 (계약 C1)
   front = 0.25;
   ASSERT_TRUE(
-    spinUntil(
-      exec, [&]() {return zone == "STOP" && estop_active && last_cmd == 0.0;}, 3.0, tick));
+    spinUntil(exec, [&]() {return zone == "STOP" && last_cmd == 0.0;}, 3.0, tick));
   EXPECT_EQ(level, 3);
+  EXPECT_FALSE(estop_active);
   EXPECT_TRUE(diag);
+}
+
+TEST_F(RosNodesTest, SafetyNodeVolatileEstopExclusionPolygonAndDepthCloud)
+{
+  auto helper = std::make_shared<rclcpp::Node>("safety_test_helper2");
+  const auto latched = rclcpp::QoS(1).reliable().transient_local();
+  // volatile E-stop 발행자 (리뷰 결함: transient_local 구독만 있어 조용히 무시됐다)
+  auto estop_pub = helper->create_publisher<std_msgs::msg::Bool>(
+    "estop", rclcpp::QoS(10).reliable().durability_volatile());
+  auto cmd_pub = helper->create_publisher<geometry_msgs::msg::Twist>("cmd_vel_smoothed", 10);
+  auto scan_pub = helper->create_publisher<sensor_msgs::msg::LaserScan>(
+    "scan_filtered", rclcpp::SensorDataQoS());
+  auto cloud_pub = helper->create_publisher<sensor_msgs::msg::PointCloud2>(
+    "camera/depth/points_filtered", rclcpp::SensorDataQoS());
+  auto excl_pub = helper->create_publisher<geometry_msgs::msg::PolygonStamped>(
+    "safety/dock_exclusion", 10);
+  tf2_ros::StaticTransformBroadcaster stb(helper);
+  auto optical = makeTf("base_link", "camera_depth_optical_frame", 0.29, 0.0, 0.07, helper->now());
+  optical.transform.rotation.x = -0.5;
+  optical.transform.rotation.y = 0.5;
+  optical.transform.rotation.z = -0.5;
+  optical.transform.rotation.w = 0.5;
+  // 로봇은 map (2.0, 1.0) 에서 +x 를 본다: map → odom (1.0, 0) + odom → base_link (1.0, 1.0)
+  stb.sendTransform(
+  {
+    makeTf("base_link", "lidar_link", 0.15, 0.0, 0.02, helper->now()), optical,
+    makeTf("map", "odom", 1.0, 0.0, 0.0, helper->now()),
+    makeTf("odom", "base_link", 1.0, 1.0, 0.0, helper->now())});
+
+  double last_cmd = -1.0;
+  int level = -1;
+  bool estop_active = false;
+  auto s1 = helper->create_subscription<geometry_msgs::msg::Twist>(
+    "cmd_vel", 10, [&](geometry_msgs::msg::Twist::ConstSharedPtr m) {last_cmd = m->linear.x;});
+  auto s2 = helper->create_subscription<std_msgs::msg::UInt8>(
+    "safety/zone", latched, [&](std_msgs::msg::UInt8::ConstSharedPtr m) {level = m->data;});
+  auto s3 = helper->create_subscription<std_msgs::msg::Bool>(
+    "safety/estop_active", latched,
+    [&](std_msgs::msg::Bool::ConstSharedPtr m) {estop_active = m->data;});
+  auto reset = helper->create_client<std_srvs::srv::Trigger>("safety/reset_estop");
+
+  rclcpp::NodeOptions opts;
+  opts.parameter_overrides(
+  {
+    rclcpp::Parameter("safety.sensor_timeouts.imu", 0.0),
+    rclcpp::Parameter("safety.sensor_timeouts.wheel_encoder", 0.0),
+    rclcpp::Parameter("safety.sensor_timeouts.rgb_camera", 0.0),
+    rclcpp::Parameter("safety.sensor_timeouts.depth_camera", 0.0),
+  });
+  auto node = amr_perception::createSafetyNode(opts);
+  rclcpp::executors::SingleThreadedExecutor exec;
+  exec.add_node(node);
+  exec.add_node(helper);
+
+  double v_cmd = 0.3;
+  double plate = -1.0;       // 전면 모서리에서 판까지 [m] (LiDAR), < 0 이면 없음
+  double low_box = -1.0;     // 전면 모서리에서 저상 상자까지 [m] (깊이 점군만), < 0 이면 없음
+  bool polygon = false;      // map 프레임 예외 다각형 발행
+  int ticks = 0;
+  auto tick = [&]() {
+      geometry_msgs::msg::Twist t;
+      t.linear.x = v_cmd;
+      cmd_pub->publish(t);
+      if (polygon) {
+        geometry_msgs::msg::PolygonStamped poly;
+        poly.header.frame_id = "map";
+        poly.header.stamp = helper->now();
+        // base_link x ∈ [0.4, 1.2] ↔ map x ∈ [2.4, 3.2], y ∈ [0.5, 1.5]
+        for (const auto & xy : std::vector<std::pair<double, double>>{
+        {2.4, 0.5}, {3.2, 0.5}, {3.2, 1.5}, {2.4, 1.5}})
+        {
+          geometry_msgs::msg::Point32 q;
+          q.x = static_cast<float>(xy.first);
+          q.y = static_cast<float>(xy.second);
+          poly.polygon.points.push_back(q);
+        }
+        excl_pub->publish(poly);
+      }
+      if (ticks++ % 5 != 0) {
+        return;
+      }
+      amr_perception::LaserScanData d;
+      d.angle_min = -M_PI;
+      d.angle_increment = 2.0 * M_PI / 720.0;
+      d.range_min = 0.1;
+      d.range_max = 25.0;
+      d.ranges.assign(720, std::numeric_limits<float>::infinity());
+      if (plate >= 0.0) {
+        const double x_wall = 0.30 + plate - 0.15;
+        for (int i = 0; i < 720; ++i) {
+          const double a = d.angle_min + i * d.angle_increment;
+          if (std::cos(a) > 1e-3 && std::abs(x_wall * std::tan(a)) <= 0.3) {
+            d.ranges[i] = static_cast<float>(x_wall / std::cos(a));
+          }
+        }
+      }
+      scan_pub->publish(toMsg(d, helper->now()));
+      // 깊이 점군 (optical: X = -y_b, Y = -(z_b - 0.07), Z = x_b - 0.29),
+      // 상자 지면 높이 0.05~0.12 m
+      sensor_msgs::msg::PointCloud2 pc;
+      pc.header.stamp = helper->now();
+      pc.header.frame_id = "camera_depth_optical_frame";
+      sensor_msgs::PointCloud2Modifier mod(pc);
+      mod.setPointCloud2FieldsByString(1, "xyz");
+      std::vector<std::array<float, 3>> pts;
+      if (low_box >= 0.0) {
+        for (int iy = -2; iy <= 2; ++iy) {
+          for (const double zg : {0.05, 0.09, 0.12}) {
+            const double xb = 0.30 + low_box;
+            const double yb = 0.05 * iy;
+            const double zb = zg - 0.18;
+            pts.push_back(
+              {static_cast<float>(-yb), static_cast<float>(-(zb - 0.07)),
+                static_cast<float>(xb - 0.29)});
+          }
+        }
+      }
+      // 바닥(지면 0.0) 점은 잘려야 한다
+      pts.push_back({0.0F, 0.25F, 0.3F});
+      mod.resize(pts.size());
+      sensor_msgs::PointCloud2Iterator<float> ix(pc, "x");
+      sensor_msgs::PointCloud2Iterator<float> iy(pc, "y");
+      sensor_msgs::PointCloud2Iterator<float> iz(pc, "z");
+      for (const auto & q : pts) {
+        *ix = q[0];
+        *iy = q[1];
+        *iz = q[2];
+        ++ix;
+        ++iy;
+        ++iz;
+      }
+      cloud_pub->publish(pc);
+    };
+
+  // 1) 명령 통과 (바닥 점만 있는 점군)
+  ASSERT_TRUE(spinUntil(exec, [&]() {return std::abs(last_cmd - 0.3) < 1e-9;}, 8.0, tick));
+  EXPECT_EQ(level, 0);
+  // 2) volatile E-stop true → 정지 + estop_active
+  std_msgs::msg::Bool on;
+  on.data = true;
+  ASSERT_TRUE(
+    spinUntil(
+      exec, [&]() {return estop_active && last_cmd == 0.0;}, 5.0, [&]() {
+        estop_pub->publish(on);
+        tick();
+      }));
+  // 3) 입력이 true 인 동안의 reset 은 거절되고, 그 뒤 false 가 와도 풀리지 않는다
+  ASSERT_TRUE(reset->wait_for_service(3s));
+  auto fut = reset->async_send_request(std::make_shared<std_srvs::srv::Trigger::Request>());
+  ASSERT_TRUE(
+    spinUntil(exec, [&]() {return fut.wait_for(0s) == std::future_status::ready;}, 5.0, tick));
+  EXPECT_FALSE(fut.get()->success);
+  std_msgs::msg::Bool off;
+  off.data = false;
+  spinUntil(
+    exec, {}, 0.6, [&]() {
+      estop_pub->publish(off);
+      tick();
+    });
+  EXPECT_TRUE(estop_active);
+  EXPECT_DOUBLE_EQ(last_cmd, 0.0);
+  auto fut2 = reset->async_send_request(std::make_shared<std_srvs::srv::Trigger::Request>());
+  ASSERT_TRUE(
+    spinUntil(exec, [&]() {return fut2.wait_for(0s) == std::future_status::ready;}, 5.0, tick));
+  EXPECT_TRUE(fut2.get()->success);
+  ASSERT_TRUE(spinUntil(exec, [&]() {return !estop_active && last_cmd > 0.29;}, 3.0, tick));
+  // 4) 저상 상자 (LiDAR 에 안 보임) → 깊이 점군으로 STOP
+  low_box = 0.22;
+  ASSERT_TRUE(spinUntil(exec, [&]() {return level == 3 && last_cmd == 0.0;}, 3.0, tick));
+  EXPECT_FALSE(estop_active);
+  low_box = -1.0;
+  v_cmd = -0.2;  // 후진 → 해제
+  ASSERT_TRUE(spinUntil(exec, [&]() {return level == 0 && last_cmd < -0.19;}, 3.0, tick));
+  // 5) 판 0.2 m: 다각형 없으면 STOP, map 프레임 다각형이 오면 예외(정지 거리 0.10, CRITICAL 0.2)
+  v_cmd = 0.3;
+  plate = 0.2;
+  ASSERT_TRUE(spinUntil(exec, [&]() {return level == 3 && last_cmd == 0.0;}, 3.0, tick));
+  polygon = true;
+  ASSERT_TRUE(
+    spinUntil(exec, [&]() {return level != 3 && std::abs(last_cmd - 0.2) < 1e-9;}, 3.0, tick));
+  // 6) 다각형이 끊기면 (0.3 s) 일반 규칙으로 돌아온다
+  polygon = false;
+  ASSERT_TRUE(spinUntil(exec, [&]() {return level == 3 && last_cmd == 0.0;}, 3.0, tick));
 }
 
 TEST_F(RosNodesTest, ObstacleTrackerNodeTracksMovingObstacleAndRemovesMapWall)
@@ -234,7 +424,7 @@ TEST_F(RosNodesTest, ObstacleTrackerNodeTracksMovingObstacleAndRemovesMapWall)
   tf2_ros::TransformBroadcaster tfb(helper);
   stb.sendTransform(
     std::vector<geometry_msgs::msg::TransformStamped>{
-    makeTf("base_link", "lidar_link", 0.15, 0.0, 0.20, helper->now()),
+    makeTf("base_link", "lidar_link", 0.15, 0.0, 0.02, helper->now()),
     makeTf("map", "odom", 0.0, 0.0, 0.0, helper->now())});
   // /map: 10 × 10 m, 0.05 m, x = 3.0 m 에 세로 벽 (정적 배경)
   const auto latched = rclcpp::QoS(1).reliable().transient_local();

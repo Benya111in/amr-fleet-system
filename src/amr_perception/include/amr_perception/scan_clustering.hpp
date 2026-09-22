@@ -5,7 +5,10 @@
 // 파이프라인 (docs/algorithms/tracking.md §1, 연구 브리프 perception-tracking §3.3–3.4 베이스라인):
 //   1) projectScan      : 유효 빔(유한, [range_min, range_max])을 추적 프레임 점으로 변환
 //   2) StaticMapDistance: /map 점유 셀까지의 유클리드 거리 LUT(정확 EDT).
-//                         d <= r_bg 인 점 = 정적 배경
+//      alignScanToMap   : 스캔을 거리장에 맞추는 국소 정합(가우스-뉴턴, 위치 추정 사전분포) →
+//                         map←tracking 보정 + 보정 공분산
+//      labelBackground  : d <= r_bg(점) 인 점 = 정적 배경. r_bg 는 보정 공분산을 그 점의 거리장
+//                         법선 방향으로 투영한 3σ 와 LiDAR 잡음 반경의 합성 (위치 오차에 강건)
 //   3) segmentScan      : 적응형 브레이크포인트(ABD) — 연속 빔 간격이
 //                         D_th = r·sin(Δφ)/sin(λ-Δφ) + 3σ_r 를 넘거나 배경 라벨이 바뀌면 끊는다
 //   4) 병합/재분할       : 최소 점간 간격 < merge_min_gap 인 같은 라벨 세그먼트 병합,
@@ -18,6 +21,8 @@
 
 #ifndef AMR_PERCEPTION__SCAN_CLUSTERING_HPP_
 #define AMR_PERCEPTION__SCAN_CLUSTERING_HPP_
+
+#include <Eigen/Core>
 
 #include <cstdint>
 #include <vector>
@@ -61,6 +66,9 @@ public:
   bool valid() const {return width_ > 0 && height_ > 0;}
   /// map 프레임 점에서 가장 가까운 점유 셀 중심까지 거리 [m]. 지도 밖/점유 셀 없음 → +inf.
   double distance(const Vec2 & p_map) const;
+  /// 셀 중심 격자의 쌍선형 보간 거리와 map 프레임 기울기. 보간 이웃이 지도 밖/무한이면 +inf.
+  double interpolate(const Vec2 & p_map, Vec2 * gradient) const;
+  double resolution() const {return resolution_;}
   int width() const {return width_;}
   int height() const {return height_;}
 
@@ -68,6 +76,7 @@ private:
   int width_{0};
   int height_{0};
   double resolution_{0.05};
+  Pose2D origin_;
   Pose2D origin_inv_;
   std::vector<float> dist_;  // [m]
 };
@@ -86,8 +95,42 @@ struct SegmentationParams
   double far_range{6.0};               ///< [m]
   double max_extent{1.5};              ///< PCA 장축 길이 상한 [m], 넘으면 재분할
   double max_range{12.0};              ///< 이 거리 밖 점은 무시 [m]
-  double background_radius{0.10};      ///< r_bg: 점유 셀까지 이 거리 이내면 배경 [m]
+  double background_radius{0.10};      ///< r_bg 하한: LiDAR 잡음 3σ + 반 셀 [m]
   double overlap_radius{0.25};         ///< r_ov: 지도 중첩률 계산 반경 [m]
+  // 위치 오차에 강건한 배경 판정 (tracking.md §1.1)
+  bool align_to_map{true};             ///< 스캔-지도 국소 정합으로 map←tracking 보정
+  double align_max_correspondence{0.30};  ///< 정합에 쓰는 점: 초기 d_map 이 이 이하 [m]
+  double align_huber{0.05};            ///< Huber 가중 경계 [m]
+  int align_iterations{8};
+  int align_min_points{40};            ///< 대응점이 이보다 적으면 보정 없이 사전분포만
+  double align_max_translation{0.30};  ///< 이보다 큰 보정은 실패로 본다 [m]
+  double align_max_rotation{0.06};     ///< [rad] (3.4°)
+  /// 정합 잔차 강건 σ 가 이보다 크면 오정합(지역 최소)으로 보고 버린다 [m]
+  /// (LiDAR σ 0.03 → 정상 ≈ 0.01–0.03)
+  double align_max_residual{0.05};
+  double background_k_sigma{3.0};      ///< r_bg 의 위치 불확실성 배수
+  double background_max_radius{0.35};  ///< r_bg 상한 [m] (벽에 붙은 사람도 전경으로 남게)
+};
+
+/// map←tracking 위치 사전분포 (odometry/filtered_map 공분산, 하·상한으로 자른 값)
+struct PosePrior
+{
+  double sigma_xy{0.05};   ///< [m]
+  double sigma_yaw{0.01};  ///< [rad]
+};
+
+/// 스캔-지도 국소 정합 결과
+struct MapAlignment
+{
+  bool valid{false};             ///< 정합 성공 (아니면 correction = 항등, 사전분포 공분산)
+  bool converged{false};         ///< 반복 한도 안에서 수렴
+  Pose2D map_from_tracking;      ///< 보정된 map←tracking
+  Pose2D correction;             ///< map 프레임 보정 (p' = correction ∘ p)
+  Pose2D attempted;              ///< 정합이 찾은 보정 (실패해도 진단용으로 남긴다)
+  Eigen::Matrix3d covariance{Eigen::Matrix3d::Identity()};  ///< (tx, ty, θ) 공분산 (센서 중심)
+  Vec2 pivot{Vec2::Zero()};      ///< 회전 중심 (map 프레임 센서 위치)
+  int correspondences{0};
+  double residual_sigma{0.0};    ///< 정합 후 거리 잔차 강건 σ (1.4826·MAD) [m]
 };
 
 struct ClusterModelParams
@@ -126,10 +169,22 @@ struct Cluster
 std::vector<ScanPoint> projectScan(
   const LaserScanData & scan, const Pose2D & sensor_pose, double max_range);
 
-/// 점마다 배경 라벨 (map_from_tracking: 추적 프레임 → map)
+/// 점마다 배경 라벨 (map_from_tracking: 추적 프레임 → map), 고정 반경
 void labelBackground(
   std::vector<ScanPoint> & points, const StaticMapDistance & map,
   const Pose2D & map_from_tracking, double background_radius);
+
+/// 스캔 점을 거리장에 맞추는 국소 정합: Σ ρ_Huber(d(T·p) - res/2) + 사전분포 항을 가우스-뉴턴으로
+/// 최소화한다. points: 추적 프레임 점, sensor: 추적 프레임 센서 위치.
+MapAlignment alignScanToMap(
+  const std::vector<ScanPoint> & points, const Vec2 & sensor, const StaticMapDistance & map,
+  const Pose2D & map_from_tracking, const PosePrior & prior, const SegmentationParams & params);
+
+/// 불확실성 반영 배경 라벨: r_bg(p) = min(r_max, √(r_0² + k²·σ_n²(p))),
+/// σ_n² = 점 변위 공분산을 거리장 법선 n 에 투영한 값, r_0 = max(background_radius, k·σ_res).
+void labelBackground(
+  std::vector<ScanPoint> & points, const StaticMapDistance & map, const MapAlignment & alignment,
+  const SegmentationParams & params);
 
 /// ABD 분할. points 는 빔 순서. 반환: 세그먼트별 점 인덱스.
 /// full_circle: 360° 스캔이면 첫/끝 세그먼트를 이어 붙일 수 있는지 검사. total_beams: 스캔 빔 수.
@@ -161,11 +216,13 @@ bool isOccludedAtEdge(
   const std::vector<int> & indices, double mean_range, bool full_circle, double margin);
 
 /// 전체 파이프라인: 배경(다수결) 세그먼트를 버리고 최소 점 수를 넘는 전경 클러스터만 돌려준다.
-/// map 이 nullptr 또는 invalid 이면 배경 분리를 건너뛴다.
+/// map 이 nullptr 또는 invalid 이면 배경 분리를 건너뛴다. seg.align_to_map 이면 국소 정합 후
+/// 불확실성 반영 반경으로 라벨한다 (prior: 위치 추정 공분산, alignment_out: 정합 결과).
 std::vector<Cluster> extractClusters(
   const LaserScanData & scan, const Pose2D & sensor_pose, const StaticMapDistance * map,
   const Pose2D & map_from_tracking, const SegmentationParams & seg,
-  const ClusterModelParams & model);
+  const ClusterModelParams & model, const PosePrior & prior = PosePrior{},
+  MapAlignment * alignment_out = nullptr);
 
 }  // namespace amr_perception
 

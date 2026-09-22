@@ -73,6 +73,21 @@ public:
     seg_.max_range = declare_parameter<double>("segmentation.max_range", 12.0);
     seg_.background_radius = declare_parameter<double>("segmentation.background_radius", 0.10);
     seg_.overlap_radius = declare_parameter<double>("segmentation.overlap_radius", 0.25);
+    seg_.align_to_map = declare_parameter<bool>("background.align_to_map", true);
+    seg_.align_max_correspondence =
+      declare_parameter<double>("background.max_correspondence", 0.30);
+    seg_.align_huber = declare_parameter<double>("background.huber", 0.05);
+    seg_.align_iterations = declare_parameter<int>("background.iterations", 8);
+    seg_.align_min_points = declare_parameter<int>("background.min_points", 40);
+    seg_.align_max_translation = declare_parameter<double>("background.max_translation", 0.30);
+    seg_.align_max_rotation = declare_parameter<double>("background.max_rotation", 0.06);
+    seg_.align_max_residual = declare_parameter<double>("background.max_residual", 0.05);
+    seg_.background_k_sigma = declare_parameter<double>("background.k_sigma", 3.0);
+    seg_.background_max_radius = declare_parameter<double>("background.max_radius", 0.35);
+    prior_xy_min_ = declare_parameter<double>("background.prior_sigma_xy_min", 0.03);
+    prior_xy_max_ = declare_parameter<double>("background.prior_sigma_xy_max", 0.20);
+    prior_yaw_min_ = declare_parameter<double>("background.prior_sigma_yaw_min", 0.005);
+    prior_yaw_max_ = declare_parameter<double>("background.prior_sigma_yaw_max", 0.05);
 
     model_.bias_mu = declare_parameter<double>("cluster_model.bias_mu", 0.15);
     model_.sigma_delta = declare_parameter<double>("cluster_model.sigma_delta", 0.10);
@@ -226,8 +241,30 @@ private:
     data.range_min = scan.range_min;
     data.range_max = scan.range_max;
     data.ranges = scan.ranges;
+    // 위치 추정 공분산 (odometry/filtered_map) → 국소 정합 사전분포 (하·상한으로 자른다)
+    PosePrior prior;
+    prior.sigma_xy = prior_xy_max_;
+    prior.sigma_yaw = prior_yaw_max_;
+    if (odom_received_.nanoseconds() > 0 && (now() - odom_received_).seconds() <= odom_timeout_) {
+      const auto & c = odom_.pose.covariance;
+      prior.sigma_xy = std::clamp(
+        std::sqrt(std::max(c[0], c[7])), prior_xy_min_, prior_xy_max_);
+      prior.sigma_yaw = std::clamp(std::sqrt(std::max(c[35], 0.0)), prior_yaw_min_, prior_yaw_max_);
+    }
+    MapAlignment alignment;
     const auto clusters = extractClusters(
-      data, tracking_from_lidar, map_usable ? &map_ : nullptr, map_from_tracking, seg_, model_);
+      data, tracking_from_lidar, map_usable ? &map_ : nullptr, map_from_tracking, seg_, model_,
+      prior, &alignment);
+    if (map_usable && seg_.align_to_map) {
+      RCLCPP_INFO_THROTTLE(
+        get_logger(), *get_clock(), 10000,
+        "지도 정합: 보정 (%.3f, %.3f) m, %.2f°, 대응 %d, 잔차 σ %.3f m, 성공 %d "
+        "(시도 (%.3f, %.3f) m, %.2f°, 사전 σ %.3f m, %.2f°)",
+        alignment.correction.x, alignment.correction.y, alignment.correction.yaw * 180.0 / M_PI,
+        alignment.correspondences, alignment.residual_sigma, alignment.valid,
+        alignment.attempted.x, alignment.attempted.y, alignment.attempted.yaw * 180.0 / M_PI,
+        prior.sigma_xy, prior.sigma_yaw * 180.0 / M_PI);
+    }
 
     // 자기 운동: base 속도(odom twist, base 프레임) → LiDAR 속도 (추적 프레임)
     double v_lin = 0.0;
@@ -395,6 +432,10 @@ private:
 
   SegmentationParams seg_;
   ClusterModelParams model_;
+  double prior_xy_min_{0.03};
+  double prior_xy_max_{0.20};
+  double prior_yaw_min_{0.005};
+  double prior_yaw_max_{0.05};
   TtcParams ttc_;
   std::unique_ptr<ObstacleTracker> tracker_;
   StaticMapDistance map_;

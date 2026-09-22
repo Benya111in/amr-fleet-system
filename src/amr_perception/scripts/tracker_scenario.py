@@ -104,7 +104,7 @@ def main(argv=None) -> int:  # pragma: no cover - ROS 통합 시험 (docs/algori
         m.transform.rotation.w = math.cos(yaw / 2)
         return m
 
-    stb.sendTransform([tf('base_link', 'lidar_link', 0.15, 0.0, 0.20, 0.0, node.get_clock().now()
+    stb.sendTransform([tf('base_link', 'lidar_link', 0.15, 0.0, 0.02, 0.0, node.get_clock().now()
                           .to_msg())])
     t_start = None
 
