@@ -375,6 +375,32 @@ def test_keepout_mask_paints_block_zones():
     assert build_keepout_mask(inside_goal, [], cfg(), CORR, (), spec, block_zones={'c'}) is None
 
 
+def test_estopped_blocker_with_a_task_does_not_block_resolution():
+    """
+    회귀 (통합 시나리오 12): E-stop 된 로봇을 기다리다 exhausted(no_alt_path) 로 끝났다.
+
+    구역 안에서 E-stop 된 로봇(작업·경로는 그대로)을 "지나가기" 기다리지 않고, 서 있는 장애물로 보고
+    희생 로봇이 돌아가면 해소로 본다.
+    """
+    im = IncidentManager(cfg(escalate_after_s=2.0, yield_timeout_s=4.0, alt_path_timeout_s=5.0,
+                             replan_grace_s=1.0, deadlock_max_s=60.0))
+    blocked = line((10.0, 5.0), (18.0, 5.0))
+    estop = RobotView('E', 10.0, 5.0, 0.0, 0.0, blocked, True, False, 100, None,
+                      frozenset({'c'}), blocked, mobile=False)      # active 이지만 못 움직인다
+    mover = view('W', 2.5, 5.0, (18.0, 5.0), 200)
+    w = make_world([mover, estop], zone_map=CORR)
+    evs = im.open(0.0, ['W', 'E'], 'BLOCKED', w, {'c'})
+    assert evs[0].values['victim'] == 'W'
+    # 양보로는 풀리지 않는다 (E 가 자리를 비울 수 없다) → 전략 2 로 올라간다
+    names = _names(im.step(3.0, w))
+    assert EV_ESCALATED in names and im.active()[0].strategy == ALT_PATH
+    detour = line((2.5, 5.0), (3.0, 2.0), (17.0, 2.0), (18.0, 5.0))
+    w2 = make_world([RobotView('W', 3.0, 2.0, 0.0, 1.0, detour[1:], True, False, 200, None,
+                               frozenset(), detour[1:]), estop], zone_map=CORR)
+    assert _names(im.step(4.0, w2)) == [EV_RESOLVED]                 # 이전 판: exhausted(no_alt_path)
+    assert not im.active()
+
+
 def test_immobile_members_are_never_victims_and_failures_are_not_repeated():
     im = IncidentManager(cfg())
     mover = view('W', 2.5, 5.0, (18.0, 5.0), 200)                       # 통로 서쪽 입구 앞에서 대기
