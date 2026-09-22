@@ -12,6 +12,9 @@
 
   optical 프레임은 REP-103 광학 규약(z 전방, x 우측, y 하방)이며 이미지/camera_info 의 header.frame_id 가 된다.
   시각 형상은 식별용 소형 박스/실린더이고 충돌체·관성은 없다 (sdformat 이 base_footprint 로 병합).
+  배치 (sensors.yaml 결정): LiDAR 는 차체 안 슬롯(스캔 평면 지면 +0.20), 카메라 모듈은 전면 창(차체 전면 1 cm 안쪽,
+  지면 +0.25), IMU 는 구동축 위. 모두 데크(+0.33) 아래라 적재물이 가리지 않는다. LiDAR 실린더는 차체 박스 안에 있어
+  밖에서는 슬롯 띠(amr_base.xacro)만 보인다.
   센서 정의(gz 플러그인)는 amr_gazebo.xacro 에 있다.
 -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
