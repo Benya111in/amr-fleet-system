@@ -17,6 +17,7 @@ from launch.actions import (DeclareLaunchArgument, ExecuteProcess, GroupAction,
                             IncludeLaunchDescription, LogInfo, OpaqueFunction,
                             RegisterEventHandler, TimerAction)
 from launch.utilities import perform_substitutions
+from launch_ros.actions import Node
 import pytest
 import yaml
 
@@ -126,8 +127,11 @@ def test_multi_robot_default_five(prefix):
     assert [(e['namespace'], e['with_cpu']) for e in evals] == [
         ('amr_01', 'true')] + [(f'amr_0{i}', 'false') for i in range(2, 6)]
     assert len({e['run_name'] for e in evals}) == 1 and evals[0]['run_name'].startswith('multi_')
-    hold = [a for a in actions if isinstance(a, ExecuteProcess)]
+    # launch_ros Node 는 ExecuteProcess 의 하위 클래스다 (감시 노드가 섞이지 않게 뺀다)
+    hold = [a for a in actions if isinstance(a, ExecuteProcess) and not isinstance(a, Node)]
     assert len(hold) == 1
+    watchdog = [a for a in actions if isinstance(a, Node)]
+    assert len(watchdog) == 1 and watchdog[0].node_executable == 'lifecycle_watchdog'
     cmd = [perform_substitutions(ctx, part) for part in hold[0].cmd]
     assert cmd[-4:] == ['hold', '--world', 'warehouse', '--pause']
     assert sum(isinstance(a, RegisterEventHandler) for a in actions) == 2

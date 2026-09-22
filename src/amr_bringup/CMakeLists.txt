@@ -14,6 +14,7 @@ ament_python_install_package(${PROJECT_NAME})
 # --- 실행 파일 (ros2 run amr_bringup world_gate) — 모듈의 main() 을 부르는 얇은 진입점 ---
 install(PROGRAMS
   scripts/world_gate
+  scripts/lifecycle_watchdog
   DESTINATION lib/${PROJECT_NAME}
 )
 

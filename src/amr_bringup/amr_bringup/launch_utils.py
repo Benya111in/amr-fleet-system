@@ -36,6 +36,7 @@ from launch.event_handlers import OnProcessExit
 from launch.launch_context import LaunchContext
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 import yaml
 
@@ -47,6 +48,11 @@ STACKS: Tuple[Tuple[str, str, str, str], ...] = (
     ('with_behavior', 'amr_behavior', 'behavior.launch.py', 'behavior'),
 )
 GLOBALS = ('with_fleet', 'with_dashboard', 'with_evaluation')
+#: 스택별 lifecycle 관리 노드 (lifecycle_watchdog 감시 대상). 루트 map_server 는 따로 더한다
+LIFECYCLE_NODES: Dict[str, Tuple[str, ...]] = {
+    'localization': ('amcl',),
+    'navigation': ('planner_server', 'controller_server', 'behavior_server', 'bt_navigator'),
+}
 
 
 def truthy(text: str) -> bool:
@@ -93,6 +99,9 @@ def common_arguments() -> List[DeclareLaunchArgument]:
         # 로봇 스택을 로봇마다 이만큼 늦춰 띄운다 (stack_actions 주석: 5대 동시 기동 실패)
         DeclareLaunchArgument('stack_stagger_s', default_value='6.0',
                               description='로봇 i 스택 시작 지연 = i × 이 값 [s] (0 = 동시)'),
+        # lifecycle 전이 응답 유실 안전망 (lifecycle_watchdog 모듈 설명). 0 = 끔
+        DeclareLaunchArgument('lifecycle_watchdog_grace', default_value='90.0',
+                              description='이 시간 뒤부터 멈춘 lifecycle 노드를 직접 올린다 [s] (0 = 끔)'),
         # 이름이 'map' 이면 안 된다: 포함한 런치가 부모 범위의 launch 인자를 그대로 보므로(모듈 설명)
         # localization.launch.py 의 map 기본값이 '' 로 가려져 map_server 가 지도 없이 뜬다 (실측)
         DeclareLaunchArgument('map_yaml', default_value='',
@@ -123,6 +132,7 @@ class Options:
     map_yaml: str = ''
     nav_ttc_bt: str = 'auto'
     stack_stagger_s: float = 6.0
+    lifecycle_watchdog_grace: float = 90.0
 
     @property
     def world_name(self) -> str:
@@ -145,7 +155,8 @@ def read_options(context: LaunchContext, entry: str) -> Options:
                    localization_mode=arg('localization_mode').strip() or 'localization',
                    map_yaml=arg('map_yaml').strip(),
                    nav_ttc_bt=arg('nav_ttc_bt').strip().lower() or 'auto',
-                   stack_stagger_s=float(arg('stack_stagger_s') or 0.0))
+                   stack_stagger_s=float(arg('stack_stagger_s') or 0.0),
+                   lifecycle_watchdog_grace=float(arg('lifecycle_watchdog_grace') or 0.0))
 
 
 def launch_file(pkg: str, name: str) -> Tuple[Optional[str], str]:
@@ -415,6 +426,29 @@ def dds_environment() -> List:
             LogInfo(msg=f'[bringup] {DDS_PROFILE_VAR}={path} ({note})')]
 
 
+def watched_lifecycle_nodes(robots: Sequence[RobotSpec], opts: Options) -> List[str]:
+    """lifecycle_watchdog 가 볼 관리 노드 절대 이름 (켜진 스택만, 루트 map_server 포함)."""
+    out: List[str] = []
+    if opts.flags.get('with_localization', True):
+        out.append('/map_server')
+    for _flag, _pkg, _name, label in STACKS:
+        if not opts.flags.get(_flag, True):
+            continue
+        out += [f'/{r.name}/{n}' for r in robots for n in LIFECYCLE_NODES.get(label, ())]
+    return out
+
+
+def watchdog_action(robots: Sequence[RobotSpec], opts: Options) -> List:
+    """전이 응답 유실로 멈춘 lifecycle 노드를 직접 올리는 감시 노드 (lifecycle_watchdog 모듈 설명)."""
+    nodes = watched_lifecycle_nodes(robots, opts)
+    if not nodes or opts.lifecycle_watchdog_grace <= 0.0:
+        return []
+    return [Node(package='amr_bringup', executable='lifecycle_watchdog',
+                 name='lifecycle_watchdog', output='screen',
+                 parameters=[{'nodes': nodes, 'grace': opts.lifecycle_watchdog_grace,
+                              'use_sim_time': False}])]
+
+
 def bringup_actions(robots: Sequence[RobotSpec], spawn: FleetSpawn, opts: Options,
                     prefixed: bool) -> List:
     """월드 + 로봇 N대 + 전역 노드 전체 (위 모듈 설명의 순서)."""
@@ -424,4 +458,5 @@ def bringup_actions(robots: Sequence[RobotSpec], spawn: FleetSpawn, opts: Option
             + [description_action(r, frame_prefix(r, prefixed), opts) for r in robots]
             + spawn_sequence(robots, spawn, opts,
                              after_spawn=lambda: stack_actions(robots, prefixed, opts))
-            + global_actions(spawn, robots, opts))
+            + global_actions(spawn, robots, opts)
+            + watchdog_action(robots, opts))
