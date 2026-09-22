@@ -1,0 +1,7 @@
+#!/usr/bin/env python3
+"""aruco_detector_node 실행 파일 (ros2 run amr_perception aruco_detector_node). 구현: amr_perception/aruco_detector_node.py."""
+
+from amr_perception.aruco_detector_node import main
+
+if __name__ == '__main__':
+    main()
