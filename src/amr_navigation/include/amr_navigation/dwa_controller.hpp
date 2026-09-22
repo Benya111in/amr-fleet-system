@@ -10,7 +10,8 @@
 //   (std_msgs/Float32, latched)
 // 발행: local_plan (nav_msgs/Path, 선택 궤적), dwa/stats (std_msgs/Float64MultiArray, 아래 순서)
 //   [cycle_ms, n_samples, n_valid, n_collision, n_vo_rejected, vo_saturated, best_ttc, v, w,
-//    d_goal, n_recentered]
+//    d_goal, n_recentered, yield_state (0 clear / 1 yield / 2 committed), yield_stop_distance]
+//   (마지막 둘은 없으면 −1: 유한하지 않은 정지거리)
 #ifndef AMR_NAVIGATION__DWA_CONTROLLER_HPP_
 #define AMR_NAVIGATION__DWA_CONTROLLER_HPP_
 
