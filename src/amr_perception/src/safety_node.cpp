@@ -127,6 +127,7 @@ public:
     p.ttc_limit_enabled = declare_parameter<bool>("ttc.enabled", true);
     p.ttc_critical = declare_parameter<double>("ttc.critical", 2.15);
     p.ttc_max_age = declare_parameter<double>("ttc.max_age", 0.5);
+    ttc_only_dynamic_ = declare_parameter<bool>("ttc.only_dynamic", true);
     p.command_timeout = declare_parameter<double>("command_timeout", 0.5);
     p.estop_release_requires_reset = declare_parameter<bool>("estop_release_requires_reset", true);
     p.swept_margin = declare_parameter<double>("approach.swept_margin", 0.0);
@@ -240,13 +241,12 @@ public:
       declare_parameter<std::string>("topics.tracked_obstacles", "perception/tracked_obstacles"),
       rclcpp::QoS(10).reliable(),
       [this](amr_msgs::msg::TrackedObstacleArray::ConstSharedPtr msg) {
-        double ttc = std::numeric_limits<double>::infinity();
+        std::vector<TrackTtc> tracks;
+        tracks.reserve(msg->obstacles.size());
         for (const auto & o : msg->obstacles) {
-          if (!std::isnan(o.time_to_collision)) {
-            ttc = std::min(ttc, static_cast<double>(o.time_to_collision));
-          }
+          tracks.push_back({static_cast<double>(o.time_to_collision), o.is_dynamic});
         }
-        gate_->setMinTtc(ttc, now().seconds());
+        gate_->setMinTtc(minTrackTtc(tracks, ttc_only_dynamic_), now().seconds());
       });
     // E-stop: transient_local 구독(늦게 떠도 latched 마지막 값) + volatile 구독(volatile 발행자).
     // volatile 구독은 두 종류 발행자와 모두 맞으므로 같은 표본이 두 번 올 수 있다
@@ -634,6 +634,7 @@ private:
   double exclusion_received_{-1.0};
   rclcpp::Time last_diag_{0, 0, RCL_ROS_TIME};
   bool published_once_{false};
+  bool ttc_only_dynamic_{true};   ///< TTC 제한에 동적 트랙만 (minTrackTtc)
   SafetyZone last_zone_{SafetyZone::kClear};
   bool last_estop_{false};
   bool last_degraded_{false};

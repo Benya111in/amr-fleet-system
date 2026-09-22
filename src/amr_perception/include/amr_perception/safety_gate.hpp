@@ -67,6 +67,19 @@ struct SensorWatch
   SensorFailureAction action{SensorFailureAction::kStop};
 };
 
+/// 추적 결과 한 개의 TTC 와 동적 여부 (safety_node 가 perception/tracked_obstacles 에서 채운다).
+struct TrackTtc
+{
+  double ttc{std::numeric_limits<double>::infinity()};
+  bool is_dynamic{false};
+};
+
+/// TTC 제한에 쓸 최소 TTC. only_dynamic 이면 동적 트랙만 본다 — 정적 구조물(벽·랙)은
+/// 접근 거리 존이 맡는다. 추적기는 외접원(0.361 m)으로 TTC 를 계산하므로 0.60 m 통로에서
+/// 로봇 중심 0.30 m 옆 벽 클러스터가 TTC 0 이 되어 통로 안에서 멈췄다 (Gazebo 0/3).
+/// NaN 은 무시, 없으면 +inf.
+double minTrackTtc(const std::vector<TrackTtc> & tracks, bool only_dynamic);
+
 struct SafetyParams
 {
   double footprint_length{0.60};
