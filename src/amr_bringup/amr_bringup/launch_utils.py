@@ -85,14 +85,11 @@ def common_arguments() -> List[DeclareLaunchArgument]:
         DeclareLaunchArgument('localization_mode', default_value='localization',
                               description='localization 스택 mode (localization | slam | odom). '
                                           'slam 은 매핑 — 루트 map_server·AMCL 대신 slam_toolbox'),
-        # WORKAROUND(amr_navigation): navigate_to_pose.xml(TTC 판)은 RateController 를
-        # ReactiveFallback 아래에 두어, 형제가 SUCCESS 를 낼 때마다 halt → IDLE → 다음 tick 에
-        # first_time 으로 다시 계획한다 (BT tick 마다 재계획: /plan 22 Hz, FollowPath 선점
-        # "Aborting handle" 수백 회, 목표 방향 정렬 실패 — 통합 실측). 고쳐질 때까지 기본은 TTC 조건
-        # 없는 Nav2 표준 구조 BT (use_ttc_bt:=false). auto 면 패키지 기본 동작
-        DeclareLaunchArgument('nav_ttc_bt', default_value='false',
-                              description='navigation.launch.py use_ttc_bt '
-                                          '(false | true | auto) — false 는 TTC 재계획 BT 결함 우회'),
+        # auto = amr_navigation 기본 (TTC 재계획 BT). 한때 TTC BT 가 BT tick 마다 재계획하는 결함
+        # (RateController 가 ReactiveFallback 아래서 halt 됨) 때문에 false 로 우회했으나 amr_navigation 이
+        # 구조를 고쳤다 (Gazebo ComputePathToPose 41 → 0.25 회/s, costmap.md). false 는 TTC 조건 없는 BT
+        DeclareLaunchArgument('nav_ttc_bt', default_value='auto',
+                              description='navigation.launch.py use_ttc_bt (auto | true | false)'),
         # 이름이 'map' 이면 안 된다: 포함한 런치가 부모 범위의 launch 인자를 그대로 보므로(모듈 설명)
         # localization.launch.py 의 map 기본값이 '' 로 가려져 map_server 가 지도 없이 뜬다 (실측)
         DeclareLaunchArgument('map_yaml', default_value='',
@@ -121,7 +118,7 @@ class Options:
     dashboard_port: str = ''
     localization_mode: str = 'localization'
     map_yaml: str = ''
-    nav_ttc_bt: str = 'false'
+    nav_ttc_bt: str = 'auto'
 
     @property
     def world_name(self) -> str:
@@ -143,7 +140,7 @@ def read_options(context: LaunchContext, entry: str) -> Options:
                    dashboard_port=arg('dashboard_port').strip(),
                    localization_mode=arg('localization_mode').strip() or 'localization',
                    map_yaml=arg('map_yaml').strip(),
-                   nav_ttc_bt=arg('nav_ttc_bt').strip().lower() or 'false')
+                   nav_ttc_bt=arg('nav_ttc_bt').strip().lower() or 'auto')
 
 
 def launch_file(pkg: str, name: str) -> Tuple[Optional[str], str]:
@@ -225,8 +222,7 @@ def stack_extra_arguments(label: str, opts: Options) -> Dict[str, str]:
     """
     스택 하나에만 주는 인자 (다른 스택에 새지 않게).
 
-    localization: mode(slam 매핑)·map. navigation: use_ttc_bt (nav_ttc_bt 인자, 기본 false — 모듈의
-    WORKAROUND 주석).
+    localization: mode(slam 매핑)·map. navigation: use_ttc_bt (nav_ttc_bt 인자, 기본 auto).
     """
     if label == 'navigation':
         return {'use_ttc_bt': opts.nav_ttc_bt}
