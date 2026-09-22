@@ -707,9 +707,13 @@ SafetyStatus SafetyGate::evaluate(double now)
   } else if (proximity_stop_) {
     // 원인별 해제: 현재 운동으로 더 이상 다가가지 않는다(장애물이 떠났거나 운동이 바뀌었다),
     // 접촉 가드는 떨어졌다. 원인이 아닌 채널(예: 통로 옆 벽의 가드 거리 0.07 m)은
-    // 해제를 막지 않는다.
-    const bool main_clear = !(hasCause("lidar") || hasCause("depth")) ||
-      d_main > p.stop_release_distance;
+    // 해제를 막지 않는다. **원인이 된 센서가 다시 보여 줘야** 푼다: 깊이 점군이 끊기면 그 값은
+    // +inf 라 합친 거리로는 "치웠다" 로 보인다 — 깊이로 선 STOP 이 점군이 끊긴 사이 풀려
+    // 장애물이 그대로 있는데 다시 움직였다 (통합 시나리오 09 실측).
+    const bool lidar_clear = !hasCause("lidar") || lidar_main > p.stop_release_distance;
+    const bool depth_clear = !hasCause("depth") ||
+      (cloud_fresh && cloud_main > p.stop_release_distance);
+    const bool main_clear = lidar_clear && depth_clear;
     const bool excl_clear = !hasCause("dock_exclusion") ||
       d_excl > p.exclusion_stop_distance + h;
     const bool guard_clear = !hasCause("contact") || guard > p.contact_guard_distance + h;
@@ -822,7 +826,10 @@ SafetyStatus SafetyGate::evaluate(double now)
       st.reasons.push_back("stop_" + c);
     }
     // 현재 운동이 아직 정지 원인에 다가가면 0. 접촉 가드만 남았으면 멀어지는 명령만 저속 통과.
-    const bool approaching =
+    // 깊이로 선 STOP 인데 점군이 끊겼으면 "멀어진다" 를 증명할 수 없다 → 다가가는 것으로 본다
+    // (탈출 판정은 LiDAR 빔만 보므로 평면 아래 물체를 못 본다, 통합 시나리오 09).
+    const bool depth_blind = hasCause("depth") && !cloud_fresh;
+    const bool approaching = depth_blind ||
       ((hasCause("lidar") || hasCause("depth")) && d_main <= p.stop_release_distance) ||
       (hasCause("dock_exclusion") && d_excl <= p.exclusion_stop_distance + h) ||
       d_main <= p.emergency_stop_distance || d_excl <= p.exclusion_stop_distance;

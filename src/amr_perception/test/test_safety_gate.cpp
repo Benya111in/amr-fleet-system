@@ -846,6 +846,37 @@ TEST(SafetyGate, DockExclusionLetsDockedStandoffPassWithoutStop)
 
 // ---------------------------------------------------------------- 깊이 점군
 
+TEST(SafetyGate, DepthStopIsNotReleasedWhileTheCloudIsStale)
+{
+  // 회귀 (통합 시나리오 09): 깊이로 선 STOP 이 점군이 끊긴 사이 풀려
+  // 장애물이 그대로인데 다시 움직였다. 원인 센서가 다시 "치웠다" 고 보여 줄 때만 푼다.
+  SafetyGate g(SafetyParams{}, {}, 0.0);
+  std::vector<Vec2> box;
+  for (int i = 0; i < 7; ++i) {
+    box.emplace_back(0.30 + 0.22, -0.15 + 0.05 * i);
+  }
+  double t = 0.0;
+  g.setScan({}, kLidar, kInc, true, t);
+  g.setCloud(box, t);
+  EXPECT_DOUBLE_EQ(drive(g, 0.3, 0.0, t).command.linear, 0.0);
+  // 점군이 끊긴다 (LiDAR 는 계속 비어 있음 = 멀다) → STOP 유지, 사유도 유지
+  for (int i = 1; i <= 20; ++i) {
+    t = 0.05 * i;
+    g.setScan({}, kLidar, kInc, true, t);
+    const auto st = drive(g, 0.3, 0.0, t);
+    EXPECT_DOUBLE_EQ(st.command.linear, 0.0) << "t=" << t;
+    EXPECT_TRUE(hasCause(st, "depth")) << "t=" << t;
+    EXPECT_TRUE(st.proximity_stop) << "t=" << t;
+  }
+  // 점군이 돌아와 비었음을 보이면 푼다
+  t += 0.05;
+  g.setScan({}, kLidar, kInc, true, t);
+  g.setCloud({Vec2(3.0, 0.0), Vec2(3.0, 0.05), Vec2(3.0, 0.1)}, t);
+  const auto clear = drive(g, 0.3, 0.0, t);
+  EXPECT_FALSE(clear.proximity_stop);
+  EXPECT_NEAR(clear.command.linear, 0.3, 1e-9);
+}
+
 TEST(SafetyGate, LowObstacleSeenOnlyByDepthCloudStops)
 {
   // 0.15 m 상자·지게차 포크는 LiDAR 평면(지면 0.20 m) 아래 → 깊이 점군만 본다
