@@ -33,6 +33,7 @@ CLEAN_EXIT_CODES = (0, -2, -15, 130, 143)
 # 종료 코드를 판정하지 않는 외부 프로세스 (Gazebo 서버는 렌더링 정리 중 비정상 코드로 끝나는 일이 있다)
 IGNORED_PROCESSES = ('gazebo', 'ign', 'ruby')
 RUN_EXITS_KEY = 'exited_during_run'
+LIFECYCLE_ACTIVE = 3        # lifecycle_msgs/State PRIMARY_STATE_ACTIVE
 SHUTDOWN_MARGIN_S = 120.0   # 러너 상한 − 이만큼: launch 종료(SIGINT→SIGTERM→SIGKILL) + post-shutdown 판정
 
 
@@ -239,13 +240,33 @@ class ProbeCase(unittest.TestCase):
                    ok, '', f'{seconds * self.settings.timeout_scale:.0f} s 안에 못 받은 토픽 '
                    f'{missing}, 노드 {sorted(self.probe.node_names())}')
 
+    def managed_nodes(self, manager: str) -> Tuple[str, ...]:
+        """관리자 이름 → 그 관리자가 맡는 lifecycle 노드 (이름은 amr_bringup 이 단일 출처)."""
+        from amr_bringup.launch_utils import LIFECYCLE_NODES
+        label = manager.rstrip('/').rsplit('lifecycle_manager_', 1)[-1]
+        if label == 'map':
+            return ('/map_server',)                      # map 은 로봇 이름공간 밖이다
+        return LIFECYCLE_NODES.get(label, ())
+
+    def lifecycle_state(self, node: str) -> int:
+        """<node>/get_state 의 상태 id (응답 없으면 0 = UNKNOWN)."""
+        from lifecycle_msgs.srv import GetState
+        res = self.probe.call(GetState, f'{node}/get_state', GetState.Request(), 2.0)
+        return int(res.current_state.id) if res is not None else 0
+
     def wait_lifecycle_active(self, managers: Sequence[str], seconds: float,
                               name: str = 'lifecycle managers active') -> None:
         """
         nav2_lifecycle_manager 들의 <이름>/is_active 가 true 가 될 때까지 기다린다 (판정 기록).
 
         Nav2 가 활성화 도중일 때 요청을 보내면 거절되거나(06: 50/50 거절), 종료가 활성화 전이 도중에 오면
-        controller_server 가 abort(-6)로 끝났다 — 요청 전에 모든 관리자가 활성인지 확인한다.
+        controller_server 가 abort(-6)로 끝났다 — 요청 전에 스택이 활성인지 확인한다.
+
+        관리자가 응답하지 않아도 그 관리자가 맡는 노드가 모두 active 면 통과로 본다: nav2_lifecycle_manager
+        는 change_state 를 무한 대기로 부르므로(nav2_util::LifecycleServiceClient, 시간 제한 인자 없음)
+        전이 응답이 한 번 유실되면 영원히 멈춘다 — 그때 amr_bringup 의 lifecycle_watchdog 이 노드를 직접
+        올려 스택은 정상 동작한다. 시나리오가 재려는 것은 스택 동작이므로 측정은 진행하고, 멈춘 관리자는
+        measure('lifecycle_manager_wedged') 로 따로 남긴다 (bond 감시가 없는 상태라 결함은 결함이다).
         """
         from std_srvs.srv import Trigger
         state = {}
@@ -260,8 +281,21 @@ class ProbeCase(unittest.TestCase):
 
         ok = self.probe.wait_until(active, self.timeout(seconds), 1.0)
         inactive = [m for m in managers if not state.get(m)]
-        self.check(name, inactive or 'all active', [], ok, '',
-                   f'{seconds * self.settings.timeout_scale:.0f} s 안에 비활성: {inactive}')
+        note = f'{seconds * self.settings.timeout_scale:.0f} s 안에 비활성: {inactive}'
+        if not ok:
+            wedged = {}
+            for m in inactive:
+                nodes = self.managed_nodes(m)
+                wedged[m] = {n: self.lifecycle_state(n) for n in nodes}
+            all_active = bool(wedged) and all(
+                nodes and all(s == LIFECYCLE_ACTIVE for s in nodes.values())
+                for nodes in wedged.values())
+            if all_active:
+                self.measure('lifecycle_manager_wedged', wedged)
+                ok = True
+                note = (f'관리자 {inactive} 가 응답하지 않지만 그 노드는 모두 active '
+                        f'(lifecycle_watchdog 이 직접 전이) — 관리자 결함은 measure 에 기록')
+        self.check(name, inactive or 'all active', [], ok, '', note)
 
     def check_map_registration(self, seconds: float = 120.0, topic: str = '/map', grid=None):
         """
