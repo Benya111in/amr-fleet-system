@@ -134,7 +134,7 @@ graph TD
   2. 로봇마다 `amr_description description.launch.py robot_name:=amr_0N prefix:=amr_0N/` + `spawn.launch.py robot_name:=amr_0N x:=… y:=… yaw:=…` (자세는 아래 표 = `amr_bringup/config/fleet_spawn.yaml`)
   3. `amr_simulation unpause.launch.py robots:=amr_01,amr_02,...` — 모든 모델이 월드에 보이면 일시정지를 푼다 (하나라도 300 s 안에 안 보이면 ERROR, 월드는 멈춘 채)
 
-  순서로 띄운다. 실측: 2대·6대 모두 첫 scan 이 sim 0.0 s, 간격 0.100 s (폭주 없음), 해제까지 월드 기동 후 7~10 s. 운용 중(sim T > 0) 재스폰은 여전히 폭주를 일으키므로 피한다 (적재 변경도 재스폰 대신 향후 DetachableJoint).
+  순서로 띄운다. 실측: 2대·6대 모두 첫 scan 이 sim 0.0 s, 간격 0.100 s (폭주 없음), 해제까지 월드 기동 후 7~10 s. 운용 중(sim T > 0) 재스폰은 여전히 폭주를 일으키므로 피한다 (적재 변경은 재스폰 없이 DetachableJoint — `payload_manager_node`).
 - 브리지: 로봇당 `parameter_bridge` 1개. 인자 나열(`/amr_01/scan@sensor_msgs/msg/LaserScan[ignition.msgs.LaserScan …`) 또는 `config_file` YAML(0.244.26 에서 지원 확인)을 쓰고, 이름을 바꿔야 할 때만 `--ros-args -r __ns:=/amr_01 -r <gz>:=<ros>` 를 쓴다 (확인). `/clock` 브리지는 루트에 1개.
 - `IGN_PARTITION`: gz-transport 디스커버리 범위. 서버·모든 브리지·`ign topic` CLI 가 같은 값을 가져야 하며, 다른 파티션에서는 토픽이 전혀 보이지 않는다 (확인: 0개). `docker-compose.yml` 은 `.env` 의 `IGN_PARTITION`(`.env.example`: `IGN_PARTITION=amr_<이름>`, 사람마다 다르게)을 모든 서비스에 주입하므로 한 사람의 서버·브리지·CLI 컨테이너는 같은 파티션을 쓰고, 같은 호스트의 다른 사용자와는 격리된다. 호스트에서 직접 `ign topic` 을 쓸 때는 같은 값을 export 한다.
 - 스폰 좌표 (대기 구역 패드, `src/amr_bringup/config/fleet_spawn.yaml` — `amr_bringup/test/test_spawn_poses.py` 가 월드 SDF 의 충돌체·actor 궤적·지게차 경로와 대조):
@@ -193,6 +193,18 @@ graph TD
 - 스폰 좌표: `config/fleet_spawn.yaml` — 남동 대기 구역 x = 18, 20, 22, 24, 26 / y = −16, yaw π/2. `test/test_spawn_poses.py` 가 `warehouse.sdf` 의 box 충돌체·actor 궤적·지게차 구간과 대조한다 (벽 3.8 m, 기둥 ≥ 8.6 m, 동적 경로 ≥ 6.0 m).
 - 스택 런치에 주는 인자 (선언하지 않은 인자는 무시됨): `robot_name`, `namespace`(= robot_name), `prefix`·`frame_prefix`(단일 로봇은 `''` 를 명시), `use_sim_time`, `initial_x/y/yaw`(= 스폰 자세, AMCL 초기 자세), `waiting_pose`(`"x,y,yaw"` = 스폰 자세 — 로봇마다 다른 대기 위치), `start_map_server`(첫 로봇만 `true`, 루트 map_server 1개).
 - 통신 지연(§6): `fleet_spawn.yaml` 의 공통 `comm_latency_ms` 는 manager·모든 adapter 에, `robots[].comm_latency_ms` 는 그 로봇 adapter(`robot_state` 송신)에만 들어간다. fleet.yaml 뒤에 `/<id>/fleet_adapter_node` 키를 덧붙인 임시 파라미터 파일을 `params_file` 로 넘긴다 (0 ≤ lo ≤ hi ≤ 100 ms 검사; 확인: 공통 60 → manager·adapter `[0, 60]`, amr_02 만 `[20, 80]`). manager → 로봇(`assign_task`) 방향은 지연 모델이 하나라 공통 값만 쓴다.
+
+- Fast DDS 프로파일 (`launch_utils.dds_environment`, `config/fastdds_multi_robot*.xml`): `FASTRTPS_DEFAULT_PROFILES_FILE` 이
+  비어 있으면 bringup 이 모든 하위 프로세스에 준다. (1) `builtin.mutation_tries` 400 — 5대 전체 스택은 ROS 프로세스 149 개인데
+  Fast DDS 2.6 은 수신 포트를 100 번까지만 바꿔 시도해 101 번째 이후 참가자가 그래프에서 빠졌다 (lifecycle 이 `planner_server`
+  를 10 분 넘게 기다림, 실측). (2) SHM 세그먼트 16 MB — 카메라 영상(921 KB·1.2 MB)이 기본 0.5 MB 에 들어가지 않아 UDP 조각으로
+  떨어지던 것을 막는다 (쓰는 쪽 = 이미지 브리지도 같아야 한다; 전체 스택 1대 YOLO 30.0 FPS). `ROS_LOCALHOST_ONLY=1` 이면 UDP 를
+  127.0.0.1 로 묶은 변형, **`/dev/shm` < 2 GiB 이면 SHM 확대 없는 변형** — docker 기본 64 MB 에서는 16 MB 세그먼트가 1대만으로
+  공간을 다 써 통신이 멎었다 (실측). compose 는 `ipc: host` 라 해당 없고, 시험용 컨테이너는 `--shm-size=8g` 로 띄운다
+  (전체 스택 1대 ≈ 0.6 GB 사용). ros2 CLI·통합 테스트 프로브처럼 같은 그래프에 붙는 외부 도구도 같은 변수를 줘야 100 개 넘는
+  참가자를 본다 (`scripts/run_integration.sh`).
+- lifecycle bond 시간 30 s (`localization.launch.py`·`navigation.launch.py` `BOND_TIMEOUT_S`): 5대 + 과부하(load 60–230)에서
+  4 s (map)·10 s (amcl) 로는 "bond 로 닿지 않음 → 기동 중단" 이 났다.
 
 ### 9.1 실측 — 센서 + 시뮬레이터 + fleet + dashboard + evaluation (온보드 스택 미포함)
 

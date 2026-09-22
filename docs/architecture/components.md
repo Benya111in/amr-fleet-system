@@ -90,7 +90,6 @@ flowchart TB
 
 설계상 필요하지만 현재 `package.xml` 에 없는 의존 (구현 시 추가):
 
-- `amr_simulation`: `ros_gz_interfaces` (`payload_manager_node` — 설계, 미구현)
 - `amr_fleet`: `amr_bringup` (exec, `multi_robot.launch.py` 가 `system.launch.py` 를 로봇별로 include), `nav_msgs`, `diagnostic_msgs`, `std_msgs`, `python3-scipy`, `python3-networkx`
 - `amr_perception`: `nav_msgs`, `std_msgs`, `std_srvs`, `python3-numpy` (+ `ultralytics`, `torch` 는 pip)
 - `amr_behavior`: `geometry_msgs`, `std_msgs`, `tf2_ros`. `behaviortree_cpp`(v4) 대신 `behaviortree_cpp_v3` 권장 — Humble 의 `nav2_behavior_tree` 가 v3 에 링크되므로 한 프로세스에 두 버전을 섞지 않는다
@@ -115,7 +114,7 @@ flowchart TB
 | `gz_world.py` (amr_description) | Python | own | 스폰(create 서비스 대기 → 중복 검사 → 생성 → scene/info 로 생성 확인, 실패 시 런치 종료)과 일시정지 해제(전 로봇 확인 후) | `ign service` CLI 호출 위주 |
 | `obstacle_truth_node` | Python | own | 동적 장애물 지면 진실: actor 궤적을 Gazebo 와 같은 스플라인으로 sim time 보간 + 지게차·셔틀 오도메트리 → `/sim/dynamic_obstacles` (명세 4.7 추적기 평가) | 50 Hz, 1 코어의 약 22 % (실측) |
 | `collision_monitor_node` | Python | own | 로봇 발자국 ↔ 동적 장애물(사람 원, 차량 사각형, 다른 로봇) 부호 거리, 접촉(< 0 m) 사건 계수 (명세 4.7 "30회 충돌 0건") | ground_truth 50 Hz, 1 코어의 약 22 % (2대, 실측) |
-| `payload_manager_node` | Python | own | (설계, 미구현) 주행 중 적재/하역 이벤트: 박스 모델 spawn + DetachableJoint 부착으로 질량 변화 반영, 충전 이벤트. 현재는 스폰 시점 적재(xacro `payload`)만 있다 | gz 서비스 호출 위주, 성능 무관 |
+| `payload_manager_node` | Python | own | 주행 중 적재/하역 (명세 4.1·8장). `payload/attach`·`payload/mass`(task_executor, 계약 C5) → 물품 표 크기·질량의 화물 모델 `<robot>_cargo` 를 데크 위에 생성(UserCommands create, `ign service` CLI) → 로봇 모델의 DetachableJoint(`amr_gazebo.xacro`, 부모 `base_footprint`)가 부착 → 질량·관성이 동역학에 합산. 하역 = detach + remove. 로봇마다 `amr_description spawn.launch.py` 가 기동 (bringup 변경 없음) | `ign service` 호출 위주 (적재 1대 0.5 s, 5대 동시 1.0 s 벽시계), 성능 무관 |
 
 월드·센서 실측 (Fortress 6.18 헤드리스, `amr-fleet-system:wf-final`, 2026-09-22):
 
@@ -142,8 +141,9 @@ flowchart TB
 | `map_server` | C++ | LC/ext | **루트(`/`)에 1개만** 기동, `maps/*.yaml` → `/map` (transient_local). 로봇별 AMCL·전역 costmap·추적기가 절대 이름 `/map` 을 구독 ([multi_robot.md](multi_robot.md) §4) | — |
 | `amcl` | C++ | LC/ext | `scan_filtered` + `/map` → `amcl_pose`. `tf_broadcast: false` (map→odom 은 EKF 가 발행) | — |
 | `ekf_filter_node_odom` | C++ | ext | `wheel_odom` + `imu/data` → `odometry/filtered`, TF `odom→base_footprint` | — |
-| `ekf_filter_node_map` | C++ | ext | `wheel_odom` + `imu/data` + `amcl_pose` → `odometry/filtered_map`, TF `map→odom` | — |
-| `kidnap_monitor_node` | Python | own | `amcl_pose` 공분산 급증/점프 감지 → `reinitialize_global_localization` + `spin` 요청, `localization/lost` 발행 | 저주기 감시 로직 |
+| `ekf_filter_node_map` | C++ | ext | `wheel_odom` + `imu/data` + `amcl_pose` + `scan_match_pose` → `odometry/filtered_map`, TF `map→odom` | — |
+| `kidnap_monitor_node` | Python | own | 스캔-지도 인라이어 비율·공분산·점프로 납치 감지 → 전역 시드 탐색 + 제자리 2π + 별칭 여백 게이트 → map EKF `set_pose`, `localization/lost` 발행 ([../algorithms/slam.md](../algorithms/slam.md) §5) | 저주기 감시 로직 |
+| `scan_matcher_node` | Python | own | 스캔-지도 점-대-면 정합(Gauss-Newton, 헤시안 공분산) → `scan_match_pose` → map EKF pose1 (slam.md §4.3, `use_scan_matcher` 기본 true) | 스캔마다 (10 Hz) |
 | `lifecycle_manager_localization` | C++ | ext | 로봇별 `amcl` configure/activate. 루트 `map_server` 는 `multi_robot.launch.py`(단일 로봇은 `system.launch.py`)가 별도 `lifecycle_manager_map` 으로 활성화 | — |
 
 매핑 모드(`mode:=slam`)에서는 `slam_toolbox` 만, 주행 모드(`mode:=localization`)에서는 로봇별 `amcl`+`ekf_filter_node_map` 을 기동하고, 루트 `map_server` 는 로봇 수와 무관하게 1개만 띄운다(이미 떠 있으면 재사용). 두 모드는 `map→odom` 발행자가 겹치므로 동시에 켜지 않는다.
@@ -173,7 +173,7 @@ flowchart TB
 | `detection_marker_node` | Python | own | `perception/detected_objects` → RViz `MarkerArray` (CUBE + TEXT "Class/Conf/Dist") | 시각화 전용 |
 | `aruco_detector_node` | Python | own | `camera/image_raw` → `cv2.aruco` (opencv-contrib-python-headless 4.11.0.86 — Dockerfile 고정) → 도킹 마커 자세 `perception/dock_marker_pose` (base_link 기준) | OpenCV Python |
 | `obstacle_tracker_node` | C++ | own | `scan_filtered` − `/map` 배경 → 클러스터링 → 데이터 연관 → **칼만 필터** → 속도/방향/신뢰도/동적 여부 → 경로(`plan`)·자기 속도 기반 **TTC** → `perception/tracked_obstacles` 10 Hz | 안전 체인(스캔→TTC→정지) 지연 최소화 |
-| `safety_node` | C++ | own | `cmd_vel_smoothed` 게이트 → `cmd_vel`. 거리 존 Warning 1.0 m(≤ 0.5 m/s) / Critical 0.5 m(≤ 0.2 m/s) / 정지 0.3 m, TTC 기반 연속 감속 v ≤ a·(TTC − t_react) ([sequences.md](sequences.md) §2), E-stop 래치, 센서 타임아웃(`robot_params.yaml safety.sensor_timeouts`, 토픽별 ≈3 주기: LiDAR 0.3 / depth 0.2 / RGB 0.1 / IMU 0.05 / 엔코더 0.06 s) — LiDAR·휠 엔코더 고장은 **정지**, IMU·카메라 고장은 `degraded_mode_max_speed` **0.2 m/s 저속** | 안전 필수, 50 Hz |
+| `safety_node` | C++ | own | `cmd_vel_smoothed` 게이트 → `cmd_vel`. 거리 = 현재 운동(명령·측정 속도 원호)의 스윕 풋프린트 안 **접근 거리** (0.60 m 통로 옆 벽은 영역 밖): Warning 1.0 m(≤ 0.5 m/s) / Critical 0.5 m(≤ 0.2 m/s) / STOP 0.3 m (`safety/zone` = 3, E-stop 아님), 모든 방향 접촉 가드 0.02 m, 전방 깊이 점군(지면 0.03–0.40 m, LiDAR 평면 아래 물체), 도킹 예외 다각형(계약 C2), TTC 연속 감속 v ≤ a·(TTC − t_react), E-stop 래치(계약 C1), 센서 고장 = 주기에서 유도한 디바운스 (LiDAR 0.3 / 휠 0.2 s → **정지** + estop_active, IMU 0.2 / RGB 0.3 / 깊이 0.4 s → **0.2 m/s 저속**; ≈ 3 주기 지연은 경고만) ([../algorithms/tracking.md](../algorithms/tracking.md) §6) | 안전 필수, 50 Hz |
 
 ### 3.5 amr_behavior
 
@@ -213,7 +213,7 @@ flowchart LR
     bridge["ros_gz_bridge"]
     truth["obstacle_truth_node"]
     colmon["collision_monitor_node"]
-    payload["payload_manager_node<br/>(설계)"]
+    payload["payload_manager_node"]
   end
   subgraph desc["amr_description"]
     rsp["robot_state_publisher"]
@@ -260,7 +260,7 @@ flowchart LR
   gz <-->|"gz transport"| bridge
   bridge -->|"/sim/forklift_main/odom<br/>/sim/shuttle_amr/odom"| truth & colmon
   bridge -->|"ground_truth/odom"| colmon
-  payload -.->|"SpawnEntity / DetachableJoint"| gz
+  payload -.->|"ign service create/remove<br/>cargo/attach·detach"| gz
   bridge -->|"joint_states"| wodom & rsp
   bridge -->|"imu/data_raw"| imuf
   bridge -->|"scan"| scanf
@@ -293,8 +293,8 @@ flowchart LR
   safety -->|"safety/estop_active<br/>safety/zone"| adapter
   texec -.->|"navigate_to_pose"| btnav
   texec -.->|"dock"| dock
-  texec -->|"payload/attach"| payload
-  payload -->|"payload/mass"| vprof & ctrl
+  texec -->|"payload/attach · payload/mass"| payload
+  texec -->|"payload/mass"| vprof & ctrl
   texec -->|"task_status<br/>executor/phase"| adapter
   fm -.->|"assign_task"| texec
   adapter -->|"robot_state"| fm & tm
@@ -323,7 +323,7 @@ flowchart LR
   vprof["velocity_profiler_node<br/>프로파일 · 저크 · PID"] -->|"cmd_vel_smoothed"| safety
   safety["safety_node<br/>존 감속 · E-stop · 센서 타임아웃"] -->|"cmd_vel"| bridge["ros_gz_bridge"] --> gz["Gazebo DiffDrive"]
   ekfo["ekf_filter_node_odom"] -->|"odometry/filtered"| vprof
-  payload["payload_manager_node"] -->|"payload/mass"| vprof
+  texec["task_executor_node"] -->|"payload/mass"| vprof
   tracker["obstacle_tracker_node"] -->|"perception/tracked_obstacles"| safety
   scanf["scan_filter_node"] -->|"scan_filtered"| safety
   dash["dashboard_node"] -->|"estop / fleet estop"| safety
@@ -414,14 +414,19 @@ Gazebo 실측 (평지, cmd_vel 스텝, ground_truth 50 Hz):
 | Pub | `/sim/collision_monitor/summary` | `std_msgs/msg/String` | 1 Hz | JSON 로봇별 `{contacts, min_distance, current, nearest, per_obstacle_min}` |
 | SrvS | `/sim/collision_monitor/reset` | `std_srvs/srv/Trigger` | | 시험 1회마다 누적 초기화 (명세 4.7 30회 시험) |
 
-`payload_manager_node` (설계, 미구현 — 현재 적재는 스폰 시점 xacro `payload`/`payload_mass` 인자):
+`payload_manager_node` (amr_simulation, 로봇 네임스페이스):
 
 | 방향 | 이름 | 타입 | 비고 |
 | --- | --- | --- | --- |
-| Sub | `payload/attach` | `std_msgs/msg/String` | `"small" / "medium" / "large"` 부착, `""` 분리 |
-| Sub | `charging/enable` | `std_msgs/msg/Bool` | 충전 스테이션 도킹 시 true |
-| Pub | `payload/mass` | `std_msgs/msg/Float32` | latched. `robot_params.yaml payload.*.mass` |
-| SrvC | `/world/<world>/create`, `/world/<world>/remove` | `ros_gz_interfaces/srv/SpawnEntity`, `ros_gz_interfaces/srv/DeleteEntity` | 브리지 경유 |
+| Sub | `payload/attach` | `std_msgs/msg/String` (reliable, transient_local, depth 1) | `"small" / "medium" / "large"` 적재, `""` 하역 (계약 C5) |
+| Sub | `payload/mass` | `std_msgs/msg/Float32` (reliable, transient_local, depth 1) | [kg] (C5). 두 토픽은 마지막 메시지 후 0.1 s 조용하면 한 요청으로 확정 |
+| Sub | `ground_truth/odom` | `nav_msgs/msg/Odometry` | 화물 생성 자세(월드 = map)·정지 판정 |
+| Sub | `cargo/state` | `std_msgs/msg/String` | gz `/<r>/cargo/state` 브리지 (DetachableJoint `"attached"` / `"detached"`) |
+| Pub | `cargo/attach`, `cargo/detach` | `std_msgs/msg/Empty` | gz `/<r>/cargo/{attach,detach}` 브리지 (spawn.launch.py) |
+| Pub | `payload/sim_state` | `std_msgs/msg/String` JSON, transient_local | `{state: none/loading/attached/unloading/error, item, mass, model, detail, offset_m}` |
+| SrvC | `/world/<world>/create`, `/world/<world>/remove` | `ign service` (`ignition.msgs.EntityFactory` / `Entity`) | ros_gz_bridge 0.244 는 서비스 브리지 불가 |
+
+`payload/mass` 는 이 노드가 아니라 `task_executor_node` 가 발행한다 (C5). `charging/enable` 소비자는 `battery_model_node` (5.5).
 
 ### 5.2 amr_localization
 
@@ -456,7 +461,7 @@ Gazebo 실측 (평지, cmd_vel 스텝, ground_truth 50 Hz):
 | 노드 | Sub | Pub | TF | SrvS |
 | --- | --- | --- | --- | --- |
 | `ekf_filter_node_odom` | `wheel_odom`, `imu/data` | `odometry/filtered` (`nav_msgs/msg/Odometry`, 50 Hz) | `<r>/odom → <r>/base_footprint` | `set_pose` (`robot_localization/srv/SetPose`) |
-| `ekf_filter_node_map` | `wheel_odom`, `imu/data`, `amcl_pose` | `odometry/filtered_map` (`nav_msgs/msg/Odometry`, 50 Hz) | `map → <r>/odom` | `set_pose` |
+| `ekf_filter_node_map` | `wheel_odom`, `imu/data`, `amcl_pose`, `scan_match_pose` | `odometry/filtered_map` (`nav_msgs/msg/Odometry`, 50 Hz) | `map → <r>/odom` | `set_pose` |
 
 `kidnap_monitor_node`
 
@@ -522,15 +527,17 @@ Nav2 서버 (ext, 액션·토픽 이름은 Nav2 Humble 기본값)
 | | Pub | `perception/tracked_obstacles` | `amr_msgs/msg/TrackedObstacleArray` | 10 Hz, reliable | frame `map`. `time_to_collision` = inf 이면 비충돌 |
 | | Pub | `perception/tracked_markers` | `visualization_msgs/msg/MarkerArray` | 10 Hz | 속도 화살표 + track_id |
 | `safety_node` | Sub | `cmd_vel_smoothed` | `geometry_msgs/msg/Twist` | | |
-| | Sub | `scan_filtered` | `sensor_msgs/msg/LaserScan` | 10 Hz | 존 판정(footprint 기준 최근접 거리). 타임아웃 `sensor_timeouts.lidar` 0.3 s → **정지** |
+| | Sub | `scan_filtered` | `sensor_msgs/msg/LaserScan` | 10 Hz | 접근 영역 거리(스윕 풋프린트) + 접촉 가드. 고장 0.3 s (3 주기) → **정지** + estop_active |
 | | Sub | `perception/tracked_obstacles` | `amr_msgs/msg/TrackedObstacleArray` | | TTC ≤ τ_crit 이면 v ≤ a·(TTC − t_react) 연속 제한 ([sequences.md](sequences.md) §2) |
-| | Sub | `imu/data`, `wheel_odom` | | 100 / 50 Hz | 타임아웃 `sensor_timeouts.imu` 0.05 s → `degraded_mode_max_speed` 0.2 m/s 저속, `sensor_timeouts.wheel_encoder` 0.06 s → **정지** |
-| | Sub | `camera/camera_info`, `camera/depth/camera_info` | `sensor_msgs/msg/CameraInfo` | 30 / 15 Hz | 카메라 생존 감시(이미지와 같은 주기의 경량 메시지). 타임아웃 `sensor_timeouts.rgb_camera` 0.1 s / `sensor_timeouts.depth_camera` 0.2 s → 0.2 m/s 저속 |
-| | Sub | `estop`, `/fleet/estop` | `std_msgs/msg/Bool` | latched | 대시보드 E-stop 버튼 (로봇별 / 전체) |
+| | Sub | `imu/data`, `wheel_odom` | | 100 / 50 Hz | `wheel_odom` twist = 접근 영역의 측정 속도 가설. 지연(≈ 3 주기, sensor_timeouts)은 경고만; 고장 = `sensor_fault_periods` / 주기: IMU 0.2 s → 0.2 m/s 저속, 휠 0.2 s → **정지** + estop_active |
+| | Sub | `camera/camera_info`, `camera/depth/camera_info` | `sensor_msgs/msg/CameraInfo` | 30 / 15 Hz | 카메라 생존 감시. 고장 RGB 0.3 s / 깊이 0.4 s → 0.2 m/s 저속 |
+| | Sub | `camera/depth/points_filtered` | `sensor_msgs/msg/PointCloud2` | 15 Hz, sensor | 전방 LiDAR 평면 아래 물체(지면 0.03–0.40 m) 접근 판정. 0.4 s 넘게 없으면 전진 0.2 m/s |
+| | Sub | `safety/dock_exclusion` | `geometry_msgs/msg/PolygonStamped` | ≥ 10 Hz (도킹 중) | 계약 C2: 안의 점은 정지 거리 0.10 m + 0.2 m/s 상한, 0.3 s 무수신이면 일반 규칙. TF 로 풀리는 아무 프레임 |
+| | Sub | `estop`, `/fleet/estop` | `std_msgs/msg/Bool` | transient_local + volatile 구독 | 대시보드 E-stop 버튼 (로봇별 / 전체). 두 QoS 발행자 모두 수신 |
 | | Pub | `cmd_vel` | `geometry_msgs/msg/Twist` | 50 Hz | 유일한 `cmd_vel` 발행자 |
-| | Pub | `safety/estop_active` | `std_msgs/msg/Bool` | latched | 0.3 m 침범 / E-stop / 센서 고장 |
-| | Pub | `safety/zone` | `std_msgs/msg/UInt8` | 변화 시 | 0 CLEAR · 1 WARNING(1.0 m) · 2 CRITICAL(0.5 m) · 3 STOP(0.3 m) |
-| | SrvS | `safety/reset_estop` | `std_srvs/srv/Trigger` | | 래치 해제 (원인 해소 후) |
+| | Pub | `safety/estop_active` | `std_msgs/msg/Bool` | latched | 계약 C1: E-stop 래치 ∨ 정지형 센서 고장. **근접 정지는 포함하지 않는다** (`safety/zone` = 3) |
+| | Pub | `safety/zone` | `std_msgs/msg/UInt8` | latched, 변화 시 | 0 CLEAR · 1 WARNING(1.0 m) · 2 CRITICAL(0.5 m) · 3 STOP (접근 0.3 m · 접촉 가드 0.02 m · 도킹 예외 0.10 m; 운동이 바뀌어 멀어지면 해제) |
+| | SrvS | `safety/reset_estop` | `std_srvs/srv/Trigger` | | E-stop 래치 해제: 모든 입력이 false 일 때만 성공. 거절된 요청은 상태를 남기지 않는다 |
 
 ### 5.5 amr_behavior
 
@@ -540,25 +547,27 @@ Nav2 서버 (ext, 액션·토픽 이름은 Nav2 Humble 기본값)
 | --- | --- | --- | --- |
 | SrvS | `assign_task` | `amr_msgs/srv/AssignTask` | 플릿이 호출. IDLE 이 아니면 `success=false`, `message="busy"` |
 | Pub | `task_status` | `amr_msgs/msg/Task` | 상태 전이마다 (PENDING→IN_PROGRESS→COMPLETED/FAILED) |
-| Pub | `executor/phase` | `std_msgs/msg/String` | `idle / moving / docking / loading / charging / error` — `RobotState.status` 매핑 원천 |
+| Pub | `executor/phase` | `std_msgs/msg/String` | `IDLE / MOVING / PERCEIVING / DOCKING / LOADING / UNLOADING / UNDOCKING / RETURNING / CHARGING / RECOVERING / ERROR` — `RobotState.status` 매핑 원천 (플릿은 대소문자 무시, PERCEIVING·RECOVERING 은 MOVING) |
 | Sub | `perception/detected_objects` | `amr_msgs/msg/DetectedObjectArray` | `IsObjectDetected` 조건 |
 | Sub | `localization/lost`, `safety/estop_active` | `std_msgs/msg/Bool` | `IsLocalized`, `IsEstopClear` 조건 |
 | Sub | `traffic/hold` | `std_msgs/msg/Bool` | `IsTrafficHold` 조건 (ReactiveSequence 가 주행 중단) |
 | Sub | `traffic/yield_pose` | `geometry_msgs/msg/PoseStamped` | 양보 위치 |
 | Sub | `battery_state` | `sensor_msgs/msg/BatteryState` | `IsBatteryOk` |
-| Pub | `payload/attach`, `charging/enable` | `std_msgs/msg/String`, `std_msgs/msg/Bool` | 적재/하역/충전 이벤트 |
+| Pub | `payload/attach`, `payload/mass`, `charging/enable` | `std_msgs/msg/String`, `std_msgs/msg/Float32`, `std_msgs/msg/Bool` | 적재/하역(계약 C5, transient_local)·충전 창 이벤트 |
+| Pub/Sub | `/fleet/charger_claims` | `std_msgs/msg/String` JSON | 로봇 간 충전소 점유 공유 (1 Hz 심장박동, 점유 시각 무손실 `%.17g`) |
 | ActC | `navigate_to_pose` | `nav2_msgs/action/NavigateToPose` | `nav2_behavior_tree::BtActionNode` 재사용 |
 | ActC | `dock` | `amr_msgs/action/Dock` | |
 | ActC | `spin`, `backup`, `wait` | `nav2_msgs/action/Spin`, `BackUp`, `Wait` | 복구 서브트리 |
 | SrvC | `global_costmap/clear_entirely_global_costmap` | `nav2_msgs/srv/ClearEntireCostmap` | 복구 |
-| 기타 | Groot ZMQ `:1666/1667` | — | BT 시각화 (명세 8장) |
+| 기타 | Groot ZMQ `:1666/1667` (로봇 i: 1666 + 2i / 1667 + 2i, bringup 이 준다) | — | BT 시각화 (명세 8장) |
 
 `docking_server_node`
 
 | 방향 | 이름 | 타입 | 비고 |
 | --- | --- | --- | --- |
 | ActS | `dock` | `amr_msgs/action/Dock` | goal `dock_id`, `approach_pose`, `max_retries`(=3) / feedback `current_phase`(`search / align / approach / final`), `distance_remaining`, `attempt` / result `success`, `final_position_error`, `final_angle_error`, `attempts_used` |
-| Sub | `perception/dock_marker_pose` | `geometry_msgs/msg/PoseStamped` | 마커 타임아웃 `marker_timeout` 2 s |
+| Sub | `perception/dock_marker_pose` | `geometry_msgs/msg/PoseStamped` | 계약 C3: 마커 모델 프레임 (+x = 판 바깥 법선, +z 위) — `marker_normal_axis: x`. 마커 타임아웃 `marker_timeout` 2 s |
+| Pub | `safety/dock_exclusion` | `geometry_msgs/msg/PolygonStamped` | 계약 C2: 도킹 goal 동안 20 Hz, 판 앞 사각형 (`exclusion.*`) |
 | Pub | `cmd_vel_nav` | `geometry_msgs/msg/Twist` | 20 Hz, 도킹 중에만 |
 | 판정 | — | — | 위치 ≤ 0.02 m, 각도 ≤ 1° (0.01745 rad), 안정 0.5 s 유지 |
 
@@ -636,6 +645,8 @@ POST 는 `Origin` 이 있으면 `Host` 와 같아야 하고(403), `api_token` �
 조작 API 에 `X-Dashboard-Token` 헤더가 필요하다(401, 페이지가 처음 조작할 때 입력받아 세션에 둔다).
 **`safety_node` 계약**: 로봇별 `estop` 과 `/fleet/estop` 중 하나라도 true 면 정지를 유지하고, `reset_estop` 은 두 값이
 모두 false 일 때만 래치를 푼다 (대시보드는 전체 E-stop 중 로봇별 해제를 409 로 막지만 다른 발행자는 막지 못한다).
+거절된 reset 은 대기 상태를 만들지 않는다 — 대시보드는 false 발행 뒤 reset 을 부르고, 실패하면 다시 부른다. 근접 정지(`safety/zone` = 3)는
+E-stop 이 아니다: BT `IsEstopClear`·플릿 어댑터는 `estop_active` 만 E-stop 으로 본다 (계약 C1).
 
 ---
 
@@ -675,4 +686,4 @@ ros2 topic hz /amr_01/cmd_vel        # 50 Hz, 발행자 1개 (ros2 topic info -v
 - `imu/data_raw`(브리지) → `imu/data`(필터) 규칙은 REP-145 를 따른 것. `sensors.yaml imu.topic` 은 브리지 출력 `imu/data_raw` 이고, 필터 출력 `imu/data` 는 `imu_filter_node` 가 정한다
 - 휠 인코더 노이즈(양자화·슬립)는 `wheel_odometry_node` 입력단에서 소프트웨어로 모델링한다 (결정). Fortress 에 엔코더 센서는 없고, 물리 슬립은 WheelSlip 시스템이 있지만 드리프트 분석 대상 노이즈를 파라미터로 통제하려고 쓰지 않는다
 - `battery_state`: 시뮬레이터가 발행하지 않는다 (LinearBattery 미사용). 대시보드·BT `IsBatteryOk` 입력을 누가 낼지(예: 주행 거리 기반 방전 모델 노드) 결정 필요
-- 주행 중 적재/하역 질량 변경(`payload_manager_node`, DetachableJoint)은 미구현. 스폰 시점 적재만 된다
+- 주행 중 적재/하역 질량 변경: 구현 (`payload_manager_node` + DetachableJoint). 남은 점: 화물 생성 자세는 지면 진실에서 계산하므로 요청~생성(≈ 0.3 s 벽시계) 사이 로봇이 움직이면 그만큼 어긋난 채 고정된다 — `payload/sim_state.offset_m` 로 보고, 2 cm 초과 시 경고

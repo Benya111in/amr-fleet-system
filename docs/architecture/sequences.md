@@ -106,9 +106,9 @@ sequenceDiagram
     end
   end
 
-  TE->>PM: payload/attach ("medium")
-  PM->>GZ: SpawnEntity(box) + DetachableJoint attach (10 kg)
-  PM-->>TE: payload/mass (10.0) — velocity_profiler_node · DWA 도 구독
+  TE->>PM: payload/attach ("medium") + payload/mass (10.0) — velocity_profiler_node · DWA 도 payload/mass 구독
+  PM->>GZ: create(<robot>_cargo, 10 kg, 데크 위) → DetachableJoint 부착 ("attached")
+  PM-->>TE: payload/sim_state (attached, offset_m)
   TE->>TE: Wait(load_time 10 s), executor/phase "loading"
   Note over TE,PM: dropoff_pose 로 MoveTo → DockAt → Unload(payload/attach "") 동일 절차
   TE-->>AD: task_status (COMPLETED)
@@ -126,7 +126,7 @@ sequenceDiagram
 - **요청·할당**: 작업은 JSON 으로 `/fleet/task_request` 에 들어오고(명세 8장) `fleet_manager_node` 가 `amr_msgs/msg/Task` 로 바꿔 우선순위·마감 큐에 넣는다. 할당은 `robot_state` 의 자세와 상태로 계산하며, 로봇 측 `assign_task` 는 IDLE 일 때만 수락한다. 거절되면 즉시 다음 후보로 넘어가므로 중앙 큐와 로봇 상태가 어긋나도 작업이 유실되지 않는다.
 - **주행**: `task_executor_node` 의 BT 는 Nav2 를 `navigate_to_pose` 로 호출할 뿐 경로·속도 계산에 관여하지 않는다. 자체 구현 A*/DWA 는 Nav2 서버 안의 플러그인이고, 속도는 `velocity_profiler_node`(프로파일·저크·PID) 와 `safety_node`(존·E-stop) 를 거쳐서만 로봇에 닿는다.
 - **복구 3종 (명세 8장)**: ① 주행 불가 — Nav2 내부 복구(RoundRobin) 뒤에도 실패하면 작업 BT 가 2회 재시도하고 대체 접근 자세를 시도한 뒤 FAILED 보고. ② 인식 실패 — 제자리 회전과 후진으로 시야를 바꿔 3회까지 재확인. ③ 도킹 3회 실패 — `Dock` 결과 `attempts_used=3` 이면 에러 보고 후 대기 구역으로 이동(대체 작업), 플릿이 재할당. 그 밖에 배터리 부족(Charge), 위치 상실(`IsLocalized`), E-stop(`IsEstopClear`) 은 ReactiveSequence 가 매 tick 검사한다.
-- **적재/하역**: 물리 조작 대신 가상 이벤트(명세 7장 제약). `payload_manager_node` 가 박스 모델을 붙여 질량을 바꾸고, `payload/mass` 를 받은 `velocity_profiler_node` 와 DWA 가 가감속 한계를 낮춘다.
+- **적재/하역**: 물리 조작 대신 가상 이벤트(명세 7장 제약). `payload_manager_node` 가 화물 모델을 DetachableJoint 로 붙여 질량·관성이 동역학에 합산되고 (25 kg: 가속 1.000 → 0.842, E-stop 제동 1.653 → 1.135 m/s², 하역하면 복원), `payload/mass` 를 받은 `velocity_profiler_node` 와 DWA 가 가감속 한계를 낮춘다.
 
 ### 시간 요구
 
@@ -179,11 +179,10 @@ sequenceDiagram
   else 거리 ≤ 1.0 / 0.5 m — Warning / Critical Zone
     SF->>SF: v ≤ 0.5 / 0.2 m/s (zone_max_speed), safety/zone=1 / 2 — 거리 존 상한이 TTC 제한보다 낮으면 우선
     SF->>GZ: cmd_vel (감속)
-  else 거리 ≤ 0.3 m — 긴급 정지
+  else 접근 거리(현재 운동의 스윕 풋프린트 안) ≤ 0.3 m — 긴급 정지
     SF->>GZ: cmd_vel = 0 (즉시)
-    SF-->>AD: safety/estop_active=true, safety/zone=3
-    AD-->>AD: robot_state STATUS_ESTOP → fleet_manager → /fleet/alerts
-    SF->>SF: 장애물 이탈 + 히스테리시스 (0.5 m) → 자동 해제
+    SF-->>AD: safety/zone=3 (estop_active 는 그대로 — 근접 정지는 E-stop 이 아니다, 계약 C1)
+    SF->>SF: 같은 운동의 접근 거리 > 0.5 m, 또는 운동이 바뀌어 멀어지면(후진·회전) 해제
   end
 
   Note over TR,CT: 장애물 통과 후 TTC = inf → DWA path 비용이 원경로로 복귀 유도
@@ -192,7 +191,7 @@ sequenceDiagram
   NAV->>CT: follow_path
   Note over CT,SF: 복귀 ≤ 5 s, 이탈 ≤ 1 m, 30회 시나리오 충돌 0건
 
-  opt 센서 고장 — 토픽별 수신 간격 > safety.sensor_timeouts (LiDAR 0.3 s, 휠 엔코더 0.06 s, IMU 0.05 s, 카메라 0.1~0.2 s)
+  opt 센서 고장 — 수신 간격 > 고장 시간 = sensor_fault_periods / 주기 (LiDAR 0.3 s, 휠 0.2 s, IMU 0.2 s, RGB 0.3 s, 깊이 0.4 s). ≈ 3 주기 지연은 경고만
     SF->>GZ: cmd_vel 정지 (LiDAR/휠 엔코더 고장) 또는 저속 degraded_mode_max_speed 0.2 m/s (IMU/카메라 고장)
     SF-->>AD: safety/estop_active=true (센서 타임아웃) → /fleet/alerts
   end
@@ -203,7 +202,7 @@ sequenceDiagram
 - **감지·추적**: `obstacle_tracker_node` 는 필터된 스캔에서 정적 지도(`/map`)에 해당하는 점을 빼고 남은 클러스터를 칼만 필터로 추적한다. `TrackedObstacle` 의 `velocity`, `heading`, `confidence`, `is_dynamic` 이 여기서 채워지고, `time_to_collision` 은 로봇의 현재 경로(`plan`)와 속도(`odometry/filtered_map`)에 대해 예측 궤적이 만나는 최초 시각으로 계산한다(교차 없으면 `inf`).
 - **회피는 세 겹**: ① DWA 플러그인 — 예측 위치를 clearance 비용에 넣고, Velocity Obstacle 원뿔에 드는 속도 샘플을 제외한다(명세 "VO/ORCA 개념 적용"). ② Nav2 BT — `IsTTCBelowThreshold` 조건이 재계획을 즉시 트리거해 1 Hz 주기를 기다리지 않는다. ③ `safety_node` — 알고리즘과 무관하게 TTC 기반 연속 감속(v ≤ a·(TTC − t_react))과 거리 기반 존(Warning 1.0 m → 0.5 m/s / Critical 0.5 m → 0.2 m/s / 정지 0.3 m, `robot_params.yaml safety.*`)으로 최종 게이트한다. 두 상한 중 낮은 쪽이 이긴다. 1.0 m/s 장애물(명세) 은 ①②로 회피하고, ③은 실패 시 안전망이다.
 - **복귀**: 별도 "복귀 모드" 없이, 장애물이 지나가 TTC 가 `inf` 로 돌아오면 DWA 의 path-distance 비용과 1 Hz 재계획이 로봇을 원경로로 끌어온다. 이탈 1 m·복귀 5 s 는 이 비용 가중치와 look-ahead 로 튜닝한다(`docs/algorithms/dwa.md`).
-- **E-stop 과 센서 고장**: `safety/estop_active` 는 래치이며 원인이 사라지면(히스테리시스) 자동 해제, 대시보드 E-stop 버튼(`estop`, `/fleet/estop`) 은 `safety/reset_estop` 서비스로만 해제한다. 센서 타임아웃은 토픽별 수신 간격(`robot_params.yaml safety.sensor_timeouts`: LiDAR 0.3 / depth 0.2 / RGB 0.1 / IMU 0.05 / 휠 엔코더 0.06 s, 카메라는 `camera_info` 로 감시)으로 판단하고, LiDAR·휠 엔코더 고장은 정지, IMU·카메라 고장은 `degraded_mode_max_speed` 0.2 m/s 저속 운행이다.
+- **E-stop 과 센서 고장**: `safety/estop_active` = E-stop 래치(대시보드 `estop`·`/fleet/estop`; transient_local 과 volatile 발행자 모두 수신) ∨ 정지형 센서 고장. 버튼 래치는 모든 입력이 false 인 상태의 `safety/reset_estop` 으로만 풀리며 거절된 reset 은 상태를 남기지 않는다. 근접 정지는 `safety/zone` = 3 이고 E-stop 이 아니다 (BT `IsEstopClear`, 플릿 어댑터는 estop_active 만 E-stop 으로 본다 — 계약 C1). 센서 고장은 주기에서 유도한 디바운스: 지연(≈ 3 주기)은 경고, 고장(LiDAR 0.3 / 휠 0.2 s)은 정지, IMU·카메라 고장은 0.2 m/s 저속; 전방 깊이 점군이 0.4 s 넘게 늦으면 전진 0.2 m/s.
 
 ### 시간 요구
 
@@ -213,10 +212,10 @@ sequenceDiagram
 | τ_warn (회피·재계획 시작) | 3.0 s (설계 초기값) | τ_crit 2.15 s + 재계획 0.5 s = 2.65 s 에 0.35 s(추적 3 주기) 여유. 부족하면 τ_warn 을 올리거나 순항 속도를 낮춘다 |
 | τ_crit (TTC 기반 감속 시작) | 2.15 s (설계 초기값) | `robot_params.yaml safety` 제동 모델 t_stop(v) = reaction_latency + v/a: 2.0 m/s 에서 0.15 + 2.0/1.0 = **2.15 s** (제동 거리 d = 2.30 m). TTC ≤ τ_crit 이면 v ≤ a·(TTC − t_react) 로 연속 제한 (TTC 1.0 s → 0.85 m/s, 0.5 s → 0.35 m/s, 0.35 s → 0.2 m/s). 거리 존 상한(`warning_zone_max_speed` 0.5 / `critical_zone_max_speed` 0.2 m/s)이 더 낮으면 그쪽이 우선 |
 | 재계획 완료 | **500 ms 이내** | 명세 4장 4절. `ComputePathToPose.result.planning_time` 으로 측정 |
-| 긴급 정지 거리 | **0.3 m** 이내 접근 시 즉시 정지 | 명세 4장 7절. `safety_node` 50 Hz → 지연 ≤ 20 ms |
+| 긴급 정지 거리 | **0.3 m** 이내 접근 시 즉시 정지 | 명세 4장 7절. 접근 = 현재 운동의 스윕 풋프린트 안 거리 (0.60 m 통로 옆 벽 제외). `safety_node` 50 Hz + 스캔 이벤트 → 지연 ≤ 20 ms |
 | 회피 후 복귀 | **5 s 이내**, 경로 이탈 **1 m 이내** | 명세 4장 7절. CTE 로그 `[timestamp, planned_x/y, actual_x/y, cte]` |
 | 회피 테스트 | 30회 충돌 0건 | Gazebo 접촉 이벤트 카운트 |
-| 센서 타임아웃 | 센서별 ≈3 주기 (LiDAR 0.3 s, IMU 0.05 s …) | `robot_params.yaml safety.sensor_timeouts` |
+| 센서 타임아웃 | 지연 경고 ≈ 3 주기, 고장 = sensor_fault_periods / 주기 (LiDAR 0.3, 휠 0.2, IMU 0.2, RGB 0.3, 깊이 0.4 s) | `robot_params.yaml safety.*`, `perception.yaml` |
 
 ---
 
