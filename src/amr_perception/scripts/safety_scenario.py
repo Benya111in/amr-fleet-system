@@ -5,10 +5,12 @@ safety_node 기능 시험기 — 합성 스캔·센서 생존 신호·E-stop 을
 단계 (모두 한 번에 순서대로)
   A 접근   : 전방 장애물이 2.0 m 에서 approach_speed 로 다가온다 (스캔 10 Hz). 존별 최대 출력 속도와
              "D <= 0.30 스캔 발행 → cmd_vel 0 수신" 지연을 잰다 (safety_node 50 Hz, 명세 0.3 m 즉시 정지).
-  B 센서   : 장애물을 치우고, IMU 발행을 멈춘다 → degraded(0.2 m/s) 까지 지연; 재개 후 LiDAR 를 멈춘다 →
-             정지 + estop_active 까지 지연 (robot_params.yaml safety.sensor_timeouts).
-  C E-stop : estop=true (transient_local) → 정지; estop=false → 여전히 정지(래치); safety/reset_estop 호출
-             → 해제.
+             근접 정지는 zone 3 STOP 이고 estop_active 가 아니다 (계약 C1).
+  B 센서   : 장애물을 치우고, 휠 엔코더 한 번 늦음(60 ms) → 정지 없음; IMU 발행 중단 → degraded(0.2 m/s)
+             까지 지연; 휠 엔코더 끊김 → 정지 + estop_active 까지 지연; LiDAR 끊김 → 정지
+             (지연 = safety.sensor_timeouts, 고장 = sensor_fault_periods / update_rate).
+  C E-stop : estop=true (transient_local) → 정지; 입력이 true 인 동안 reset → 거절; estop=false → 여전히
+             정지(래치); safety/reset_estop 호출 → 해제. 이어서 volatile 발행자로 같은 순서.
 결과는 JSON (stdout, --out).
 
     ros2 run amr_perception safety_scenario.py --out /tmp/safety.json
@@ -53,6 +55,9 @@ def main(argv=None) -> int:  # pragma: no cover - ROS 통합 시험 (docs/algori
     depth_pub = node.create_publisher(CameraInfo, 'camera/depth/camera_info',
                                       qos_profile_sensor_data)
     estop_pub = node.create_publisher(Bool, 'estop', latched)
+    estop_vol_pub = node.create_publisher(
+        Bool, 'estop', QoSProfile(depth=10, reliability=QoSReliabilityPolicy.RELIABLE,
+                                  durability=QoSDurabilityPolicy.VOLATILE))
     reset_cli = node.create_client(Trigger, 'safety/reset_estop')
     stb = StaticTransformBroadcaster(node)
     m = TransformStamped()
@@ -60,11 +65,11 @@ def main(argv=None) -> int:  # pragma: no cover - ROS 통합 시험 (docs/algori
     m.child_frame_id = 'lidar_link'
     m.header.stamp = node.get_clock().now().to_msg()
     m.transform.translation.x = 0.15
-    m.transform.translation.z = 0.20
+    m.transform.translation.z = 0.02   # sensors.yaml lidar extrinsic (지면 +0.20 m)
     m.transform.rotation.w = 1.0
     stb.sendTransform([m])
 
-    state = {'obstacle': None, 'imu': True, 'lidar': True, 'cmd': args.cmd_speed}
+    state = {'obstacle': None, 'imu': True, 'lidar': True, 'wheel': True, 'cmd': args.cmd_speed}
     log = []          # (wall, linear)
     zone = {'name': '', 'level': -1, 'estop': None}
     events = []
@@ -108,7 +113,8 @@ def main(argv=None) -> int:  # pragma: no cover - ROS 통합 시험 (docs/algori
         t = Twist()
         t.linear.x = state['cmd']
         cmd_pub.publish(t)
-        wheel_pub.publish(Odometry())
+        if state['wheel']:
+            wheel_pub.publish(Odometry())
 
     def hb_imu():
         if state['imu']:
@@ -184,11 +190,20 @@ def main(argv=None) -> int:  # pragma: no cover - ROS 통합 시험 (docs/algori
             if stop_scan_wall and w >= stop_scan_wall and v != 0.0 and w < stop_scan_wall + (
                 first_after(stop_scan_wall, lambda x: x == 0.0) or 0.0) * 1e-3),
         'estop_active_after_stop': zone['estop'], 'zone_after_stop': zone['name'],
+        'zone_level_after_stop': zone['level'],
     }
     # --- B 센서 고장
     state['obstacle'] = None
     spin_for(1.5)                                  # 정지 래치 해제 (거리 > 0.5)
     released = [v for w, v, _ in log if w > time.monotonic() - 0.2]
+    # 휠 엔코더 한 번 늦음 (60 ms = 3 주기) → 지연 경고만
+    n0 = len(log)
+    state['wheel'] = False
+    spin_for(0.06)
+    state['wheel'] = True
+    spin_for(0.5)
+    single_gap_zero = sum(1 for _, v, _ in log[n0:] if v == 0.0)
+    single_gap_estop = zone['estop']
     state['imu'] = False
     t_imu = time.monotonic()
     spin_for(0.6)
@@ -197,6 +212,13 @@ def main(argv=None) -> int:  # pragma: no cover - ROS 통합 시험 (docs/algori
     state['imu'] = True
     spin_for(0.6)
     recovered = [v for w, v, _ in log if w > time.monotonic() - 0.2]
+    state['wheel'] = False
+    t_wheel = time.monotonic()
+    spin_for(0.6)
+    wheel_lat = first_after(t_wheel, lambda v: v == 0.0)
+    wheel_estop = zone['estop']
+    state['wheel'] = True
+    spin_for(0.6)
     state['lidar'] = False
     t_lidar = time.monotonic()
     spin_for(1.0)
@@ -206,33 +228,43 @@ def main(argv=None) -> int:  # pragma: no cover - ROS 통합 시험 (docs/algori
     spin_for(1.0)
     result['B_sensor_timeout'] = {
         'released_speed': round(max(released), 3) if released else None,
+        'wheel_single_60ms_gap_zero_cmds': single_gap_zero,
+        'wheel_single_60ms_gap_estop_active': single_gap_estop,
+        'wheel_dropout_to_stop_ms': wheel_lat, 'wheel_dropout_estop_active': wheel_estop,
         'imu_timeout_to_degraded_ms': degraded_lat,
         'degraded_speed': round(max(degraded_vals), 3) if degraded_vals else None,
         'after_imu_recovery_speed': round(max(recovered), 3) if recovered else None,
         'lidar_timeout_to_stop_ms': lidar_lat, 'lidar_timeout_estop_active': lidar_estop,
     }
-    # --- C E-stop 래치
-    estop_pub.publish(Bool(data=True))
-    t_e = time.monotonic()
-    spin_for(0.5)
-    estop_lat = first_after(t_e, lambda v: v == 0.0)
-    estop_pub.publish(Bool(data=False))
-    spin_for(0.5)
-    still = [v for w, v, _ in log if w > time.monotonic() - 0.3]
-    reset_ok = None
-    if reset_cli.wait_for_service(timeout_sec=2.0):
+    # --- C E-stop 래치 (transient_local 발행자, 이어서 volatile 발행자)
+
+    def reset():
+        if not reset_cli.wait_for_service(timeout_sec=2.0):
+            return None
         fut = reset_cli.call_async(Trigger.Request())
         rclpy.spin_until_future_complete(node, fut, timeout_sec=2.0)
-        reset_ok = bool(fut.result().success) if fut.result() else None
-    spin_for(0.5)
-    after = [v for w, v, _ in log if w > time.monotonic() - 0.2]
-    result['C_estop'] = {
-        'estop_to_stop_ms': estop_lat,
-        'after_false_max_speed': round(max(still), 3) if still else None,
-        'reset_success': reset_ok,
-        'after_reset_speed': round(max(after), 3) if after else None,
-        'estop_active_final': zone['estop'],
-    }
+        return bool(fut.result().success) if fut.result() else None
+
+    for key, pub in (('C_estop', estop_pub), ('C_estop_volatile', estop_vol_pub)):
+        pub.publish(Bool(data=True))
+        t_e = time.monotonic()
+        spin_for(0.5)
+        estop_lat = first_after(t_e, lambda v: v == 0.0)
+        rejected = reset()
+        pub.publish(Bool(data=False))
+        spin_for(0.5)
+        still = [v for w, v, _ in log if w > time.monotonic() - 0.3]
+        reset_ok = reset()
+        spin_for(0.5)
+        after = [v for w, v, _ in log if w > time.monotonic() - 0.2]
+        result[key] = {
+            'estop_to_stop_ms': estop_lat,
+            'reset_while_pressed_success': rejected,
+            'after_false_max_speed': round(max(still), 3) if still else None,
+            'reset_success': reset_ok,
+            'after_reset_speed': round(max(after), 3) if after else None,
+            'estop_active_final': zone['estop'],
+        }
     ts = [w for w, _, _ in log]
     result['cmd_vel_rate_hz'] = round((len(ts) - 1) / (ts[-1] - ts[0]), 1) if len(ts) > 1 \
         else None

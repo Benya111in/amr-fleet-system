@@ -118,9 +118,9 @@ class YoloNode(Node):
             if not os.path.exists(weights):
                 fallback = resolve_weights(str(gp('fallback_weights').value), search)
                 self.get_logger().warn(
-                    f'가중치 {weights} 없음 → {fallback} 로 대체. COCO 가중치는 Gazebo 창고 월드의 '
-                    '상자·작업자를 검출하지 못한다 (perception.md §8.3) — scripts/train.py 로 만든 '
-                    '미세조정 가중치를 models/ 에 둔다')
+                    f'가중치 {weights} 없음 → {fallback} 로 대체. COCO 가중치는 창고 월드의 상자·표지판을 '
+                    '검출하지 못한다 (perception.md §8.3) — 저장소의 models/yolov8n_warehouse.pt 가 '
+                    '설치됐는지 확인하고, 재생성은 models/README.md')
                 weights = fallback
             detector = YoloDetector(
                 weights, str(gp('device').value), int(gp('imgsz').value),

@@ -37,10 +37,10 @@ flowchart LR
   COCO `yolov8n.pt` 로 대체. `device: auto` 는 CUDA 가 있으면 `cuda:0` + FP16,
   없으면 CPU + `cpu_imgsz: 320`(연산량 1/4, 명세 대안 "CPU 10 FPS") 으로 자동 전환한다.
 - **클래스 (명세 "화물, 사람, 표지판 등 3종 이상")**: 출력 `box`(0) / `person`(1) / `sign`(2).
-  `config/classes.yaml` 의 `model_class_map` 이 모델 클래스 **이름**을 출력 클래스로 옮긴다:
-  COCO 가중치에서는 `person`(COCO 0)→person, `stop sign`(11)→sign, `suitcase`(28)→box(임시 대용),
-  미세조정 가중치(`box/person/sign`)에서는 그대로 통과. 매핑에 없는 클래스는 추론 단계
-  `classes=` 필터로 NMS 전에 버린다. COCO 에 "화물 상자" 가 없으므로 box 의 본 경로는 미세조정이다(§5).
+  `config/classes.yaml` 의 `model_class_map` 이 모델 클래스 **이름**을 출력 클래스로 옮긴다: 미세조정 가중치
+  (`box/person/sign/forklift/amr`, §5) 에서는 앞의 셋을 그대로 통과시키고 `forklift`·`amr` 는 버린다(학습에만 넣어 상자·사람과의
+  혼동을 줄인다). COCO 대체 가중치에서는 `person`(COCO 0)→person, `stop sign`(11)→sign, `suitcase`(28)→box(임시 대용).
+  매핑에 없는 클래스는 추론 단계 `classes=` 필터로 NMS 전에 버린다.
 - **출력**: `vision_msgs/Detection2DArray` — `bbox.center` = 픽셀 중심, `results[0].hypothesis.class_id` =
   출력 클래스 이름, `id` = 출력 class_id, 스탬프 = 입력 이미지 스탬프(지연 측정·3D 동기의 기준).
 - **처리율 설계**: 구독 QoS depth 1 (best effort) — 추론이 입력보다 느리면 오래된 프레임을 버리고 최신
@@ -149,28 +149,41 @@ person 초록 0.5×0.5×1.7, sign 파랑) + `TEXT_VIEW_FACING` "Class: Box, Conf
   - SQPnP 를 더한 이유: 광축 위 **완전 정면** 마커에서 OpenCV IPPE 가 수치적으로 퇴화했다 (잡음 없는 렌더에서 두 해 모두
     재투영 2.7 px, 13° 오차; 경우에 따라 뒤집힌 해) — 전역 최적 SQPnP 가 이 경우를 보완한다.
   - **평면 자세 모호성**: 원거리·작은 마커에서 두 해의 재투영 오차가 거의 같다(법선이 시선에 대해 뒤집힌 해).
-    마커가 카메라 광축 높이(월드: 0.43 m = 카메라 높이)에 있으면 두 해가 모두 수직이라 사전정보로도 못 가른다.
-    이때 두 해 사이 각을 `ambiguity_angle` 로 보고하고 회전 분산에 $(\text{angle}/2)^2$ 를 더한다.
+    마커가 카메라 광축 높이에 있으면 두 해가 모두 수직이라 사전정보로도 못 가른다. 센서 재배치 뒤에는 이것이
+    **기본 도킹 기하**다: 마커 판 중심 높이 `MARKER_Z` 0.25 m = 카메라 광학 중심 높이(지면 0.18 + `camera_link` z 0.07,
+    sensors.yaml) → §8.5 의 h 0 열이 실제 조건이다. 이때 두 해 사이 각을 `ambiguity_angle` 로 보고하고 회전 분산에
+    $(\text{angle}/2)^2$ 를 더한다. 도킹은 마커 방향(법선)을 **0.75 m 이내에서만** 믿는다 (§8.5 h 0 열에서 방향 오차가
+    1° 목표 안에 드는 마지막 거리). 그보다 멀면 위치만 쓴다.
 - **출력 규약**: `perception/dock_marker_pose` (PoseStamped, base_link) — 위치 = 마커 중심, 자세 = 마커 **모델 프레임**
   (x = 면 바깥 법선(로봇 쪽), z = 위; Gazebo `dock_marker` 모델과 같은 REP-103 규약). 정면으로 마주 보면 yaw = π.
   `perception/dock_marker_id` (Int32), `perception/dock_marker_pose_cov` (PoseWithCovarianceStamped, 재투영 자코비안
   $\Sigma = \sigma_\text{px}^2 (J^\top J)^{-1}$, 도킹 EKF 입력용). `perception/aruco/enable` (SetBool) 로 도킹 중에만 켤 수 있다.
 - **도킹 "각도 오차"**: 로봇은 바닥에서 yaw 만 바꾸므로 마커 법선의 수평 성분 각 차(`aruco.heading_error`)로 잰다.
 
-## 5. 미세조정 파이프라인 (box 클래스)
+## 5. 미세조정 파이프라인 (현재 월드, 구역 분할)
 
-COCO 에는 창고 상자 클래스가 없으므로 합성/시뮬레이션 데이터로 YOLOv8n 을 미세조정한다.
+COCO 에는 창고 상자 클래스가 없고 COCO 가중치는 이 월드의 작업자·표지판도 못 찾는다(§8.3) → 현재 월드(재배치 후 카메라 전면
+0.25 m, RGB 노이즈 켬)의 Gazebo 영상에 지면 진실 라벨을 달아 YOLOv8n 을 미세조정한다. 이전 판(한 위치 제자리 회전 500 장을
+무작위 분할, 표지판 라벨 없음)은 val mAP50 0.994 가 거의 같은 프레임의 train/val 누수였고 현재 월드에서 사람 0/175, 표지판 0/269
+였다 (리뷰 지적) — 아래는 그 대체다.
 
-1. `scripts/generate_dataset.py synthetic` — Gazebo 없이 cv2 도형 장면(골판지 상자 + 상면, 사람 실루엣(형광 조끼 포함),
-   정지/경고/안내 표지판, 랙 줄무늬 배경, 밝기·블러·잡음 증강)을 그린다. 화가 알고리즘 + id 마스크로 가시 비율 < 40 % 인
-   물체는 라벨에서 뺀다. YOLO txt(`cls cx cy w h`, 0–1) + `data.yaml`.
-2. `scripts/generate_dataset.py gazebo` — 실행 중인 시뮬레이션에서 카메라 영상에 **지면 진실 라벨**을 단다: 월드 SDF 의
-   박스 모델 include(크기는 모델 SDF 의 `<box><size>`, 중심 높이는 링크 pose) + 작업자 actor 궤적(sim 시각 선형 보간) →
-   3D 박스 8 꼭짓점을 `ground_truth/odom ∘ TF(base_footprint→optical)` 로 투영 → 2D bbox(잘림 비율 ≤ 0.5, 최소 10 px) →
-   깊이 이미지 가림 비율 > 0.6 이면 제외.
-3. `scripts/train.py` — `YOLO(yolov8n.pt).train(...)` → val 분할 mAP50 / mAP50-95 / 클래스별 AP50 → `metrics.json`,
-   `--out models/yolov8n_warehouse.pt`. `yolo_node` 의 기본 `weights` 가 이 파일이고(`classes.yaml` 이 이름을 그대로 통과),
-   없으면 `fallback_weights: yolov8n.pt`(COCO) 로 경고와 함께 내려간다. 가중치(*.pt)는 저장소에 넣지 않는다(.gitignore).
+1. **수집** `scripts/dataset_capture.py` — 로봇 5 대를 `/world/<w>/set_pose_vector` 로 창고 곳곳에 순간이동시키고, sim 정착 후
+   같은 스탬프의 RGB·깊이·`ground_truth/odom` 을 받는다. 자세는 지도(map = world) 자유 셀 중 벽·랙 여유가 있는 곳이며, 절반은
+   표적(작업자·표지판·지게차·셔틀·상자)을 1.2–8 m 에서 바라보고 절반은 무작위 방향이다. 명령 자세와 3 cm / 1° 넘게 다르면 버린다.
+2. **라벨** `amr_perception.world_objects.label_objects` — 정적 상자(모델 include), 표지판 판(인라인), 작업자(actor 궤적,
+   이미지 스탬프 시각), 지게차·셔틀(`/sim/<이름>/odom`), 다른 AMR(`ground_truth/odom`) 의 3D 박스를
+   `ground_truth/odom ∘ TF(base_footprint→optical)` 로 투영 → 2D bbox. 깊이 이미지로 가림, 이미지 경계로 잘림을 판정해
+   가림·잘림·너무 작은(짧은 변 < 8 px)·가시 픽셀 부족 물체는 라벨에서 뺀다(뺀 이유는 `meta/<split>.jsonl` 에 전부 남긴다).
+3. **분할 = 창고 구역** (카메라 위치 기준, 구역 사이 3 m 완충대에는 로봇을 두지 않는다): test x ≥ 15 m (동측 출고 도크·대기 구역),
+   val x ≤ −14, y ≤ −6 (남서 충전소), train 나머지. 누수 점검(`leak_check`, 32×24 회색조 평균 절대차): val·test 프레임의 가장
+   가까운 train 프레임까지 중앙값 14.3 / 11.7 (무작위 쌍 35.7 / 30.8), 카메라 위치는 train 과 최소 3.1 m 떨어진다.
+4. **학습·평가** `scripts/yolo_train_eval.py train|eval|heldout` — `YOLO(yolov8n.pt)` 80 epoch, 640 px, GPU; 학습 클래스
+   box / person / sign / forklift / amr (지게차·다른 AMR 을 따로 배워 상자·사람과의 혼동을 줄인다). 출력은
+   `config/classes.yaml` 이 box / person / sign 3 종만 통과시키고 나머지는 추론 단계에서 버린다. `eval` 은 ultralytics val
+   (클래스별 P / R / mAP50 / mAP50-95) 과 배포 경로(`YoloDetector`, conf 0.35, IoU ≥ 0.5) 동작점 재현율을 함께 잰다.
+5. **배포** — `models/yolov8n_warehouse.pt` (6.2 MB, 저장소에 포함, 출처·재생성은 `models/README.md`),
+   회귀 시험용 보류 구역 프레임 12 장 `models/heldout/` (`test_yolo_heldout.py`). 이전 도구 `generate_dataset.py` /
+   `train.py` 는 합성(cv2) 장면 단위 테스트용으로만 남는다.
 
 ## 6. 깊이 점군 (`pointcloud_filter_node`, C++)
 
@@ -180,6 +193,12 @@ Fortress 6.18 의 `camera/depth/points` 는 `header.frame_id` 가 optical 인데
 (`leaf_size` 0.05 m = costmap 해상도, 칸당 최소 2 점으로 고립 잡음 제거, `pixel_step` 2). 출력 frame = 깊이 optical.
 테스트: 역투영 왕복, 32FC1/16UC1(행 패딩), 무효 픽셀·거리 컷, 3 m 평면에서 가산 잡음 σ = 0.018 m (2만 점, ±0.0008),
 voxel 무게중심·결정적 순서·최소 점 수.
+
+**안전 게이트 입력 (LiDAR 평면 아래 물체).** LiDAR 스캔 평면은 지면 +0.20 m 라 소형 상자(0.15 m)·지게차 포크(0.05–0.10 m)를
+못 본다. `safety_node` 가 이 점군을 구독해 base_link 로 옮기고 지면 높이 0.03–0.40 m, 수평 3.5 m 안의 점을 LiDAR 와 같은
+접근 거리 판정에 넣는다 ([tracking.md](tracking.md) §6.3). 카메라(전면, 광학 중심 지면 0.25 m, 수직 화각 ±35.4°)는 렌즈 앞
+0.31 m(= 범퍼 앞 0.30 m)에서 지면 0.03 m 위를 보므로 0.3 m 정지 거리의 물체는 바닥 가까이까지 화각 안이다.
+전방만 보므로 후진 방향의 저상 물체는 판정 밖이다.
 
 ## 7. 파라미터 (요약 — 전체와 근거는 `src/amr_perception/config/perception.yaml` 주석)
 
@@ -246,17 +265,58 @@ voxel 무게중심·결정적 순서·최소 점 수.
   CPU 256 6.77 / 11.1 ms, CPU 320 predict() 6.25 / 6.73 ms. CPU 는 모든 조합이 10 FPS 목표(100 ms)의 1/10 이하다.
 - Gazebo 카메라(§8.4)에서 미세조정 가중치: `detections_2d` 29.76 Hz (카메라 29.97 Hz), 추론 평균 5.7 ms.
 
-### 8.3 미세조정 파이프라인 (box 클래스)
+**미세조정 가중치 재측정** (`yolov8n_warehouse.pt` 현재판 — 구조는 같은 YOLOv8n, 2026-09-22 15:00–15:30, load average 72–210 / 32 라
+잠정치). 같은 `yolo_fps_probe.py`, 입력률을 30 / 60 / 90 Hz 로 올려 처리 상한을 본다:
 
-| 데이터셋 | 구성 | 학습 | val 결과 |
+| 구성 | 전송 | 30 Hz 입력 | 60 Hz | 90 Hz | 지연 p50 / p95 (30 Hz) |
+| --- | --- | --- | --- | --- | --- |
+| GPU 640 FP16 | SHM 프로파일 | **30.0** | 60.0 | 82.8 | 15.0 / 20.5 ms |
+| GPU 640 FP16 | 기본 UDP | 23.3 | 48.9 | 71.7 | 13.2 / 15.9 ms |
+| CPU 320 | SHM 프로파일 | **26.3** | 20.8 | — | 50.2 / 77.5 ms |
+| CPU 320 | 기본 UDP | 12.2 | 16.3 | — | 56.2 / 96.7 ms |
+
+과부하(load ≈ 130) 에서 CPU 경로도 명세 대안(≥ 10 FPS)을 넘는다. Gazebo 카메라 종단(브리지 → `yolo_node`)은 RTF 0.23–0.33 이라
+카메라 자체가 벽시계 1.4–7.1 Hz 였고, 이때 **브리지 쪽에도** SHM 프로파일을 주면 받은 프레임을 전부 처리했고(처리율 1.00,
+GPU 지연 p50 15.9 ms) 브리지에 주지 않으면 0.32–0.54 만 처리했다 — 영상 경로의 두 끝 모두에 프로파일이 필요하다(§1).
+bringup 이 전체 시스템에 한 프로파일을 주는 방법은 `amr_bringup` 의 Fast DDS 프로파일 설정을 따른다.
+
+### 8.3 미세조정 결과 (현재 월드, 구역 분할)
+
+측정: 2026-09-22 14:00–15:30 KST, RTX 5090, load average 70–200 / 32 (다른 작업과 공유 — 학습 시간만 영향, 정확도 무관).
+
+데이터셋 (`dataset_capture.py`, 로봇 5 대, 자세 5671 개):
+
+| 분할 (구역) | 영상 | box | person | sign | forklift | amr |
+| --- | --- | --- | --- | --- | --- | --- |
+| train | 4006 | 25217 | 3114 | 9074 | 625 | 1587 |
+| val (남서 충전소) | 669 | 2024 | 488 | 1452 | 75 | 178 |
+| test (동측 도크·대기 구역, 보류) | 996 | 4789 | 800 | 1979 | 142 | 335 |
+
+학습 결과 (ultralytics val, conf 0.001 곡선 기준; 괄호는 클래스별 재현율 R):
+
+| 모델 | 학습 | 분할·입력 | mAP50 | mAP50-95 | box | person | sign |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| **YOLOv8n (배포)** | 80 epoch, 780 s | test 640 | **0.935** | 0.727 | 0.940 (0.888) | 0.971 (0.916) | 0.925 (0.846) |
+| YOLOv8n | | test 320 (CPU 경로) | 0.747 | 0.480 | 0.761 (0.731) | 0.811 (0.747) | 0.728 (0.684) |
+| YOLOv8n | | val 640 | 0.928 | 0.686 | 0.958 (0.890) | 0.979 (0.932) | 0.837 (0.731) |
+| YOLOv8s | 80 epoch, 1234 s | test 640 | 0.960 | 0.775 | 0.959 (0.929) | 0.977 (0.943) | 0.951 (0.887) |
+
+배포 동작점 (`YoloDetector`, conf 0.35, IoU ≥ 0.5, GT 짧은 변 ≥ 12 px, test 분할): GPU 640 재현율 box 0.977 / person 0.994 /
+sign 0.968, 정밀도 0.844 / 0.931 / 0.889, 추론 p50 4.4 ms; CPU 320 재현율 0.963 / 0.968 / 0.946, 정밀도 0.783 / 0.951 / 0.870,
+추론 p50 18.2 ms. v8s 는 mAP50 +0.025 지만 22.5 MB·추론 약 2 배라 v8n 을 배포한다 (명세 3 클래스 재현율이 이미 0.95 이상).
+
+**실시간 검증 (`scripts/yolo_live_eval.py`)** — 실제 `yolo_node`(배포 설정, GPU)를 Gazebo 카메라에 물리고, 로봇을 test 구역의
+본 적 없는 자세 150 곳으로 옮겨 자세마다 2 프레임을 받아 지면 진실과 맞춘다:
+
+| 조건 | box 재현율 (GT) / 정밀도 | person | sign |
 | --- | --- | --- | --- |
-| 합성 (`generate_dataset.py synthetic --train 60 --val 20`) | 상자 86 / 사람 68 / 표지판 45 (train) | 3 epoch, GPU 22.6 s | mAP50 0.355, mAP50-95 0.283 (AP50 person 0.93, box 0.12, sign 0.02) — 3 epoch·60 장은 파이프라인 증명용 |
-| Gazebo 지면 진실 (`generate_dataset.py gazebo --frames 500 --every 4`) | 로봇 (0, −4.3) 제자리 회전 0.25 rad/s; train 400 / val 100 장, 상자 1371 · 사람 181 라벨 (월드에 표지판 모델 없음) | 30 epoch, GPU 36 s | **mAP50 0.994, mAP50-95 0.932** (AP50 box 0.994, person 0.994), P 0.975 / R 0.981 |
+| GPU, 거리 ≤ 10 m, 짧은 변 ≥ 16 px (300 프레임) | 1.000 (270) / 0.912 | 1.000 (74) / 0.949 | 1.000 (144) / 0.883 |
+| GPU, 거리 ≤ 60 m, 짧은 변 ≥ 12 px (300 프레임) | 1.000 (454) / 0.892 | 1.000 (135) / 0.957 | 0.973 (293) / 0.922 |
+| CPU 320, 거리 ≤ 10 m (298 프레임) | 1.000 (235) / 0.677 | 1.000 (59) / 0.831 | 1.000 (136) / 0.814 |
 
-- 한계: Gazebo 셋은 한 위치의 연속 프레임을 무작위로 나눴으므로 val 이 낙관적이다. 실제 일반화 수치는 여러 위치·다른 시각의
-  별도 val 로 다시 잰다 (`--frames` 를 늘려 주행 중 수집).
-- **COCO 가중치는 이 월드에서 쓸 수 없다**: 같은 카메라 5007 프레임에서 검출 0 건(블록형 작업자 메시·단색 상자는 COCO 분포 밖).
-  미세조정 가중치는 5110 프레임 중 사람 2186 프레임, 상자 19943 건을 검출했다 → 배포 가중치는 `yolov8n_warehouse.pt`.
+이전 가중치(리뷰 재현)는 같은 월드에서 사람 0/175, 표지판 0/269 였다. 남은 약점: CPU 320 경로의 상자 정밀도 0.68 (먼 랙 선반
+구조를 상자로 오검출) — CPU 는 명세 대안 경로이고 GPU 가 기본이다. 결과는 한 월드(같은 모델 형상)의 다른 구역이므로 실제
+창고로의 일반화를 뜻하지 않는다.
 
 ### 8.4 Gazebo 종단 시험 (기능 d)
 

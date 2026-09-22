@@ -110,7 +110,10 @@ if(BUILD_TESTING)
   # CONFIGURE_DEPENDS: 테스트 파일을 추가하면 재구성 없이 다음 빌드에 반영된다.
   file(GLOB _pytests CONFIGURE_DEPENDS test/test_*.py)
   if(_pytests)
-    ament_add_pytest_test(amr_perception_pytest test)
+    # ament 는 --cov=<소스 디렉토리> 만 준다. 테스트가 import 하는 것은 설치된 패키지라서
+    # --symlink-install 이 아니면 모듈이 0 % 로 잡힌다 → import 한 패키지도 측정한다.
+    ament_add_pytest_test(amr_perception_pytest test
+      ENV "PYTEST_ADDOPTS=--cov=amr_perception")
   endif()
 
   # C++ 핵심 알고리즘 단위 테스트 (gtest). 커버리지: --cmake-args -DCMAKE_CXX_FLAGS="--coverage"

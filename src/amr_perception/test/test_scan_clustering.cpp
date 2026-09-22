@@ -278,3 +278,141 @@ TEST(ScanClustering, PartialOcclusionInflatesLateralCovariance)
   ASSERT_EQ(alone.size(), 1U);
   EXPECT_FALSE(alone.front().occluded);
 }
+
+namespace
+{
+// 6 x 4 m 방 (벽 두께 1 셀, 바깥 여백 5 셀 — SLAM 지도처럼 벽 뒤도 지도 안) + 내부 기둥 0.4 m
+// (회전 관측성), 해상도 0.05. 벽 셀 x ∈ [0, 0.05), [6.0, 6.05), y ∈ [0, 0.05), [4.0, 4.05)
+StaticMapDistance roomMap()
+{
+  const int w = 131;
+  const int h = 91;
+  std::vector<int8_t> data(w * h, 0);
+  auto occ = [&](int x, int y) {data[y * w + x] = 100;};
+  for (int x = 5; x <= 125; ++x) {
+    occ(x, 5);
+    occ(x, 85);
+  }
+  for (int y = 5; y <= 85; ++y) {
+    occ(5, y);
+    occ(125, y);
+  }
+  for (int x = 85; x < 93; ++x) {
+    for (int y = 55; y < 63; ++y) {
+      occ(x, y);
+    }
+  }
+  StaticMapDistance m;
+  m.build(w, h, 0.05, Pose2D{-0.25, -0.25, 0.0}, data, 65);
+  return m;
+}
+
+// roomMap 과 같은 구조물의 레이캐스트용 선분 (점유 셀 안쪽 표면)
+std::vector<scan_sim::Segment> roomSegments()
+{
+  const double lo = 0.05;
+  const double hx = 6.0;
+  const double hy = 4.0;
+  return {
+    {Vec2(lo, lo), Vec2(hx, lo)}, {Vec2(hx, lo), Vec2(hx, hy)}, {Vec2(hx, hy), Vec2(lo, hy)},
+    {Vec2(lo, hy), Vec2(lo, lo)}, {Vec2(4.0, 2.5), Vec2(4.4, 2.5)},
+    {Vec2(4.4, 2.5), Vec2(4.4, 2.9)}, {Vec2(4.4, 2.9), Vec2(4.0, 2.9)},
+    {Vec2(4.0, 2.9), Vec2(4.0, 2.5)}};
+}
+}  // namespace
+
+TEST(ScanClustering, InterpolatedDistanceGradient)
+{
+  const StaticMapDistance map = wallMap();
+  // 벽(x ∈ [2.00, 2.05)) 왼쪽: 거리는 x 가 커질수록 줄어든다 → ∂d/∂x ≈ -1
+  Vec2 g;
+  const double d = map.interpolate(Vec2(1.63, 0.2), &g);
+  EXPECT_NEAR(d, 2.025 - 1.63, 0.03);
+  EXPECT_NEAR(g.x(), -1.0, 0.05);
+  EXPECT_NEAR(g.y(), 0.0, 0.05);
+  // 같은 셀 안 수치 미분과 일치
+  const double h = 1e-4;
+  Vec2 dummy;
+  const double gx = (map.interpolate(Vec2(1.63 + h, 0.2), &dummy) -
+    map.interpolate(Vec2(1.63 - h, 0.2), &dummy)) / (2 * h);
+  EXPECT_NEAR(g.x(), gx, 1e-6);
+  EXPECT_TRUE(std::isinf(map.interpolate(Vec2(-5.0, 0.0), &g)));
+  EXPECT_TRUE(std::isinf(StaticMapDistance{}.interpolate(Vec2(1.0, 0.0), &g)));
+}
+
+TEST(ScanClustering, ScanToMapAlignmentRecoversPoseOffset)
+{
+  // 위치 추정 오차 (5 cm, -4 cm, 1°) 를 준 map←tracking 을 국소 정합이 되돌린다
+  const StaticMapDistance map = roomMap();
+  std::mt19937 rng(7);
+  const Pose2D sensor{2.5, 1.8, 0.3};
+  const auto scan = scan_sim::makeScan(sensor, {}, roomSegments(), 0.03, &rng);
+  const auto pts = amr_perception::projectScan(scan, sensor, 12.0);
+  const Pose2D err{0.05, -0.04, 1.0 * M_PI / 180.0};
+  SegmentationParams seg;
+  amr_perception::PosePrior prior;
+  prior.sigma_xy = 0.08;
+  prior.sigma_yaw = 0.03;
+  const auto al = amr_perception::alignScanToMap(pts, sensor.translation(), map, err, prior, seg);
+  ASSERT_TRUE(al.valid);
+  EXPECT_GT(al.correspondences, 300);
+  // 보정 후 map←tracking ≈ 항등 (참값)
+  EXPECT_NEAR(al.map_from_tracking.x, 0.0, 0.01);
+  EXPECT_NEAR(al.map_from_tracking.y, 0.0, 0.01);
+  EXPECT_NEAR(al.map_from_tracking.yaw, 0.0, 0.2 * M_PI / 180.0);
+  EXPECT_GT(al.residual_sigma, 0.005);
+  EXPECT_LT(al.residual_sigma, 0.05);
+  // 잔차가 큰 정합(오정합)은 버린다
+  SegmentationParams strict = seg;
+  strict.align_max_residual = 0.005;
+  EXPECT_FALSE(
+    amr_perception::alignScanToMap(pts, sensor.translation(), map, err, prior, strict).valid);
+  // 대응점이 모자라면 실패 → 보정 없음, 사전분포 공분산
+  seg.align_min_points = 100000;
+  const auto none = amr_perception::alignScanToMap(
+    pts, sensor.translation(), map, err, prior, seg);
+  EXPECT_FALSE(none.valid);
+  EXPECT_NEAR(none.map_from_tracking.x, err.x, 1e-12);
+  EXPECT_NEAR(none.covariance(0, 0), 0.08 * 0.08, 1e-9);
+}
+
+TEST(ScanClustering, PoseErrorDoesNotFragmentWallsIntoForeground)
+{
+  // 리뷰 결함 재현: 고정 r_bg 0.10 m 은 5 cm·1° 위치 오차에서 벽을 전경 조각으로 깬다.
+  // 국소 정합 + 불확실성 반경은 벽을 배경으로 두고 벽 0.5 m 앞 사람만 남긴다.
+  const StaticMapDistance map = roomMap();
+  const Pose2D err{0.05, 0.05, 1.0 * M_PI / 180.0};
+  ClusterModelParams model;
+  int fixed_extra = 0;
+  for (int k = 0; k < 20; ++k) {
+    std::mt19937 rng(100 + k);
+    const Pose2D sensor{1.0 + 0.2 * k, 1.5, 0.1 * k};
+    const auto scan = scan_sim::makeScan(
+      sensor, {{Vec2(5.45, 1.0), 0.15}}, roomSegments(), 0.03, &rng);
+    SegmentationParams seg;
+    const auto aligned = amr_perception::extractClusters(scan, sensor, &map, err, seg, model);
+    ASSERT_EQ(aligned.size(), 1U) << "scan " << k;
+    EXPECT_NEAR(aligned.front().measurement.x(), 5.45, 0.12);
+    EXPECT_NEAR(aligned.front().measurement.y(), 1.0, 0.12);
+    seg.align_to_map = false;
+    const auto fixed = amr_perception::extractClusters(scan, sensor, &map, err, seg, model);
+    fixed_extra += static_cast<int>(fixed.size()) - 1;
+  }
+  EXPECT_GT(fixed_extra, 20);  // 고정 반경은 스캔당 평균 1 개 넘는 벽 조각
+  // 사전분포만(정합 실패)이어도 법선 방향 불확실성으로 반경이 커져 벽이 배경이 된다
+  std::mt19937 rng(9);
+  const Pose2D sensor{3.0, 2.0, 0.0};
+  const auto scan = scan_sim::makeScan(sensor, {}, roomSegments(), 0.03, &rng);
+  auto pts = amr_perception::projectScan(scan, sensor, 12.0);
+  SegmentationParams seg;
+  seg.align_min_points = 100000;
+  amr_perception::PosePrior prior;
+  prior.sigma_xy = 0.05;
+  prior.sigma_yaw = 0.02;
+  const auto al = amr_perception::alignScanToMap(pts, sensor.translation(), map, err, prior, seg);
+  amr_perception::labelBackground(pts, map, al, seg);
+  const auto fg = std::count_if(
+    pts.begin(), pts.end(), [](const ScanPoint & p) {return !p.background;});
+  // 흩어진 잡음 점 몇 개 (클러스터 아님)
+  EXPECT_LE(static_cast<double>(fg), 0.02 * static_cast<double>(pts.size()));
+}

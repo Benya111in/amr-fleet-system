@@ -11,30 +11,36 @@
 flowchart LR
   scan["scan_filtered 10 Hz"] --> proj["projectScan<br/>TF odom←lidar (스캔 스탬프)"]
   map["/map (latched)"] --> lut["StaticMapDistance<br/>정확 EDT LUT"]
-  proj --> bg["labelBackground<br/>d_map ≤ 0.10 m = 정적"]
-  lut --> bg
+  proj --> al["alignScanToMap<br/>거리장 국소 정합 → map←odom 보정·공분산"]
+  lut --> al
+  al --> bg["labelBackground<br/>r_bg(점) = √(r₀² + 9σ_n²)"]
   bg --> seg["segmentScan (ABD)<br/>merge / split / 부분 가림"]
   seg --> cl["buildCluster<br/>편향 보정 z, R"]
   cl --> trk["ObstacleTracker<br/>CV-KF + 확장 행렬 GNN(Hungarian)<br/>생명주기 · LS 속도 χ² 검정"]
-  odom["odometry/filtered_map"] --> trk
+  odom["odometry/filtered_map<br/>(자기 속도 · 위치 공분산)"] --> trk
+  odom --> al
   trk --> ttc["computeTimeToCollision<br/>plan 추종 로봇 vs CV 예측 + σ 팽창"]
   plan["plan"] --> ttc
-  ttc -->|"perception/tracked_obstacles (map)"| safety["safety_node / SafetyGate 50 Hz"]
+  ttc -->|"perception/tracked_obstacles (map)"| safety["safety_node / SafetyGate 50 Hz<br/>접근 영역 · 접촉 가드 · E-stop · 센서"]
   scan --> safety
+  pc["camera/depth/points_filtered<br/>(지면 0.03~0.40 m)"] --> safety
+  wo["wheel_odom (측정 속도)"] --> safety
+  excl["safety/dock_exclusion"] --> safety
   cmd["cmd_vel_smoothed"] --> safety -->|"cmd_vel"| gz["DiffDrive"]
-  estop["estop, /fleet/estop (latched)"] --> safety
+  estop["estop, /fleet/estop<br/>(transient_local·volatile)"] --> safety
 ```
 
 | 단계 | 헤더 / 구현 | 테스트 (gtest) |
 | --- | --- | --- |
 | 2D 기하, 풋프린트 거리 | `geometry2d.hpp` | `test_geometry.cpp` |
-| 배경 LUT, ABD 분할, 클러스터 측정 | `scan_clustering.hpp` | `test_scan_clustering.cpp` |
+| 배경 LUT·국소 정합, ABD 분할, 클러스터 측정 | `scan_clustering.hpp` | `test_scan_clustering.cpp` |
 | CV 칼만 필터 | `kalman_filter.hpp` | `test_kalman_filter.cpp` |
 | Hungarian 할당 (직접 구현) | `hungarian.hpp` | `test_hungarian.cpp` |
 | 추적기 (연관·생명주기·동적 판정·신뢰도) | `obstacle_tracker.hpp` | `test_obstacle_tracker.cpp` |
 | TTC | `ttc.hpp` | `test_ttc.cpp` |
-| 안전 게이트 | `safety_gate.hpp` | `test_safety_gate.cpp` |
-| 노드 | `obstacle_tracker_node.cpp`, `safety_node.cpp` | `scripts/tracker_scenario.py`, `scripts/safety_scenario.py` (기능 시험) |
+| 안전 게이트 (스윕 풋프린트, 강건 통계, 게이트) | `safety_gate.hpp` | `test_safety_gate.cpp` |
+| 노드 | `obstacle_tracker_node.cpp`, `safety_node.cpp` | `test_ros_nodes.cpp` (rclcpp), `scripts/tracker_scenario.py`, `scripts/safety_scenario.py` (합성 기능 시험) |
+| Gazebo 시험 하네스 | `test/scripts/`: `safety_gz.launch.py`·`safety_gz_trials.py`·`safety_test_world.py`·`gt_tf_relay.py` (안전 게이트), `tracker_gz.launch.py`·`tracker_gz_route.py` (실제 AMCL 추적기) | §9.4, §9.5 |
 
 **추적 프레임 = `odom`.** `map` 에서 추적하면 AMCL 보정 점프(3–8 cm, 납치 복구 시 m 단위)가 모든 트랙에 동시에
 가짜 속도로 들어간다. `odom→base_footprint`(EKF)는 연속이므로 측정·예측·연관·속도 검정은 odom 에서 하고, 정적 지도
@@ -44,7 +50,8 @@ flowchart LR
 
 1. **투영**: 유효 빔(유한, `[range_min, min(range_max, 12 m)]`)을 스캔 스탬프 TF 로 odom 점으로.
 2. **정적 배경 LUT**: `/map` 점유 셀(≥ 65)까지의 유클리드 거리를 Felzenszwalb–Huttenlocher 분리형 정확 거리 변환으로
-   한 번 만든다 ($O(WH)$, 지도 갱신 시만). 점마다 $d_\text{map} \le r_\text{bg} = 0.10$ m (2 셀: 위치 오차 흡수) 이면 배경.
+   한 번 만든다 ($O(WH)$, 지도 갱신 시만). 셀 중심 격자의 쌍선형 보간이 거리 $d(\mathbf p)$ 와 기울기(표면 법선) $\nabla d$ 를
+   준다. **배경 = $d_\text{map} \le r_\text{bg}(\mathbf p)$**, 반경은 위치 추정 불확실성을 반영한다 (§1.1).
 3. **적응형 브레이크포인트(ABD)**: 이웃 빔 $i-1, i$ 에서
    $\|\mathbf p_i - \mathbf p_{i-1}\| > D_\text{th} = r_{i-1}\frac{\sin\Delta\phi}{\sin(\lambda - \Delta\phi)} + 3\sigma_r$
    ($\Delta\phi = 0.5°$, $\lambda = 10°$, $\sigma_r = 0.03$ m) 이거나 배경 라벨이 바뀌면 끊는다. $D_\text{th}$ = 0.25 (3 m),
@@ -55,6 +62,36 @@ flowchart LR
    보이는 조각의 중심이 가로로 치우친다 → 가로(시선 수직) 분산에 $\sigma_\text{occ}^2 = 0.20^2$ 를 더하고 `occluded` 로
    표시한다. 가려진 측정은 LS 속도 창에서 뺀다. 기둥 뒤를 지나는 작업자에서 게이트 탈락 → ID 교체를 막기 위한 것
    (`TrackSurvivesShortOcclusion`: 가림 0.7 s 동안 ID 유지).
+
+### 1.1 위치 오차에 강건한 배경 판정 (국소 정합 + 불확실성 반경)
+
+예전 고정 $r_\text{bg}$ = 0.10 m 는 LiDAR 잡음 3σ(0.09 m)만으로 거의 다 쓰였다. AMCL 오차 4–5 cm·0.5° 에서 랙 면이 전경
+조각으로 깨지고, 보이는 조각이 로봇과 함께 미끄러지며 가짜 동적 트랙이 됐다 (리뷰 실측: 거짓 `is_dynamic` 527/1988).
+
+**국소 정합** (`alignScanToMap`): 스캔 점을 스캔 스탬프의 `map←odom` 으로 옮기고, 초기 $d \le 0.30$ m 인 점(구조물에 맞은
+빔)으로 센서 중심 보정 $\boldsymbol\delta = (t_x, t_y, \theta)$, $\mathbf p' = R(\theta)(\mathbf p - \mathbf c) + \mathbf c + \mathbf t$ 를 푼다:
+
+$$\min_{\boldsymbol\delta}\ \sum_i \frac{\rho_\text{Huber}\big(d(\mathbf p_i') - \tfrac{h}{2}\big)}{\sigma_m^2} + \boldsymbol\delta^\top\Lambda\,\boldsymbol\delta,\qquad
+J_i = \big[\nabla d^\top,\ \nabla d^\top J\,R(\theta)(\mathbf p_i - \mathbf c)\big],$$
+
+$h$ = 셀 크기(점유 셀 중심 ↔ 표면 반 셀), $\sigma_m^2 = \sigma_r^2 + h^2/12$ (LiDAR 잡음 + 격자 양자화), Huber 0.05 m. 가우스-뉴턴
+걸음은 한 번에 0.10 m·1.1° 로 자르고 실제 강건 비용이 줄 때까지 반씩 줄인다 (거리장 기울기가 셀 단위로 끊겨 큰 걸음은
+넘어간다), 최대 8 회. 사전분포 $\Lambda = \operatorname{diag}(\sigma_{xy}^{-2}, \sigma_{xy}^{-2}, \sigma_\psi^{-2})$ 는 `odometry/filtered_map` 공분산을
+0.03–0.20 m, 0.3–2.9° 로 자른 값 — 복도처럼 한 방향이 관측되지 않으면 그 방향은 사전분포에 머문다. 대응점 < 40 이거나
+보정이 0.30 m·3.4° 를 넘으면 실패로 보고 보정 없이 사전분포 공분산만 쓴다. 보정 공분산 $\Sigma = (H/\hat\sigma^2 + \Lambda)^{-1}$,
+$\hat\sigma$ = 정합 잔차의 1.4826·MAD.
+
+**불확실성 반경**: 점 변위 $\delta\mathbf p = [I_2,\ J(\mathbf p - \mathbf c)]\,\boldsymbol\delta$ 의 **거리장 법선 성분** 분산
+$\sigma_n^2 = \mathbf a^\top\Sigma\,\mathbf a$, $\mathbf a = (\mathbf n,\ \mathbf n^\top J(\mathbf p - \mathbf c))$, $\mathbf n = \nabla d/|\nabla d|$ 로
+
+$$r_\text{bg}(\mathbf p) = \min\Big(0.35,\ \sqrt{r_0^2 + 9\,\sigma_n^2}\Big),\qquad r_0 = \max(0.10,\ 3\hat\sigma).$$
+
+벽을 따라 미끄러지는 오차는 $d$ 를 바꾸지 않으므로 법선 성분만 쓴다(먼 점일수록 회전 항이 커진다). 상한 0.35 m 는 벽
+0.35 m 앞 사람을 항상 전경으로 남긴다. 출력 좌표(`perception/tracked_obstacles`, map)는 보정하지 않는다 — 코스트맵·플래너와
+같은 AMCL 프레임을 유지하기 위해서다. 테스트: `ScanToMapAlignmentRecoversPoseOffset` (5 cm·−4 cm·1° 오차 → 1 cm·0.2° 이내),
+`PoseErrorDoesNotFragmentWallsIntoForeground` (5 cm·5 cm·1° 오차 20 스캔: 고정 반경은 벽 조각 > 20 개, 정합은 벽 앞 사람
+하나만), `InterpolatedDistanceGradient`. 실제 SLAM 지도(`maps/warehouse.pgm`, 격자 레이캐스트 스캔 σ 0.03, 6 자세 × 5 오차)
+진단 결과는 §9.5.
 
 ## 2. 클러스터 측정 모델과 칼만 필터
 
@@ -134,8 +171,12 @@ $\ln\det S$ 항 덕분에 공분산이 부푼 coasting 트랙이 확정 트랙�
 $$g(\tau) = \|\mathbf p_r(\tau) - \mathbf p_o(\tau)\| - \big(r_\text{robot} + r_o + \min(k\,\sigma_o(\tau),\ \sigma_\text{cap})\big),$$
 
 $r_\text{robot} = \sqrt{0.3^2 + 0.2^2} = 0.361$ m (풋프린트 외접원), $r_o$ = 트랙 외접원 반경, $\sigma_o(\tau)$ = 연결 방향 $\mathbf d$ 로 본
-$\sqrt{\mathbf d^\top\Sigma_o(\tau)\mathbf d}$, $k = 1$, $\sigma_\text{cap}$ = 0.5 m. **TTC = $g$ 가 처음 0 이하가 되는 $\tau$**
+$\sqrt{\mathbf d^\top\Sigma_o(\tau)\mathbf d}$, $\sigma_\text{cap}$ = 0.5 m. **TTC = $g$ 가 처음 0 이하가 되는 $\tau$**
 ($\tau \in [0, 5]$ s), 없으면 `inf` (메시지 규약).
+
+**팽창 배수 $k$ (`ttc.k_sigma`) 는 측정 정확도로 정한다** (§9.2): $k$ 는 예측 불확실성만큼 TTC 를 **일찍**(안전 쪽으로)
+당긴다. 명세 목표 "TTC ±0.3 s" 안에서 가장 보수적인 값을 쓴다 — 10 시드 합성 교차에서 최대 오차가 0.3 s 를 넘지 않는
+가장 큰 $k$ (§9.2 표). 늦게 나온 표본(과소 추정 쪽)은 어느 $k$ 에서도 0 이다.
 
 **직선·등속의 폐형식 (검증 기준).** 로봇도 등속 직선이면 상대 위치 $\mathbf d(\tau) = \mathbf d_0 + \tau\Delta\mathbf v$ 이고
 $\|\mathbf d(\tau)\|^2 = R^2$ ($R = r_\text{robot} + r_o$) 의 작은 근이 TTC:
@@ -153,46 +194,125 @@ TTC 를 줄이되 상한($\sigma_\text{cap}$/접근속도) 이하, 공분산 성
 
 ## 6. 안전 게이트 (`SafetyGate`, `safety_node` 50 Hz)
 
-**거리 기준**: robot_params.yaml `distance_reference: footprint_edge` — 스캔 점을 base_link 로 옮긴 뒤 풋프린트
-사각형(0.60 × 0.40) **모서리까지의 최단 거리** $D$ (LiDAR range 를 그대로 쓰지 않는다). 풋프린트보다 0.02 m 안쪽 점은 자기
-차체 반사로 무시.
+### 6.1 접근 영역 — "0.3 m 이내로 접근" 의 거리
 
-**존과 속도 상한** (robot_params.yaml `safety.*`):
+명세 4.7 "장애물이 안전 거리(0.3 m) 이내로 **접근** 시 즉시 정지". 모든 방향 풋프린트 거리로 판정하면 0.60 m 통로(명세 4.4,
+풋프린트 옆 0.10 m)의 옆 벽 때문에 입구 앞에서 멈춘다 (리뷰 재현: 예전 omni·motion 두 모드 모두 D = 0.10 → 정지, Gazebo 에서
+통로 입구 0.32 m 앞 정지). 그래서 거리를 **현재 운동이 쓸고 갈 영역 안에서의 접근 거리**로 정의한다 (`SweptFootprint`).
 
-| 존 (`safety/zone` UInt8 / `safety/zone_name` String) | 조건 | 선속도 상한 |
+- **운동 가설**: 명령 $(v_c, \omega_c)$ 와 측정 $(v_m, \omega_m)$ (`wheel_odom` twist, 1차 저역 통과 τ = 0.1 s, 0.2 s 유효 — 엔코더
+  슬립 잡음 ω σ ≈ 0.04 rad/s 를 약 1/3 로). 가설마다 영역을 만들고 점별로 작은 값을 쓴다. 명령이 0 이어도 아직 움직이면
+  측정 가설이 앞을 본다. 둘 다 멈춰 있으면 마지막 명령 운동(`hold_motion_intent`) — 정지 원인 앞에서 STOP 이 깜박이지 않게.
+- **접근 거리**: 등속 원호에서 정지점 $\mathbf p$ 는 로봇 좌표로 순간 회전 중심 $\mathbf c = (0, v/\omega)$ 둘레를 $-\omega$ 로 돈다.
+  반지름 $\rho = |\mathbf p - \mathbf c|$ 원과 풋프린트 사각형(±0.30 × ±0.20) 변의 교점 중 운동 방향 첫 교점까지의 각 $\Delta$ →
+  $s(\mathbf p) = \rho\Delta$ (닿는 풋프린트 점의 이동 거리). $|v/\omega| > 10^5$ m 는 직선: $s = x - 0.30$ ($|y| \le 0.20$), 후진은 대칭.
+  풋프린트 안 = 0, 옆·뒤(지나온 점)·원이 사각형과 만나지 않는 점 = ∞.
+- **영역 길이**: 원호는 정지 포락선 $S_1 = 0.30 + d(u)$, $d(u) = u\,t + u^2/2a$ 까지 (u = 풋프린트 최고 점 속도 = 꼭짓점에서
+  $|(v - \omega y,\ \omega x)|$ 의 최대), 그 뒤는 원호 끝 자세의 접선 직선으로 $S = \max(1.0 + 0.05,\ S_1) + 0.10$ m 까지. 정지
+  포락선 밖(경고 존 앞쪽)까지 같은 곡률을 가정하면, 중심선으로 돌아오는 짧은 조향(ω 0.02–0.1 rad/s)에도 반대편 벽이
+  WARNING 이 된다. 제자리 회전은 원호로 끝까지 — 꼭짓점 원(반경 0.361 m) 안의 점만 닿으므로 0.60 m 통로 안 회전은 벽에
+  닿아 STOP (맞다), 전방 0.5 m 판 앞에서의 방향 전환은 허용된다.
+- 좌우 여유 `approach.swept_margin` 기본 0: 여유를 두면 벽에 1 cm 붙은 로봇은 앞뒤가 모두 "접근" 이 되어 갇힌다. 스침은
+  접촉 가드(§6.4)가 맡는다. 여유를 켜면 이미 옆 여유 안에 있는 점은 여유 없이 판정한다 (옆 벽 = "지금 닿음" 이 아니다).
+- 검증: `SweptFootprintArcMatchesBruteForce` (무작위 운동·점을 시간 적분과 비교, 3 mm 이내), 직선·후진·회전 해석값,
+  `NarrowAisleWallsNeitherStopNorCap` (0.60 m 통로, σ 0.03, 600 스캔 × 오프셋 0/±3 cm: STOP 0, 중심선 감속 0).
+
+### 6.2 잡음 강건성 (LiDAR σ 0.03 m)과 지연 보정
+
+단일 빔 최솟값은 0.40 m 판 앞에서도 1000 프레임 중 여러 번 0.30 아래로 떨어진다(`NoisyObstacleNearThresholdDoesNotTripStop`).
+
+- **공간 일관성**: 빔 i 를 중심으로 **물리 폭 4 cm** 를 덮는 창(빔 수 = 0.04 / (r · 0.5°), 최소 5 빔)에서 60 % 순위 값, 그 최소 =
+  $D_\text{LiDAR}$. 가까울수록 창이 길어(0.3 m 에서 17 빔) 옆 0.07 m 벽(CTE 3 cm)의 잡음 점 몇 개가 풋프린트 선 안으로 들어와도
+  창의 60 % 가 함께 들어오지는 않는다. 먼 곳은 최소 5 빔 = 3 빔 물체(1 m 에서 2.6 cm, 2.6 m 에서 6.8 cm)까지 검출한다.
+- **시간 일관성**: STOP 래치 = 새 프레임(스캔·점군) 2 개 연속 $D \le 0.30$, 또는 $D \le 0.25$ 한 프레임. 속도는 여유 거리 제한
+  $v(D \le 0.30) = 0$ 이 첫 프레임에 이미 0 으로 묶으므로 확정 대기로 늦어지는 제동은 없다.
+- **깊이 점군**: `cloud_min_points` (3) 번째로 작은 접근 거리 (voxel 5 cm, 칸당 ≥ 2 점 필터 뒤).
+- **지연 보정**: 스캔·점군 헤더(촬영) 시각 이후 측정 운동만큼 점을 옮긴다: $\mathbf p_\text{now} = \Delta(v_m, \omega_m, t_\text{now} - t_\text{stamp})^{-1}\mathbf p$
+  (최대 0.5 s). 부하에서 점군이 100 ms 이상 늦게 오는 동안 다가간 거리를 놓치지 않는다
+  (`SensorLatencyIsCompensatedByMeasuredMotion`: 0.2 s 전 0.40 m, 0.5 m/s → 0.30 m).
+
+### 6.3 전방 깊이 점군 — LiDAR 평면 아래 물체
+
+스캔 평면은 지면 +0.20 m 라 소형 상자(0.15 m)·지게차 포크(0.05–0.10 m)는 LiDAR 사각이다. `camera/depth/points_filtered`
+(optical)를 base_link 로 옮겨 지면 높이 0.03–0.40 m, 수평 3.5 m 안의 점을 평면 점으로 LiDAR 와 같은 접근 거리 판정에 넣는다.
+카메라(전면, 광학 중심 지면 0.25 m, 수직 화각 ±35.4°)는 렌즈 앞 0.31 m(= 범퍼 앞 0.30 m)에서 지면 0.03 m 위를, 포크 윗면
+(0.10 m)은 렌즈 앞 0.21 m 부터 본다. 후진 방향은 카메라가 없으므로 LiDAR 평면만 본다. 깊이 카메라 고장(camera_info 0.4 s
+결측) → 0.2 m/s 저속 (LiDAR 평면 아래 물체를 못 보므로).
+
+### 6.4 STOP 래치 해제 · 접촉 가드 · 탈출 — 갇히지 않는다
+
+- **원인별 해제**: 접근(lidar/depth)은 현재 운동의 $D > 0.50$ (`stop_release_distance`, 같은 운동에서의 히스테리시스).
+  운동이 바뀌어 장애물이 영역 밖이면(후진, 회전) $D = \infty$ → 바로 해제된다. 측정 속도가 아직 앞으로면 그 가설이 남아
+  막는다 (멈춘 뒤 해제). 원인이 아닌 채널(예: 통로 옆 벽의 가드 거리 0.07 m)은 해제를 막지 않는다.
+- **모든 방향 접촉 가드**: 풋프린트 거리의 창 중앙값(물리 6 cm, 최소 9 빔) 최소 $G \le 0.02$ m → STOP. 가드만 남았으면 $G$ 가
+  운동 예측(0.3 s, 5 단계) 중 0.01 m 넘게 줄지 않는 명령만 `escape_max_speed` 0.2 m/s(점 속도)로 통과 — 벽에 붙은 로봇은
+  나란히 빠져나갈 수 있고, 원호·제자리 회전은 꼬리가 벽을 쳐서 막힌다 (`ContactGuardAllowsOnlyMovingAway`). 중앙값 σ 는
+  0.3 m 거리에서 약 0.008 m 라 CTE 5 cm(벽 옆 0.05 m)에서도 가드까지 3.8σ.
+- **자기 차체**: 풋프린트보다 0.02 m 안쪽 점은 모든 판정(탈출 포함)에서 먼저 뺀다. 리뷰 결함(탈출 판정만 자기 점을 세어
+  슬롯 기둥 반사 하나가 탈출을 막음)은 `SelfReturnsDoNotBlockEscape` 가 재현한다.
+
+### 6.5 존과 속도 상한
+
+| 존 (`safety/zone` UInt8 / `safety/zone_name`) | 조건 (D = 접근 거리) | 풋프린트 최고 점 속도 상한 |
 | --- | --- | --- |
-| CLEAR / 0 | $D > 1.0$ | 여유 거리 연속 제한 $v_\max(D)$ |
+| CLEAR / 0 | $D > 1.0$ (영역 밖 = ∞) | 여유 거리 연속 제한 $v_\max(D)$ |
 | WARNING / 1 | $0.5 < D \le 1.0$ | min(0.5, $v_\max(D)$) |
 | CRITICAL / 2 | $0.3 < D \le 0.5$ | min(0.2, $v_\max(D)$) |
-| STOP / 3 | $D \le 0.3$ | **0 (즉시, 래치)** — $D > 0.5$ 에서 자동 해제 |
+| STOP / 3 | $D \le 0.3$ 확정, 접촉 가드, 도킹 예외 0.10 m | **0** (래치, §6.4 해제) — E-stop 아님 |
 
 **여유 거리 연속 제한 유도.** 반응 지연 $t$ = 0.15 s 동안 등속 후 최대 감속 $a$ = 1.0 m/s² 로 멈출 때 정지 거리
 $d(v) = vt + \frac{v^2}{2a}$ 가 남은 여유 $D - 0.30$ 을 넘지 않아야 하므로 $v^2 + 2atv - 2a(D - 0.3) \le 0$ 의 양의 근:
 
 $$v_\max(D) = -at + \sqrt{(at)^2 + 2a(D - 0.30)}$$
 
-($D$ = 2.6 → 2.0, 1.0 → 1.04, 0.5 → 0.50 m/s; 테스트가 이 세 값을 확인). 존 상한과 연속 제한 중 작은 값.
+($D$ = 2.6 → 2.0, 1.0 → 1.04, 0.5 → 0.50 m/s; 테스트가 이 세 값을 확인). 상한은 풋프린트 최고 점 속도(꼭짓점)에 걸고 $v, \omega$ 를
+같은 비율로 줄여 **곡률을 유지**한다 (직진 = $|v|$, 제자리 회전 = $|\omega| \cdot 0.361$). 하드웨어 한계(2.0 m/s, 1.5 rad/s)는
+각각 따로 자른다.
 
 **TTC 연속 감속**: 최소 TTC ≤ τ_crit = 2.15 s (= $t + v_\max/a$, sequences.md §2) 이면 $v \le a(\text{TTC} - t)$
 (TTC 1.0 → 0.85, 0.5 → 0.35 m/s). 거리 존 상한이 더 낮으면 그쪽이 이긴다. 0.5 s 넘은 TTC 는 무시.
-**각속도**: 꼭짓점 속도 $|\omega| r_\text{circ}$ 도 거리 상한 이하 — $v, \omega$ 를 같은 비율로 줄여 **곡률을 유지**한다.
-**탈출**: STOP 래치 중에도 0.5 s 예측 시 풋프린트-장애물 거리가 늘어나는 명령(후진 등)은 CRITICAL 상한으로 통과(갇힘 방지).
-**도킹 예외 다각형**: `safety/dock_exclusion` 안의 점은 0.10 m 정지 거리 + 0.2 m/s 상한만 적용(도킹 판 접근).
 
-**E-stop 래치**: `estop`, `/fleet/estop` (std_msgs/Bool, **transient_local** — 대시보드가 latched 로 발행하므로 늦게 떠도
-마지막 값을 받는다). true 수신 즉시 래치. 해제 조건 = 모든 입력이 **명시적 false** + `safety/reset_estop` (std_srvs/Trigger)
-호출. reset 이 false 보다 먼저 도착하는 경우(대시보드는 false 발행 직후 reset 을 부른다)를 위해 1 s 동안 false 를 기다린다.
-대기 중 새 true 는 대기를 무효화한다.
+### 6.6 도킹 예외 다각형 (계약 C2)
 
-**센서 고장** (robot_params.yaml `safety.sensor_timeouts`): 토픽별 마지막 수신 후 경과 > 타임아웃이면 고장.
-LiDAR(`scan_filtered` 0.3 s)·휠 엔코더(`wheel_odom` 0.06 s) → **정지** + `estop_active`; IMU(`imu/data` 0.05 s)·RGB
-(`camera/camera_info` 0.1 s)·깊이(`camera/depth/camera_info` 0.2 s) → `degraded_mode_max_speed` **0.2 m/s 저속**.
-기동 직후에는 기동 시각을 마지막 수신으로 두어 타임아웃만큼 유예한다. 입력 명령이 0.5 s 넘게 끊겨도 0.
+`safety/dock_exclusion` (PolygonStamped, TF 로 풀리는 아무 프레임 — 예: map; docking_server_node 가 도킹 중 ≥ 10 Hz). 수신하면
+odom 에 고정해 두고 스캔·점군마다 현재 base_link 로 다시 옮긴다 (수신 사이 로봇 이동 반영, 정적 TF 캐시를 쓰지 않는다).
+다각형 안 점: 정지 거리 `exclusion_stop_distance` 0.10 m, CRITICAL 상한 0.2 m/s, 여유 거리 제한 $v(D;\,0.10)$. 0.3 s 동안 새
+다각형이 없으면 일반 규칙. standoff 0.65 → 범퍼-판 0.35 m 는 0.30 보다 크지만 σ 0.03 잡음에서 창 순위 최소가 0.30 아래로
+떨어질 수 있어 예외가 필요하다 (§9.4 (c)).
 
-**발행**: `cmd_vel` 50 Hz (유일한 발행자; 명령 입력 시 즉시 + 타이머 보충), 스캔으로 존/정지 상태가 바뀌면 다음 주기를
-기다리지 않고 즉시 발행(0.3 m 정지 지연 = 스캔 처리 시간). `safety/estop_active` (Bool, latched), `safety/zone`
-(UInt8 0–3, latched — components.md §5.4 계약, fleet_adapter_node 구독), `safety/zone_name` (String, 사람이 읽는 표기),
-`diagnostics` 1 Hz + 변화 시.
+### 6.7 E-stop (계약 C1)
+
+`estop`, `/fleet/estop` (Bool). 구독 두 개 — reliable + transient_local (늦게 떠도 latched 값) + reliable + volatile
+(volatile 발행자; 리뷰 결함: transient_local 구독만 있어 조용히 무시됐다). volatile 구독은 두 종류 발행자와 모두 맞으므로
+같은 표본이 두 번 온다 → 발행자 GID 별 원천 시각이 새 것만 받는다. QoS 가 맞지 않는 발행자(best effort)는 이벤트 콜백이
+ERROR 로그와 진단 `estop_incompatible_publishers` 로 알린다.
+
+- true → 즉시 래치, 이벤트 발행으로 `cmd_vel` 0 (다음 주기를 기다리지 않는다).
+- 해제 = 모든 입력이 명시적 false 인 상태에서 `safety/reset_estop`. 입력이 true 인 동안의 reset 은 거절하고 **아무 상태도
+  남기지 않는다** (리뷰 결함: 거절 뒤 1 s 안의 false 가 래치를 풀었다). 대시보드 순서(false 발행 → 확인 → reset)는 그대로 동작한다.
+- `safety/estop_active` = E-stop 래치 ∨ 정지형 센서 고장. 근접 STOP 은 `safety/zone` = 3 으로만 알린다.
+
+### 6.8 센서 고장 — 주기에서 유도한 디바운스
+
+수신 간격(sim 시각) > **지연** (`robot_params.yaml safety.sensor_timeouts`, ≈ 3 주기) → 지연 경고(진단 `late_sensors`, 속도 영향
+없음). 간격 > **고장** = max(지연, `sensor_fault_periods` / `<센서>.update_rate` (sensors.yaml)) → 대응:
+
+| 센서 (감시 토픽) | 주기 | 지연 | 고장 (주기 수) | 대응 |
+| --- | --- | --- | --- | --- |
+| LiDAR (`scan_filtered`) | 10 Hz | 0.30 s | 0.30 s (3) | 정지 + `estop_active` |
+| 휠 엔코더 (`wheel_odom`) | 50 Hz | 0.06 s | 0.20 s (10) | 정지 + `estop_active` |
+| IMU (`imu/data`) | 100 Hz | 0.05 s | 0.20 s (20) | 0.2 m/s 저속 |
+| RGB (`camera/camera_info`) | 30 Hz | 0.10 s | 0.30 s (9) | 0.2 m/s 저속 |
+| 깊이 (`camera/depth/camera_info`) | 15 Hz | 0.20 s | 0.40 s (6) | 0.2 m/s 저속 |
+
+실제 끊김은 마지막 수신 후 고장 시간 + 한 주기(20 ms) 안에 대응한다. 주기 수는 부하 시 sim 시각 수신 간격 실측(§9.4 (e))에서
+거짓 고장이 없는 값이다. 센서 고장은 원인이 사라지면(수신 재개) 저절로 풀린다. 기동 직후에는 기동 시각을 마지막 수신으로
+두어 고장 시간만큼 유예한다. 입력 명령이 0.5 s 넘게 끊겨도 0.
+
+**발행**: `cmd_vel` 50 Hz (유일한 발행자). 스캔·점군·명령·E-stop 이벤트로 존/정지 상태가 바뀌거나 출력 속도가 줄면 다음 주기를
+기다리지 않고 즉시 발행. `safety/estop_active` (Bool, latched), `safety/zone` (UInt8 0–3, latched — components.md §5.4 계약,
+fleet_adapter_node 구독), `safety/zone_name` (String), `diagnostics` 1 Hz + 변화 시 (접근·접촉·예외 거리, STOP 원인,
+지연·고장 센서, E-stop QoS 불일치 수).
 
 ## 7. 파라미터 (요약 — 전체와 근거는 `config/perception.yaml`, 안전 값은 `config/robot_params.yaml`)
 
@@ -201,6 +321,10 @@ LiDAR(`scan_filtered` 0.3 s)·휠 엔코더(`wheel_odom` 0.06 s) → **정지** 
 | `kf.q` | 0.25 | m²/s³ | 1 s 속도 변화 σ 0.5 m/s (보행 가감속), NEES 일관 |
 | `kf.init_velocity_std` | 1.5 | m/s | 명세 장애물 최고속 |
 | `segmentation.sigma_r` (= `lidar.noise_stddev`) | 0.03 | m | sensors.yaml, R 시선 성분 |
+| `segmentation.background_radius` (= $r_0$ 하한) | 0.10 | m | LiDAR 3σ + 반 셀 |
+| `background.max_correspondence` / `huber` | 0.30 / 0.05 | m | 정합 대응점 / Huber 경계 (§1.1) |
+| `background.k_sigma` / `max_radius` | 3 / 0.35 | – / m | 법선 불확실성 3σ, 벽 앞 사람 보존 |
+| `background.prior_sigma_*` | 0.03–0.20 m, 0.005–0.05 rad | | EKF map 공분산의 하·상한 |
 | `cluster_model.sigma_delta` / `bias_mu` | 0.10 / 0.15 | m | 미지 클래스 표면→중심 편향 |
 | `cluster_model.sigma_occluded` | 0.20 | m | 부분 가림 중심 치우침 ≈ 물체 반폭 |
 | `association.gate_chi2` | 9.21 | – | χ²₂(0.99) |
@@ -209,10 +333,18 @@ LiDAR(`scan_filtered` 0.3 s)·휠 엔코더(`wheel_odom` 0.06 s) → **정지** 
 | `lifecycle.confirm_hits/window` | 3 / 5 | 스캔 | 0.3 s 이내 확정, 잡음 1–2 프레임 무시 |
 | `lifecycle.max_misses` / `_occluded` | 5 / 15 | 스캔 | 0.5 s / 가림 1.5 s 유지 |
 | `dynamic.window` / `chi2` / `v_min` | 10 / 13.82 / 0.15 | 스캔 / – / m/s | 1 s 창, χ²₂(0.999), 명세 최저 0.3 m/s 의 절반 |
-| `ttc.horizon` / `k_sigma` / `sigma_cap` | 5.0 / 1.0 / 0.5 | s / – / m | > τ_warn 3.0 s, 1σ 팽창, 상한 |
+| `ttc.horizon` / `k_sigma` / `sigma_cap` | 5.0 / 0.5 / 0.5 | s / – / m | > τ_warn 3.0 s, ±0.3 s 안의 가장 큰 팽창 (§9.2), 상한 |
 | `safety_node.ttc.critical` | 2.15 | s | $t + v_\max/a$ |
-| `safety_node.stop_release_distance` | 0.50 | m | 0.3 m 정지 히스테리시스 |
+| `safety_node.stop_release_distance` | 0.50 | m | 같은 운동에서 0.3 m 정지 히스테리시스 |
 | `safety_node.zone_hysteresis` | 0.05 | m | 스캔 σ 의 약 1.7 배 |
+| `safety_node.approach.swept_margin` / `region_margin` | 0 / 0.10 | m | 갇힘 방지 (§6.1) / 영역 길이 여유 |
+| `safety_node.approach.measured_time_constant` | 0.1 | s | 엔코더 ω 잡음 1/3 |
+| `safety_node.robust.beam_window_width` / `beam_support` | 0.04 / 0.6 | m / – | 3 cm 물체 검출, 단일·소수 빔 무시 |
+| `safety_node.robust.contact_guard_distance` | 0.02 | m | 통로 CTE 5 cm 에서도 3.8σ |
+| `safety_node.robust.stop_confirm_frames` / `immediate_stop_margin` | 2 / 0.05 | 프레임 / m | 거짓 STOP 억제 |
+| `safety_node.depth_cloud.min_height` / `max_height` | 0.03 / 0.40 | m | 바닥 제거 / 차체 상면 0.33 + 여유 |
+| `safety_node.exclusion_stop_distance` / `exclusion_timeout` | 0.10 / 0.3 | m / s | 계약 C2 |
+| `safety_node.sensor_fault_periods` | 3 / 10 / 20 / 9 / 6 | 주기 | LiDAR / 휠 / IMU / RGB / 깊이 (§6.8) |
 | `safety_node.command_timeout` | 0.5 | s | 상위 노드 정지 대비 |
 
 ## 8. 확장점 (연구 브리프 제안과의 정합)
@@ -222,80 +354,92 @@ LiDAR(`scan_filtered` 0.3 s)·휠 엔코더(`wheel_odom` 0.06 s) → **정지** 
 - **카메라 클래스 융합**: `TrackOutput.class_confidence` (신뢰도 로지스틱의 $\beta_3$ 항) 와 `perception/detections_3d`
   (클래스 + map 위치 + 공분산) 가 입력. 브리프의 클래스별 $\mu_\delta$, $q$, 반경 사전은 `ClusterModelParams`/`TtcParams` 에 클래스 축을 더하면 된다.
 - **P3 DATMO 자유공간 점수**: `ScanPoint.map_distance` 와 `Cluster.map_overlap` 이 이미 계산되며, 동적 판정
-  `updateDynamicState` 에 로그오즈 항을 더하는 형태로 붙는다.
-- **피어 AMR 주입** (LiDAR 평면 0.38 m 보다 낮은 AMR 차체): 추적기 입력에 가상 클러스터로 `/amr_XX/odometry/filtered_map` 을 넣는다.
+  `updateDynamicState` 에 로그오즈 항을 더하는 형태로 붙는다. 배경 판정은 §1.1 의 국소 정합이 맡는다.
+- **피어 AMR 주입**: 스캔 평면이 지면 +0.20 m 로 내려와 다른 AMR 차체(지면 0.03–0.33 m)는 LiDAR 에 보인다 (sensors.yaml
+  장착 주석). 가려진 피어를 미리 알기 위한 확장으로만 남긴다: 추적기 입력에 가상 클러스터로 `/amr_XX/odometry/filtered_map`.
+- **지게차 포크 TTC**: LiDAR 는 포크(지면 0.05–0.10 m)가 아니라 1.2 m 뒤 마스트를 추적하므로 TTC 도 마스트 기준이다. 근접
+  정지는 깊이 점군이 맡는다 (§6.3, §9.4 (b)). 클래스별 전방 돌출 길이를 트랙 반경에 더하는 것이 확장점이다.
 - 메시지 확장 제안(`TrackedObstacle` 에 공분산·반경·방향 σ): 현재 계약에 필드가 없어 `TrackOutput` 에만 있다.
 
 ## 9. 검증 결과
 
-측정 환경: `amr-fleet-system:wf-final` 일회용 컨테이너, 호스트 32 스레드 + RTX 5090, 2026-09-22 11:00–11:30 (KST).
-외부 `gsim` 작업이 끝난 뒤라 load average **8–14 / 32** — 아래 시간 수치는 잠정치가 아니다(각 행에 load 병기).
-재현: `ros2 run amr_perception tracker_scenario.py`, `ros2 run amr_perception safety_scenario.py` (노드는 `config/*.yaml` 로 기동).
+측정 환경: `amr-fleet-system:wf-final` 일회용 컨테이너(Gazebo 는 `--gpus all`), 호스트 32 스레드 + RTX 5090,
+2026-09-22 14:30–15:50 (KST), 이 기준선(a7d43f7 + glue0 지도)에서. 에이전트 6 개가 같은 호스트를 나눠 써서 **load average 가
+67–230 / 32** 였다 — 모든 표에 load 와 Gazebo RTF 를 적는다. 시간 수치(지연)는 이 과부하 조건의 값이다.
+재현: `./scripts/test.sh --packages-select amr_perception`, `ros2 run amr_perception tracker_scenario.py`,
+`ros2 run amr_perception safety_scenario.py`, Gazebo 하네스는 `src/amr_perception/test/scripts/` (각 파일 머리말).
 
-### 9.1 단위·통합 테스트 (gtest)
+### 9.1 단위·통합 테스트
 
-| 대상 | 테스트 | 결과 |
-| --- | --- | --- |
-| `amr_perception_gtest` (ROS 비의존 라이브러리) | 65 개 / 8 스위트: 기하, Hungarian, KF, 분할, 추적기(교차 트랙 ID 유지·가림·생명주기·동적 판정·종단 TTC), TTC(정면·횡단·이탈·경로 모퉁이·팽창), 안전 게이트(존·연속 제한·TTC·E-stop 래치·센서 타임아웃·탈출·도킹 예외), 깊이 점군 | 65/65 통과 |
-| `amr_perception_ros_gtest` (rclcpp 노드) | safety_node: 게이트·transient_local E-stop 래치·`safety/reset_estop`; obstacle_tracker_node: 이동 장애물 추적 + `/map` 벽 제거; pointcloud_filter_node: 역투영 | 3/3 통과 |
-| 커버리지 (lcov, `--coverage` Debug, 테스트 코드 제외) | 라인 **95.8 %** (1808/1887), 함수 90.2 % | `safety_gate.cpp` 98.0, `obstacle_tracker.cpp` 98.3, `scan_clustering.cpp` 97.1, `ttc.cpp` 97.2, `kalman_filter.cpp`·`hungarian.cpp`·`geometry2d.cpp` 100, `obstacle_tracker_node.cpp` 96.3, `safety_node.cpp` 90.9, `pointcloud_filter_node.cpp` 91.7 % (`main_*.cpp` 3 × 5 줄만 0 %) |
+측정: 2026-09-22 22:20 KST, 이 패키지의 최종 코드(안전·추적 + YOLO 변경 합본), load average ≈ 17 / 32.
 
-### 9.2 기능 (a) — 합성 LaserScan 횡단 장애물 → `obstacle_tracker_node`
+- `./scripts/test.sh --packages-select amr_perception` → **328 tests, 0 errors, 0 failures, 34 skipped**
+  (skipped 34 = cppcheck 2.7 성능 문제로 ament_cppcheck 가 건너뛴 파일). gtest 82 (`SafetyGate` 접근 영역·접촉 가드·도킹 예외·
+  센서 고장 디바운스·E-stop 래치·탈출, `ScanClustering` 배경 판정의 자세 공분산·국소 정렬, 추적·TTC) + rclcpp gtest 4
+  (`safety_node`·`obstacle_tracker_node` 배선, volatile/transient_local E-stop 발행자) + pytest 86 (YOLO 보류 구역 회귀 포함 —
+  저장소 가중치로 건너뛰지 않는다) + 린트 7 종. WERROR 빌드 경고 0.
+- 커버리지: **C++ 라인 96.1 %** (2437 / 2536, 함수 92.5 %; lcov, `--coverage -O0` 별도 빌드로 gtest 두 실행 파일),
+  **Python 91 %** (2295 문장, 분기 포함 pytest-cov).
 
-시나리오(`tracker_scenario.py`): 로봇 원점에서 +x 로 1.0 m/s (`odometry/filtered_map`, 직선 `plan`), 반경 0.2 m 원통이
-(4, −4) 에서 +y 로 **1.0 m/s** 로 로봇 경로를 가로지른다. 720 빔 360° 스캔, 거리 잡음 σ = 0.03 m, 10 Hz, 6 s.
-기준 TTC 는 §5 폐형식($R = 0.361 + 0.2$, 상대 속도 $\sqrt2$ m/s → $\tau_c = 4 - R/\sqrt2 - t$).
+### 9.2 추적기·TTC — 합성 1.0 m/s 교차 (`tracker_scenario.py`, 시드 10 개 × 설정)
 
-| 지표 (정착 1.5 s 이후) | 목표 | 기본 설정 (`ttc.k_sigma` 1.0) | 명목 기하 (`k_sigma` 0) |
-| --- | --- | --- | --- |
-| 속도 오차 RMS / p95 / 최대 | ≤ 0.1 m/s | 0.023 / 0.037 / 0.099 m/s | 0.024 / 0.037 / 0.112 m/s (1 표본) |
-| 방향 오차 RMS / 최대 | ≤ 10° | 1.36° / 4.8° | 1.39° / 5.1° |
-| 위치 오차 평균 | – | 0.019 m | 0.020 m |
-| 트랙 확정 / 동적 판정 시각 | – | 0.5 s / 0.7 s | 0.3 s / 0.4 s |
-| TTC − 기준 (29 표본) 평균 / 최대 \|·\| | ≤ 0.3 s | −0.195 / 0.413 s (**항상 이르게**) | −0.026 / **0.066 s** |
-| 스캔 → 발행 지연 p50 / p95 | ≤ 30 ms | 0.33 / 0.47 ms | 0.31 / 0.49 ms |
-| 트랙 ID | 1 개 유지 | [1] | [1] |
+시나리오: 로봇 원점에서 +x 로 1.0 m/s (`odometry/filtered_map`, 직선 `plan`), 반경 0.2 m 원통이 (4, −4) 에서 +y 로 **1.0 m/s**
+로 경로를 가로지른다. 720 빔 360° 스캔, σ = 0.03 m, 10 Hz, 6 s, 정착 1.5 s 이후 집계. 기준 TTC = §5 폐형식
+($R = 0.361 + 0.2$). `obstacle_tracker_node` 를 시드마다 새로 띄웠다 (load 133–181).
 
-해석: 추정기 자체(명목 기하)의 TTC 는 폐형식과 0.066 s 이내다. 기본 설정은 연구 브리프 §3.7 대로 예측 공분산의
-연결 방향 1σ(상한 0.5 m)를 충돌 반경에 더하므로 TTC 가 0.1–0.4 s **일찍** 나온다 — 안전 쪽으로만 치우친 의도된
-보수성이며(늦게 나온 표본 0), `safety_node` 의 τ_crit 2.15 s 감속이 이 값을 쓴다. 명세 "1.0 m/s 동적 장애물 인식"은
-0.4–0.7 s(4–7 스캔) 안에 `is_dynamic` 이 켜지는 것으로 확인된다. (외부 부하 load ≈ 100 에서 같은 시험: 속도 최대 오차
-0.079 m/s, 명목 TTC 최대 0.063 s, 지연 p95 76 ms — 잠정치.)
+| `ttc.k_sigma` | TTC − 기준 평균 | \|오차\| p50 / p95 / 최대 (10 시드, 287–290 표본) | 늦게 나온 최대 (과소 추정) | 목표 ±0.3 s |
+| --- | --- | --- | --- | --- |
+| 0 | −0.028 s | 0.035 / 0.055 / 0.077 s | 0.044 s | 충족 (늦은 표본 있음) |
+| **0.25 (기본)** | −0.085 s | 0.084 / 0.185 / **0.230 s** | **0** | **충족** |
+| 0.5 | −0.135 s | 0.124 / 0.310 / 0.355 s | 0 | 미충족 |
+| 0.75 | −0.171 s | 0.156 / 0.384 / 0.427 s | 0 | 미충족 |
+| 1.0 (이전 기본) | −0.195 s | 0.192 / 0.400 / 0.427 s | 0 | 미충족 |
 
-### 9.3 기능 (c) — 합성 입력 → `safety_node` (`safety_scenario.py`, robot_params.yaml 그대로)
+$k$ = 0.25 는 목표 안에서 가장 큰 팽창이고 늦게(낙관적으로) 나오는 표본을 없애는 가장 작은 값이다 — 이전 기본 1.0 은
+시드마다 0.40–0.43 s 일러 목표를 넘었다 (리뷰 지적 재현). 참고: `-p ttc.k_sigma:=` 는 `--params-file` 뒤에 줘도 반영되지 않아
+(모든 설정이 1.0 과 같은 결과) 덮어쓰기 YAML 을 마지막 파일로 줬다.
 
-최종 코드(`safety/zone` UInt8 계약 반영 후)로 재실행, load 6.4–7.9.
+추적 정확도 (40 회, 정착 후 2010 표본, $k$ 무관): 속도 오차 RMS **0.024 m/s**, p95 0.048 m/s, 최대 0.129 m/s — 회당 최대의
+중앙값 0.076 m/s, **40 회 중 8 회가 0.1 m/s 를 넘었다** (목표 "≤ 0.1 m/s" 는 RMS·p95 로 충족, 최대치로는 미충족). 방향 오차
+p95 2.9°, 최대 6.1°; 위치 오차 평균 0.019 m; 트랙 확정 0.2–0.3 s, `is_dynamic` 0.39–0.40 s (40/40 회, 시나리오 시작 기준 —
+1.0 m/s 보행자 인식), 트랙 ID 회당 1 개; 스캔 → 발행 지연 p50 1.4 ms, p95 11.6 ms.
+
+### 9.3 안전 게이트 — 합성 입력 → `safety_node` (`safety_scenario.py`, LiDAR 만, 벽시계)
+
+실제 `safety_node` 실행 파일 + robot_params / sensors / perception.yaml (깊이 점군은 끔 — 합성 시험은 점군을 발행하지 않는다).
+load 159–161.
 
 | 시나리오 | 목표 | 측정 |
 | --- | --- | --- |
-| 1.0 m/s 명령, 전방 벽이 풋프린트 모서리 기준 2.0 m → 0.1 m 로 접근 (스캔 10 Hz) | 존별 상한 | CLEAR 1.0 / WARNING **0.50** / CRITICAL **0.20** / STOP **0.0** m/s (존별 표본 106/51/21/40) |
-| D ≤ 0.3 m 스캔 도착 → `cmd_vel` 0 | 한 주기(20 ms) 안 | **0.12 ms** (이벤트 즉시 발행), 정지 스캔 이후 0 아닌 명령 0 개, `estop_active` true, zone STOP |
-| IMU(`imu/data`, 0.05 s) 끊김 → 저속 | degraded 0.2 m/s | 발행 중단 후 52.8 ms 에 0.20 m/s (= 타임아웃 + ≤ 1 주기), 복구 후 1.0 m/s |
-| LiDAR(`scan_filtered`, 0.3 s) 끊김 → 정지 | 정지 + E-stop 표시 | 하트비트 중단 후 244 ms (마지막 스캔은 그보다 최대 100 ms 앞) 에 0, `estop_active` true |
-| `estop` true → 정지, false 만으로는 해제 안 됨, `safety/reset_estop` 후 해제 | 래치 | 0.13 ms 에 0 / false 후 최대 0.0 / reset `success` → 1.0 m/s, `estop_active` false |
-| `cmd_vel` 발행률 | 50 Hz | 51.1 Hz |
+| 1.0 m/s 명령, 전방 벽이 2.0 m → 0.1 m (0.5 m/s, 스캔 10 Hz) | 존별 상한 | CLEAR 1.0 / WARNING **0.50** / CRITICAL **0.20** / STOP **0.0** m/s (표본 107/51/22/43) |
+| D ≤ 0.3 m 스캔 발행 → `cmd_vel` 0 | 한 주기(20 ms) 안 | **4.97 ms**, 그 뒤 0 아닌 명령 0 개. zone 3 STOP, `estop_active` **false** (계약 C1) |
+| 휠 엔코더 한 번 늦음 (60 ms 끊김) | 정지 없음 | 0 명령 0 개, `estop_active` false |
+| 휠 엔코더 끊김 | 정지 + `estop_active` (고장 0.20 s) | 213 ms 에 0, `estop_active` true |
+| IMU 끊김 | 0.2 m/s (고장 0.20 s) | 212 ms 에 0.20 m/s, 복구 후 1.0 |
+| LiDAR 끊김 | 정지 (고장 0.30 s) | 242 ms 에 0 (마지막 스캔은 끊기 전 최대 100 ms), `estop_active` true |
+| E-stop (transient_local 발행자) → reset(입력 true) → false → reset | 즉시 정지, 거절된 reset 은 무효, false 뒤 reset 만 해제 | 2.6 ms 에 0 / 거절(success false) / false 뒤 최대 0.0 / reset 성공 → 1.0 m/s |
+| 같은 순서, **volatile** 발행자 | 같음 | 0.48 ms 에 0 / 거절 / 0.0 / 해제 → 1.0 m/s |
+| `cmd_vel` 발행률 | 50 Hz | 50.8 Hz |
 
-(외부 부하 load ≈ 100 에서의 같은 시험: 정지 지연 1.9 ms, IMU → 저속 153 ms, LiDAR → 정지 280 ms, E-stop 18.9 ms,
-47.4 Hz — 잠정치. 판정 로직은 부하와 무관하게 같았다.)
+### 9.4 안전 게이트 — Gazebo (`src/amr_perception/test/scripts/safety_gz_trials.py`)
 
-### 9.4 기능 (d) — Gazebo 창고 월드, 실제 LiDAR + 1.0 m/s 작업자 actor
+구성: 현재 월드(재배치 후 LiDAR 0.20 m, σ 0.03 m, 깊이 카메라 켬) + 로봇 1 대, 실제 `scan_filter_node` → `safety_node`
+(`cmd_vel_smoothed` → `cmd_vel`), 명령은 시험 스크립트가 낸다(Nav2 없음). 지면 진실 = Gazebo 자세. RTF 0.35–0.57,
+load average 112–207 / 32 (시간 수치는 sim 시각 기준). 2026-09-22 15:40–16:30 KST.
 
-구성은 perception.md §8.4 와 같은 실행: amr_01 을 (0, −4.3) 에 −y 방향으로 세우고 `worker_crossing` 이 전방 2.7 m (y = −7) 를
-x −6 → 6 → −6 으로 1.0 m/s 왕복(25 s 주기, 끝에서 0.5 s 회전). 하네스가 `scan → scan_filtered`, 지면 진실 `odom→base_footprint`,
-`map = odom` 을 중계했다(위치 추정 스택 대역, `/map` 없음 → 정적 배경 분리 없이 전부 후보). sim 7.9–178 s, RTF ≈ 1.0, load 7.7–9.0.
-지면 진실은 월드 SDF 궤적의 시뮬레이션 시각 보간이다.
-
-| 지표 | 목표 | 결과 |
+| 시험 | 목표 | 결과 |
 | --- | --- | --- |
-| `perception/tracked_obstacles` 발행률 | 10 Hz | 9.79 Hz |
-| 속도 오차 평균 / RMS / p95 (정상 구간 n = 1428: 방향 전환 뒤 1.5 s 제외) | ≤ 0.1 m/s | 0.017 / **0.050** / 0.088 m/s |
-| 방향 오차 RMS / p95 (정상 구간) | ≤ 10° | **3.0° / 5.4°** |
-| 위치 오차 평균 / p95 | – | 0.054 / 0.110 m |
-| `is_dynamic` 비율 (정상 구간) | – | 98.9 % |
-| 전체 구간(방향 전환 포함 n = 1630) 속도 RMS / 방향 RMS | – | 0.12 m/s / 9.3° (전환 직후 CV 모델 지연) |
-| 트랙 ID | – | 7 회 통과에 ID 3 개 (ID 교체 2 회, 둘 다 x ≈ 2.6 m 부근) |
-| TTC | 충돌 없음 → inf | 전 표본 inf (로봇 정지, 작업자는 2.7 m 앞을 지나감) |
-| `safety/zone` | – | 2 = CRITICAL — 로봇 뒤 rack_C4 가 풋프린트 뒤 모서리에서 ≈ 0.45 m (`zone_region: omni`) |
+| 0.60 m 좁은 통로 중앙선 1.0 m/s 명령, 10 회 | 정지 0 | **정지 0 / 10**, zone 최대 0 (CLEAR), 벽까지 최소 0.10 m (기하 그대로), 통과 4.8–8.2 s. 입구에서 CRITICAL 감속(0.2 m/s 상한)이 통과 시간의 8–37 % |
+| 정적 장애물 정면 접근 (사람 6, 낮은 상자 0.15 m 5, 지게차 포크 4) | 풋프린트까지 0.3 m 에서 정지 | 사람 0.300–0.303 m, 낮은 상자 0.303–0.305 m (깊이 점군이 원인 — LiDAR 평면 아래), 지게차 0.277–0.301 m. 15/15 STOP, `estop_active` 0 회 (C1) |
+| 움직이는 장애물 진입 (0.3–1.0 m/s, 로봇 앞 0.67–1.68 m 에서 경로 진입) | 0.3 m − 제동 허용치 0.07 m 이상 | 사람 0.295–0.305 m (6 회), 낮은 상자 0.243–0.288 m (4 회). 25 회 전체 최소 0.243 m, 허용 하한 0.23 m 미만 0 회 |
+| 도킹 예외 다각형 (C2) 발행, 판까지 범퍼 0.353 m 접근 5 회 | 정지 없음 | STOP 0, 최종 zone 0. 다각형 없이 2 회: STOP 없이 도달했으나 zone 2 CRITICAL (0.2 m/s 상한) |
+| E-stop 누름 (1.0 m/s 주행 중) 6 회 (transient_local 3, volatile 3) | 즉시 0, 거절된 reset 무효 | 누름 → `cmd_vel` 0: 0.5–4.3 ms, 이후 0 아닌 명령 0 개. 실제 정지 거리 0.28–0.32 m, 평균 감속 1.60–1.64 m/s² (구동 토크 제한 — robot_description). 눌린 동안 reset 거절 6/6, 해제 후 재출발 6/6 |
+| 휠 오도메트리 한 번 끊김 60–150 ms, 20 회 | 정지 없음 | 0 명령 0 개, `estop_active` 0 회 |
+| 휠 오도메트리 끊김 (고장) 5 회 / IMU 끊김 5 회 | 정지 + estop_active / 0.2 m/s 저속 | 휠: sim 195–199 ms 에 정지, estop_active, 복구 14–15 ms. IMU: 190–201 ms 에 저속, estop_active 없음 |
 
-첫 Gazebo 실행에서는 `scan_filtered` 발행자(amr_localization `scan_filter_node`)가 없어 추적기 입력이 비었다 — 통합 런치에서
-`scan_filter_node` 가 반드시 함께 떠야 하며, 단독 시험은 `scan → scan_filtered` 중계로 대신한다.
+### 9.5 측정하지 못한 것
+
+- **실제 AMCL 위의 동적 판정 오검출률**: Gazebo 경로 주행 시험(`run_gz_tracker.sh`)에서 위치 추정이 수렴하지 않아(오차 중앙값
+  3.0 m / 18 m — 새 지도·초기 자세 문제, 위치 추정 패키지 수정 대상) 오검출률 87–98 % 는 추적기가 아니라 위치 추정의 결과였다.
+  배경 판정을 자세 공분산·국소 정렬로 바꾼 효과(§1)는 합성 시험(§9.1)으로만 확인했고, 위치 추정 수정 뒤 다시 잰다.
+- 5 대 동시·Nav2 가 명령을 내는 통합 체인의 좁은 통로 통과는 navigation 쪽 시험에서 잰다.
