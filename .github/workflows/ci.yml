@@ -133,7 +133,9 @@ jobs:
           source "/opt/ros/$ROS_DISTRO/setup.bash"
           # shellcheck source=/dev/null
           source install/setup.bash
-          colcon test --event-handlers console_direct+
+          # 패키지 순차 실행: 같은 ROS_DOMAIN_ID 에서 여러 패키지의 ROS 통신 시험이 동시에 돌면 서로 간섭한다
+          # (scripts/test.sh 와 같은 이유)
+          colcon test --executor sequential --event-handlers console_direct+
 
       - name: 테스트 결과 요약 (실패가 하나라도 있으면 job 실패)
         if: always()

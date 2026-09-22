@@ -30,7 +30,11 @@ TEST_FAILED=0
 colcon test-result --delete-yes >/dev/null 2>&1 || true
 
 echo "=== colcon test ==="
+# 패키지를 한 번에 하나씩 (--executor sequential): 여러 패키지의 ROS 통신 시험이 같은 ROS_DOMAIN_ID 에서 동시에
+# 돌면 서로의 /tf·토픽을 받아 실패한다 (실측: amr_simulation 의 Gazebo 적재 시험과 amr_perception safety_node
+# 시험을 같은 도메인에서 동시에 돌리면 실패, 다른 도메인이면 통과). 패키지 안의 시험은 ctest 가 원래 순차다.
 colcon test \
+    --executor sequential \
     --event-handlers console_direct+ \
     --return-code-on-test-failure \
     "$@" || TEST_FAILED=1
