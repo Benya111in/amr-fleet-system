@@ -62,6 +62,26 @@ double DwaPlanner::simTime(double v) const
   return std::clamp(std::abs(v) / a + 0.5, config_.sim_time_min, config_.sim_time_max);
 }
 
+YieldConfig DwaPlanner::yieldConfig() const
+{
+  YieldConfig y;
+  y.enable = config_.yield_crossing && config_.use_dynamic_obstacles;
+  y.robot_radius = config_.robot_radius;
+  y.corridor_margin = config_.yield_corridor_margin;
+  y.stop_margin = config_.yield_stop_margin;
+  y.clear_margin = config_.yield_clear_margin;
+  y.horizon = config_.yield_horizon;
+  y.lookahead = config_.yield_lookahead;
+  y.max_zone = config_.yield_max_zone;
+  y.min_speed = config_.dynamic_speed_threshold;
+  y.accel = config_.limits.acc_lim_x;
+  y.decel = config_.limits.decel_lim_x;
+  y.jerk = config_.limits.jerk_lim_x;
+  y.latency = config_.approach_latency;
+  y.v_max = config_.limits.max_vel_x;
+  return y;
+}
+
 std::pair<double, double> DwaPlanner::windowCenter(const DwaInput & in) const
 {
   if (in.has_last && std::abs(in.v_last - in.v_meas) <= config_.window_reset_v &&
@@ -268,9 +288,22 @@ DwaResult DwaPlanner::compute(
   res.d_goal = d_goal;
   const bool aligning = std::isfinite(d_goal) && d_goal <= config_.goal_align_distance;
 
-  // --- 1) 동적 창 ---
+  // 동적 장애물 선별 (VO·TTC·양보 공용)
+  std::vector<DynamicObstacle> dyn;
+  if (config_.use_dynamic_obstacles) {
+    for (const auto & o : in.obstacles) {
+      if (o.speed() >= config_.dynamic_speed_threshold) {
+        dyn.push_back(o);
+      }
+    }
+  }
+
+  // --- 1) 동적 창 (횡단 양보 정지선이 외부 속도 제한과 같은 자리에 들어간다) ---
   const auto [v_c, w_c] = windowCenter(in);
-  const double v_cap = std::min(L.max_vel_x, in.speed_limit);
+  res.yield = evaluateYield(
+    path, cum_s, in.pose, robot_proj.s, std::max(0.0, in.v_meas), dyn, yieldConfig());
+  const double v_cap = std::min(std::min(L.max_vel_x, in.speed_limit), res.yield.speed_limit);
+  res.v_cap = v_cap;
   res.window = dynamicWindow(v_c, w_c, v_cap);
 
   // 목표 속도: 접근 감속 + 현재 헤딩 오차가 크면 감속 (경로가 뒤에 있으면 제자리 회전 유도)
@@ -297,16 +330,6 @@ DwaResult DwaPlanner::compute(
   // --- 2) 샘플링 ---
   const auto samples = sampleVelocities(res.window, v_c, w_c);
   res.n_samples = samples.size();
-
-  // 동적 장애물 선별
-  std::vector<DynamicObstacle> dyn;
-  if (config_.use_dynamic_obstacles) {
-    for (const auto & o : in.obstacles) {
-      if (o.speed() >= config_.dynamic_speed_threshold) {
-        dyn.push_back(o);
-      }
-    }
-  }
 
   const double v_span = std::max(1e-6, L.max_vel_x - L.min_vel_x);
   // 명령 → 감속 시작 지연: 명령 유지 T_c + 저크 램프의 평균 지연 a/(2j)
@@ -391,6 +414,7 @@ DwaResult DwaPlanner::compute(
     // 여유(기준 경로 대비 초과 비용)와 경로 이탈
     double clear = 0.0;
     double path_sum = 0.0;
+    double cte_max = 0.0;
     std::size_t hint = robot_proj.segment;
     for (std::size_t k = 1; k < c.poses.size(); ++k) {
       const Pose2D & p = c.poses[k];
@@ -403,6 +427,7 @@ DwaResult DwaPlanner::compute(
         if (k <= k_eval) {
           const Projection pk = windowProjection(path, cum_s, {p.x, p.y}, hint);
           path_sum += std::min(std::abs(pk.cte) / config_.path_band, 1.0);
+          cte_max = std::max(cte_max, std::abs(pk.cte));
         }
       }
       clear = std::max(clear, std::max(0.0, cp - cg));
@@ -410,6 +435,13 @@ DwaResult DwaPlanner::compute(
     const std::size_t nk = std::max<std::size_t>(1, k_eval);
     c.terms.clearance = std::min(1.0, clear / 252.0);
     c.terms.path = path.empty() ? 0.0 : path_sum / static_cast<double>(nk);
+    c.max_cte = cte_max;
+    // 이탈 한계 초과 벌점: 한계는 max(d_off, 지금 로봇의 이탈) — 이미 밖이면 그 거리까지는 벌하지
+    // 않아 복귀 후보가 살아남고, 한계 밖으로 더 나가는 후보만 강하게 벌한다 (단조 감소 포락선).
+    if (!path.empty() && config_.max_path_offset > 0.0 && config_.off_path_band > 0.0) {
+      const double limit = std::max(config_.max_path_offset, std::abs(robot_proj.cte));
+      c.terms.off_path = std::min(1.0, std::max(0.0, cte_max - limit) / config_.off_path_band);
+    }
     c.terms.velocity = std::abs(v_des - c.v) / v_span;
     // 진동
     if (in.has_last) {
@@ -440,7 +472,8 @@ DwaResult DwaPlanner::compute(
     }
     c.cost = W.heading * c.terms.heading + W.clearance * c.terms.clearance +
       W.velocity * c.terms.velocity + W.path * c.terms.path +
-      W.oscillation * c.terms.oscillation + W.dynamic * c.terms.dynamic;
+      W.oscillation * c.terms.oscillation + W.dynamic * c.terms.dynamic +
+      W.off_path * c.terms.off_path;
     ++res.n_valid;
     if (c.vo_rejected) {
       ++res.n_vo_rejected;

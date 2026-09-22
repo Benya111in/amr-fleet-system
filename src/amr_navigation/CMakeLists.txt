@@ -54,6 +54,7 @@ add_library(amr_navigation_core SHARED
   src/core/path_smoother.cpp
   src/core/footprint.cpp
   src/core/velocity_obstacle.cpp
+  src/core/crossing_yield.cpp
   src/core/dwa.cpp
   src/core/speed_profile.cpp
   src/core/pure_pursuit.cpp
@@ -150,7 +151,8 @@ if(BUILD_TESTING)
 
   # C++ 단위 테스트 (gtest): 코어 모듈별 1 바이너리 + 플러그인/노드 통합 1 바이너리
   find_package(ament_cmake_gtest REQUIRED)
-  foreach(_t grid astar geometry path_smoother collision dwa pure_pursuit profiler scan_denoise)
+  foreach(_t grid astar geometry path_smoother collision dwa crossing_yield pure_pursuit profiler
+          scan_denoise)
     ament_add_gtest(test_${_t} test/test_${_t}.cpp TIMEOUT 120)
     target_link_libraries(test_${_t} amr_navigation_core)
   endforeach()
