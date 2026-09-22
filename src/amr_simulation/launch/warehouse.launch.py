@@ -21,7 +21,10 @@
     prefix        TF 프레임 접두어 (기본 "" — 다중 로봇이면 "<robot_name>/")
     x, y, z, yaw  스폰 자세 [m, rad]. 기본 (0, 0, 0.02, 0) = 랙 B열-C열 사이 5 m 통로 한가운데 (자유 셀)
     payload, payload_mass
-                  적재물 (amr_description description.launch.py 로 전달, 기본 없음)
+                  스폰 시점 적재물 (amr_description description.launch.py 로 전달, 기본 없음).
+                  주행 중 적재/하역은 spawn.launch.py 가 로봇마다 띄우는 payload_manager_node 가 한다
+                  (payload/attach·payload/mass → 화물 모델 + DetachableJoint,
+                  amr_simulation/payload.py)
     bridge_odom_tf
                   DiffDrive odom TF 를 /tf 로 브리지 (EKF 이전 초기 매핑용, 기본 false — spawn.launch.py)
     obstacle_truth

@@ -7,7 +7,8 @@
   *_wheel_link    구동 바퀴 (continuous, y 축). 조인트 원점 (0, ±separation/2, wheel_radius - base_link_height).
                   <limit effort velocity> = robot_params.yaml drive.* (모터·감속기 모델) → 적재 질량에 따라 가속·제동이 달라진다
   *_caster_link   앞/뒤 구형 캐스터 (fixed). 조인트 원점 (±caster_x_offset, 0, caster_radius - base_link_height)
-  cargo_link      데크(차체 상면) 중앙. 적재물이 있으면 실제 크기 박스(시각·충돌·균질 관성)를 단다
+  cargo_link      데크(차체 상면) 중앙. 스폰 시점 적재물이 있으면 실제 크기 박스(시각·충돌·균질 관성)를 단다.
+                  주행 중 적재물은 별도 모델 + DetachableJoint (amr_gazebo.xacro "런타임 적재물")
 
   모든 치수/질량/관성은 amr.urdf.xacro 가 config/robot_params.yaml 에서 읽어 둔 프로퍼티를 쓴다.
   바퀴 상단(지면 +0.165)이 차체 바닥(+0.03) 안으로 들어오지만 같은 모델 링크끼리는 충돌하지 않는다
@@ -130,12 +131,9 @@
       sdformat 이 URDF 루트 링크(base_footprint)에 질량·관성·무게중심을 합산해 Gazebo 동역학에 그대로 들어간다.
       바퀴 토크 한계(drive.wheel_effort_limit)가 있으므로 합산 질량이 가속·제동 응답을 바꾼다 (robot_params.yaml drive 실측).
       적재물이 없으면 형상·관성 없는 빈 프레임만 남는다 (TF 의 cargo_link 는 항상 있다).
-      주행 중 적재/하역에 따른 질량 변경(재스폰 없이)은 향후 과제: 물품을 별도 모델(amr_simulation/models/box_*)로 두고
-      ignition-gazebo-detachable-joint-system 으로 attach/detach 하면 Gazebo 가 질량을 동적으로 합산한다.
-        <parent_link>(prefix)base_footprint</parent_link>  (병합된 실제 링크. cargo_link 는 Gazebo 에 없다)
-        <child_model>box_small</child_model> <child_link>link</child_link>
-        <attach_topic>/<robot_name>/cargo/attach</attach_topic> <detach_topic>/<robot_name>/cargo/detach</detach_topic>
-      (Fortress 6.18 의 DetachableJoint 는 attach_topic/detach_topic 을 모두 지원 — 라이브러리 문자열로 확인, 미실행)
+      이것은 스폰 시점에 고정되는 적재물이다. 주행 중 적재/하역(재스폰 없이)은 이 링크가 아니라 별도 화물 모델
+      <robot_name>_cargo 를 DetachableJoint 로 붙였다 떼는 방식이다 (amr_gazebo.xacro "런타임 적재물",
+      amr_simulation payload_manager_node). 둘을 함께 쓰면 질량이 더해지므로 런타임 적재를 쓸 때는 payload 를 비운다.
     -->
     <joint name="${prefix}cargo_joint" type="fixed">
       <parent link="${prefix}base_link"/>

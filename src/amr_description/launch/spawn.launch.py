@@ -21,6 +21,11 @@ description.launch.py 가 먼저 떠서 /<robot_name>/robot_description 을 발�
                   EKF(ekf_filter_node_odom)가 생기기 전 초기 매핑(slam_toolbox)용 임시 경로 — EKF 와 함께 켜면
                   같은 변환의 발행자가 둘이 되어 TF 가 튄다. 이 TF 는 조인트 적분값이라 슬립·양자화 노이즈가 없다
     spawn_timeout create 서비스(월드 로드) 대기 한도 [s] (기본 900)
+    payload_manager
+                  true(기본)면 amr_simulation payload_manager_node 를 이 로봇 네임스페이스에 띄운다
+                  (주행 중 적재/하역의 질량을 Gazebo 동역학에 반영 — urdf/amr_gazebo.xacro "런타임 적재물").
+                  amr_simulation 이 ament index 에 없으면 로그 한 줄 남기고 건너뛴다
+                  (amr_simulation 이 이 패키지에 의존하므로 package.xml 의존성은 두지 않는다 — 순환 방지)
 
 스폰 (결정: ros_gz_sim create 대신 scripts/gz_world.py spawn)
     create 서비스를 기다리고, 같은 이름이 없는지 확인한 뒤 생성하고, scene/info 에서 모델이 실제로 생겼는지 확인한다.
@@ -34,6 +39,10 @@ description.launch.py 가 먼저 떠서 /<robot_name>/robot_description 을 발�
             odom_gz (DiffDrive 자체 오도메트리, 비교용), ground_truth/odom (평가용, frame_id world)
             (bridge_odom_tf:=true 일 때만) /tf ← gz odom_gz/tf
     ROS→GZ  cmd_vel
+    런타임 적재물 (DetachableJoint, urdf/amr_gazebo.xacro — payload_manager_node 가 쓴다)
+            ROS→GZ cargo/attach, cargo/detach (std_msgs/Empty ↔ ignition.msgs.Empty)
+            GZ→ROS cargo/state (std_msgs/String ← ignition.msgs.StringMsg "attached"/"detached",
+                   바뀔 때만)
     QoS: parameter_bridge 의 발행자는 reliable (depth 10), image_bridge 는 image_transport 기본(reliable).
          구독 측은 best-effort(sensor data)로 받아도 된다.
     브리지하지 않음(기본): DiffDrive/OdometryPublisher 의 tf — odom→base_footprint 는 EKF 가 발행
@@ -77,6 +86,7 @@ Fortress 점군 주의
 import os
 import tempfile
 
+from ament_index_python.packages import get_package_share_directory, PackageNotFoundError
 import yaml
 from launch import LaunchDescription
 from launch.actions import (DeclareLaunchArgument, EmitEvent, LogInfo, OpaqueFunction,
@@ -124,6 +134,13 @@ def _bridge_entries(sensors: dict, bridge_odom_tf: bool = False) -> list:
         {"ros_topic_name": "cmd_vel", "gz_topic_name": "cmd_vel",
          "ros_type_name": "geometry_msgs/msg/Twist", "gz_type_name": "ignition.msgs.Twist",
          "direction": "ROS_TO_GZ"},
+    ] + [
+        # 런타임 적재물 (DetachableJoint attach/detach 요청). gz 이름 = xacro 의 /<robot_name>/cargo/*
+        {"ros_topic_name": f"cargo/{req}", "gz_topic_name": f"cargo/{req}",
+         "ros_type_name": "std_msgs/msg/Empty", "gz_type_name": "ignition.msgs.Empty",
+         "direction": "ROS_TO_GZ"} for req in ("attach", "detach")
+    ] + [
+        gz_to_ros("cargo/state", "cargo/state", "std_msgs/msg/String", "ignition.msgs.StringMsg"),
         gz_to_ros("odom_gz", "odom_gz", "nav_msgs/msg/Odometry", "ignition.msgs.Odometry"),
         gz_to_ros("ground_truth/odom", "ground_truth/odom",
                   "nav_msgs/msg/Odometry", "ignition.msgs.Odometry"),
@@ -231,7 +248,28 @@ def _setup(context, *args, **kwargs):
         parameters=[{"use_sim_time": use_sim_time}],
     )
 
-    return actions + [spawn, spawn_check, bridge, image_bridge]
+    actions += [spawn, spawn_check, bridge, image_bridge]
+    if arg("payload_manager").lower() in ("true", "1"):
+        actions.append(payload_manager_action(robot_name, world, config_dir, use_sim_time))
+    return actions
+
+
+def payload_manager_action(robot_name: str, world: str, config_dir: str, use_sim_time: bool):
+    """amr_simulation payload_manager_node (설치돼 있을 때만). 없으면 이유를 로그로 남긴다."""
+    try:
+        get_package_share_directory("amr_simulation")
+    except PackageNotFoundError:
+        return LogInfo(msg=(f"[{robot_name}] payload_manager 건너뜀: amr_simulation 이 ament index 에"
+                            " 없다 (주행 중 적재 질량이 Gazebo 동역학에 반영되지 않는다)"))
+    return Node(
+        package="amr_simulation",
+        executable="payload_manager_node.py",
+        name="payload_manager_node",
+        namespace=robot_name,
+        output="screen",
+        parameters=[{"robot_name": robot_name, "world": world, "config_dir": config_dir,
+                     "use_sim_time": use_sim_time}],
+    )
 
 
 def generate_launch_description() -> LaunchDescription:
@@ -254,5 +292,7 @@ def generate_launch_description() -> LaunchDescription:
                               description="DiffDrive odom TF 를 /tf 로 브리지 (EKF 이전 초기 매핑용)"),
         DeclareLaunchArgument("spawn_timeout", default_value="900",
                               description="월드 create 서비스 대기 한도 [s]"),
+        DeclareLaunchArgument("payload_manager", default_value="true",
+                              description="amr_simulation payload_manager_node (런타임 적재물) 기동"),
     ]
     return LaunchDescription(args + [OpaqueFunction(function=_setup)])

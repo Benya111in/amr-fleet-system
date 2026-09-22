@@ -34,6 +34,7 @@ import os
 import rclpy
 import yaml
 from nav_msgs.msg import Odometry
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from std_msgs.msg import Float64, String, UInt32
 from std_srvs.srv import Trigger
@@ -153,7 +154,7 @@ def main(args=None):
     node = CollisionMonitorNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):   # Ctrl-C / 런치 종료(SIGINT)
         pass
     finally:
         node.destroy_node()

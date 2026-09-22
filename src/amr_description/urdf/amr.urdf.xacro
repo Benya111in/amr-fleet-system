@@ -16,7 +16,11 @@
                  크기·질량은 robot_params.yaml payload.<종류>.{size, mass} — 데크 위 실제 크기 박스
     payload_mass 적재 질량 [kg] 덮어쓰기. 음수(기본 -1)면 payload 종류의 질량.
                  payload 없이 질량만 주면 그 질량을 담을 수 있는 가장 작은 종류의 박스로 모델링한다
-                 (예 payload_mass:=25 → large 박스). 0 이면 적재물 없음
+                 (예 payload_mass:=25 → large 박스). 0 이면 적재물 없음.
+                 payload / payload_mass 는 스폰 시점에 고정되는 적재물이다 (정적 시험용)
+    runtime_payload
+                 true(기본)면 주행 중 적재/하역용 DetachableJoint 를 넣는다 (amr_gazebo.xacro "런타임 적재물").
+                 화물 모델 <robot_name>_cargo 를 amr_simulation payload_manager_node 가 데크 위에 만들고 붙인다
     self_visibility_bit
                  자기 차체 시각체의 가시성 비트 번호 (0~27). 기본 "" → robot_name 끝 숫자 n 에서
                  4 + (n − 1) mod 20 (amr_01 → 4, amr_05 → 8). amr_gazebo.xacro "자기 차체 제외" 참조
@@ -24,9 +28,10 @@
   모듈
     amr_inertial.xacro   관성 텐서 매크로 (YAML 대각 성분 / 박스 해석식)
     amr_materials.xacro  RViz/Gazebo 재질
-    amr_base.xacro       base_footprint, base_link, 구동 바퀴, 캐스터, cargo_link(+적재 박스)
+    amr_base.xacro       base_footprint, base_link, 구동 바퀴, 캐스터, cargo_link(+스폰 시점 적재 박스)
     amr_sensors.xacro    lidar_link, camera_link(+optical 프레임 2개), imu_link
-    amr_gazebo.xacro     Gazebo Fortress 시스템 플러그인 + 센서 정의 + 자기 차체 가시성 비트
+    amr_gazebo.xacro     Gazebo Fortress 시스템 플러그인(런타임 적재 DetachableJoint 포함) + 센서 정의
+                         + 자기 차체 가시성 비트
 
   단독 실행 예
     xacro amr.urdf.xacro config_dir:=/ros2_ws/config robot_name:=amr_02 prefix:=amr_02/ payload:=large | check_urdf /dev/stdin
@@ -38,6 +43,7 @@
   <xacro:arg name="config_dir" default=""/>
   <xacro:arg name="payload" default="none"/>
   <xacro:arg name="payload_mass" default="-1"/>
+  <xacro:arg name="runtime_payload" default="true"/>
   <xacro:arg name="self_visibility_bit" default=""/>
 
   <xacro:property name="robot_name" value="$(arg robot_name)"/>
@@ -119,6 +125,14 @@
                            else float(payloads[payload_type]['mass'])}"/>
   <xacro:property name="cargo_size"
                   value="${payloads[payload_type]['size'] if payload_type != 'none' else [0.0, 0.0, 0.0]}"/>
+
+  <!--
+    런타임 적재물 (amr_gazebo.xacro "런타임 적재물"). 화물 모델 이름 <robot_name>_cargo (링크 link),
+    gz 토픽 /<robot_name>/cargo/{attach,detach,state}. spawn.launch.py 브리지와 amr_simulation payload_manager_node
+    (amr_simulation/payload.py cargo_model_name) 가 같은 규칙을 쓴다 — test_urdf.py 가 대조한다
+  -->
+  <xacro:property name="runtime_payload" value="${'$(arg runtime_payload)'.strip().lower() in ('true', '1', 'yes')}"/>
+  <xacro:property name="cargo_model" value="${robot_name}_cargo"/>
 
   <!--
     자기 차체 가시성 비트 (amr_gazebo.xacro "자기 차체 제외"). 이 로봇의 모든 시각체는 visibility_flags = 1 << bit 만

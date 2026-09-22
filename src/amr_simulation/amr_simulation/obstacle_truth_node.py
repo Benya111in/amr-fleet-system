@@ -28,6 +28,7 @@ import math
 import rclpy
 from amr_msgs.msg import TrackedObstacle, TrackedObstacleArray
 from nav_msgs.msg import Odometry
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
@@ -128,7 +129,7 @@ def main(args=None):
     node = ObstacleTruthNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):   # Ctrl-C / 런치 종료(SIGINT)
         pass
     finally:
         node.destroy_node()

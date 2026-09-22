@@ -25,7 +25,11 @@ robot_state_publisher 를 네임스페이스 /<robot_name> 에서 띄운다.
                   (robot_params.yaml payload.<종류>.{size, mass})
     payload_mass  적재 질량 [kg] 덮어쓰기 (기본 -1 = 종류의 질량). payload 없이 질량만 주면 그 질량을 담는
                   가장 작은 종류의 박스로 모델링한다 (payload_mass:=25 → large). 0 이면 적재물 없음.
-                  스폰 시점 질량만 바꾼다 — 주행 중 적재/하역은 DetachableJoint (urdf/amr_base.xacro 주석)
+                  스폰 시점 질량만 바꾼다 — 주행 중 적재/하역은 runtime_payload
+    runtime_payload
+                  true(기본)면 주행 중 적재/하역용 DetachableJoint 를 모델에 넣는다 (urdf/amr_gazebo.xacro
+                  "런타임 적재물"). 화물 모델은 amr_simulation payload_manager_node 가 만든다
+                  (spawn.launch.py 가 기동)
     self_visibility_bit
                   자기 차체 가시성 비트 (기본 "" = robot_name 끝 숫자로 자동, urdf/amr.urdf.xacro). 동시에 뜨는
                   로봇끼리 달라야 한다 — 같으면 서로의 LiDAR 에 안 보인다
@@ -66,6 +70,7 @@ def generate_launch_description() -> LaunchDescription:
     config_dir = LaunchConfiguration("config_dir")
     payload = LaunchConfiguration("payload")
     payload_mass = LaunchConfiguration("payload_mass")
+    runtime_payload = LaunchConfiguration("runtime_payload")
     self_visibility_bit = LaunchConfiguration("self_visibility_bit")
 
     args = [
@@ -88,6 +93,9 @@ def generate_launch_description() -> LaunchDescription:
             "payload_mass", default_value="-1",
             description="적재 질량 [kg] 덮어쓰기 (-1 = payload 종류의 질량, 0 = 적재물 없음)"),
         DeclareLaunchArgument(
+            "runtime_payload", default_value="true",
+            description="주행 중 적재/하역용 DetachableJoint (화물 모델 <robot_name>_cargo)"),
+        DeclareLaunchArgument(
             "self_visibility_bit", default_value="",
             description="자기 차체 가시성 비트 (빈 값 = robot_name 끝 숫자로 자동)"),
         DeclareLaunchArgument(
@@ -106,6 +114,7 @@ def generate_launch_description() -> LaunchDescription:
             " config_dir:=", config_dir,
             " payload:=", payload,
             " payload_mass:=", payload_mass,
+            " runtime_payload:=", runtime_payload,
             " self_visibility_bit:=", self_visibility_bit,
         ]),
         value_type=str)

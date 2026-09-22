@@ -8,9 +8,9 @@
 """
 
 import filecmp
+import importlib.util
 import os
 import struct
-import subprocess
 import sys
 import tempfile
 import xml.etree.ElementTree as ET
@@ -37,14 +37,18 @@ def _floats(text):
     return [float(v) for v in text.split()]
 
 
-def test_regenerated_world_is_identical():
+def test_regenerated_world_is_identical(monkeypatch, capsys):
+    """생성기를 같은 프로세스에서 다시 돌린다 (모듈을 새로 읽어 seed 난수 상태도 처음부터 — 커버리지에도 잡힌다)."""
+    spec = importlib.util.spec_from_file_location("gen_warehouse_world_fresh", GEN)
+    gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen)
     with tempfile.TemporaryDirectory() as d:
         out = os.path.join(d, "warehouse.sdf")
-        r = subprocess.run([sys.executable, str(GEN), out], capture_output=True, text=True,
-                           check=False)
-        assert r.returncode == 0, r.stderr
+        monkeypatch.setattr(sys, "argv", [str(GEN), out])
+        gen.main()
         assert filecmp.cmp(out, WORLD, shallow=False), \
             "커밋된 warehouse.sdf 가 생성기 출력과 다르다 — python3 worlds/gen_warehouse_world.py 로 다시 생성할 것"
+    assert "actors=" in capsys.readouterr().out
 
 
 def test_interior_at_least_60_by_40(world):
@@ -126,7 +130,6 @@ def test_dock_floor_boxes_reach_scan_plane(world):
 
 def test_fleet_spawn_poses_are_free():
     """config/fleet_spawn_poses.yaml 자세가 벽·랙·기둥·사람 경로·차량 경로와 겹치지 않는다."""
-    import importlib.util
     spec = importlib.util.spec_from_file_location("gen", GEN)
     gen = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(gen)

@@ -31,7 +31,8 @@ if(BUILD_TESTING)
   set(ament_cmake_copyright_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
 
-  # xacro 전개 + URDF 파싱/정합 검사 (test/test_urdf.py). colcon test 가 install 공간을 소싱한 상태에서 돈다
+  # xacro 전개 + URDF 파싱/정합 검사 (test/test_urdf.py), 스폰 도구(test_gz_world.py), 런치 구성·브리지·
+  # payload_manager 기동(test_launch.py). colcon test 가 install 공간을 소싱한 상태에서 돈다
   # ($(find amr_description) 해석). 최상위 config/ 는 테스트 파일 위치에서 찾는다.
   find_package(ament_cmake_pytest REQUIRED)
   ament_add_pytest_test(amr_description_pytest test TIMEOUT 300)

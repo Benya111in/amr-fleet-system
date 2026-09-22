@@ -8,13 +8,14 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
 
-# --- Python 모듈 설치 (actor 궤적 보간, 발자국 기하, 지면 진실/충돌 판정 노드) ---
+# --- Python 모듈 설치 (actor 궤적 보간, 발자국 기하, 지면 진실/충돌 판정 노드, 런타임 적재물) ---
 ament_python_install_package(${PROJECT_NAME})
 
 # --- 실행 스크립트 (ros2 run amr_simulation <이름>) ---
 install(PROGRAMS
   scripts/obstacle_truth_node.py
   scripts/collision_monitor_node.py
+  scripts/payload_manager_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -34,9 +35,10 @@ if(BUILD_TESTING)
   set(ament_cmake_copyright_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
 
-  # 월드 재생성 == 커밋된 SDF, actor 궤적 보간, 발자국 부호 거리 (test/test_*.py)
+  # 월드 재생성 == 커밋된 SDF, actor 궤적 보간, 발자국 부호 거리, 런타임 적재물 (test/test_*.py).
+  # test_payload_gazebo.py 는 Gazebo(ign) 가 있을 때 물리 전용 월드에서 실제 적재·가감속을 확인한다 (~1 분)
   find_package(ament_cmake_pytest REQUIRED)
-  ament_add_pytest_test(amr_simulation_pytest test TIMEOUT 300)
+  ament_add_pytest_test(amr_simulation_pytest test TIMEOUT 600)
 endif()
 
 ament_package()
