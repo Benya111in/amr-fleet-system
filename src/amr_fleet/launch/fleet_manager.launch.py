@@ -6,8 +6,13 @@ Fleet Manager + 로봇별 어댑터 런치 (docker-compose `fleet` 서비스가 
         allocation_strategy:=hungarian comm_latency_ms:='[0.0, 100.0]'
     # 시뮬레이터(/clock)·실행기 없이 단독 모의 시험
     ros2 launch amr_fleet fleet_manager.launch.py use_sim_time:=false auto_complete_after_s:=3.0
+    # 교통 관리자 끄기 / 탐지만 (기준선 측정)
+    ros2 launch amr_fleet fleet_manager.launch.py traffic_manager:=false
+    ros2 launch amr_fleet fleet_manager.launch.py traffic_mode:=observe
 
-- fleet_manager_node 는 /fleet, fleet_adapter_node 는 /<robot_id> 네임스페이스.
+- fleet_manager_node · traffic_manager_node 는 /fleet, fleet_adapter_node 는 /<robot_id> 네임스페이스.
+- traffic_manager:=true(기본)면 traffic_manager_node 를 config/traffic.yaml(traffic_params_file)로
+  함께 띄운다 (robot_ids · use_sim_time 은 같은 값, traffic_mode 가 비어 있지 않으면 mode 를 덮어쓴다).
 - 기본값은 config/fleet.yaml (params_file) 한 곳에 둔다. 아래 인자는 비어 있지 않을 때만 덮어쓴다.
 - comm_latency_ms, simulate_latency 는 manager(assign_task 호출)와 adapter(robot_state) 양쪽에 준다.
 - use_sim_time 기본 true: 전 노드가 /clock 을 쓴다 (multi_robot.md §6, dashboard·evaluation 런치와 같다).
@@ -40,7 +45,7 @@ def _typed(name, text):
         return float(value)
     if name == 'auto_complete_after_s':
         return float(value)
-    if name in ('simulate_latency', 'serve_assign_task'):
+    if name in ('simulate_latency', 'serve_assign_task', 'traffic_manager'):
         if not isinstance(value, bool):
             raise ValueError(f'{name} 는 true/false: {text!r}')
     return value
@@ -68,6 +73,16 @@ def _launch_setup(context):
         parameters=[params_file, dict(common, robot_ids=','.join(robot_ids),
                                       **_overrides(context, _MANAGER_ARGS))])
     actions = [manager]
+    if _typed('traffic_manager', LaunchConfiguration('traffic_manager').perform(context)):
+        traffic_overrides = dict(common, robot_ids=','.join(robot_ids))
+        mode = LaunchConfiguration('traffic_mode').perform(context).strip()
+        if mode:
+            traffic_overrides['mode'] = mode
+        actions.append(Node(
+            package='amr_fleet', executable='traffic_manager_node', name='traffic_manager_node',
+            namespace='fleet', output='screen',
+            parameters=[LaunchConfiguration('traffic_params_file').perform(context),
+                        traffic_overrides]))
     if _typed('launch_adapters', LaunchConfiguration('launch_adapters').perform(context)):
         adapter_overrides = _overrides(context, _ADAPTER_ARGS)
         if ('serve_assign_task' not in adapter_overrides
@@ -84,6 +99,8 @@ def _launch_setup(context):
 
 def generate_launch_description() -> LaunchDescription:
     default_params = PathJoinSubstitution([FindPackageShare('amr_fleet'), 'config', 'fleet.yaml'])
+    traffic_params = PathJoinSubstitution([FindPackageShare('amr_fleet'), 'config',
+                                           'traffic.yaml'])
     args = [
         DeclareLaunchArgument('robot_ids', default_value='amr_01,amr_02,amr_03,amr_04,amr_05',
                               description='쉼표로 구분한 로봇 네임스페이스 목록'),
@@ -103,5 +120,10 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('log_dir', default_value='',
                               description="로그 디렉토리 ('' = fleet.yaml, 그것도 비면 $ROS_WS/logs)"),
         DeclareLaunchArgument('params_file', default_value=default_params),
+        DeclareLaunchArgument('traffic_manager', default_value='true',
+                              description='traffic_manager_node 실행 (교통 관리 · 교착 탐지/해소)'),
+        DeclareLaunchArgument('traffic_mode', default_value='',
+                              description="active | observe ('' = traffic.yaml)"),
+        DeclareLaunchArgument('traffic_params_file', default_value=traffic_params),
     ]
     return LaunchDescription(args + [OpaqueFunction(function=_launch_setup)])

@@ -16,6 +16,7 @@ ament_python_install_package(${PROJECT_NAME})
 install(PROGRAMS
   scripts/fleet_manager_node
   scripts/fleet_adapter_node
+  scripts/traffic_manager_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

@@ -14,4 +14,4 @@
 - [ ] `path_tracking.md` — Pure Pursuit look-ahead 적응 조정, PID 게인 튜닝
 - [ ] `perception.md` — YOLOv8 연동, Pinhole 모델 2D→3D 변환
 - [ ] `tracking.md` — 칼만 필터 상태/관측 모델, TTC 계산
-- [ ] `deadlock.md` — 교착 유형 분류, 탐지 알고리즘, 해소 전략 2가지 이상
+- [x] [`deadlock.md`](deadlock.md) — 교착 유형 분류, 탐지 알고리즘, 해소 전략 2가지 이상 (교통 관리 포함)

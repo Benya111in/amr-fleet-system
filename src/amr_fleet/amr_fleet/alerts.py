@@ -4,8 +4,11 @@
 - 알림: diagnostic_msgs/DiagnosticStatus name = fleet/<TYPE>, level OK/WARN/ERROR,
   hardware_id = robot_id, values 에 task_id · robots (대시보드 알림 배너가 그대로 표시).
   OK 는 해제·복구 통지다 (fleet/ESTOP 해제, fleet/ROBOT_RECOVERED) — 배너는 WARN 이상만 띄운다.
-- 교통 이벤트: traffic_manager_node 가 name = traffic/DEADLOCK (탐지) | traffic/RESOLVED (해소) 로
-  보낸다. 탐지만 FleetStatus.deadlock_count 에 센다.
+- 교통 이벤트: traffic_manager_node 가 /fleet/traffic_events 로 name = traffic/DEADLOCK (탐지) |
+  traffic/RESOLVED (해소) | traffic/ESCALATED (전략 1 → 2, 희생 로봇 교체) | traffic/UNRESOLVED (해소 실패) |
+  traffic/STALL (사이클 없는 1대 정체) 를 보낸다. 탐지(DEADLOCK)만 FleetStatus.deadlock_count 에 센다.
+  교착 알림은 traffic_manager_node 가 /fleet/alerts 에 fleet/DEADLOCK 으로 직접 낸다
+  (탐지 ERROR, 해소 OK, 해소 실패 ERROR — fleet/ESTOP 의 진입/해제와 같은 방식).
 """
 
 from __future__ import annotations
@@ -25,9 +28,13 @@ ALERT_ASSIGN_TIMEOUT = 'fleet/ASSIGN_TIMEOUT'    # assign_task 응답 없음 →
 ALERT_DEADLINE_MISSED = 'fleet/DEADLINE_MISSED'  # 종료 전 마감 초과 (WARN)
 ALERT_INVALID_TASK = 'fleet/INVALID_TASK'        # 스키마·의미 규칙 위반 작업 요청 (WARN)
 ALERT_INTERNAL_ERROR = 'fleet/INTERNAL_ERROR'    # 콜백 예외 — 노드는 계속 돈다 (ERROR)
+ALERT_DEADLOCK = 'fleet/DEADLOCK'                # 교착 탐지 (ERROR) · 해소 (OK) · 해소 실패 (ERROR)
 
-TRAFFIC_DEADLOCK = 'traffic/DEADLOCK'
-TRAFFIC_RESOLVED = 'traffic/RESOLVED'
+TRAFFIC_DEADLOCK = 'traffic/DEADLOCK'          # 교착 탐지 (deadlock_count 에 센다)
+TRAFFIC_RESOLVED = 'traffic/RESOLVED'          # 해소 (values: strategy, resolve_time_s)
+TRAFFIC_ESCALATED = 'traffic/ESCALATED'        # 전략 1 → 2 전환 · 희생 로봇 교체 (우선순위 역전)
+TRAFFIC_UNRESOLVED = 'traffic/UNRESOLVED'      # 해소 실패 (상한 시간 · 후보 소진 · 시도 초과)
+TRAFFIC_STALL = 'traffic/STALL'                # 사이클 없는 1대 정체 (경고)
 
 
 def is_deadlock_event(name: str) -> bool:

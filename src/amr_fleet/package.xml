@@ -27,6 +27,7 @@
   <exec_depend>launch_ros</exec_depend>
   <!-- jammy apt 3.2.0 (rosdep, CI) 과 이미지의 pip 4.x 모두: 스키마는 draft-07, Draft7Validator 만 쓴다 -->
   <exec_depend>python3-jsonschema</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
   <exec_depend>python3-scipy</exec_depend>
   <exec_depend>python3-yaml</exec_depend>
 
