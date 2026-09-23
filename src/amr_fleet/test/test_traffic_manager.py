@@ -703,3 +703,30 @@ def test_yield_victim_reserves_free_zones_on_its_pocket_route():
     route = np.array(inc.pocket.route)
     assert tm.zone_map.zones_at(route).count('corr') == 0 and route[:, 1].min() < 3.0
     assert tm.tokens.holders('corr') == ['K']
+
+
+def test_alt_path_victim_is_not_held_by_the_token_it_is_masked_out_of():
+    """
+    ALT_PATH 로 마스크를 받은 로봇은 그 구역 토큰 대기로 세우지 않는다.
+
+    실행기는 교통 hold 동안 주행 goal 을 취소한다 (move_to.xml) — 세워 두면 재계획을 못 해
+    "마스크를 피하는 경로"가 영영 나오지 않는다. 통합 시나리오 12 의 강제 교착이 그랬다:
+    마스크(5080 셀)를 주고도 replan_grace_s 안에 새 경로가 없어 no_alt_path 로 끝났다.
+    구역에 못 들어가게 막는 일은 마스크가 한다.
+    """
+    from amr_fleet.traffic_resolution import IncidentCommand
+    from amr_fleet.traffic_zones import TokenDecision
+    tm = make_tm()
+    views = {'V': ob('V', 1.1, 5.0, 0.0, (17.0, 5.0), 100, t=0.0)}
+    waits = {'V': TokenDecision(False, ('x_ab_4',), ('B',), 3.0)}
+    mask = object()
+
+    tm.incidents.commands = lambda: {  # noqa: E731 - 합성 단계만 보는 시험
+        'V': IncidentCommand(1, False, None, mask, frozenset({'x_ab_4'}))}
+    cmd = tm._compose(views, waits, {})['V']
+    assert not cmd.hold and cmd.keepout is mask and cmd.incident_id == 1
+
+    # 마스크가 막지 않는 다른 구역을 기다리는 중이면 토큰 hold 는 그대로다
+    waits2 = {'V': TokenDecision(False, ('x_ab_5',), ('B',), 3.0)}
+    cmd2 = tm._compose(views, waits2, {})['V']
+    assert cmd2.hold and cmd2.reason == 'zone:x_ab_5'

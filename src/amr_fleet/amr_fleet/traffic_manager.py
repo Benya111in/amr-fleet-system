@@ -1070,6 +1070,17 @@ class TrafficManager:
                     cmd.hold, cmd.reason = True, f'yield:incident{ic.incident_id}'
                     continue
             if rid in token_waits:
+                # 마스크가 이미 막는 구역을 기다리는 중이면 토큰 hold 를 걸지 않는다: 실행기는 hold 동안
+                # 주행 goal 을 취소하므로(move_to.xml) 세워 두면 재계획 자체를 못 해 ALT_PATH 가
+                # 영원히 성립하지 않는다 (통합 시나리오 12 강제 교착: 마스크를 주고도 no_alt_path).
+                # 못 들어가게 막는 일은 마스크가 한다.
+                blockers = [views[b] for b in token_waits[rid].blockers if b in views]
+                if ic is not None and ic.keepout is not None \
+                        and set(token_waits[rid].zones) <= set(ic.masked_zones) \
+                        and not any(b.stale for b in blockers):
+                    # 관측이 끊긴 보유자(stale)면 hold 를 유지한다 (fail-closed): 그 로봇의 몸체·토큰은
+                    # 남아 있지만 실제 위치를 모르므로 마스크만 믿고 풀어 줄 수 없다.
+                    continue
                 cmd.hold = True
                 cmd.reason = 'zone:' + '+'.join(token_waits[rid].zones)
             elif rid in crossing:
