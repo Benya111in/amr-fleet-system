@@ -150,7 +150,10 @@ controller_server:
       yield_corridor_margin: 0.5       # [m] 통로 반폭 여유 = dynamic_margin (critical zone).
                                        #   반폭 R_c = 0.361 + 0.25 + 0.5 = 1.111 m
       yield_stop_margin: 0.25          # [m] 통로 입구 앞 정지선 여유 (경로 호길이)
-      yield_clear_margin: 1.0          # [s] "먼저 빠져나간다" 판정의 시간 여유
+      yield_clear_margin: 2.0          # [s] "먼저 빠져나간다" 판정의 시간 여유. 1.0 → 2.0:
+                                       # 08 실측에서 통로 안에 들어선 뒤 멈춘(committed) 접촉이
+                                       # 남았다 — 통로 밖에 서는 쪽을 더 자주 고르게 한다.
+                                       # 들어간 뒤의 후진 이탈은 마지막 수단이다
       yield_horizon: 8.0               # [s] 장애물 등속 예측 지평 (통로 길이 = |u|·8 s)
       yield_lookahead: 4.0             # [m] 경로에서 교차 구간을 찾는 거리 (≤ path_horizon)
       yield_max_zone: 6.0              # [m] 교차 구간 길이 상한 — 넘으면 나란한 주행으로 보고 정지선 없음
