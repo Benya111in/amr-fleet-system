@@ -138,7 +138,26 @@ DockingServerNode::DockingServerNode(const rclcpp::NodeOptions & options)
   for (const auto & id : ids) {
     standoffs_[id] = declare_parameter<double>("docks." + id + ".standoff", p.standoff);
     marker_ids_[id] = static_cast<int>(declare_parameter<int>("docks." + id + ".marker_id", -1));
+    // 마커의 지도 자세 [x, y, yaw] (계약 C3: +x = 판 바깥 법선). 적으면 다른 도크의 마커를 봤을 때
+    // 로봇 자세를 역산해 재위치추정 근거로 낸다 (marker_relocalization.hpp).
+    const auto mp = declare_parameter<std::vector<double>>(
+      "docks." + id + ".marker_pose", std::vector<double>{});
+    if (mp.size() == 3 && marker_ids_[id] >= 0) {
+      marker_poses_[marker_ids_[id]] = MapPose2D{mp[0], mp[1], mp[2]};
+    } else if (!mp.empty()) {
+      RCLCPP_WARN(
+        get_logger(), "docks.%s.marker_pose 는 [x, y, yaw] 여야 한다 (%zu 개) → 무시",
+        id.c_str(), mp.size());
+    }
   }
+  reloc_enabled_ = declare_parameter<bool>("relocalization.enabled", reloc_enabled_);
+  reloc_max_range_ = declare_parameter<double>("relocalization.max_range", reloc_max_range_);
+  reloc_tolerance_ = declare_parameter<double>("relocalization.tolerance", reloc_tolerance_);
+  reloc_min_observations_ = static_cast<int>(declare_parameter<int>(
+      "relocalization.min_observations", reloc_min_observations_));
+  reloc_position_sigma_ = declare_parameter<double>(
+    "relocalization.position_sigma", reloc_position_sigma_);
+  reloc_yaw_sigma_ = declare_parameter<double>("relocalization.yaw_sigma", reloc_yaw_sigma_);
   marker_id_max_age_ = declare_parameter<double>("marker_id_max_age", marker_id_max_age_);
 
   tf_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
@@ -146,6 +165,8 @@ DockingServerNode::DockingServerNode(const rclcpp::NodeOptions & options)
   cmd_pub_ = create_publisher<geometry_msgs::msg::Twist>("cmd_vel_nav", rclcpp::QoS(1));
   exclusion_pub_ = create_publisher<geometry_msgs::msg::PolygonStamped>(
     "safety/dock_exclusion", rclcpp::QoS(10));
+  marker_fix_pub_ = create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>(
+    "localization/marker_fix", rclcpp::QoS(10));
   marker_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
     "perception/dock_marker_pose", rclcpp::SensorDataQoS(),
     std::bind(&DockingServerNode::onMarker, this, std::placeholders::_1));
@@ -250,12 +271,7 @@ void DockingServerNode::onMarker(const geometry_msgs::msg::PoseStamped::SharedPt
     return;
   }
   const double now_s = now().seconds();
-  if (wrongMarker(now_s)) {
-    RCLCPP_WARN_THROTTLE(
-      get_logger(), *get_clock(), 5000, "마커 id %d ≠ 도크 마커 %d → 관측 버림", last_marker_id_,
-      expected_marker_id_);
-    return;
-  }
+  const bool wrong = wrongMarker(now_s);
   if (expected_marker_id_ >= 0 && last_marker_id_time_ >= 0.0 &&
     now_s - last_marker_id_time_ > marker_id_max_age_)
   {
@@ -279,17 +295,71 @@ void DockingServerNode::onMarker(const geometry_msgs::msg::PoseStamped::SharedPt
     }
   }
   if (auto obs = markerToObservation(pose, normal_axis_)) {
+    if (wrong) {
+      // 다른 도크의 마커다: 도킹에는 쓰지 않되(관측 버림), 위치 추정이 틀어졌다는 증거로는 쓴다.
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 5000, "마커 id %d ≠ 도크 마커 %d → 관측 버림", last_marker_id_,
+        expected_marker_id_);
+      publishMarkerFix(last_marker_id_, *obs);
+      return;
+    }
     if (active_) {
       pending_obs_ = obs;
     }
     last_obs_ = obs;
     last_obs_time_ = now().seconds();
+  } else if (wrong) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 5000, "마커 id %d ≠ 도크 마커 %d → 관측 버림", last_marker_id_,
+      expected_marker_id_);
   } else {
     RCLCPP_WARN_THROTTLE(
       get_logger(), *get_clock(), 5000,
       "마커 자세의 %s 축이 수평이 아니다 → 관측 버림 (marker_normal_axis 규약 확인)",
       normal_axis_.c_str());
   }
+}
+
+void DockingServerNode::publishMarkerFix(int observed_id, const MarkerObservation & obs)
+{
+  if (!reloc_enabled_ || observed_id < 0) {
+    return;
+  }
+  const auto it = marker_poses_.find(observed_id);
+  if (it == marker_poses_.end()) {
+    return;                       // 지도 자세를 모르는 마커 (레지스트리 밖) — 근거로 쓸 수 없다
+  }
+  if (std::hypot(obs.x, obs.y) > reloc_max_range_) {
+    return;                       // 멀리서 본 마커는 각도 오차가 커져 자세 역산이 흔들린다
+  }
+  const MapPose2D fix = impliedRobotPose(obs, it->second);
+  // 연속 관측이 서로 가까울 때만 낸다 (한 프레임의 오검출로 위치 추정을 흔들지 않는다)
+  if (reloc_streak_id_ == observed_id && poseDistance(fix, reloc_last_fix_) <= reloc_tolerance_) {
+    ++reloc_streak_;
+  } else {
+    reloc_streak_ = 1;
+    reloc_streak_id_ = observed_id;
+  }
+  reloc_last_fix_ = fix;
+  if (reloc_streak_ < reloc_min_observations_) {
+    return;
+  }
+  reloc_streak_ = 0;
+  geometry_msgs::msg::PoseWithCovarianceStamped msg;
+  msg.header.stamp = now();
+  msg.header.frame_id = "map";
+  msg.pose.pose.position.x = fix.x;
+  msg.pose.pose.position.y = fix.y;
+  msg.pose.pose.orientation.z = std::sin(fix.yaw / 2.0);
+  msg.pose.pose.orientation.w = std::cos(fix.yaw / 2.0);
+  msg.pose.covariance[0] = reloc_position_sigma_ * reloc_position_sigma_;
+  msg.pose.covariance[7] = reloc_position_sigma_ * reloc_position_sigma_;
+  msg.pose.covariance[35] = reloc_yaw_sigma_ * reloc_yaw_sigma_;
+  marker_fix_pub_->publish(msg);
+  RCLCPP_WARN(
+    get_logger(),
+    "마커 %d (다른 도크) 를 %.2f m 앞에서 봤다 → 로봇 자세 역산 (%.2f, %.2f, %.1f°) 발행",
+    observed_id, std::hypot(obs.x, obs.y), fix.x, fix.y, fix.yaw * 180.0 / M_PI);
 }
 
 void DockingServerNode::controlStep()

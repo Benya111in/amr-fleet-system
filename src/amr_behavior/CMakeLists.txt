@@ -136,6 +136,9 @@ if(BUILD_TESTING)
   ament_add_gtest(test_docking_controller test/test_docking_controller.cpp)
   target_link_libraries(test_docking_controller amr_behavior_algorithms)
 
+  ament_add_gtest(test_marker_relocalization test/test_marker_relocalization.cpp)
+  target_link_libraries(test_marker_relocalization amr_behavior_algorithms)
+
   ament_add_gtest(test_ttc_trigger test/test_ttc_trigger.cpp)
   target_link_libraries(test_ttc_trigger amr_behavior_algorithms
     amr_is_ttc_below_threshold_condition_bt_node)

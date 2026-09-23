@@ -29,9 +29,11 @@
 #include <vector>
 
 #include "amr_behavior/docking/docking_controller.hpp"
+#include "amr_behavior/docking/marker_relocalization.hpp"
 #include "amr_msgs/action/dock.hpp"
 #include "geometry_msgs/msg/polygon_stamped.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
+#include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
@@ -90,6 +92,10 @@ private:
   /// 이 goal 의 도크 마커가 아니면 true: 검출기가 id 를 낸 적이 있는데 최근
   /// (marker_id_max_age) id 가 없거나 다르다. 도크 id 를 모르거나 id 를 받은 적이 없으면 false.
   bool wrongMarker(double now) const;
+  /// 다른 도크의 마커를 봤을 때: 그 마커의 지도 자세로 로봇 자세를 역산해
+  /// localization/marker_fix 로 낸다 (연속 관측 min_observations 회가 서로
+  /// tolerance 안에 들어올 때만). 도킹 판정은 바꾸지 않는다.
+  void publishMarkerFix(int observed_id, const MarkerObservation & obs);
   void controlStep();
   void goalStep(double now);
   void exclusionStep(double now);
@@ -101,6 +107,16 @@ private:
   Params base_params_;
   std::map<std::string, double> standoffs_;
   std::map<std::string, int> marker_ids_;
+  std::map<int, MapPose2D> marker_poses_;     ///< ArUco id → 마커 지도 자세 (계약 C3: +x 바깥 법선)
+  bool reloc_enabled_{true};
+  double reloc_max_range_{3.0};               ///< [m] 이보다 먼 관측은 쓰지 않는다
+  double reloc_tolerance_{0.30};              ///< [m] 연속 관측이 이 안에 들어와야 한다
+  int reloc_min_observations_{3};
+  double reloc_position_sigma_{0.05};         ///< [m] 발행 공분산
+  double reloc_yaw_sigma_{0.05};              ///< [rad]
+  int reloc_streak_{0};
+  int reloc_streak_id_{-1};
+  MapPose2D reloc_last_fix_;
   int expected_marker_id_{-1};       ///< 이번 세션의 도크 마커 id (−1 = 확인 안 함)
   int last_marker_id_{-1};
   double last_marker_id_time_{-1.0};
@@ -133,6 +149,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr marker_id_sub_;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_pub_;
   rclcpp::Publisher<geometry_msgs::msg::PolygonStamped>::SharedPtr exclusion_pub_;
+  rclcpp::Publisher<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr marker_fix_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
   rclcpp::Client<std_srvs::srv::SetBool>::SharedPtr detector_client_;
 };

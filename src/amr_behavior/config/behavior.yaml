@@ -22,17 +22,22 @@
 #                         43.5° 밖. y+1 의 box_medium 을 정면으로 보는 방위(∓47.4° 회전): 거리 base_link 1.36 m / 카메라 1.07 m.
 #   marker_id             월드의 ArUco id (DICT_4X4_50: 도크 0~3, 충전소 4~6). docking_server_node 는 perception/dock_marker_id
 #                         가 다른 관측을 버린다 — search 회전(±0.5 rad)에서는 4 m 옆 이웃 도크 마커(≈ 14 px)도 시야에 든다.
+#   marker_pose [x,y,rad] 그 마커의 지도 자세 (계약 C3: +x = 판 바깥 법선). 월드 모델 <pose> 와 같아야 한다
+#                         (tests/integration/unit 의 도크 정합 시험이 월드와 대조한다). 다른 도크의 마커를 봤을 때
+#                         docking_server_node 가 이 자세로 로봇 자세를 역산해 localization/marker_fix 로 낸다 —
+#                         kidnap_monitor_node 가 그 값으로 재위치추정한다 (같은 형태의 평행 통로에서 스캔 정합은
+#                         구분하지 못한다, 통합 시나리오 11).
 /**:
   ros__parameters:
     docks:
       ids: [dock_1, dock_2, dock_a, dock_b, charger_c1, charger_c2, charger_c3]
-      dock_1: {staging: [-27.78, 17.0, 3.14159265], standoff: 0.65, perceive_yaw: 2.3146, marker_id: 0}
-      dock_2: {staging: [-27.78, 13.0, 3.14159265], standoff: 0.65, perceive_yaw: 2.3146, marker_id: 1}
-      dock_a: {staging: [27.78, 17.0, 0.0], standoff: 0.65, perceive_yaw: 0.8270, marker_id: 2}
-      dock_b: {staging: [27.78, 13.0, 0.0], standoff: 0.65, perceive_yaw: 0.8270, marker_id: 3}
-      charger_c1: {staging: [-26.0, -16.64, -1.57079633], standoff: 0.65, marker_id: 4}
-      charger_c2: {staging: [-22.0, -16.64, -1.57079633], standoff: 0.65, marker_id: 5}
-      charger_c3: {staging: [-18.0, -16.64, -1.57079633], standoff: 0.65, marker_id: 6}
+      dock_1: {staging: [-27.78, 17.0, 3.14159265], standoff: 0.65, perceive_yaw: 2.3146, marker_id: 0, marker_pose: [-29.99, 17.0, 0.0]}
+      dock_2: {staging: [-27.78, 13.0, 3.14159265], standoff: 0.65, perceive_yaw: 2.3146, marker_id: 1, marker_pose: [-29.99, 13.0, 0.0]}
+      dock_a: {staging: [27.78, 17.0, 0.0], standoff: 0.65, perceive_yaw: 0.8270, marker_id: 2, marker_pose: [29.99, 17.0, 3.14159265]}
+      dock_b: {staging: [27.78, 13.0, 0.0], standoff: 0.65, perceive_yaw: 0.8270, marker_id: 3, marker_pose: [29.99, 13.0, 3.14159265]}
+      charger_c1: {staging: [-26.0, -16.64, -1.57079633], standoff: 0.65, marker_id: 4, marker_pose: [-26.0, -18.14, 1.57079633]}
+      charger_c2: {staging: [-22.0, -16.64, -1.57079633], standoff: 0.65, marker_id: 5, marker_pose: [-22.0, -18.14, 1.57079633]}
+      charger_c3: {staging: [-18.0, -16.64, -1.57079633], standoff: 0.65, marker_id: 6, marker_pose: [-18.0, -18.14, 1.57079633]}
 
 # ---------------------------------------------------------------- 작업 실행기
 /**/task_executor_node:
@@ -170,6 +175,15 @@
                                     # 자세만 쓴다 (경고 로그). 이전 판은 오래된 id 를 "다른 마커" 로 보고 관측을
                                     # 전부 버려, 검출기 부하로 id 가 잠깐 늦은 시도에서 도킹이 통째로 실패했다
                                     # (통합 시나리오 10, 10 회 중 1 회 3 시도 소진 → GT 11 cm / 30°)
+    # 다른 도크의 마커를 봤을 때: 그 마커의 지도 자세(docks.<id>.marker_pose)로 로봇 자세를 역산해
+    # localization/marker_fix 로 낸다. 도킹 판정은 그대로(관측 버림) — 위치 추정 쪽이 쓰는 근거다.
+    relocalization:
+      enabled: true                 # 다른 도크의 마커로 로봇 자세를 역산해 발행할지 (false = 끔)
+      max_range: 3.0                # [m] 더 멀리서 본 마커는 각도 오차가 커져 역산이 흔들린다
+      tolerance: 0.30               # [m] 연속 관측이 이 안에 들어와야 한다 (한 프레임 오검출 거름)
+      min_observations: 3           # 이만큼 연속으로 일치해야 발행한다 (30 Hz 검출에서 0.1 s)
+      position_sigma: 0.05          # [m] 발행 공분산 (0.36 m 앞 마커 169 px → 화소 오차 ≈ 2 cm)
+      yaw_sigma: 0.05               # [rad] ≈ 2.9°
 
 # ---------------------------------------------------------------- 시뮬레이션 배터리 (amr_behavior/battery_model.py)
 # Gazebo 로봇에는 배터리가 없다 → battery_state 를 이 모델이 낸다 (실기에서는 BMS 드라이버, start_battery_model:=false).
