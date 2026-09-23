@@ -3,6 +3,10 @@
 
 전략 1 YIELD    우선순위 기반 양보: 교착 로봇 중 우선순위가 가장 낮은 로봇(희생 로봇)을 가장 가까운
                 빈 대기 포켓으로 보낸다 (traffic/yield_pose + traffic/hold=true). 나머지는 그대로 진행.
+                구역 밖에 자리가 없으면 마지막 수단으로 구역 안(통로)까지 허용한다 (pocket_into_zone) —
+                1차선 통로·막다른 접근로는 폭이 pocket_clearance_m 보다 좁아 '구역 밖' 후보가 전부
+                걸러지기 때문이다 (통합 시나리오 12: 해소 실패 5건이 모두 no_pocket,no_route).
+                그때도 다른 로봇의 남은 경로에서는 pocket_clearance_m 을 지키므로 상대는 지나갈 수 있다.
                 포켓 = traffic_zones.yaml 의 pockets (기본) 또는 auto_pockets 면 자동 탐색 셀: 주행 가능,
                 구역(통로·교차로) 밖, 다른 로봇의 남은 경로에서 pocket_clearance_m 이상.
                 다른 로봇 몸체와 다른 로봇이 보유·점유한 구역을 지나지 않는 격자 Dijkstra 로 "도달 가능한
@@ -72,6 +76,7 @@ class ResolutionConfig:
     auto_pockets: bool = True
     pocket_search_radius_m: float = 12.0
     pocket_clearance_m: float = 1.0
+    pocket_into_zone: bool = True      # 구역 밖에 자리가 없으면 구역 안까지 허용 (마지막 수단)
     pocket_path_horizon_m: float = 12.0
     search_resolution_m: float = 0.25
     escalate_after_s: float = 10.0
@@ -273,7 +278,8 @@ def find_yield_pocket(tgrid: TraversabilityGrid, start: Tuple[float, float],
                       avoid_paths: Sequence[np.ndarray], cfg: ResolutionConfig,
                       pockets: Sequence[Pocket] = (),
                       reserved: Sequence[Tuple[float, float]] = (),
-                      blocked: Optional[np.ndarray] = None) -> Optional[Pocket]:
+                      blocked: Optional[np.ndarray] = None,
+                      allow_zones: bool = False) -> Optional[Pocket]:
     """
     출발점에서 다른 로봇 몸체를 지나지 않고 갈 수 있는 가장 가까운 포켓 (경로 비용 기준).
 
@@ -282,6 +288,9 @@ def find_yield_pocket(tgrid: TraversabilityGrid, start: Tuple[float, float],
     avoid_paths 의 점에서 pocket_clearance_m 이상. 반경 pocket_search_radius_m 안에서만 찾는다.
     blocked: 지나지 못하는 셀 (다른 로봇이 보유·점유한 구역). 돌려주는 Pocket.route = 출발점 → 포켓
     격자 경로 (월드 좌표).
+    allow_zones: 자동 포켓의 '구역 밖' 조건을 푼다 (마지막 수단). 1차선 통로·막다른 접근로에서는
+    구역 밖 후보가 통로 폭보다 넓은 pocket_clearance_m 때문에 전부 걸러져 물러설 자리가 없다 —
+    그때는 구역 안(통로)으로라도 물러나는 편이 교착을 푼다 (통합 시나리오 12 실측).
     """
     spec = tgrid.spec
     r = cfg.robot_radius
@@ -311,7 +320,7 @@ def find_yield_pocket(tgrid: TraversabilityGrid, start: Tuple[float, float],
     use_auto = cfg.auto_pockets and (not pockets or not targets)
     if not targets and not use_auto:
         return None
-    auto_ok = forbid | tgrid.zone_mask
+    auto_ok = forbid if allow_zones else (forbid | tgrid.zone_mask)
 
     res = spec.resolution
     dist = {(sx, sy): 0.0}
@@ -824,6 +833,14 @@ class IncidentManager:
             blocked = world.tgrid.zones_mask(held) if held else None
             pocket = find_yield_pocket(world.tgrid, views[victim].xy, others_xy, avoid,
                                        self.cfg, world.pockets, reserved, blocked)
+            if pocket is None and self.cfg.pocket_into_zone:
+                # 구역 밖에 물러설 자리가 없다: 마지막 수단으로 구역 안(통로)까지 허용한다.
+                # 그래도 다른 로봇의 남은 경로에서 pocket_clearance_m 은 지키므로 상대는 지나갈 수 있다.
+                pocket = find_yield_pocket(world.tgrid, views[victim].xy, others_xy, avoid,
+                                           self.cfg, world.pockets, reserved, blocked,
+                                           allow_zones=True)
+                if pocket is not None:
+                    inc.attempts.append(f'{YIELD}:{victim}(into_zone)')
         if pocket is None:
             return self._start_alt(inc, now, world, 'no_pocket')
         self._begin(inc, now, world, YIELD)

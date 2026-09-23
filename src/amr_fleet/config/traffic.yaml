@@ -62,6 +62,10 @@
       auto_pockets: true           # 지정 포켓이 모두 불가하면 자동 포켓 (구역 밖 · 경로 밖 빈 셀)
       pocket_search_radius_m: 12.0  # 포켓까지 경로 길이 상한 (다른 로봇 몸체를 지나지 않는 격자 Dijkstra)
       pocket_clearance_m: 1.0      # 포켓은 다른 주행 로봇의 남은 경로에서 이만큼 떨어진다
+      # 구역 밖에 물러설 자리가 없으면 구역 안(통로)까지 허용한다 — 1차선 통로·막다른 접근로는
+      # 폭이 pocket_clearance_m 보다 좁아 '구역 밖' 후보가 전부 걸러진다 (통합 시나리오 12: 해소
+      # 실패 5건이 모두 no_pocket,no_route). 구역 안이라도 상대 경로에서는 위 간격을 지킨다
+      pocket_into_zone: true
       pocket_path_horizon_m: 12.0  # 그 경로를 이만큼만 본다
       search_resolution_m: 0.25    # 포켓 탐색 · 길 존재 확인 격자
       escalate_after_s: 10.0       # 전략 1 중 상대가 전혀 못 움직이면(사이클 지속) 전략 2 로
