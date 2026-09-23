@@ -77,6 +77,7 @@ struct DwaWeights
   double oscillation{0.2};
   double dynamic{1.5};
   double off_path{3.0};     // w_f: 이탈 한계 초과 벌점 (다른 어느 항보다 커야 되돌린다)
+  double escape{2.5};       // w_e: 이미 들어선 통로(kCommitted)에서 빠져나가는 후보에 주는 이득
 };
 
 struct DwaConfig
@@ -126,6 +127,12 @@ struct DwaConfig
   double yield_horizon{8.0};            // [s] 장애물 예측 지평 (통로 길이 = |u|·horizon)
   double yield_lookahead{4.0};          // [m] 경로에서 교차 구간을 찾는 최대 거리
   double yield_max_zone{6.0};           // [m] 교차 구간 길이 상한 (넘으면 나란한 주행)
+  // 통로 안(kCommitted)에서 정지해 버리면 장애물이 그대로 걸어 들어온다 (시나리오 08 실측:
+  // 접촉 4건 모두 로봇 속도 0 · yield_state=committed · 차선 가로 거리 |β| < 0.65 m).
+  // 앞은 VO 가 막으므로 나가는 길은 뒤뿐이다 — 그 상태에서만 후진 샘플을 열고,
+  // 통로 축에서 멀어지는 후보에 이득을 준다.
+  double yield_escape_speed{0.25};      // [m/s] kCommitted 에서 허용하는 후진 속도 (0 = 끔)
+  double yield_escape_cos{0.87};        // |cos(헤딩, 장애물 진행)| 이 이보다 작을 때만 (횡단)
   // 좁은 곳 경로 재중심 (0 단계)
   bool recenter_narrow{true};
   double recenter_min_cost{100.0};  // 이 비용 이상인 경로 점만 (지역 s = 3: 장애물 ≈ 0.5 m 이내)
@@ -144,6 +151,7 @@ struct DwaCostTerms
   double oscillation{0.0};
   double dynamic{0.0};
   double off_path{0.0};
+  double escape{0.0};       // 통로 축까지의 거리로 정규화 (1 = 축 위, 0 = 통로 밖)
 };
 
 struct DwaCandidate

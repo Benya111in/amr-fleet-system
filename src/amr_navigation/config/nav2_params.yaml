@@ -154,6 +154,11 @@ controller_server:
       yield_horizon: 8.0               # [s] 장애물 등속 예측 지평 (통로 길이 = |u|·8 s)
       yield_lookahead: 4.0             # [m] 경로에서 교차 구간을 찾는 거리 (≤ path_horizon)
       yield_max_zone: 6.0              # [m] 교차 구간 길이 상한 — 넘으면 나란한 주행으로 보고 정지선 없음
+      # 이미 통로 안(kCommitted)에서 멈추면 장애물이 그대로 걸어 들어온다 (시나리오 08 회귀 실행:
+      # 접촉 4건이 모두 로봇 속도 0 · committed · 차선 가로 거리 ≤ 0.65 m). 앞은 VO 가 막으므로
+      # 나갈 길은 뒤뿐이다 — 그 상태에서만 후진 샘플을 열고, 통로 축에서 멀어지는 후보에 이득을 준다
+      yield_escape_speed: 0.25         # [m/s] kCommitted 후진 상한 (0 = 끔)
+      escape_weight: 2.5               # w_e: 통로 축에서 멀어지는 후보 이득 (off_path 3.0 보다 작게)
                                        #   (26.6° 비스듬한 교차는 2·R_c/sin 26.6° = 4.97 m). 횡단 각도 하한 22.6°
       recenter_narrow: True            # 좁은 곳(양쪽이 막힌 골) 기준 경로를 지역 코스트맵 골 바닥으로 옮긴다 (dwa.md §1.7):
       recenter_min_cost: 100.0         #   위치추정 편향(전역 경로가 0.60 m 통로 중심에서 2–4 cm 비낌)과 무관하게 실제 통로 중심
