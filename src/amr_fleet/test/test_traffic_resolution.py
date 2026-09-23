@@ -430,3 +430,51 @@ def test_immobile_members_are_never_victims_and_failures_are_not_repeated():
     estop.mobile = True
     im.step(4.0, w3)                                                    # E 복구 → 다시 시도 가능
     assert not im.in_cooldown(['E', 'F'], 4.0) and im.suppressed() == set()
+
+
+# ------------------------------------------------- 막다른 통로 (구역 안으로만 물러설 수 있는 경우)
+
+
+def dead_end_map():
+    """서쪽 방(통로 구역) + 동쪽 막다른 1차선 통로. 우회로 없음."""
+    occ = np.ones((100, 200), dtype=bool)
+    occ[5:95, 5:40] = False            # 서쪽 방 (= 통로 구역)
+    occ[45:55, 40:160] = False         # 막다른 1차선 통로 (x 4 ~ 16, 폭 1 m)
+    return occ, GridSpec(RES, 0.0, 0.0, 200, 100)
+
+
+def dead_end_world(robots, c=None):
+    occ, spec = dead_end_map()
+    c = c or cfg()
+    zone_map = ZoneMap(zones_from_config([
+        {'id': 'room', 'kind': 'corridor',
+         'polygon': [[0.5, 0.5], [4.0, 0.5], [4.0, 9.5], [0.5, 9.5]]}]))
+    tg = TraversabilityGrid.from_occupancy(occ, spec, c.robot_radius, 0.25, zone_map,
+                                           c.passage_radius)
+    return WorldView({r.robot_id: r for r in robots}, zone_map, tg, [],
+                     mask_spec_for(spec, 0.1))
+
+
+def dead_end_pair():
+    """A 는 막다른 끝(도크)으로, B 는 그 뒤에서 같은 통로로 — 통로 안에서 마주 선다."""
+    return [view('A', 14.0, 5.0, (15.5, 5.0), 200),
+            view('B', 12.0, 5.0, (15.0, 5.0), 100, yaw=math.pi)]
+
+
+def test_dead_end_retreats_into_the_zone_when_nothing_else_is_free():
+    """
+    통로 밖 포켓도 대체 경로도 없는 막다른 구간: 구역 안으로라도 물러선다.
+
+    실측(통합 시나리오 12): 포켓은 '구역 밖' 이어야 해서 1차선 통로에서는 후보가 전부 걸러지고
+    (통로 폭이 pocket_clearance_m 보다 좁다) 대체 경로도 없어 두 전략이 모두 소진, 해소 실패
+    5건이 났다. 마지막 수단으로 구역 안 셀을 허용하면 방까지 물러나 상대를 보낼 수 있다.
+    """
+    im = IncidentManager(cfg())
+    a, b = dead_end_pair()
+    evs = im.open(0.0, ['A', 'B'], 'HEAD_ON', dead_end_world([a, b]))
+    assert _names(evs) == [EV_DEADLOCK]
+    assert evs[0].values['strategy'] == YIELD, evs[0].values
+    cmd = im.commands()['B']
+    assert cmd.hold and cmd.yield_pose is not None
+    # 물러설 자리는 방(구역 안), 통로 밖이어야 한다
+    assert cmd.yield_pose[0] < 4.0, cmd.yield_pose
