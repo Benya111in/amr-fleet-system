@@ -316,12 +316,8 @@ DwaResult DwaPlanner::compute(
     config_.yield_escape_speed > 0.0 && res.yield.obstacle >= 0 &&
     static_cast<std::size_t>(res.yield.obstacle) < dyn.size() &&
     in.v_meas < config_.yield_escape_v_meas;
-  if (escaping) {
-    const DynamicObstacle & o = dyn[static_cast<std::size_t>(res.yield.obstacle)];
-    const double su = std::max(1e-6, o.speed());
-    const double cos_a = (std::cos(in.pose.theta) * o.vx + std::sin(in.pose.theta) * o.vy) / su;
-    escaping = std::abs(cos_a) < config_.yield_escape_cos;   // 0.87 ≈ ±30° 안이면 정면/추종
-  }
+  // (각도 조건은 두지 않는다: 08 경로는 작업자 진행 방향과 26° 라 |cos| 0.9 로 걸러졌고, 실제로
+  //  정지한 채 통로 안에서 접촉이 났다. 정면 접근은 "정지·후진 중" 조건과 VO 가 함께 막는다.)
   if (escaping) {
     res.window.v_lo = std::max(
       -config_.yield_escape_speed, v_c - L.decel_lim_x * config_.control_period);
