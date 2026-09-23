@@ -211,7 +211,7 @@ def test_traffic_yaml_matches_config():
 def test_manager_loads_zones_file_and_describes():
     cfg = TrafficConfig(zones_file=str(CONFIG_DIR / 'traffic_zones.yaml'))
     tm = TrafficManager(cfg)
-    assert len(tm.zone_map) == 13 and len(tm.pockets) >= 30
+    assert len(tm.zone_map) == 17 and len(tm.pockets) >= 30   # 구역 13 + 도크 접근 4
     assert 'narrow_aisle(corridor,yaml' in tm.describe_zones()
     none = TrafficManager(TrafficConfig())
     assert none.describe_zones() == '(없음)' and none.pockets == []

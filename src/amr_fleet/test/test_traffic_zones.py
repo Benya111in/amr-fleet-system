@@ -377,7 +377,10 @@ def test_warehouse_layout_matches_world():
     zm = ZoneMap(zones)
     ids = [z.zone_id for z in zones]
     assert 'narrow_aisle' in ids and zm.get('narrow_aisle').kind == CORRIDOR
-    assert sum(z.kind == INTERSECTION for z in zones) == 12
+    # 교차로 12 (통로 x 열 틈) + 도크 접근 4 (용량 1 — 같은 도크에 두 대가 못 들어간다)
+    assert sum(z.kind == INTERSECTION for z in zones) == 16
+    for dock in ('dock_1_approach', 'dock_2_approach', 'dock_a_approach', 'dock_b_approach'):
+        assert zm.get(dock).kind == INTERSECTION
     # 좁은 통로 중앙선은 구역 안이고 통과 가능 (벽까지 ≥ 반폭 0.2 + 여유 → passage_radius 0.22)
     for y in np.arange(-11.9, -8.0, 0.2):
         assert zm.zone_at(0.0, y) == 'narrow_aisle'
