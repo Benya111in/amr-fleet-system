@@ -147,7 +147,9 @@ controller_server:
       vo_time_tie: 0.02                # [s] VO 포화 시 진입 시각이 이 안이면 같다고 보고 비용으로 고른다 (dwa.md §2.1)
       yield_crossing: True             # 횡단 양보: 동적 장애물의 예측 통로 **밖** 가상 정지선 앞에 선다 (dwa.md §2.3).
                                        #   VO/TTC 만으로는 통로 **안**에서 멈춰 서고, 비키지 않는 사람이 걸어 들어온다
-      yield_corridor_margin: 0.5       # [m] 통로 반폭 여유 = dynamic_margin (critical zone).
+      yield_corridor_margin: 0.7       # [m] 통로 반폭 여유. 0.5(=critical zone) → 0.7: 08 실측에서
+                                       # 통로 안에 들어선 뒤 멈춰 접촉하는 사례가 남아, 더 바깥에
+                                       # 서도록 통로를 넓힌다 (R_c = 0.361 + r_obs + 0.7)
                                        #   반폭 R_c = 0.361 + 0.25 + 0.5 = 1.111 m
       yield_stop_margin: 0.25          # [m] 통로 입구 앞 정지선 여유 (경로 호길이)
       yield_clear_margin: 2.0          # [s] "먼저 빠져나간다" 판정의 시간 여유. 1.0 → 2.0:
