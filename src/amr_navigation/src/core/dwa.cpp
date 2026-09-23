@@ -309,9 +309,13 @@ DwaResult DwaPlanner::compute(
   // 한 주기에 닿을 수 있는 범위(감속 한계) 안에서만 내린다 — 명령이 튀지 않는다.
   // 횡단일 때만 의미가 있다: 정면 접근(장애물 진행 방향이 로봇 헤딩과 나란)은 통로 축이 우리
   // 진행선과 같아 "옆으로 빠진다" 가 성립하지 않는다 — 그 상황은 VO/TTC 의 감속이 맡는다.
+  // 이미 서 있거나 뒤로 빠지는 중일 때만 연다. 정상 주행 중에는 건드리지 않는다 — 연속 운용(14)
+  // 실측: 주행 중에도 열어 두었더니 후진↔전진이 되풀이되어 "Failed to make progress" 58 건과
+  // 작업 시간 초과 1 건이 났다 (같은 구성의 앞 실행은 0 건).
   bool escaping = res.yield.state == YieldState::kCommitted &&
     config_.yield_escape_speed > 0.0 && res.yield.obstacle >= 0 &&
-    static_cast<std::size_t>(res.yield.obstacle) < dyn.size();
+    static_cast<std::size_t>(res.yield.obstacle) < dyn.size() &&
+    in.v_meas < config_.yield_escape_v_meas;
   if (escaping) {
     const DynamicObstacle & o = dyn[static_cast<std::size_t>(res.yield.obstacle)];
     const double su = std::max(1e-6, o.speed());

@@ -134,6 +134,7 @@ struct DwaConfig
   double yield_escape_speed{0.25};      // [m/s] kCommitted 에서 허용하는 후진 속도 (0 = 끔)
   double yield_escape_cos{0.87};        // |cos(헤딩, 장애물 진행)| 이 이보다 작을 때만 (횡단)
   double yield_escape_drift{0.15};      // [m] 이탈이 지금보다 이만큼 넘게 늘면 이득 없음
+  double yield_escape_v_meas{0.05};     // [m/s] 측정 속도가 이보다 낮을 때만 (정지·후진 중)
   // 좁은 곳 경로 재중심 (0 단계)
   bool recenter_narrow{true};
   double recenter_min_cost{100.0};  // 이 비용 이상인 경로 점만 (지역 s = 3: 장애물 ≈ 0.5 m 이내)
