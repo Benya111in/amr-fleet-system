@@ -78,6 +78,8 @@ class KidnapMonitorNode(Node):
         self.declare_parameter('scan_topic', 'scan_filtered')
         self.declare_parameter('map_topic', '/map')
         self.declare_parameter('lost_topic', 'localization/lost')
+        # 도킹 서버가 다른 도크의 마커를 보고 역산한 로봇 자세 (amr_behavior docking_server_node)
+        self.declare_parameter('marker_fix_topic', 'localization/marker_fix')
         self.declare_parameter('status_topic', 'localization/kidnap_status')
         self.declare_parameter('reinit_service', 'reinitialize_global_localization')
         self.declare_parameter('spin_action', 'spin')
@@ -160,6 +162,9 @@ class KidnapMonitorNode(Node):
                 self.get_logger().warn('robot_localization.srv 없음: EKF set_pose 비활성')
         fallback = self.get_parameter('fallback_cmd_vel_topic').value
         self.cmd_pub = self.create_publisher(Twist, fallback, 10) if fallback else None
+        self.create_subscription(
+            PoseWithCovarianceStamped, self.get_parameter('marker_fix_topic').value,
+            self.on_marker_fix, 10)
 
         self.event_log = self.get_parameter('event_log').value
         self.create_timer(1.0 / max(float(self.get_parameter('match_rate').value), 0.1),
@@ -214,6 +219,12 @@ class KidnapMonitorNode(Node):
             stamp_sec(msg.header.stamp), (p.position.x, p.position.y, yaw_of(p.orientation)),
             c[0] + c[7], c[35]))
 
+    def on_marker_fix(self, msg: PoseWithCovarianceStamped) -> None:
+        """등록된 마커로 역산한 자세: 현재 추정과 크게 다르면 LOST 선언 + 그 자세로 시드."""
+        p = msg.pose.pose
+        self.execute(self.detector.on_marker_fix(
+            self.now_sec(), (p.position.x, p.position.y, yaw_of(p.orientation))))
+
     def on_match_timer(self) -> None:
         """가장 최근 스캔의 일치도: 스캔 시각 map 자세 = 마지막 AMCL ∘ odom 상대 이동."""
         if self.field is None or not self.scans:
@@ -265,6 +276,8 @@ class KidnapMonitorNode(Node):
                 self.cancel_spin()
             elif action.kind == kd.ActionType.SET_EKF_POSE:
                 self.set_ekf_pose(*action.value)
+            elif action.kind == kd.ActionType.SEED_POSE:
+                self.seed_pose(action.value)
         if actions:
             self.log_events()
             self.publish_status()
@@ -326,6 +339,27 @@ class KidnapMonitorNode(Node):
             f'seed #{attempt}: initialpose ({h.x:.2f}, {h.y:.2f}, {math.degrees(yaw):.0f} deg), '
             f'score {h.score:.3f} m, inlier {h.ratio:.3f}')
         return True
+
+    def seed_pose(self, pose) -> None:
+        """외부 증거(마커)로 역산한 자세를 AMCL·EKF 에 그대로 넣는다 (전역 탐색 없이)."""
+        x, y, yaw = pose
+        msg = PoseWithCovarianceStamped()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = self.map_frame
+        msg.pose.pose.position.x = float(x)
+        msg.pose.pose.position.y = float(y)
+        msg.pose.pose.orientation.z = math.sin(0.5 * yaw)
+        msg.pose.pose.orientation.w = math.cos(0.5 * yaw)
+        cov = [0.0] * 36
+        cov[0] = cov[7] = float(self.get_parameter('seed_cov_xy').value)
+        cov[35] = float(self.get_parameter('seed_var_yaw').value)
+        msg.pose.covariance = cov
+        self.initial_pose_pub.publish(msg)
+        self.set_ekf_pose((float(x), float(y), float(yaw)),
+                          float(self.get_parameter('seed_cov_xy').value),
+                          float(self.get_parameter('seed_var_yaw').value))
+        self.get_logger().warn(
+            f'marker fix seed: initialpose ({x:.2f}, {y:.2f}, {math.degrees(yaw):.0f} deg)')
 
     def start_spin(self, angle: float) -> None:
         if self.spin_client.server_is_ready():
