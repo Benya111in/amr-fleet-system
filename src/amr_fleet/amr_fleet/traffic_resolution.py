@@ -580,6 +580,7 @@ class IncidentCommand:
     hold: bool
     yield_pose: Optional[Tuple[float, float, float]] = None
     keepout: Optional[KeepoutMask] = None
+    masked_zones: FrozenSet[str] = frozenset()   # 마스크가 이미 막는 구역 (토큰 hold 가 필요 없다)
 
 
 class IncidentManager:
@@ -641,7 +642,8 @@ class IncidentManager:
                 p = inc.pocket
                 out[v] = IncidentCommand(inc.incident_id, True, (p.x, p.y, p.yaw))
             elif inc.strategy == ALT_PATH and inc.mask is not None:
-                out[v] = IncidentCommand(inc.incident_id, False, None, inc.mask)
+                out[v] = IncidentCommand(inc.incident_id, False, None, inc.mask,
+                                         frozenset(inc.contested_zones))
         return out
 
     # --- 사건 열기 ---
