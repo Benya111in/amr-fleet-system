@@ -57,8 +57,10 @@ def test_shared_parameters_from_workspace_config():
 
 @pytest.mark.parametrize('mode, expected', [
     ('odom', ['ekf_node', 'imu_filter_node', 'scan_filter_node', 'wheel_odometry_node']),
-    ('slam', ['async_slam_toolbox_node', 'ekf_node', 'imu_filter_node', 'scan_filter_node',
-              'wheel_odometry_node']),
+    # slam 모드는 지도 저장용 map_saver_server 와 그 lifecycle_manager 를 함께 띄운다
+    # (slam_toolbox 내부 saver 는 이름공간 아래에서 쓸 수 없다 — launch 주석)
+    ('slam', ['async_slam_toolbox_node', 'ekf_node', 'imu_filter_node', 'lifecycle_manager',
+              'map_saver_server', 'scan_filter_node', 'wheel_odometry_node']),
     ('localization', ['amcl', 'amcl_map_adapter', 'ekf_node', 'ekf_node', 'imu_filter_node',
                       'kidnap_monitor_node', 'lifecycle_manager', 'lifecycle_manager',
                       'map_server', 'scan_filter_node', 'scan_matcher_node',
