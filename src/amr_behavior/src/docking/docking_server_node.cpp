@@ -327,10 +327,18 @@ void DockingServerNode::publishMarkerFix(int observed_id, const MarkerObservatio
   }
   const auto it = marker_poses_.find(observed_id);
   if (it == marker_poses_.end()) {
-    return;                       // 지도 자세를 모르는 마커 (레지스트리 밖) — 근거로 쓸 수 없다
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 5000,
+      "마커 %d 의 지도 자세가 레지스트리에 없다 → 재위치추정 근거로 쓰지 않는다", observed_id);
+    return;
   }
-  if (std::hypot(obs.x, obs.y) > reloc_max_range_) {
-    return;                       // 멀리서 본 마커는 각도 오차가 커져 자세 역산이 흔들린다
+  const double range = std::hypot(obs.x, obs.y);
+  if (range > reloc_max_range_) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 5000,
+      "마커 %d 가 %.2f m 로 멀다 (상한 %.2f m) → 재위치추정 근거로 쓰지 않는다", observed_id, range,
+      reloc_max_range_);
+    return;
   }
   const MapPose2D fix = impliedRobotPose(obs, it->second);
   // 연속 관측이 서로 가까울 때만 낸다 (한 프레임의 오검출로 위치 추정을 흔들지 않는다)
@@ -342,6 +350,9 @@ void DockingServerNode::publishMarkerFix(int observed_id, const MarkerObservatio
   }
   reloc_last_fix_ = fix;
   if (reloc_streak_ < reloc_min_observations_) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 5000, "마커 %d 역산 자세 연속 %d/%d 회 (일치 대기)", observed_id,
+      reloc_streak_, reloc_min_observations_);
     return;
   }
   reloc_streak_ = 0;
@@ -352,14 +363,16 @@ void DockingServerNode::publishMarkerFix(int observed_id, const MarkerObservatio
   msg.pose.pose.position.y = fix.y;
   msg.pose.pose.orientation.z = std::sin(fix.yaw / 2.0);
   msg.pose.pose.orientation.w = std::cos(fix.yaw / 2.0);
-  msg.pose.covariance[0] = reloc_position_sigma_ * reloc_position_sigma_;
-  msg.pose.covariance[7] = reloc_position_sigma_ * reloc_position_sigma_;
+  // 공분산은 거리에 따라 키운다: 화소 각도 오차가 그대로 거리 오차로 커진다
+  const double sigma = reloc_position_sigma_ * std::max(1.0, range);
+  msg.pose.covariance[0] = sigma * sigma;
+  msg.pose.covariance[7] = sigma * sigma;
   msg.pose.covariance[35] = reloc_yaw_sigma_ * reloc_yaw_sigma_;
   marker_fix_pub_->publish(msg);
   RCLCPP_WARN(
     get_logger(),
-    "마커 %d (다른 도크) 를 %.2f m 앞에서 봤다 → 로봇 자세 역산 (%.2f, %.2f, %.1f°) 발행",
-    observed_id, std::hypot(obs.x, obs.y), fix.x, fix.y, fix.yaw * 180.0 / M_PI);
+    "마커 %d (다른 도크) 를 %.2f m 앞에서 봤다 → 자세 역산 (%.2f, %.2f, %.1f°) 발행 (σ %.2f m)",
+    observed_id, range, fix.x, fix.y, fix.yaw * 180.0 / M_PI, sigma);
 }
 
 void DockingServerNode::controlStep()
