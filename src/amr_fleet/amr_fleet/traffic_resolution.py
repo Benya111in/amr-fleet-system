@@ -911,7 +911,12 @@ class IncidentManager:
                **extra: object) -> ResolutionEvent:
         values = {'incident': str(inc.incident_id), 'robots': ','.join(inc.robots),
                   'type': inc.kind, 'attempts': '>'.join(inc.attempts),
-                  'zones': ','.join(sorted(inc.contested_zones))}
+                  'zones': ','.join(sorted(inc.contested_zones)),
+                  # 탐지 시 로봇 위치: 해소 실패를 사후에 귀속하려면 "어디였는지" 가 있어야 한다
+                  # (통합 시나리오 12 에서 zones 가 비어 있어 위치를 로그로 좁힐 수 없었다)
+                  'at': ';'.join(f'{r}:{inc.contested_points[r][0]:.1f},'
+                                 f'{inc.contested_points[r][1]:.1f}'
+                                 for r in inc.robots if r in inc.contested_points)}
         if inc.immobile:
             values['immobile'] = ','.join(inc.immobile)
         values.update({k: str(v) for k, v in extra.items()})
