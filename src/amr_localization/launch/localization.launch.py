@@ -159,6 +159,20 @@ def _setup(context, *args, **kwargs):
                             [os.path.join(pkg_config, 'slam_toolbox.yaml'),
                              {'odom_frame': odom_frame, 'base_frame': base_frame,
                               'map_frame': 'map', **common}]))
+        # 지도 저장 서비스. slam_toolbox 의 save_map 은 이름공간 아래에서 쓸 수 없다: 지도는 절대
+        # 토픽 /map 에 내면서, 저장 때 자기 프로세스 안에 만드는 nav2 map_saver 는 상대 토픽 map
+        # (= /amr_01/map, 발행자 없음)을 구독해 2 s 뒤 "Failed to spin map subscription" 으로 끝난다
+        # (통합 시나리오 03 에서 매번 재현, 토픽 구독자 목록으로 확인). 그 노드는 전역 인자도 받지
+        # 않아 리맵·파라미터로 고칠 수 없으므로, 표준 map_saver_server 를 우리가 띄워 /map 을 준다
+        # (nav2_bringup 의 SLAM 구성과 같은 방식). 임계값은 요청에 실어 보낸다 (docs slam.md §2).
+        actions += [
+            node('nav2_map_server', 'map_saver_server', 'map_saver_server',
+                 [{'save_map_timeout': 15.0, 'free_thresh_default': 0.19,
+                   'occupied_thresh_default': 0.65, **common}], [('map', '/map')]),
+            node('nav2_lifecycle_manager', 'lifecycle_manager', 'lifecycle_manager_map_saver',
+                 [{'autostart': True, 'node_names': ['map_saver_server'],
+                   'bond_timeout': BOND_TIMEOUT_S, **common}]),
+        ]
     elif mode == 'localization':
         actions.append(ekf('ekf_filter_node_map', 'map',
                            [('odometry/filtered', 'odometry/filtered_map')]))
