@@ -43,6 +43,7 @@ class ActionType(enum.Enum):
     SPIN = 'spin'                          # Nav2 spin (value: 목표 회전각 [rad])
     CANCEL_SPIN = 'cancel_spin'
     SET_EKF_POSE = 'set_ekf_pose'          # value: (pose, cov_xy_trace, var_yaw)
+    SEED_POSE = 'seed_pose'                # value: Pose — 외부 증거(마커)로 역산한 자세를 그대로 시드
 
 
 @dataclass
@@ -74,6 +75,7 @@ class KidnapParams:
     reinit_retry: int = 4              # 재초기화 시도 횟수 (노드: 앞 시도는 가설 시드, 마지막은 AMCL 전역)
     recovery_timeout: float = 90.0     # [s] LOST 이후 이 시간 안에 못 찾으면 FAILED
     cooldown: float = 3.0              # [s] 복구 직후 재감지 유예 (EKF 가 새 자세로 옮겨 가는 시간)
+    marker_fix_min_error: float = 1.0  # [m] 마커로 역산한 자세가 이보다 멀면 위치 추정이 틀렸다고 본다
 
 
 @dataclass
@@ -273,6 +275,35 @@ class KidnapDetector:
         if odom_now is None:
             return None
         return compose(self._anchor[0], relative_pose(self._anchor[1], odom_now))
+
+    def on_marker_fix(self, t: float, pose: Pose) -> List[Action]:
+        """
+        지도에 등록된 마커로 역산한 로봇 자세 (외부 증거, amr_behavior docking_server_node).
+
+        스캔-맵 정합은 같은 형태의 평행 통로를 구분하지 못한다 (통합 시나리오 11: 6 m 옆으로 옮겨도
+        inlier·공분산·점프 어디에도 안 걸렸다). ArUco 마커는 지도에서 유일하므로 그 애매함을 끊는다.
+        현재 추정과 marker_fix_min_error 이상 어긋나면 LOST 를 선언하고, 역산 자세를 그대로 시드로 준다
+        (전역 가설 탐색보다 훨씬 빠르고, 별칭 가설로 다시 수렴할 위험도 없다).
+        """
+        if self._amcl_pose is None or t < self._cooldown_until:
+            return []
+        error = math.hypot(pose[0] - self._amcl_pose[0], pose[1] - self._amcl_pose[1])
+        if error < self.params.marker_fix_min_error:
+            return []
+        reason = f'marker fix {error:.2f} m from estimate'
+        self.lost = True
+        self.detect_time = t
+        self._lost_since = t
+        self._reinits_done = 0
+        self._converged_count = 0
+        self._low_match = 0
+        self._last_match = None
+        self._last_margin = None
+        self._set_state(t, State.RECOVERING, f'LOST: {reason}')
+        # 시드가 있으므로 전역 재초기화(REINITIALIZE)는 하지 않는다. 회전은 그대로 — AMCL 이 갱신을
+        # 하려면 움직여야 하고, 회전은 제자리에서 안전하다.
+        return ([Action(ActionType.PUBLISH_LOST, True), Action(ActionType.SEED_POSE, pose)]
+                + self._spin(t, reason))
 
     def on_match(self, t: float, ratio: float, valid_beams: int,
                  alias_margin: Optional[float] = None) -> List[Action]:

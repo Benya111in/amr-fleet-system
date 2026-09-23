@@ -265,3 +265,37 @@ def test_cooldown_blocks_immediate_realarm():
     assert det.state == State.TRACKING
     det.on_match(7.0, 0.1, 150)        # 유예 후: 다시 감지
     assert det.state == State.SUSPECT
+
+
+def test_marker_fix_declares_lost_and_seeds_that_pose():
+    """마커로 역산한 자세가 추정과 멀면 LOST + 그 자세 시드 (전역 재초기화는 하지 않는다)."""
+    det = KidnapDetector()
+    feed_odom(det, 0.0, 2.0)
+    det.on_amcl(1.0, (-27.78, 13.0, math.pi), 0.01, 0.001)   # 믿고 있는 자리: dock_2 앞
+    truth = (-27.78, 17.0, math.pi)                          # 실제로는 dock_1 앞 (4 m 옆)
+    actions = det.on_marker_fix(2.0, truth)
+    assert kinds(actions) == [ActionType.PUBLISH_LOST, ActionType.SEED_POSE, ActionType.SPIN]
+    assert actions[0].value is True
+    assert actions[1].value == truth
+    assert det.lost and det.state == State.RECOVERING
+    assert 'marker fix' in det.events[-2].reason
+
+
+def test_marker_fix_consistent_with_estimate_is_ignored():
+    """추정과 가까운 마커 보정은 정상 관측이다 — 상태를 건드리지 않는다."""
+    det = KidnapDetector()
+    feed_odom(det, 0.0, 2.0)
+    det.on_amcl(1.0, (-27.78, 13.0, math.pi), 0.01, 0.001)
+    assert det.on_marker_fix(2.0, (-27.85, 13.06, math.pi)) == []
+    assert det.state == State.TRACKING and not det.lost
+
+
+def test_marker_fix_needs_an_estimate_and_respects_cooldown():
+    det = KidnapDetector(KidnapParams(cooldown=5.0))
+    assert det.on_marker_fix(1.0, (0.0, 0.0, 0.0)) == []      # AMCL 자세를 아직 못 받았다
+    feed_odom(det, 0.0, 2.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 0.01, 0.001)
+    det._cooldown_until = 9.0                                 # 복구 직후 유예 구간
+    assert det.on_marker_fix(2.0, (10.0, 0.0, 0.0)) == []
+    assert kinds(det.on_marker_fix(9.0, (10.0, 0.0, 0.0))) == [
+        ActionType.PUBLISH_LOST, ActionType.SEED_POSE, ActionType.SPIN]
