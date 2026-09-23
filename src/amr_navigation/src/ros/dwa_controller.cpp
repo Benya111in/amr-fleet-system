@@ -155,6 +155,7 @@ void DWAController::configure(
   c.yield_horizon = param(node, p + "yield_horizon", 8.0);
   c.yield_max_zone = param(node, p + "yield_max_zone", 6.0);
   c.yield_escape_speed = param(node, p + "yield_escape_speed", 0.25);
+  c.yield_escape_drift = param(node, p + "yield_escape_drift", 0.15);
   c.recenter_narrow = param(node, p + "recenter_narrow", true);
   c.recenter_min_cost = param(node, p + "recenter_min_cost", 100.0);
   c.recenter_max_shift = param(node, p + "recenter_max_shift", 0.10);
