@@ -305,6 +305,24 @@ DwaResult DwaPlanner::compute(
   const double v_cap = std::min(std::min(L.max_vel_x, in.speed_limit), res.yield.speed_limit);
   res.v_cap = v_cap;
   res.window = dynamicWindow(v_c, w_c, v_cap);
+  // 이미 통로 안(kCommitted): 앞은 VO 가 막으므로 뒤로 빠질 수 있게 창 아래쪽을 연다.
+  // 한 주기에 닿을 수 있는 범위(감속 한계) 안에서만 내린다 — 명령이 튀지 않는다.
+  // 횡단일 때만 의미가 있다: 정면 접근(장애물 진행 방향이 로봇 헤딩과 나란)은 통로 축이 우리
+  // 진행선과 같아 "옆으로 빠진다" 가 성립하지 않는다 — 그 상황은 VO/TTC 의 감속이 맡는다.
+  bool escaping = res.yield.state == YieldState::kCommitted &&
+    config_.yield_escape_speed > 0.0 && res.yield.obstacle >= 0 &&
+    static_cast<std::size_t>(res.yield.obstacle) < dyn.size();
+  if (escaping) {
+    const DynamicObstacle & o = dyn[static_cast<std::size_t>(res.yield.obstacle)];
+    const double su = std::max(1e-6, o.speed());
+    const double cos_a = (std::cos(in.pose.theta) * o.vx + std::sin(in.pose.theta) * o.vy) / su;
+    escaping = std::abs(cos_a) < config_.yield_escape_cos;   // 0.87 ≈ ±30° 안이면 정면/추종
+  }
+  if (escaping) {
+    res.window.v_lo = std::max(
+      -config_.yield_escape_speed, v_c - L.decel_lim_x * config_.control_period);
+    res.window.v_lo = std::min(res.window.v_lo, res.window.v_hi);
+  }
 
   // 목표 속도: 접근 감속 + 현재 헤딩 오차가 크면 감속 (경로가 뒤에 있으면 제자리 회전 유도)
   double v_des = v_cap;
@@ -470,10 +488,20 @@ DwaResult DwaPlanner::compute(
         c.terms.dynamic = std::min(1.0, excess + config_.dynamic_steer_gain * urgency);
       }
     }
+    if (escaping) {
+      // 통로 축(장애물 진행선)까지의 거리 |β| — 클수록 좋다. 반폭 R_c 밖이면 0 (이미 나갔다).
+      const DynamicObstacle & o = dyn[static_cast<std::size_t>(res.yield.obstacle)];
+      const double su = std::max(1e-6, o.speed());
+      const double ux = o.vx / su, uy = o.vy / su;
+      const Pose2D & end = c.poses.back();
+      const double beta = std::abs(-(end.x - o.x) * uy + (end.y - o.y) * ux);
+      const double rc = config_.robot_radius + o.radius + config_.yield_corridor_margin;
+      c.terms.escape = std::clamp(1.0 - beta / std::max(1e-6, rc), 0.0, 1.0);
+    }
     c.cost = W.heading * c.terms.heading + W.clearance * c.terms.clearance +
       W.velocity * c.terms.velocity + W.path * c.terms.path +
       W.oscillation * c.terms.oscillation + W.dynamic * c.terms.dynamic +
-      W.off_path * c.terms.off_path;
+      W.off_path * c.terms.off_path + W.escape * c.terms.escape;
     ++res.n_valid;
     if (c.vo_rejected) {
       ++res.n_vo_rejected;

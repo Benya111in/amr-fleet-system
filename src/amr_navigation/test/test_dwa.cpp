@@ -886,3 +886,27 @@ TEST(Dwa, CycleTimeBudget)
   std::printf("[ info ] DWA 11x31 samples, 12x12 m costmap: %.2f ms/cycle\n", ms);
   EXPECT_LT(ms, 50.0);   // 20 Hz 주기(50 ms) 안
 }
+
+TEST(Dwa, CommittedInsideTheLaneBacksOutInsteadOfStandingStill)
+{
+  // 통합 시나리오 08 실측(회귀 실행): 접촉 4건이 모두 로봇 속도 0 · yield_state=committed ·
+  // 차선 가로 거리 |β| ≤ 0.65 m 였다 — 이미 통로 안에 들어선 채 멈춰 서서 작업자가 걸어 들어왔다.
+  // 앞은 VO 가 막으므로(다가오는 사람 쪽) 나가는 길은 뒤뿐이다. kCommitted 에서만 후진 샘플을 열고
+  // 통로 축에서 멀어지는 후보에 이득을 준다.
+  const auto path = straightPath(0.0, 0.0, 12.0);
+  const DynamicObstacle worker{0.3, 2.0, 0.0, -1.0, 0.25};   // 로봇 바로 위 차선을 −y 로 1 m/s
+  DwaConfig stay = crossingConfig();
+  stay.yield_escape_speed = 0.0;                             // 예전 동작 (빠져나갈 수단 없음)
+  const CrossRun before = crossingRun(stay, path, worker, 0.0, 6.0);
+  const CrossRun after = crossingRun(crossingConfig(), path, worker, 0.0, 6.0);
+  std::printf(
+    "[ info ] committed escape: 전 여유 %.3f m (정지 중 차선거리 %.2f), 후 여유 %.3f m (%.2f)\n",
+    before.min_clearance, before.min_lane_offset_stopped, after.min_clearance,
+    after.min_lane_offset_stopped);
+  EXPECT_LT(before.min_clearance, 0.0);                      // 예전 동작: 통로 안에서 접촉
+  EXPECT_GT(after.min_clearance, 0.0);                       // 빠져나가면 접촉 없음
+  // 정지 중 차선 축까지의 거리가 실제로 멀어진다 (통로 반폭 R_c = 1.111 m 쪽으로)
+  EXPECT_GT(after.min_lane_offset_stopped, before.min_lane_offset_stopped + 0.3);
+  // 경로를 따라 뒤로 빠지므로 수직 이탈은 거의 없다 — 명세 이탈 1 m 예산을 쓰지 않는다
+  EXPECT_LT(after.max_cte, 0.5);
+}
