@@ -57,7 +57,8 @@ TTC_PERIOD_S = 0.1                     # TTC 계산 간격 (GT 50 Hz 를 솎는�
 LIFECYCLE = ('/lifecycle_manager_map', 'lifecycle_manager_localization',
              'lifecycle_manager_navigation')
 COLUMNS = ['trial', 'reached', 'time_s', 'contacts', 'min_distance_m', 'nearest', 'min_ttc_s',
-           'max_deviation_m', 'episodes', 'return_s', 'contacts_robot_moving']
+           'max_deviation_m', 'episodes', 'return_s', 'contacts_robot_moving',
+           'episodes_open', 'open_peak_m', 'open_peak_t', 'dev_at_end_m']
 CONTACT_COLUMNS = ['trial', 'time', 'obstacle', 'distance_m', 'robot_speed_mps', 'robot_moving',
                    'obstacle_speed_mps', 'obstacle_heading_deg', 'lane_lateral_m', 'lane_along_m',
                    'yield_state', 'stop_distance_m']
@@ -254,8 +255,17 @@ class TestDynamicObstacles(cases.ProbeCase):
             eps_all += [e.returned and e.return_time(t_last) <= RETURN_MAX_S for e in eps]
             worst_dev = max(worst_dev, max_dev if math.isfinite(max_dev) else math.inf)
             worst_return = max(worst_return, ret if all(e.returned for e in eps) else math.inf)
+            # 복귀하지 못한 구간이 있으면 그 자리(최대 이탈 크기·시각)와 시행 끝의 이탈을 남긴다 —
+            # "5 s 초과" 와 "시행이 끝날 때까지 미복귀" 는 원인이 다르다 (후자는 목표 도착 시점에
+            # 원래 경로에서 back_thr 밖인 경우가 많다)
+            open_eps = [e for e in eps if not e.returned]
+            dev_end = next((d for d in reversed(devs) if math.isfinite(d)), math.nan)
             rows.append([trial, int(ok), self.probe.now() - t0, n_contacts, dmin, nearest,
-                         self._min_ttc(w0, radii), max_dev, len(eps), ret, n_moving])
+                         self._min_ttc(w0, radii), max_dev, len(eps), ret, n_moving,
+                         len(open_eps),
+                         max((e.peak for e in open_eps), default=math.nan),
+                         max((e.t_peak for e in open_eps), default=math.nan),
+                         dev_end])
             self.ctx.record.write_csv('avoidance.csv', COLUMNS, rows)
         in_lane = sum(1 for r in contact_rows
                       if isinstance(r[8], float) and math.isfinite(r[8])

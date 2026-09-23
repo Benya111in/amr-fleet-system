@@ -102,7 +102,8 @@ SCENARIOS: List[Scenario] = [
         threshold='접촉 0 / 30회, 최대 이탈 ≤ 1.0 m, 복귀 ≤ 5 s, 목표 도달 ≥ 29회, '
                   '실제 조우(최근접 동적 장애물 ≤ 2.0 m) ≥ 시행/6 (30회면 5), 시행 ≥ 30',
         log_format='avoidance.csv [trial, reached, time_s, contacts, min_distance_m, nearest, '
-                   'min_ttc_s, max_deviation_m, episodes, return_s, contacts_robot_moving] (시행마다 '
+                   'min_ttc_s, max_deviation_m, episodes, return_s, contacts_robot_moving, '
+                   'episodes_open, open_peak_m, open_peak_t, dev_at_end_m] (시행마다 '
                    '갱신), contacts.csv [trial, time, obstacle, distance_m, robot_speed_mps, '
                    'robot_moving, obstacle_speed_mps, obstacle_heading_deg, lane_lateral_m, '
                    'lane_along_m, yield_state, stop_distance_m] (뒤 6개는 원인 귀속 근거 — '
