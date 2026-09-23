@@ -9,7 +9,7 @@
 sim time 이 멈추면 wall 10 배에서 포기).
 판정: /map 해상도 ≤ 0.05 m, 월드 SDF visual(gpu_lidar 가 재는 면)의 LiDAR 평면 단면(worldmap.footprints) 대비
 보이는 가장자리 재현율 ≥ 0.9, 자유 공간 오점유율 ≤ 5 %, map ↔ 월드 SE(2) 잔여 정합 (항등 확인),
-slam_toolbox/save_map 으로 저장까지 확인 (판정에 쓴 /map 은 하네스가 map_received.pgm/yaml 로 따로 남긴다 —
+map_saver_server 로 저장까지 확인 (판정에 쓴 /map 은 하네스가 map_received.pgm/yaml 로 따로 남긴다 —
 오점유가 몰린 1 m 칸 상위 10 개도 map_check 에 기록).
 """
 
@@ -118,13 +118,26 @@ class TestSlamMap(cases.ProbeCase):
         self.assertFalse(failed, '; '.join(failed))
 
     def test_20_save_map(self) -> None:
-        """slam_toolbox/save_map 로 지도 저장 (maps/ 대신 시나리오 로그 디렉토리)."""
-        from slam_toolbox.srv import SaveMap
+        """
+        map_saver_server 로 지도 저장 (maps/ 대신 시나리오 로그 디렉토리).
+
+        slam_toolbox/save_map 이 아니라 우리가 띄운 nav2 map_saver_server 를 쓴다: slam_toolbox 는
+        지도를 절대 토픽 /map 에 내면서 저장 때 만드는 내부 map_saver 는 상대 토픽 map
+        (= <ns>/map, 발행자 없음) 을 구독해 이름공간 아래에서는 늘 실패한다 (localization.launch.py 주석).
+        미지 셀(트라이너리 205, p = 0.196) 이 자유 공간으로 읽히지 않게 free 0.19 를 요청에 싣는다.
+        """
+        from nav2_msgs.srv import SaveMap
         req_msg = SaveMap.Request()
-        req_msg.name.data = str(self.ctx.path('map'))
-        res = self.probe.call(SaveMap, 'slam_toolbox/save_map', req_msg, self.timeout(60.0))
-        self.assertIsNotNone(res, 'slam_toolbox/save_map 응답 없음')
-        saved = self.ctx.path('map.pgm').is_file() and self.ctx.path('map.yaml').is_file()
+        req_msg.map_topic = '/map'
+        req_msg.map_url = str(self.ctx.path('map'))
+        req_msg.image_format = 'pgm'
+        req_msg.map_mode = 'trinary'
+        req_msg.free_thresh = 0.19
+        req_msg.occupied_thresh = 0.65
+        res = self.probe.call(SaveMap, 'map_saver_server/save_map', req_msg, self.timeout(60.0))
+        self.assertIsNotNone(res, 'map_saver_server/save_map 응답 없음')
+        saved = (bool(res.result) and self.ctx.path('map.pgm').is_file()
+                 and self.ctx.path('map.yaml').is_file())
         self.check('map saved', saved, True, saved)
 
 
