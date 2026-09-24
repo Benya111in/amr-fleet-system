@@ -33,9 +33,19 @@ struct DynamicObstacle
   double vx{0.0};
   double vy{0.0};
   double radius{0.25};
+  // 통로 예측(횡단 양보)에 쓰는 평활 속도. VO·TTC 는 원시 (vx, vy) 를 그대로 쓴다 — 즉각
+  // 회피를 늦추면 안 되기 때문이다. 추적기가 내보내는 진행각은 직선 보행자에 대해서도
+  // 주기간 90 % 12.6° · 최대 144.9° 흔들려(08 실측), 그대로 쓰면 예측 통로가 그만큼 회전해
+  // 경로 위 교차 구간이 미터 단위로 이동한다. 설정하지 않으면 원시 속도를 쓴다.
+  double vx_pred{0.0};
+  double vy_pred{0.0};
+  bool has_pred{false};
 
   Point2D predict(double t) const {return {x + vx * t, y + vy * t};}
   double speed() const;
+  /// 통로 예측용 속도 (평활값이 없으면 원시 속도)
+  double predVx() const {return has_pred ? vx_pred : vx;}
+  double predVy() const {return has_pred ? vy_pred : vy;}
 };
 
 /// 차동구동 샘플 (v, ω) 의 τ 구간 현(chord) 속도 [m/s].

@@ -155,6 +155,26 @@ TEST(CrossingYield, InsideTheZoneIsCommittedNotStopped)
   EXPECT_FALSE(std::isfinite(r.speed_limit));
 }
 
+TEST(CrossingYield, CorridorUsesTheSmoothedVelocityNotTheRawOne)
+{
+  // 통로 축은 평활 속도로 세운다: 추적기 진행각이 직선 보행자에 대해서도 주기간 최대 144.9°
+  // 흔들려(08 실측), 원시 속도를 쓰면 통로가 그만큼 돌고 교차 구간이 미터 단위로 이동한다.
+  // VO·TTC 는 이 함수 밖에서 원시 속도를 그대로 쓴다.
+  YieldConfig cfg;
+  cfg.lookahead = 8.0;
+  const auto path = straightPath(0.0, 0.0, 12.0);
+  const auto cum = cumulativeLength(path);
+  const Pose2D robot{0.0, 0.0, 0.0};
+  DynamicObstacle o{5.0, -3.0, 1.0, 0.0, 0.25};      // 원시: 경로와 나란히 (교차 없음)
+  ASSERT_EQ(evaluateYield(path, cum, robot, 0.0, 0.8, {o}, cfg).state, YieldState::kClear);
+  o.vx_pred = 0.0;                                   // 평활: 경로를 가로지른다
+  o.vy_pred = 1.0;
+  o.has_pred = true;
+  const YieldResult r = evaluateYield(path, cum, robot, 0.0, 0.8, {o}, cfg);
+  EXPECT_EQ(r.state, YieldState::kYield);            // 평활 속도를 따랐다
+  EXPECT_TRUE(std::isfinite(r.stop_distance));
+}
+
 TEST(CrossingYield, CommittedBeatsAnotherObstaclesStopLineInEitherOrder)
 {
   YieldConfig cfg;

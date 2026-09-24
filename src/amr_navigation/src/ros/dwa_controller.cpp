@@ -169,6 +169,7 @@ void DWAController::configure(
   obstacle_radius_ = param(node, p + "obstacle_radius", 0.25);
   dynamic_fast_speed_ = param(node, p + "dynamic_fast_speed", 0.5);
   track_timeout_ = param(node, p + "track_timeout", 0.5);
+  yield_velocity_tau_ = param(node, p + "yield_velocity_tau", 0.5);
   robot_mass_ = param(node, p + "robot_mass", 47.6);
   path_horizon_ = param(node, p + "path_horizon", 6.0);
   // 정지선 탐색 거리는 코스트맵 프레임으로 옮긴 경로 창을 넘을 수 없다
@@ -278,6 +279,7 @@ std::vector<core::DynamicObstacle> DWAController::obstaclesInFrame(const std::st
   const double c = std::cos(T.theta);
   const double s = std::sin(T.theta);
   const double dt = std::max(0.0, age);
+  std::unordered_set<int> seen;
   for (const auto & o : msg->obstacles) {
     // 추적기 분류(is_dynamic) 이거나 빠른 트랙만
     // (정지 물체 트랙의 추정 속도 잡음 0.2–0.3 m/s 가 VO·TTC 를 만들지 않게)
@@ -293,7 +295,28 @@ std::vector<core::DynamicObstacle> DWAController::obstaclesInFrame(const std::st
     d.vx = c * o.velocity.x - s * o.velocity.y;
     d.vy = s * o.velocity.x + c * o.velocity.y;
     d.radius = obstacle_radius_;
+    // 통로 예측용 평활 속도 (트랙별 지수 필터). VO·TTC 는 위의 원시 속도를 그대로 쓴다.
+    if (yield_velocity_tau_ > 0.0) {
+      VelocityFilter & f = vel_filter_[o.track_id];
+      const double gap = f.stamp > 0.0 ? stamp.seconds() - f.stamp : 0.0;
+      if (f.stamp <= 0.0 || gap <= 0.0 || gap > track_timeout_) {
+        f.vx = d.vx;                      // 새 트랙이거나 끊겼다 — 현재 값으로 시작
+        f.vy = d.vy;
+      } else {
+        const double a = 1.0 - std::exp(-gap / yield_velocity_tau_);
+        f.vx += a * (d.vx - f.vx);
+        f.vy += a * (d.vy - f.vy);
+      }
+      f.stamp = stamp.seconds();
+      d.vx_pred = f.vx;
+      d.vy_pred = f.vy;
+      d.has_pred = true;
+    }
+    seen.insert(o.track_id);
     out.push_back(d);
+  }
+  for (auto it = vel_filter_.begin(); it != vel_filter_.end(); ) {   // 사라진 트랙은 버린다
+    it = seen.count(it->first) ? std::next(it) : vel_filter_.erase(it);
   }
   return out;
 }
