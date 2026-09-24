@@ -71,7 +71,12 @@ YieldResult evaluateYield(
 
   for (std::size_t idx = 0; idx < obstacles.size(); ++idx) {
     const DynamicObstacle & o = obstacles[idx];
-    const double su = o.speed();
+    // 통로 축·길이는 평활 속도로 세운다 (velocity_obstacle.hpp 참고): 추적기 진행각이
+    // 주기간 최대 144.9° 흔들려 그대로 쓰면 통로가 그만큼 돌고 교차 구간이 미터 단위로
+    // 이동한다. VO·TTC 는 이 함수 밖에서 원시 속도를 그대로 쓴다.
+    const double pvx = o.predVx();
+    const double pvy = o.predVy();
+    const double su = std::hypot(pvx, pvy);
     if (su < cfg.min_speed) {
       continue;   // 정지 물체는 코스트맵이 처리한다
     }
@@ -80,8 +85,8 @@ YieldResult evaluateYield(
     Corridor c;
     c.ox = o.x;
     c.oy = o.y;
-    c.ux = o.vx / su;
-    c.uy = o.vy / su;
+    c.ux = pvx / su;
+    c.uy = pvy / su;
     c.nx = -c.uy;
     c.ny = c.ux;
     c.R = cfg.robot_radius + o.radius + cfg.corridor_margin;

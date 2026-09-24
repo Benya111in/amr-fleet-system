@@ -19,6 +19,8 @@
 
 #include <limits>
 #include <memory>
+#include <unordered_map>
+#include <unordered_set>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -112,6 +114,15 @@ private:
   double obstacle_radius_{0.25};
   double dynamic_fast_speed_{0.5};
   double track_timeout_{0.5};
+  /// [s] 통로 예측용 속도의 지수 평활 시간 상수 (0 = 끔 — 원시 속도를 그대로 쓴다)
+  double yield_velocity_tau_{0.5};
+  struct VelocityFilter
+  {
+    double vx{0.0};
+    double vy{0.0};
+    double stamp{-1.0};
+  };
+  std::unordered_map<int, VelocityFilter> vel_filter_;
   /// 직전 주기의 횡단 양보 속도 상한 (오르는 속도를 가속 한계로 묶는다 — core::DwaInput 참고)
   double yield_limit_last_{std::numeric_limits<double>::infinity()};
   double robot_mass_{47.6};
