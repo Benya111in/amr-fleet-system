@@ -63,7 +63,8 @@ TTC_PERIOD_S = 0.1                     # TTC 계산 간격 (GT 50 Hz 를 솎는�
 LIFECYCLE = ('/lifecycle_manager_map', 'lifecycle_manager_localization',
              'lifecycle_manager_navigation')
 EPISODE_COLUMNS = ['trial', 't_start', 't_peak', 'peak_m', 't_end', 'return_s',
-                   'stopped_frac', 'mean_v_mps', 'max_v_mps']
+                   'stopped_frac', 'mean_v_mps', 'max_v_mps',
+                   'yield_frac', 'cmd_v_mean', 'gate_out_v_mean', 'vo_rejected_mean']
 
 COLUMNS = ['trial', 'reached', 'time_s', 'contacts', 'min_distance_m', 'nearest', 'min_ttc_s',
            'max_deviation_m', 'episodes', 'return_s', 'contacts_robot_moving',
@@ -204,14 +205,35 @@ class TestDynamicObstacles(cases.ProbeCase):
             rows.append(row)
         return rows
 
-    def _episode_row(self, ep, track, t_last: float) -> list:
-        """이탈 구간의 거동: 최대 이탈 → 복귀 사이 로봇이 멈춰 있었는지 (7 s 복귀의 원인 구분)."""
+    def _episode_row(self, ep, track, t_last: float, w0: float) -> list:
+        """이탈 구간의 거동: 최대 이탈 → 복귀 사이 로봇이 멈춰 있었는지, 무엇이 세웠는지."""
         t_end = ep.t_end if ep.t_end is not None else t_last
         vs = [abs(s.v) for s in track if ep.t_peak <= s.t <= t_end]
         stopped = sum(1 for v in vs if v <= metrics.CONTACT_MOVING_V) / len(vs) if vs else math.nan
         return [ep.t_start, ep.t_peak, ep.peak, ep.t_end if ep.returned else math.nan,
                 ep.return_time(t_last), stopped,
-                sum(vs) / len(vs) if vs else math.nan, max(vs, default=math.nan)]
+                sum(vs) / len(vs) if vs else math.nan,
+                max(vs, default=math.nan)] + self._cause_stats(w0, ep.t_peak, t_end)
+
+    def _cause_stats(self, w0: float, t0: float, t1: float) -> list:
+        """구간 [t0, t1] 의 [양보 비율, 계획기 명령 평균, 게이트 출력 평균, VO 기각 평균]."""
+        gt = self.gt.messages(w0)
+        if len(gt) < 2:
+            return [math.nan] * 4
+        wall = np.array([w for w, _ in gt])
+        sim = np.array([metrics.sample_from_odom(m).t for _, m in gt])
+        if not (sim[0] <= t0 <= sim[-1]):        # 외삽 금지
+            return [math.nan] * 4
+        w_lo, w_hi = float(np.interp(t0, sim, wall)), float(np.interp(min(t1, sim[-1]), sim, wall))
+        d = [list(m.data) for w, m in self.stats.messages(w0) if w_lo <= w <= w_hi]
+        d = [x for x in d if len(x) > 12]
+        gate = [m.linear.x for w, m in self.gate_out.messages(w0) if w_lo <= w <= w_hi]
+        if not d:
+            return [math.nan] * 4
+        return [sum(1 for x in d if int(x[11]) != 0) / len(d),
+                sum(x[7] for x in d) / len(d),
+                sum(gate) / len(gate) if gate else math.nan,
+                sum(x[4] for x in d) / len(d)]
 
     def test_10_trials(self) -> None:
         from action_msgs.msg import GoalStatus
@@ -297,7 +319,7 @@ class TestDynamicObstacles(cases.ProbeCase):
             # 복귀하지 못한 구간이 있으면 그 자리(최대 이탈 크기·시각)와 시행 끝의 이탈을 남긴다 —
             # "5 s 초과" 와 "시행이 끝날 때까지 미복귀" 는 원인이 다르다 (후자는 목표 도착 시점에
             # 원래 경로에서 back_thr 밖인 경우가 많다)
-            ep_rows += [[trial] + self._episode_row(e, track, t_last) for e in eps]
+            ep_rows += [[trial] + self._episode_row(e, track, t_last, w0) for e in eps]
             if eps:
                 self.ctx.record.write_csv('episodes.csv', EPISODE_COLUMNS, ep_rows)
             open_eps = [e for e in eps if not e.returned]
