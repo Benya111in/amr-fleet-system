@@ -773,6 +773,29 @@ TEST(SafetyGate, TtcContinuousDeceleration)
   EXPECT_NEAR(drive(g2, 1.0, 0.0, 0.0).command.linear, 1.0, 1e-12);
 }
 
+TEST(SafetyGate, TtcLimitDoesNotFreezeAProvenRetreat)
+{
+  // TTC 는 **측정** 속도로 계산된다 — 로봇이 서 있으면 0 에 머문다. 그 상한을 멀어지는
+  // 명령에까지 걸면 정지가 정지를 낳는다 (자기 고정). 통합 08 실측: 접촉 5건 모두 게이트
+  // 출력 0.000 · 로봇 속도 0.000, 그중 한 건은 계획기가 -0.156 m/s 후진을 냈는데도 0.
+  SafetyParams p;
+  SafetyGate g(p, {}, 0.0);
+  g.setCloud({Vec2(3.0, 0.0), Vec2(3.0, 0.05), Vec2(3.0, 0.1)}, 0.0);
+  g.setMinTtc(0.1, 0.0);                  // 코앞: v_ttc = 1.0 * (0.1 - 0.15) → 0
+  // 앞의 사람 쪽으로 가는 명령은 그대로 0
+  auto st = frame(g, plate(0.6), 0.5, 0.0, 0.0);
+  EXPECT_DOUBLE_EQ(st.command.linear, 0.0);
+  EXPECT_TRUE(hasReason(st, "ttc_limit"));
+  EXPECT_FALSE(hasReason(st, "ttc_retreat"));
+  // 멀어지는 후진은 탈출 속도까지 허용된다 (스캔으로 여유가 줄지 않음을 증명)
+  g.setCloud({Vec2(3.0, 0.0), Vec2(3.0, 0.05), Vec2(3.0, 0.1)}, 0.1);
+  g.setMinTtc(0.1, 0.1);
+  st = frame(g, plate(0.6), -0.5, 0.0, 0.1);
+  EXPECT_TRUE(hasReason(st, "ttc_retreat"));
+  EXPECT_NEAR(st.command.linear, -p.escape_max_speed, 1e-12);
+  EXPECT_FALSE(hasReason(st, "ttc_limit"));
+}
+
 TEST(SafetyGate, PointSpeedLimitPreservesCurvature)
 {
   // 거리·저속 상한은 풋프린트 최고 점 속도에 걸고 v, ω 를 같은 비율로 줄인다

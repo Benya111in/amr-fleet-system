@@ -844,8 +844,23 @@ SafetyStatus SafetyGate::evaluate(double now)
       w = 0.0;
     }
   } else {
-    scale(v, w, u_cap, v > 0.0 ? std::min(v_ttc, v_fwd) : v_ttc);
-    ttc_limited = std::isfinite(v_ttc) && std::abs(v_in) > v_ttc && v_ttc <= u_cap;
+    // TTC 는 **측정** 속도로 계산된다 — 서 있으면 0 에 머물고, 그 상한이 다시 0 을 강제해
+    // 멀어지는 명령까지 막는다 (자기 고정). 통합 08 실측: 접촉 5건이 모두 게이트 출력
+    // 0.000 · 로봇 속도 0.000 이었고 그중 한 건은 계획기가 -0.156 m/s 후진을 냈는데도
+    // 0 이었다. 정지는 "증명된 후퇴" 보다 안전하지 않다 — 스캔으로 여유가 줄지 않음이
+    // 증명된 명령은 TTC 상한에서 빼고 탈출 속도로 묶는다. TTC 가 실제로 명령을 깎는
+    // 경우에만 따지므로 평상시 주행 속도는 그대로다. 깊이 점군이 끊겼으면(평면 아래
+    // 물체를 못 본다) 증명으로 치지 않는다.
+    const bool ttc_binds = std::isfinite(v_ttc) && v_ttc < std::abs(v_in) && v_ttc < u_cap;
+    const bool retreat = ttc_binds && p.allow_escape && cloud_fresh && !beams_.empty() &&
+      escapeAllowed(v_in, w_in, scan_corr);   // 빔이 없으면 증명이 아니라 무근거다
+    if (retreat) {
+      st.reasons.emplace_back("ttc_retreat");
+      scale(v, w, std::min(u_cap, p.escape_max_speed), v > 0.0 ? v_fwd : kInf);
+    } else {
+      scale(v, w, u_cap, v > 0.0 ? std::min(v_ttc, v_fwd) : v_ttc);
+    }
+    ttc_limited = !retreat && std::isfinite(v_ttc) && std::abs(v_in) > v_ttc && v_ttc <= u_cap;
   }
   if (ttc_limited) {
     st.reasons.emplace_back("ttc_limit");
