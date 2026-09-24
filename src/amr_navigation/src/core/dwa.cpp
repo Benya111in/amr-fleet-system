@@ -499,7 +499,7 @@ DwaResult DwaPlanner::compute(
       // 경로에서 더 벗어나며 빠지는 후보에는 이득을 주지 않는다: 통로는 경로를 가로지르므로
       // 빠져나가는 방향은 경로를 따라(대개 뒤로)다. 옆으로 휘면 이탈 예산(명세 1 m)만 쓴다.
       const double drift = c.max_cte - std::abs(robot_proj.cte) - config_.yield_escape_drift;
-      c.terms.escape = drift > 0.0 ? 0.0 :
+      c.terms.escape = drift > 0.0 ? 1.0 :
         std::clamp(1.0 - beta / std::max(1e-6, rc), 0.0, 1.0);
     }
     c.cost = W.heading * c.terms.heading + W.clearance * c.terms.clearance +
