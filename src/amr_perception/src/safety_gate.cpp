@@ -856,7 +856,7 @@ SafetyStatus SafetyGate::evaluate(double now)
       escapeAllowed(v_in, w_in, scan_corr);   // 빔이 없으면 증명이 아니라 무근거다
     if (retreat) {
       st.reasons.emplace_back("ttc_retreat");
-      scale(v, w, std::min(u_cap, p.escape_max_speed), v > 0.0 ? v_fwd : kInf);
+      scale(v, w, std::min(u_cap, p.retreat_max_speed), v > 0.0 ? v_fwd : kInf);
     } else {
       scale(v, w, u_cap, v > 0.0 ? std::min(v_ttc, v_fwd) : v_ttc);
     }

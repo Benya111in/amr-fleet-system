@@ -135,6 +135,10 @@ struct SafetyParams
   bool allow_escape{true};
   double escape_horizon{0.3};           ///< 탈출 판정 예측 시간 [s]
   double escape_max_speed{0.2};         ///< 탈출 명령 최고 점 속도 [m/s]
+  /// TTC 상한을 면제받은 "증명된 후퇴" 의 최고 점 속도 [m/s]. 근접 정지 중 탈출
+  /// (escape_max_speed) 과 따로 둔다: 이쪽은 정지 원인이 아직 없고 TTC 만 걸린 상태라
+  /// 계획기가 낸 통로 이탈 속도(yield_escape_speed 0.5)를 그대로 낼 수 있어야 한다.
+  double retreat_max_speed{0.5};
   // 도킹 예외 (계약 C2)
   double exclusion_stop_distance{0.10};  ///< 도킹 예외 다각형 안 점의 정지 거리 [m]
   double exclusion_timeout{0.3};        ///< 예외 다각형 유효 시간 [s]
