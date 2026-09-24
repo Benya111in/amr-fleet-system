@@ -153,6 +153,7 @@ public:
     p.allow_escape = declare_parameter<bool>("allow_escape", true);
     p.escape_horizon = declare_parameter<double>("escape_horizon", 0.3);
     p.escape_max_speed = declare_parameter<double>("escape_max_speed", p.critical_zone_max_speed);
+    p.retreat_max_speed = declare_parameter<double>("retreat_max_speed", p.retreat_max_speed);
     p.exclusion_stop_distance = declare_parameter<double>("exclusion_stop_distance", 0.10);
     p.exclusion_timeout = declare_parameter<double>("exclusion_timeout", 0.3);
     cloud_enabled_ = declare_parameter<bool>("depth_cloud.enabled", true);

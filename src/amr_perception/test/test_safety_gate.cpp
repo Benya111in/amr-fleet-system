@@ -792,7 +792,7 @@ TEST(SafetyGate, TtcLimitDoesNotFreezeAProvenRetreat)
   g.setMinTtc(0.1, 0.1);
   st = frame(g, plate(0.6), -0.5, 0.0, 0.1);
   EXPECT_TRUE(hasReason(st, "ttc_retreat"));
-  EXPECT_NEAR(st.command.linear, -p.escape_max_speed, 1e-12);
+  EXPECT_NEAR(st.command.linear, -p.retreat_max_speed, 1e-12);
   EXPECT_FALSE(hasReason(st, "ttc_limit"));
 }
 
