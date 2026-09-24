@@ -887,6 +887,29 @@ TEST(Dwa, CycleTimeBudget)
   EXPECT_LT(ms, 50.0);   // 20 Hz 주기(50 ms) 안
 }
 
+TEST(Dwa, YieldSpeedCapCannotRiseFasterThanTheRobotAccelerates)
+{
+  // 추적기 진행각 잡음(실측 ±28° / 0.5 s)으로 예측 통로가 회전하면 양보 판단이 몇 주기씩
+  // clear 로 뒤집힌다. 그때마다 상한이 ∞ 로 풀리면 로봇은 정지선 앞에서 다시 가속한다
+  // (통합 08 실측: 정지선 2.78 → 0.61 → 0.41 m 로 줄어드는 동안 속도 0.95 → 1.00 m/s).
+  // 상한이 오르는 속도를 가속 한계로 묶으면 깜빡임이 브레이크를 놓지 못한다.
+  const auto path = straightPath(0.0, 0.0, 12.0);
+  const DwaConfig cfg = crossingConfig();
+  const DwaPlanner dwa(cfg);
+  DwaInput in = movingInput(&path, 0.9);
+  in.pose = path.front();
+  in.yield_limit_last = 0.2;                       // 직전 주기의 양보 상한
+  const DwaResult held = dwa.compute(
+    in, [](const Pose2D &) {return 0.0;}, [](double, double) {return 0.0;});
+  in.yield_limit_last = std::numeric_limits<double>::infinity();   // 제한 없음
+  const DwaResult free_run = dwa.compute(
+    in, [](const Pose2D &) {return 0.0;}, [](double, double) {return 0.0;});
+  std::printf(
+    "[ info ] yield cap: 직전 0.2 → %.3f m/s (제한 없으면 %.3f)\n", held.v_cap, free_run.v_cap);
+  EXPECT_LE(held.v_cap, 0.2 + cfg.limits.acc_lim_x * cfg.control_period + 1e-9);
+  EXPECT_GT(free_run.v_cap, held.v_cap);           // 제한이 실제로 작동했다
+}
+
 TEST(Dwa, EscapeRewardGoesOnlyToCandidatesThatLeaveAlongThePath)
 {
   // 통로를 빠져나가는 이득은 "경로를 따라" 빠지는 후보에만 준다 (dwa.md §2.3). 옆으로 휘며

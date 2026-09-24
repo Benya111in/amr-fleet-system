@@ -302,6 +302,11 @@ DwaResult DwaPlanner::compute(
   const auto [v_c, w_c] = windowCenter(in);
   res.yield = evaluateYield(
     path, cum_s, in.pose, robot_proj.s, std::max(0.0, in.v_meas), dyn, yieldConfig());
+  // 양보 상한은 로봇 가속 한계보다 빨리 오를 수 없다 (통로 예측 흔들림이 브레이크를 놓지 못하게)
+  if (std::isfinite(in.yield_limit_last)) {
+    res.yield.speed_limit = std::min(
+      res.yield.speed_limit, in.yield_limit_last + L.acc_lim_x * config_.control_period);
+  }
   const double v_cap = std::min(std::min(L.max_vel_x, in.speed_limit), res.yield.speed_limit);
   res.v_cap = v_cap;
   res.window = dynamicWindow(v_c, w_c, v_cap);

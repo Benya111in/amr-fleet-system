@@ -325,6 +325,7 @@ geometry_msgs::msg::TwistStamped DWAController::computeVelocityCommands(
   in.v_last = v_last_;
   in.w_last = w_last_;
   in.speed_limit = speed_limit_;
+  in.yield_limit_last = yield_limit_last_;
   in.obstacles = obstaclesInFrame(frame);
 
   core::DwaResult res;
@@ -341,6 +342,7 @@ geometry_msgs::msg::TwistStamped DWAController::computeVelocityCommands(
         return c == core::kNoInformation ? 0.0 : static_cast<double>(c);
       });
   }
+  yield_limit_last_ = res.yield.speed_limit;
   const double cycle_ms =
     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 

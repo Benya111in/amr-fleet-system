@@ -182,6 +182,11 @@ struct DwaInput
   bool path_end_is_goal{true};
   double speed_limit{std::numeric_limits<double>::infinity()};   // [m/s] 외부 속도 제한
   std::vector<DynamicObstacle> obstacles;       // 코스트맵 프레임, 현재 시각 기준
+  // 직전 주기에 적용된 횡단 양보 속도 상한. 상한이 **오르는** 속도를 로봇 가속 한계로 묶는 데
+  // 쓴다 — 추적기 진행각 잡음(실측 ±28°/0.5 s)으로 통로 예측이 흔들리면 양보 판단이 몇 주기씩
+  // clear 로 뒤집히고, 그때마다 상한이 ∞ 로 풀려 로봇이 다시 가속한다 (통합 08 실측). 내리는
+  // 쪽은 묶지 않는다. 로봇이 낼 수 없는 가속을 막는 것이라 이 제한으로 더 느려지지 않는다.
+  double yield_limit_last{std::numeric_limits<double>::infinity()};
 };
 
 struct DwaWindow

@@ -17,6 +17,7 @@
 #ifndef AMR_NAVIGATION__DWA_CONTROLLER_HPP_
 #define AMR_NAVIGATION__DWA_CONTROLLER_HPP_
 
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -111,6 +112,8 @@ private:
   double obstacle_radius_{0.25};
   double dynamic_fast_speed_{0.5};
   double track_timeout_{0.5};
+  /// 직전 주기의 횡단 양보 속도 상한 (오르는 속도를 가속 한계로 묶는다 — core::DwaInput 참고)
+  double yield_limit_last_{std::numeric_limits<double>::infinity()};
   double robot_mass_{47.6};
 
   rclcpp::Subscription<amr_msgs::msg::TrackedObstacleArray>::SharedPtr obs_sub_;
