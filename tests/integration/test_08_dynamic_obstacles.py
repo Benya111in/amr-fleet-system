@@ -12,6 +12,8 @@ amr_simulation 의 지면 진실 노드가 모든 동적 장애물을 판정한�
   조우     시행의 최근접 동적 장애물 부호 거리 (summary per_obstacle_min) ≤ 2.0 m — 실제로 마주쳤는가
   TTC      GT 로봇 속도 · 장애물 지면 진실 속도로 등속 접촉 시간 최솟값 (기록)
   이탈     목표 직후 첫 plan(전역 경로) 대비 GT 수직 거리 최대
+           (goal_dist_m·plan_end_dist_m: 시행 끝 GT 위치 → 목표·계획 끝점 거리 — 미복귀 구간이
+            "목표에 세워 둔 채 기준 경로에서 떨어져 있다" 인지 가리는 근거)
   복귀     이탈 > 0.3 m 구간마다 최대 이탈 시각 → 0.15 m 이하로 돌아온 시각
 판정: 접촉 0, 최대 이탈 ≤ 1.0 m, 복귀 ≤ 5 s (모든 구간), 도달 ≥ 시행 − 1, 조우 ≥ 시행/6, 시행 ≥ 30.
 로그 avoidance.csv (시행마다 갱신), contacts.csv (접촉마다 장애물·부호 거리·그 순간 GT 로봇 속도).
@@ -68,7 +70,8 @@ EPISODE_COLUMNS = ['trial', 't_start', 't_peak', 'peak_m', 't_end', 'return_s',
 
 COLUMNS = ['trial', 'reached', 'time_s', 'contacts', 'min_distance_m', 'nearest', 'min_ttc_s',
            'max_deviation_m', 'episodes', 'return_s', 'contacts_robot_moving',
-           'episodes_open', 'open_peak_m', 'open_peak_t', 'dev_at_end_m']
+           'episodes_open', 'open_peak_m', 'open_peak_t', 'dev_at_end_m',
+           'goal_dist_m', 'plan_end_dist_m']
 CONTACT_COLUMNS = ['trial', 'time', 'obstacle', 'distance_m', 'robot_speed_mps', 'robot_moving',
                    'obstacle_speed_mps', 'obstacle_heading_deg', 'lane_lateral_m', 'lane_along_m',
                    'yield_state', 'stop_distance_m', 'cmd_v_mps',
@@ -368,7 +371,10 @@ class TestDynamicObstacles(cases.ProbeCase):
                          len(open_eps),
                          max((e.peak for e in open_eps), default=math.nan),
                          max((e.t_peak for e in open_eps), default=math.nan),
-                         dev_end])
+                         dev_end,
+                         math.hypot(track[-1].x - x, track[-1].y - y) if track else math.nan,
+                         (math.hypot(track[-1].x - path[-1][0], track[-1].y - path[-1][1])
+                          if track and len(path) else math.nan)])
             self.ctx.record.write_csv('avoidance.csv', COLUMNS, rows)
         in_lane = sum(1 for r in contact_rows
                       if isinstance(r[8], float) and math.isfinite(r[8])
