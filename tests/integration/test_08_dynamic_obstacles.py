@@ -215,6 +215,42 @@ class TestDynamicObstacles(cases.ProbeCase):
                 sum(vs) / len(vs) if vs else math.nan,
                 max(vs, default=math.nan)] + self._cause_stats(w0, ep.t_peak, t_end)
 
+    def _dump_trial_stats(self, trial: int, w0: float) -> None:
+        """접촉이 난 시행의 제어 이력 전체 (양보 상태가 언제 committed 로 바뀌었는지)."""
+        gt = self.gt.messages(w0)
+        if len(gt) < 2:
+            return
+        wall = np.array([w for w, _ in gt])
+        sim = np.array([metrics.sample_from_odom(m).t for _, m in gt])
+        rows = []
+        for w, m in self.stats.messages(w0):
+            d = list(m.data)
+            if len(d) <= 12:
+                continue
+            rows.append([round(float(np.interp(w, wall, sim)), 3), d[7], d[8],
+                         YIELD_STATES.get(int(d[11]), int(d[11])),
+                         d[12] if d[12] >= 0.0 else math.inf, int(d[4]), int(d[3]),
+                         d[6] if d[6] >= 0.0 else math.inf,
+                         d[13] if len(d) > 13 and d[13] > -1e8 else math.nan,
+                         int(d[14]) if len(d) > 14 else -1])
+        # 같은 시행의 추적 속도와 계획 갱신 — 교차 구간이 흔들리는 원인 구분 (잡음 vs 재계획)
+        trk = [[round(t, 3), o.track_id, round(o.position.x, 3), round(o.position.y, 3),
+                round(o.velocity.x, 3), round(o.velocity.y, 3),
+                round(math.degrees(math.atan2(o.velocity.y, o.velocity.x)), 1),
+                int(o.is_dynamic)]
+               for t, m in ((m.header.stamp.sec + m.header.stamp.nanosec * 1e-9, m)
+                            for _, m in self.percept.messages(w0))
+               for o in m.obstacles]
+        if trk:
+            self.ctx.record.write_csv(
+                f'tracks_trial{trial:02d}.csv',
+                ['t', 'track_id', 'x', 'y', 'vx', 'vy', 'heading_deg', 'is_dynamic'], trk)
+        if rows:
+            self.ctx.record.write_csv(
+                f'stats_trial{trial:02d}.csv',
+                ['t', 'cmd_v', 'cmd_w', 'yield_state', 'stop_distance_m', 'vo_rejected',
+                 'collisions', 'ttc_s', 'zone_entry_m', 'yield_obstacle'], rows)
+
     def _cause_stats(self, w0: float, t0: float, t1: float) -> list:
         """구간 [t0, t1] 의 [양보 비율, 계획기 명령 평균, 게이트 출력 평균, VO 기각 평균]."""
         gt = self.gt.messages(w0)
@@ -254,6 +290,8 @@ class TestDynamicObstacles(cases.ProbeCase):
         plan = self.probe.subscribe('plan', Path, keep_messages=50)
         type(self).stats = self.probe.subscribe('dwa/stats', Float64MultiArray,
                                                 keep_messages=4000)
+        type(self).percept = self.probe.subscribe('perception/tracked_obstacles',
+                                                  TrackedObstacleArray, keep_messages=8000)
         type(self).gate_in = self.probe.subscribe('cmd_vel_smoothed', Twist,
                                                   keep_messages=8000)
         type(self).gate_out = self.probe.subscribe('cmd_vel', Twist, keep_messages=8000)
@@ -307,6 +345,7 @@ class TestDynamicObstacles(cases.ProbeCase):
                              for ev, v, a in zip(mine, speeds, attrib)]
             if mine:
                 self.ctx.record.write_csv('contacts.csv', CONTACT_COLUMNS, contact_rows)
+                self._dump_trial_stats(trial, w0)
             devs = [worldmap.polyline_distance(path, s.x, s.y) if len(path) else math.nan
                     for s in track]
             max_dev = max([d for d in devs if math.isfinite(d)], default=math.nan)

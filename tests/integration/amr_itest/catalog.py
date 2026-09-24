@@ -110,7 +110,11 @@ SCENARIOS: List[Scenario] = [
                    '판정에 쓰지 않는다), episodes.csv [trial, t_start, t_peak, peak_m, '
                    't_end, return_s, stopped_frac, mean_v_mps, max_v_mps, yield_frac, '
                    'cmd_v_mean, gate_out_v_mean, vo_rejected_mean] (복귀가 늦은 구간에서 '
-                   '로봇이 멈춰 있었는지·무엇이 세웠는지 — 이것도 근거일 뿐 판정에 쓰지 않는다)',
+                   '로봇이 멈춰 있었는지·무엇이 세웠는지), 접촉이 난 시행만 '
+                   'stats_trial<N>.csv [t, cmd_v, cmd_w, yield_state, stop_distance_m, '
+                   'vo_rejected, collisions, ttc_s, zone_entry_m, yield_obstacle] 와 '
+                   'tracks_trial<N>.csv [t, track_id, x, y, vx, vy, heading_deg, is_dynamic] '
+                   '(제어 이력·추적 입력 — 전부 근거일 뿐 판정에 쓰지 않는다)',
         backends=(GAZEBO,), profiles=(SYSTEM,), needs=NAV),
     Scenario(
         number=9, slug='emergency_stop', title='긴급 정지',
