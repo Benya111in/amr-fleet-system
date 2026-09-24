@@ -378,7 +378,9 @@ geometry_msgs::msg::TwistStamped DWAController::computeVelocityCommands(
       std::isfinite(res.best.ttc) ? res.best.ttc : -1.0, res.v, res.w,
       std::isfinite(res.d_goal) ? res.d_goal : -1.0, static_cast<double>(res.n_recentered),
       static_cast<double>(static_cast<int>(res.yield.state)),
-      std::isfinite(res.yield.stop_distance) ? res.yield.stop_distance : -1.0};
+      std::isfinite(res.yield.stop_distance) ? res.yield.stop_distance : -1.0,
+      std::isfinite(res.yield.zone_entry) ? res.yield.zone_entry : -1e9,
+      static_cast<double>(res.yield.obstacle)};
     stats_pub_->publish(st);
   }
   return cmd;
