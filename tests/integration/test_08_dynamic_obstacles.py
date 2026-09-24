@@ -22,6 +22,11 @@ contacts.csv 는 그 귀속에 필요한 기하도 같이 남긴다 (판정에�
   lane_lateral_m/lane_along_m              장애물 진행축 기준 로봇 좌표 (가로: 왼쪽 +, 세로: 앞 +)
                                            → |가로| ≤ 두 반지름 합이면 로봇이 장애물 차선 안에 있었다
   yield_state/stop_distance_m              접촉 직전 제어 주기의 dwa/stats [11]·[12] (정지선 판단)
+  cmd_v_mps / gate_in_v_mps / gate_out_v_mps
+                                           계획기(dwa/stats [7]) → 속도 프로파일러(cmd_vel_smoothed)
+                                           → 안전 게이트(cmd_vel) 로 이어지는 같은 시각의 명령 속도.
+                                           셋이 0 이면 계획기가 멈춘 것, 앞은 음수인데 뒤가 0 이면
+                                           그 단계가 후진 이탈을 막은 것이다
 dwa/stats 에는 스탬프가 없어 지면 진실 오도메트리의 (수신 벽시계, sim 스탬프) 대응으로 맞춘다 — 제어
 주기 한 번 정도의 오차가 있으므로 근거용이지 판정용이 아니다.
 """
@@ -34,6 +39,7 @@ from amr_itest import actions, cases, catalog, config, metrics, worldmap
 from amr_itest import requirements as req
 from amr_itest.scenario import Context
 from amr_itest.stack import Stack, system_requirements
+from geometry_msgs.msg import Twist
 import launch_testing
 import launch_testing.markers
 from nav_msgs.msg import Odometry, Path
@@ -56,12 +62,16 @@ TRIAL_TIMEOUT_S = 90.0                 # 9 m 왕복 한 번 (0.5 m/s 18 s + 양�
 TTC_PERIOD_S = 0.1                     # TTC 계산 간격 (GT 50 Hz 를 솎는다)
 LIFECYCLE = ('/lifecycle_manager_map', 'lifecycle_manager_localization',
              'lifecycle_manager_navigation')
+EPISODE_COLUMNS = ['trial', 't_start', 't_peak', 'peak_m', 't_end', 'return_s',
+                   'stopped_frac', 'mean_v_mps', 'max_v_mps']
+
 COLUMNS = ['trial', 'reached', 'time_s', 'contacts', 'min_distance_m', 'nearest', 'min_ttc_s',
            'max_deviation_m', 'episodes', 'return_s', 'contacts_robot_moving',
            'episodes_open', 'open_peak_m', 'open_peak_t', 'dev_at_end_m']
 CONTACT_COLUMNS = ['trial', 'time', 'obstacle', 'distance_m', 'robot_speed_mps', 'robot_moving',
                    'obstacle_speed_mps', 'obstacle_heading_deg', 'lane_lateral_m', 'lane_along_m',
-                   'yield_state', 'stop_distance_m']
+                   'yield_state', 'stop_distance_m', 'cmd_v_mps',
+                   'gate_in_v_mps', 'gate_out_v_mps']
 ATTRIB_GAP_S = 0.3                     # 접촉 시각 ↔ 트랙·제어 표본 허용 시차 (넘으면 빈 칸)
 YIELD_STATES = {0: 'clear', 1: 'yield', 2: 'committed'}   # dwa/stats [11]
 DEFAULT_OBSTACLE_R = 0.3               # [m] /info 에 없는 장애물의 반지름 가정
@@ -97,6 +107,16 @@ def obstacle_radii(info_json: str) -> dict:
 def obstacle_ids(info_json: str) -> dict:
     """/sim/dynamic_obstacles/info → {모델 이름: track_id} (접촉 사건의 이름 → 지면 진실 트랙)."""
     return {o['name']: o['id'] for o in json.loads(info_json or '[]') if 'name' in o}
+
+
+def _cmd_at(w_arr, msgs, w: float) -> float:
+    """벽시계 w 직전에 발행된 Twist 의 선속도 (스탬프가 없어 수신 시각으로 맞춘다)."""
+    if not len(w_arr):
+        return math.nan
+    j = int(np.searchsorted(w_arr, w)) - 1
+    if j < 0 or w - w_arr[j] > ATTRIB_GAP_S:
+        return math.nan
+    return msgs[j][1].linear.x
 
 
 class TestDynamicObstacles(cases.ProbeCase):
@@ -154,10 +174,14 @@ class TestDynamicObstacles(cases.ProbeCase):
         sim = np.array([metrics.sample_from_odom(m).t for _, m in gt])   # 같은 표본의 sim 스탬프
         stats = self.stats.messages(w0)
         st_w = np.array([w for w, _ in stats])
+        gi = self.gate_in.messages(w0)
+        gi_w = np.array([w for w, _ in gi])
+        go = self.gate_out.messages(w0)
+        go_w = np.array([w for w, _ in go])
         rows = []
         for ev in events:
             t = float(ev.get('t', math.nan))
-            row = [math.nan, math.nan, math.nan, math.nan, '', math.nan]
+            row = [math.nan] * 4 + ['', math.nan, math.nan, math.nan, math.nan]
             ob = self._track_at(tr_t, tr, ev.get('obstacle'), t)
             if ob is not None:
                 row[0] = math.hypot(ob.velocity.x, ob.velocity.y)
@@ -174,8 +198,20 @@ class TestDynamicObstacles(cases.ProbeCase):
                 if len(d) > 12 and w - st_w[j] <= ATTRIB_GAP_S:
                     row[4] = YIELD_STATES.get(int(d[11]), int(d[11]))
                     row[5] = d[12] if d[12] >= 0.0 else math.inf
+                    row[6] = d[7]        # 그 주기에 계획기가 낸 속도 (음수 = 후진 이탈 명령)
+                row[7] = _cmd_at(gi_w, gi, w)
+                row[8] = _cmd_at(go_w, go, w)
             rows.append(row)
         return rows
+
+    def _episode_row(self, ep, track, t_last: float) -> list:
+        """이탈 구간의 거동: 최대 이탈 → 복귀 사이 로봇이 멈춰 있었는지 (7 s 복귀의 원인 구분)."""
+        t_end = ep.t_end if ep.t_end is not None else t_last
+        vs = [abs(s.v) for s in track if ep.t_peak <= s.t <= t_end]
+        stopped = sum(1 for v in vs if v <= metrics.CONTACT_MOVING_V) / len(vs) if vs else math.nan
+        return [ep.t_start, ep.t_peak, ep.peak, ep.t_end if ep.returned else math.nan,
+                ep.return_time(t_last), stopped,
+                sum(vs) / len(vs) if vs else math.nan, max(vs, default=math.nan)]
 
     def test_10_trials(self) -> None:
         from action_msgs.msg import GoalStatus
@@ -196,6 +232,9 @@ class TestDynamicObstacles(cases.ProbeCase):
         plan = self.probe.subscribe('plan', Path, keep_messages=50)
         type(self).stats = self.probe.subscribe('dwa/stats', Float64MultiArray,
                                                 keep_messages=4000)
+        type(self).gate_in = self.probe.subscribe('cmd_vel_smoothed', Twist,
+                                                  keep_messages=8000)
+        type(self).gate_out = self.probe.subscribe('cmd_vel', Twist, keep_messages=8000)
         nav = actions.ActionCaller(self.probe, NavigateToPose, 'navigate_to_pose')
         self.assertTrue(nav.wait_server(self.timeout(300.0)), 'navigate_to_pose 서버 없음')
         self.wait_lifecycle_active(LIFECYCLE, 300.0)
@@ -206,7 +245,7 @@ class TestDynamicObstacles(cases.ProbeCase):
         type(self).ids = obstacle_ids(info.last().data)
         self.measure('dynamic_obstacles', json.loads(info.last().data))
         self.wait_startup_still()
-        rows, eps_all, contact_rows = [], [], []
+        rows, eps_all, contact_rows, ep_rows = [], [], [], []
         contacts = reached = encounters = moving_contacts = 0
         worst_dev, worst_return = 0.0, 0.0
         for trial in range(TRIALS):
@@ -258,6 +297,9 @@ class TestDynamicObstacles(cases.ProbeCase):
             # 복귀하지 못한 구간이 있으면 그 자리(최대 이탈 크기·시각)와 시행 끝의 이탈을 남긴다 —
             # "5 s 초과" 와 "시행이 끝날 때까지 미복귀" 는 원인이 다르다 (후자는 목표 도착 시점에
             # 원래 경로에서 back_thr 밖인 경우가 많다)
+            ep_rows += [[trial] + self._episode_row(e, track, t_last) for e in eps]
+            if eps:
+                self.ctx.record.write_csv('episodes.csv', EPISODE_COLUMNS, ep_rows)
             open_eps = [e for e in eps if not e.returned]
             dev_end = next((d for d in reversed(devs) if math.isfinite(d)), math.nan)
             rows.append([trial, int(ok), self.probe.now() - t0, n_contacts, dmin, nearest,
