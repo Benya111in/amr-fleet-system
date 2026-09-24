@@ -887,6 +887,23 @@ TEST(Dwa, CycleTimeBudget)
   EXPECT_LT(ms, 50.0);   // 20 Hz 주기(50 ms) 안
 }
 
+TEST(Dwa, EscapeRewardGoesOnlyToCandidatesThatLeaveAlongThePath)
+{
+  // 통로를 빠져나가는 이득은 "경로를 따라" 빠지는 후보에만 준다 (dwa.md §2.3). 옆으로 휘며
+  // 빠지는 후보까지 면제해 주면 명세 4.7 의 이탈 예산(1 m)을 거기에 쓰고 원경로 복귀가
+  // 늦어진다 — 통합 08 실측에서 이탈 0.45~0.66 m, 복귀 7 s.
+  const auto path = straightPath(0.0, 0.0, 12.0);
+  const DynamicObstacle worker{0.3, 2.0, 0.0, -1.0, 0.25};
+  DwaConfig cfg = crossingConfig();
+  cfg.yield_escape_drift = 0.0;        // 조금이라도 더 벗어나면 "옆으로 휨" 으로 본다
+  const CrossRun run = crossingRun(cfg, path, worker, 0.0, 6.0);
+  std::printf(
+    "[ info ] escape drift: 최대 이탈 %.3f m, 최소 여유 %.3f m\n", run.max_cte,
+    run.min_clearance);
+  EXPECT_GT(run.min_clearance, 0.0);   // 경로를 따라 빠져 접촉은 없다
+  EXPECT_LT(run.max_cte, 0.15);        // 옆으로 휘어 이탈 예산을 쓰지 않는다
+}
+
 TEST(Dwa, CommittedInsideTheLaneBacksOutInsteadOfStandingStill)
 {
   // 통합 시나리오 08 실측(회귀 실행): 접촉 4건이 모두 로봇 속도 0 · yield_state=committed ·
