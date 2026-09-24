@@ -87,7 +87,14 @@ controller_server:
       movement_time_allowance: 20.0    # [s] 동적 장애물 대기(정지) 시간을 허용
     general_goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
-      stateful: True
+      stateful: False                  # 위치 검사를 잠그지 않는다. True 면 허용치 안에 한 번
+                                       # 들어온 뒤로는 자세만 보므로, 목표에 닿은 뒤 작업자를
+                                       # 피해 물러나면 떨어진 채로 "도달" 이 된다 — 08 실측:
+                                       # 목표까지 최소 0.026 m 까지 갔다가 0.377 m 지점에서
+                                       # 종료, 그때 추정 위치도 0.364 m (위치 추정 오차는
+                                       # 0.012 m 로 멀쩡했다). 통로 이탈 후진을 연 뒤로 생겼다.
+                                       # 제자리 회전은 차동 구동이라 위치를 거의 바꾸지 않으므로
+                                       # 자세 정렬 중 허용치를 벗어나지 않는다.
       xy_goal_tolerance: 0.10          # [m] 도킹 전 접근 정밀도 (정밀 도킹 2 cm 는 docking_server 담당)
       yaw_goal_tolerance: 0.05         # [rad]
     DWA:
