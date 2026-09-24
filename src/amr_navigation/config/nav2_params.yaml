@@ -162,7 +162,9 @@ controller_server:
       # 이미 통로 안(kCommitted)에서 멈추면 장애물이 그대로 걸어 들어온다 (시나리오 08 회귀 실행:
       # 접촉 4건이 모두 로봇 속도 0 · committed · 차선 가로 거리 ≤ 0.65 m). 앞은 VO 가 막으므로
       # 나갈 길은 뒤뿐이다 — 그 상태에서만 후진 샘플을 열고, 통로 축에서 멀어지는 후보에 이득을 준다
-      yield_escape_speed: 0.25         # [m/s] kCommitted 후진 상한 (0 = 끔)
+      yield_escape_speed: 0.5          # [m/s] kCommitted 후진 상한 (0 = 끔). 0.25 → 0.5: 통로 반폭
+                                       # (R_c ≈ 1.3 m)을 벗어나려면 0.25 m/s 로는 2.4 s 가 걸려 늦었다
+                                       # (08 3회 반복: 잔여 접촉 4건이 모두 정지·committed 상태)
       escape_weight: 2.5               # w_e: 통로 축에서 멀어지는 후보 이득 (off_path 3.0 보다 작게)
       yield_escape_drift: 0.15         # [m] 지금보다 이만큼 넘게 더 벗어나는 이탈에는 이득 없음
       yield_escape_v_meas: 0.05        # [m/s] 측정 속도가 이보다 낮을 때만 (정지·후진 중) — 주행 중
