@@ -71,7 +71,8 @@ EPISODE_COLUMNS = ['trial', 't_start', 't_peak', 'peak_m', 't_end', 'return_s',
 COLUMNS = ['trial', 'reached', 'time_s', 'contacts', 'min_distance_m', 'nearest', 'min_ttc_s',
            'max_deviation_m', 'episodes', 'return_s', 'contacts_robot_moving',
            'episodes_open', 'open_peak_m', 'open_peak_t', 'dev_at_end_m',
-           'goal_dist_m', 'plan_end_dist_m']
+           'goal_dist_m', 'plan_end_dist_m', 'track_end_gap_s', 'track_n',
+           'loc_err_m', 'loc_goal_dist_m', 'min_goal_dist_m']
 CONTACT_COLUMNS = ['trial', 'time', 'obstacle', 'distance_m', 'robot_speed_mps', 'robot_moving',
                    'obstacle_speed_mps', 'obstacle_heading_deg', 'lane_lateral_m', 'lane_along_m',
                    'yield_state', 'stop_distance_m', 'cmd_v_mps',
@@ -218,6 +219,15 @@ class TestDynamicObstacles(cases.ProbeCase):
                 sum(vs) / len(vs) if vs else math.nan,
                 max(vs, default=math.nan)] + self._cause_stats(w0, ep.t_peak, t_end)
 
+    def _localization_end(self, w0: float, track, gx: float, gy: float) -> list:
+        """시행 끝의 [추정 위치 ↔ GT 오차, 추정 위치 → 목표 거리] — 목표 도달 판정은 추정 위치로
+        한다. GT 가 목표에서 멀어도 이 둘이 작으면 원인은 위치 추정이다."""
+        msgs = self.loc.messages(w0)
+        if not msgs or not track:
+            return [math.nan, math.nan]
+        s = metrics.sample_from_odom(msgs[-1][1])
+        return [math.hypot(s.x - track[-1].x, s.y - track[-1].y), math.hypot(s.x - gx, s.y - gy)]
+
     def _dump_trial_stats(self, trial: int, w0: float) -> None:
         """접촉이 난 시행의 제어 이력 전체 (양보 상태가 언제 committed 로 바뀌었는지)."""
         gt = self.gt.messages(w0)
@@ -295,6 +305,8 @@ class TestDynamicObstacles(cases.ProbeCase):
                                                 keep_messages=4000)
         type(self).percept = self.probe.subscribe('perception/tracked_obstacles',
                                                   TrackedObstacleArray, keep_messages=8000)
+        type(self).loc = self.probe.subscribe('odometry/filtered_map', Odometry,
+                                              keep_messages=8000)
         type(self).gate_in = self.probe.subscribe('cmd_vel_smoothed', Twist,
                                                   keep_messages=8000)
         type(self).gate_out = self.probe.subscribe('cmd_vel', Twist, keep_messages=8000)
@@ -323,6 +335,7 @@ class TestDynamicObstacles(cases.ProbeCase):
             goal.pose = actions.pose_stamped(x, y, yaw)
             w0, t0 = self.probe.wall(), self.probe.now()
             status, _ = nav.call(goal, self.timeout(TRIAL_TIMEOUT_S))
+            t_goal = self.probe.now()       # 목표 완료 시각 (아래 track 끝과의 차 = 표본 지연)
             ok = status == GoalStatus.STATUS_SUCCEEDED
             reached += int(ok)
             summ = self._summary(self.probe.wall()) or {}
@@ -374,7 +387,10 @@ class TestDynamicObstacles(cases.ProbeCase):
                          dev_end,
                          math.hypot(track[-1].x - x, track[-1].y - y) if track else math.nan,
                          (math.hypot(track[-1].x - path[-1][0], track[-1].y - path[-1][1])
-                          if track and len(path) else math.nan)])
+                          if track and len(path) else math.nan),
+                         t_goal - track[-1].t if track else math.nan, len(track)]
+                        + self._localization_end(w0, track, x, y)
+                        + [min((math.hypot(s.x - x, s.y - y) for s in track), default=math.nan)])
             self.ctx.record.write_csv('avoidance.csv', COLUMNS, rows)
         in_lane = sum(1 for r in contact_rows
                       if isinstance(r[8], float) and math.isfinite(r[8])
