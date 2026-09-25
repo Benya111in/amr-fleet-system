@@ -278,7 +278,7 @@ def rack_boxes(racks):
     return out
 
 
-MARKER_TEX = "model://dock_marker/materials/textures/aruco_4x4_50_"
+MARKER_TEX = "model://dock_marker/materials/textures/aruco_4x4_100_"
 SIGN_TEX = "model://sign/materials/textures/sign_"
 
 
@@ -438,6 +438,29 @@ def pillar_marker_poses():
     for i, (px, py) in enumerate(PILLARS, 1):
         for j, (nx, ny, yaw) in enumerate(PILLAR_FACES):
             out[PILLAR_MARKER_ID0 + 4 * (i - 1) + j] = (px + nx * off, py + ny * off, yaw)
+    return out
+
+
+RACK_MARKER_ID0 = 42            # 기둥 10~41 다음
+
+
+def rack_marker_poses():
+    """{id: (x, y, yaw)} — 랙 열마다 통로를 보는 양면에 하나씩 (복구 회전에서 바로 잡히도록)."""
+    off = RACK_D / 2 + PLATE_OFF
+    out = {}
+    k = 0
+    for row_y in sorted(ROWS.values(), reverse=True):
+        for cx in RACK_X:
+            out[RACK_MARKER_ID0 + k] = (cx, row_y + off, math.pi / 2)      # 북쪽 통로를 본다
+            out[RACK_MARKER_ID0 + k + 1] = (cx, row_y - off, -math.pi / 2)  # 남쪽 통로를 본다
+            k += 2
+    return out
+
+
+def rack_markers():
+    out = ""
+    for mid, (x, y, yaw) in sorted(rack_marker_poses().items()):
+        out += marker_model(f"rack_marker_{mid}", mid, x, y, yaw)
     return out
 
 
@@ -827,8 +850,8 @@ def main():
     <!-- ===== 바닥 / 외벽 / 천장 ===== -->
 {ground_and_walls()}
 {roof()}
-    <!-- ===== 기둥 {len(PILLARS)}개 + 위치 표지 마커 {4 * len(PILLARS)}개 ===== -->
-{pillars()}{pillar_markers()}
+    <!-- ===== 기둥 {len(PILLARS)}개 + 위치 표지 마커 {4 * len(PILLARS) + len(rack_marker_poses())}개 ===== -->
+{pillars()}{pillar_markers()}{rack_markers()}
     <!-- ===== 랙: A/B/C 열 7베이씩 (21) + 좁은 통로 4베이 (rack_narrow_*) =====
          좁은 통로: 중심 ({NARROW_CX}, {NARROW_CY}), y 방향 4 m,
          순폭 {NARROW_CLEAR} m = 로봇 폭 0.40 + 0.20 (명세 4.4).

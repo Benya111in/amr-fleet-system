@@ -75,7 +75,8 @@
 /**/aruco_detector_node:
   ros__parameters:
     enabled: true                # 도킹 중에만 켜려면 false 로 띄우고 perception/aruco/enable(SetBool) 로 켠다
-    dictionary: DICT_4X4_50      # amr_simulation dock_marker 텍스처와 같은 사전 (id 0~3 도크, 4~6 충전)
+    dictionary: DICT_4X4_100     # amr_simulation dock_marker 텍스처와 같은 사전 (id 0~3 도크,
+                                 # 4~6 충전, 10~83 위치 표지 — 50 개로는 표지가 안 들어간다)
     marker_size: 0.18            # [m] 흑백 영역 한 변 (6 셀 × 0.03 m, dock_marker/model.sdf)
     marker_ids: [-1]             # 허용 id (-1 = 전부)
     preferred_id: -1             # 여러 개가 보이면 이 id 우선, 없으면 가장 가까운 마커

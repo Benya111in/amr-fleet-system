@@ -368,7 +368,7 @@
       </link>
     </model>
 
-    <!-- ===== 기둥 8개 + 위치 표지 마커 32개 ===== -->
+    <!-- ===== 기둥 8개 + 위치 표지 마커 74개 ===== -->
     <include>
       <uri>model://pillar</uri>
       <name>pillar_1</name>
@@ -424,7 +424,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_10.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_10.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -446,7 +446,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_11.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_11.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -468,7 +468,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_12.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_12.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -490,7 +490,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_13.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_13.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -512,7 +512,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_14.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_14.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -534,7 +534,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_15.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_15.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -556,7 +556,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_16.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_16.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -578,7 +578,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_17.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_17.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -600,7 +600,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_18.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_18.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -622,7 +622,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_19.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_19.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -644,7 +644,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_20.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_20.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -666,7 +666,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_21.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_21.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -688,7 +688,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_22.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_22.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -710,7 +710,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_23.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_23.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -732,7 +732,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_24.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_24.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -754,7 +754,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_25.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_25.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -776,7 +776,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_26.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_26.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -798,7 +798,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_27.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_27.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -820,7 +820,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_28.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_28.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -842,7 +842,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_29.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_29.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -864,7 +864,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_30.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_30.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -886,7 +886,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_31.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_31.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -908,7 +908,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_32.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_32.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -930,7 +930,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_33.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_33.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -952,7 +952,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_34.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_34.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -974,7 +974,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_35.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_35.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -996,7 +996,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_36.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_36.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -1018,7 +1018,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_37.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_37.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -1040,7 +1040,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_38.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_38.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -1062,7 +1062,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_39.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_39.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -1084,7 +1084,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_40.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_40.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -1106,7 +1106,931 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_41.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_41.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_42">
+      <static>true</static>
+      <pose>-18.0000 9.5120 0.0000 0.0000 0.0000 1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_42.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_43">
+      <static>true</static>
+      <pose>-18.0000 8.4880 0.0000 0.0000 0.0000 -1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_43.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_44">
+      <static>true</static>
+      <pose>-12.0000 9.5120 0.0000 0.0000 0.0000 1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_44.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_45">
+      <static>true</static>
+      <pose>-12.0000 8.4880 0.0000 0.0000 0.0000 -1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_45.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_46">
+      <static>true</static>
+      <pose>-6.0000 9.5120 0.0000 0.0000 0.0000 1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_46.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_47">
+      <static>true</static>
+      <pose>-6.0000 8.4880 0.0000 0.0000 0.0000 -1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_47.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_48">
+      <static>true</static>
+      <pose>0.0000 9.5120 0.0000 0.0000 0.0000 1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_48.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_49">
+      <static>true</static>
+      <pose>0.0000 8.4880 0.0000 0.0000 0.0000 -1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_49.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_50">
+      <static>true</static>
+      <pose>6.0000 9.5120 0.0000 0.0000 0.0000 1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_50.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_51">
+      <static>true</static>
+      <pose>6.0000 8.4880 0.0000 0.0000 0.0000 -1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_51.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_52">
+      <static>true</static>
+      <pose>12.0000 9.5120 0.0000 0.0000 0.0000 1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_52.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_53">
+      <static>true</static>
+      <pose>12.0000 8.4880 0.0000 0.0000 0.0000 -1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_53.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_54">
+      <static>true</static>
+      <pose>18.0000 9.5120 0.0000 0.0000 0.0000 1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_54.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_55">
+      <static>true</static>
+      <pose>18.0000 8.4880 0.0000 0.0000 0.0000 -1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_55.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_56">
+      <static>true</static>
+      <pose>-18.0000 3.5120 0.0000 0.0000 0.0000 1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_56.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_57">
+      <static>true</static>
+      <pose>-18.0000 2.4880 0.0000 0.0000 0.0000 -1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_57.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_58">
+      <static>true</static>
+      <pose>-12.0000 3.5120 0.0000 0.0000 0.0000 1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_58.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_59">
+      <static>true</static>
+      <pose>-12.0000 2.4880 0.0000 0.0000 0.0000 -1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_59.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_60">
+      <static>true</static>
+      <pose>-6.0000 3.5120 0.0000 0.0000 0.0000 1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_60.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_61">
+      <static>true</static>
+      <pose>-6.0000 2.4880 0.0000 0.0000 0.0000 -1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_61.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_62">
+      <static>true</static>
+      <pose>0.0000 3.5120 0.0000 0.0000 0.0000 1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_62.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_63">
+      <static>true</static>
+      <pose>0.0000 2.4880 0.0000 0.0000 0.0000 -1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_63.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_64">
+      <static>true</static>
+      <pose>6.0000 3.5120 0.0000 0.0000 0.0000 1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_64.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_65">
+      <static>true</static>
+      <pose>6.0000 2.4880 0.0000 0.0000 0.0000 -1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_65.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_66">
+      <static>true</static>
+      <pose>12.0000 3.5120 0.0000 0.0000 0.0000 1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_66.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_67">
+      <static>true</static>
+      <pose>12.0000 2.4880 0.0000 0.0000 0.0000 -1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_67.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_68">
+      <static>true</static>
+      <pose>18.0000 3.5120 0.0000 0.0000 0.0000 1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_68.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_69">
+      <static>true</static>
+      <pose>18.0000 2.4880 0.0000 0.0000 0.0000 -1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_69.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_70">
+      <static>true</static>
+      <pose>-18.0000 -2.4880 0.0000 0.0000 0.0000 1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_70.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_71">
+      <static>true</static>
+      <pose>-18.0000 -3.5120 0.0000 0.0000 0.0000 -1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_71.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_72">
+      <static>true</static>
+      <pose>-12.0000 -2.4880 0.0000 0.0000 0.0000 1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_72.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_73">
+      <static>true</static>
+      <pose>-12.0000 -3.5120 0.0000 0.0000 0.0000 -1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_73.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_74">
+      <static>true</static>
+      <pose>-6.0000 -2.4880 0.0000 0.0000 0.0000 1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_74.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_75">
+      <static>true</static>
+      <pose>-6.0000 -3.5120 0.0000 0.0000 0.0000 -1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_75.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_76">
+      <static>true</static>
+      <pose>0.0000 -2.4880 0.0000 0.0000 0.0000 1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_76.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_77">
+      <static>true</static>
+      <pose>0.0000 -3.5120 0.0000 0.0000 0.0000 -1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_77.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_78">
+      <static>true</static>
+      <pose>6.0000 -2.4880 0.0000 0.0000 0.0000 1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_78.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_79">
+      <static>true</static>
+      <pose>6.0000 -3.5120 0.0000 0.0000 0.0000 -1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_79.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_80">
+      <static>true</static>
+      <pose>12.0000 -2.4880 0.0000 0.0000 0.0000 1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_80.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_81">
+      <static>true</static>
+      <pose>12.0000 -3.5120 0.0000 0.0000 0.0000 -1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_81.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_82">
+      <static>true</static>
+      <pose>18.0000 -2.4880 0.0000 0.0000 0.0000 1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_82.png</albedo_map>
+              <metalness>0.0</metalness><roughness>0.9</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="rack_marker_83">
+      <static>true</static>
+      <pose>18.0000 -3.5120 0.0000 0.0000 0.0000 -1.5708</pose>
+      <link name="link">
+        <collision name="plate_collision">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+        </collision>
+        <visual name="plate">
+          <pose>0 0 0.250 0 0 0</pose>
+          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+            <pbr><metal>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_83.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -1869,7 +2793,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_0.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_0.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -1906,7 +2830,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_1.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_1.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -1943,7 +2867,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_2.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_2.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -1980,7 +2904,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_3.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_3.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -2022,7 +2946,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_4.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_4.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -2049,7 +2973,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_5.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_5.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
@@ -2076,7 +3000,7 @@
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
             <pbr><metal>
-              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_50_6.png</albedo_map>
+              <albedo_map>model://dock_marker/materials/textures/aruco_4x4_100_6.png</albedo_map>
               <metalness>0.0</metalness><roughness>0.9</roughness>
             </metal></pbr>
           </material>
