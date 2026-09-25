@@ -158,6 +158,8 @@ DockingServerNode::DockingServerNode(const rclcpp::NodeOptions & options)
   reloc_position_sigma_ = declare_parameter<double>(
     "relocalization.position_sigma", reloc_position_sigma_);
   reloc_yaw_sigma_ = declare_parameter<double>("relocalization.yaw_sigma", reloc_yaw_sigma_);
+  reloc_max_yaw_var_ = declare_parameter<double>(
+    "relocalization.max_yaw_variance", reloc_max_yaw_var_);
   // 도크가 아닌 위치 표지 마커 (기둥 네 면). 창고 통로는 랙 열 간격 6 m 로 주기적이라 통로 방향
   // 6 m 순간 이동은 LiDAR + 지도만으로 구별할 수 없다 — 스캔이 옆 통로에 그대로 맞아 AMCL 추정이
   // 움직이지 않는다 (통합 11 실측). 전역 기준점을 레지스트리에 함께 넣는다.
@@ -186,6 +188,12 @@ DockingServerNode::DockingServerNode(const rclcpp::NodeOptions & options)
     "safety/dock_exclusion", rclcpp::QoS(10));
   marker_fix_pub_ = create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>(
     "localization/marker_fix", rclcpp::QoS(10));
+  marker_cov_sub_ = create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
+    "perception/dock_marker_pose_cov", rclcpp::SensorDataQoS(),
+    [this](geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr m) {
+      marker_cov_yaw_var_ = m->pose.covariance[35];
+      marker_cov_time_ = now().seconds();
+    });
   marker_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
     "perception/dock_marker_pose", rclcpp::SensorDataQoS(),
     std::bind(&DockingServerNode::onMarker, this, std::placeholders::_1));
@@ -355,6 +363,16 @@ void DockingServerNode::publishMarkerFix(int observed_id, const MarkerObservatio
     RCLCPP_WARN_THROTTLE(
       get_logger(), *get_clock(), 5000,
       "마커 %d 의 지도 자세가 레지스트리에 없다 → 재위치추정 근거로 쓰지 않는다", observed_id);
+    return;
+  }
+  // 모호한 자세(평면 마커의 IPPE 두 해)는 쓰지 않는다 — 검출기가 회전 공분산에 실어 보낸다
+  if (marker_cov_time_ < 0.0 || now().seconds() - marker_cov_time_ > marker_id_max_age_ ||
+    !(marker_cov_yaw_var_ >= 0.0) || marker_cov_yaw_var_ > reloc_max_yaw_var_)
+  {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 5000,
+      "마커 %d 자세가 모호하다 (yaw 분산 %.4f > %.4f rad²) → 재위치추정 근거로 쓰지 않는다",
+      observed_id, marker_cov_yaw_var_, reloc_max_yaw_var_);
     return;
   }
   const double range = std::hypot(obs.x, obs.y);
