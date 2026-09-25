@@ -81,6 +81,43 @@ def _png_size(path):
     return struct.unpack(">II", head[16:24])
 
 
+def test_pillar_marker_registry_matches_behavior_config():
+    """기둥 위치 표지 마커의 지도 자세가 재위치추정 레지스트리(behavior.yaml)와 같아야 한다.
+
+    통로가 랙 열 간격 6 m 로 주기적이라 통로 방향 6 m 순간 이동은 LiDAR + 지도만으로 구별할 수
+    없다 (통합 11). 이 마커가 유일한 전역 기준점이므로 자세가 어긋나면 복구가 로봇을 엉뚱한 곳으로
+    끌고 간다 — 둘이 따로 노는 것을 여기서 잡는다.
+    """
+    spec = importlib.util.spec_from_file_location("gen_warehouse_world_markers", GEN)
+    gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen)
+    want = gen.pillar_marker_poses()
+    path = PKG.parents[0] / "amr_behavior" / "config" / "behavior.yaml"
+    if not path.is_file():
+        pytest.skip("amr_behavior 가 이 워크스페이스에 없다 (패키지 단독 브랜치)")
+    cfg = yaml.safe_load(path.read_text(encoding="utf-8"))
+    reloc = next((v["ros__parameters"]["relocalization"] for v in cfg.values()
+                  if isinstance(v, dict) and "ros__parameters" in v
+                  and "relocalization" in v["ros__parameters"]), None)
+    if reloc is None or "landmark_ids" not in reloc:
+        pytest.skip("behavior.yaml 에 위치 표지 레지스트리가 아직 없다")
+    ids, poses = reloc["landmark_ids"], reloc["landmark_poses"]
+    assert len(poses) == 3 * len(ids), (len(poses), len(ids))
+    got = {int(i): tuple(poses[3 * k:3 * k + 3]) for k, i in enumerate(ids)}
+    assert set(got) == set(want), (sorted(set(got) ^ set(want)))
+    for mid, (x, y, yaw) in want.items():
+        gx, gy, gyaw = got[mid]
+        assert abs(gx - x) < 1e-3 and abs(gy - y) < 1e-3, (mid, got[mid])
+        assert abs(gyaw - yaw) < 1e-3, (mid, got[mid])
+
+
+def test_pillar_markers_are_in_the_world(world):
+    """마커 판이 실제로 월드에 있고 개수가 기둥 × 4 와 같다."""
+    names = [m.get("name") for m in world.iter("model")]
+    plates = [n for n in names if n and "_marker_" in n and n.startswith("pillar_")]
+    assert len(plates) == 32, len(plates)
+
+
 def test_signs_have_textures(world):
     signs = [m for m in world.findall("model") if m.get("name").startswith("sign_")]
     assert len(signs) == 25
