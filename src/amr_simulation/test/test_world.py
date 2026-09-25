@@ -81,8 +81,8 @@ def _png_size(path):
     return struct.unpack(">II", head[16:24])
 
 
-def test_pillar_marker_registry_matches_behavior_config():
-    """기둥 위치 표지 마커의 지도 자세가 재위치추정 레지스트리(behavior.yaml)와 같아야 한다.
+def test_location_marker_registry_matches_behavior_config():
+    """위치 표지 마커의 지도 자세가 재위치추정 레지스트리(behavior.yaml)와 같아야 한다.
 
     통로가 랙 열 간격 6 m 로 주기적이라 통로 방향 6 m 순간 이동은 LiDAR + 지도만으로 구별할 수
     없다 (통합 11). 이 마커가 유일한 전역 기준점이므로 자세가 어긋나면 복구가 로봇을 엉뚱한 곳으로
@@ -91,7 +91,7 @@ def test_pillar_marker_registry_matches_behavior_config():
     spec = importlib.util.spec_from_file_location("gen_warehouse_world_markers", GEN)
     gen = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(gen)
-    want = gen.pillar_marker_poses()
+    want = {**gen.pillar_marker_poses(), **gen.rack_marker_poses()}
     path = PKG.parents[0] / "amr_behavior" / "config" / "behavior.yaml"
     if not path.is_file():
         pytest.skip("amr_behavior 가 이 워크스페이스에 없다 (패키지 단독 브랜치)")
@@ -111,11 +111,13 @@ def test_pillar_marker_registry_matches_behavior_config():
         assert abs(gyaw - yaw) < 1e-3, (mid, got[mid])
 
 
-def test_pillar_markers_are_in_the_world(world):
-    """마커 판이 실제로 월드에 있고 개수가 기둥 × 4 와 같다."""
+def test_location_markers_are_in_the_world(world):
+    """위치 표지 판이 실제로 월드에 있고 개수가 기둥 × 4 + 랙 열 × 행 × 2 와 같다."""
     names = [m.get("name") for m in world.iter("model")]
-    plates = [n for n in names if n and "_marker_" in n and n.startswith("pillar_")]
-    assert len(plates) == 32, len(plates)
+    pillar = [n for n in names if n and n.startswith("pillar_") and "_marker_" in n]
+    rack = [n for n in names if n and n.startswith("rack_marker_")]
+    assert len(pillar) == 32, len(pillar)
+    assert len(rack) == 42, len(rack)
 
 
 def test_signs_have_textures(world):
