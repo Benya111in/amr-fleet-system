@@ -2,6 +2,7 @@
 aruco_detector_node — 도킹 ArUco 마커 자세 (components.md §3.4 / §5.4, 명세 4.8 도킹).
 
 Sub  camera/image_raw (sensor_msgs/Image, sensor QoS depth 1), camera/camera_info (K, D)
+Sub  perception/aruco/preferred_id (std_msgs/Int32, 여러 마커 중 우선할 id, -1 = 가장 가까운 것)
 Pub  perception/dock_marker_pose (geometry_msgs/PoseStamped, frame = base_link, 미검출 시 미발행)
      perception/dock_marker_id (std_msgs/Int32, 같은 주기 — 발행한 마커의 id)
      perception/dock_marker_pose_cov (geometry_msgs/PoseWithCovarianceStamped, base_link, 재투영
@@ -71,7 +72,7 @@ class ArucoDetectorNode(Node):
         p('dictionary', 'DICT_4X4_50')
         p('marker_size', 0.18)
         p('marker_ids', [-1])
-        p('preferred_id', -1)
+        p('preferred_id', -1)          # 시작값 (topics.preferred_id 로 바꿀 수 있다)
         p('min_side_px', 12.0)
         p('ambiguity_px', 1.0)
         p('use_upright_prior', True)
@@ -84,6 +85,7 @@ class ArucoDetectorNode(Node):
         p('topics.pose', 'perception/dock_marker_pose')
         p('topics.id', 'perception/dock_marker_id')
         p('topics.pose_cov', 'perception/dock_marker_pose_cov')
+        p('topics.preferred_id', 'perception/aruco/preferred_id')
         p('topics.debug_image', 'perception/aruco_image')
         p('topics.enable_service', 'perception/aruco/enable')
         gp = self.get_parameter
@@ -118,6 +120,10 @@ class ArucoDetectorNode(Node):
                                  qos_profile_sensor_data)
         self.create_subscription(Image, gp('topics.image').value, self.on_image, sensor_qos)
         self.create_service(SetBool, gp('topics.enable_service').value, self.on_enable)
+        # 여러 마커가 보일 때 어느 것을 낼지 실행 중에 바꾼다. 위치 표지 마커(기둥·랙)가 생기면서
+        # 도크 앞에서도 랙 마커가 더 가까워 도크 마커가 안 나오는 일이 생겼다 (통합 10 실측:
+        # search_timeout 으로 도킹 3 회 실패, 2 cm 이내 7/10). 도킹 서버가 원하는 id 를 알려준다.
+        self.create_subscription(Int32, gp('topics.preferred_id').value, self.on_preferred, 10)
         self.get_logger().info(
             f'ArUco {gp("dictionary").value}, 마커 {self.estimator.marker_size:.3f} m, '
             f'출력 프레임 {self.base_frame}, {"켜짐" if self.enabled else "꺼짐"}')
@@ -184,6 +190,12 @@ class ArucoDetectorNode(Node):
             pc.pose.covariance = [float(v) for v in cov.ravel()]
         self.cov_pub.publish(pc)
         return det
+
+    def on_preferred(self, msg: Int32) -> None:
+        """우선 마커 id (-1 = 가장 가까운 마커). 도킹 서버가 세션 시작·종료에 낸다."""
+        if int(msg.data) != self.preferred:
+            self.get_logger().info(f'우선 마커 id {self.preferred} → {int(msg.data)}')
+        self.preferred = int(msg.data)
 
     def publish_debug(self, msg: Image, gray: np.ndarray, dets: List[MarkerDetection]) -> None:
         vis = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
