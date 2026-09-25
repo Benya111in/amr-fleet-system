@@ -410,6 +410,37 @@ def docks_and_zones():
     return out
 
 
+# 기둥 위치 표지 마커 (명세 4.5 Kidnapped Robot 복구). 창고 통로는 랙 열 간격 6 m 로 주기적이라
+# 통로 방향 6 m 순간 이동은 LiDAR + 지도만으로 구별할 수 없다 — 스캔이 옆 통로에 그대로 맞아
+# AMCL 추정이 움직이지 않으므로 "점프 > 1 m"·"인라이어 < 0.5" 가 모두 걸리지 않는다 (통합 11 실측:
+# [-9.98, 0.23] → [-9.98, 6.23] 주입에 LOST 미선언, 마커도 시야에 없어 복구 경로 없음).
+# 실제 물류센터가 기둥에 구역 표지를 붙이듯, 기둥 네 면에 고유 id 마커를 붙여 전역 기준점을 만든다.
+# 통로를 따라 달리면 기둥이 정면에 들어오므로 전방 카메라로 잡힌다.
+PILLAR_MARKER_ID0 = 10          # 도크 0~3, 충전 4~6, 예비 7~9 다음
+PILLAR_FACES = [(1, 0, 0.0), (-1, 0, math.pi), (0, 1, math.pi / 2), (0, -1, -math.pi / 2)]
+
+
+def pillar_markers():
+    """기둥 i 의 면 j → id = PILLAR_MARKER_ID0 + 4*(i-1) + j (면 순서 +x, -x, +y, -y)."""
+    off = PILLAR_HALF + PLATE_OFF
+    out = ""
+    for i, (px, py) in enumerate(PILLARS, 1):
+        for j, (nx, ny, yaw) in enumerate(PILLAR_FACES):
+            mid = PILLAR_MARKER_ID0 + 4 * (i - 1) + j
+            out += marker_model(f"pillar_{i}_marker_{j}", mid, px + nx * off, py + ny * off, yaw)
+    return out
+
+
+def pillar_marker_poses():
+    """{id: (x, y, yaw)} — 재위치추정 레지스트리(config/behavior.yaml)와 같은 값이어야 한다."""
+    off = PILLAR_HALF + PLATE_OFF
+    out = {}
+    for i, (px, py) in enumerate(PILLARS, 1):
+        for j, (nx, ny, yaw) in enumerate(PILLAR_FACES):
+            out[PILLAR_MARKER_ID0 + 4 * (i - 1) + j] = (px + nx * off, py + ny * off, yaw)
+    return out
+
+
 def pillars():
     return "".join(include("pillar", f"pillar_{i}", x, y) for i, (x, y) in enumerate(PILLARS, 1))
 
@@ -796,8 +827,8 @@ def main():
     <!-- ===== 바닥 / 외벽 / 천장 ===== -->
 {ground_and_walls()}
 {roof()}
-    <!-- ===== 기둥 {len(PILLARS)}개 ===== -->
-{pillars()}
+    <!-- ===== 기둥 {len(PILLARS)}개 + 위치 표지 마커 {4 * len(PILLARS)}개 ===== -->
+{pillars()}{pillar_markers()}
     <!-- ===== 랙: A/B/C 열 7베이씩 (21) + 좁은 통로 4베이 (rack_narrow_*) =====
          좁은 통로: 중심 ({NARROW_CX}, {NARROW_CY}), y 방향 4 m,
          순폭 {NARROW_CLEAR} m = 로봇 폭 0.40 + 0.20 (명세 4.4).
