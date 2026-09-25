@@ -105,6 +105,8 @@ private:
   void setDetectorEnabled(bool enabled);
   /// 검출기에 우선 마커 id 를 알린다 (-1 = 가장 가까운 마커)
   void publishPreferredMarker(int marker_id);
+  /// 마지막 마커 자세가 모호한가 (회전 공분산이 임계 초과·없음·오래됨)
+  bool ambiguousMarker() const;
 
   Params base_params_;
   std::map<std::string, double> standoffs_;
