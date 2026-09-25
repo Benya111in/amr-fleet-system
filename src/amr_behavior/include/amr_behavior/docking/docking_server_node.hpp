@@ -103,6 +103,8 @@ private:
   void finish(bool canceled);
   void publishCommand(const Command & cmd);
   void setDetectorEnabled(bool enabled);
+  /// 검출기에 우선 마커 id 를 알린다 (-1 = 가장 가까운 마커)
+  void publishPreferredMarker(int marker_id);
 
   Params base_params_;
   std::map<std::string, double> standoffs_;
@@ -122,6 +124,9 @@ private:
   double marker_cov_yaw_var_{-1.0};           ///< 마지막 마커 자세 공분산의 yaw 성분 (< 0 = 없음)
   double marker_cov_time_{-1.0};              ///< [s] 그 수신 시각
   rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr marker_cov_sub_;
+  /// 검출기에 "이 id 를 우선 내라" 를 알린다 (-1 = 가장 가까운 마커). 위치 표지 마커가 생기면서
+  /// 도크 앞에서도 랙 마커가 더 가까워 도크 마커가 안 나오는 일이 있었다 (통합 10 실측).
+  rclcpp::Publisher<std_msgs::msg::Int32>::SharedPtr preferred_id_pub_;
   int reloc_streak_{0};
   int reloc_streak_id_{-1};
   MapPose2D reloc_last_fix_;
