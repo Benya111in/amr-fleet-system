@@ -326,6 +326,16 @@ void DockingServerNode::onMarker(const geometry_msgs::msg::PoseStamped::SharedPt
     }
   }
   if (auto obs = markerToObservation(pose, normal_axis_)) {
+    // 모호한 자세는 도킹에도 쓰지 않는다: 평면 마커의 IPPE 두 해 중 뒤집힌 쪽을 그대로 쓰면
+    // 엉뚱한 곳에 선다 (통합 10 실측 w10 시행 7: 위치 오차 1.73 m, 각도 92.7°, 시도 3 회 실패 —
+    // 나머지 9 회는 4~8 mm 였다). 검출기가 그 모호성을 회전 공분산에 실어 보낸다.
+    if (ambiguousMarker()) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 5000,
+        "마커 자세가 모호하다 (yaw 분산 %.4f > %.4f rad²) → 관측 버림", marker_cov_yaw_var_,
+        reloc_max_yaw_var_);
+      return;
+    }
     if (idle) {
       // 도킹 중이 아니다: 도킹에는 쓰지 않고 위치 표지로만 쓴다 (주행 중 기둥 마커를 보면 보정).
       publishMarkerFix(last_marker_id_, *obs);
@@ -366,16 +376,6 @@ void DockingServerNode::publishMarkerFix(int observed_id, const MarkerObservatio
     RCLCPP_WARN_THROTTLE(
       get_logger(), *get_clock(), 5000,
       "마커 %d 의 지도 자세가 레지스트리에 없다 → 재위치추정 근거로 쓰지 않는다", observed_id);
-    return;
-  }
-  // 모호한 자세(평면 마커의 IPPE 두 해)는 쓰지 않는다 — 검출기가 회전 공분산에 실어 보낸다
-  if (marker_cov_time_ < 0.0 || now().seconds() - marker_cov_time_ > marker_id_max_age_ ||
-    !(marker_cov_yaw_var_ >= 0.0) || marker_cov_yaw_var_ > reloc_max_yaw_var_)
-  {
-    RCLCPP_WARN_THROTTLE(
-      get_logger(), *get_clock(), 5000,
-      "마커 %d 자세가 모호하다 (yaw 분산 %.4f > %.4f rad²) → 재위치추정 근거로 쓰지 않는다",
-      observed_id, marker_cov_yaw_var_, reloc_max_yaw_var_);
     return;
   }
   const double range = std::hypot(obs.x, obs.y);
@@ -541,6 +541,16 @@ void DockingServerNode::publishCommand(const Command & cmd)
   twist.linear.x = cmd.linear;
   twist.angular.z = cmd.angular;
   cmd_pub_->publish(twist);
+}
+
+bool DockingServerNode::ambiguousMarker() const
+{
+  if (marker_cov_time_ < 0.0) {
+    return false;   // 공분산 토픽을 한 번도 못 받았다 (검출기가 안 내는 구성) → 예전처럼 쓴다
+  }
+  // 받은 적이 있으면 요구한다: 오래됐거나 임계를 넘으면 "모호하지 않다" 를 증명하지 못한 것이다
+  return now().seconds() - marker_cov_time_ > marker_id_max_age_ ||
+         !(marker_cov_yaw_var_ >= 0.0) || marker_cov_yaw_var_ > reloc_max_yaw_var_;
 }
 
 void DockingServerNode::publishPreferredMarker(int marker_id)
