@@ -188,6 +188,8 @@ DockingServerNode::DockingServerNode(const rclcpp::NodeOptions & options)
     "safety/dock_exclusion", rclcpp::QoS(10));
   marker_fix_pub_ = create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>(
     "localization/marker_fix", rclcpp::QoS(10));
+  preferred_id_pub_ = create_publisher<std_msgs::msg::Int32>(
+    "perception/aruco/preferred_id", rclcpp::QoS(1).reliable().transient_local());
   marker_cov_sub_ = create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
     "perception/dock_marker_pose_cov", rclcpp::SensorDataQoS(),
     [this](geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr m) {
@@ -287,6 +289,7 @@ void DockingServerNode::onAccepted(const std::shared_ptr<GoalHandle> handle)
     session_active_ = true;
     setDetectorEnabled(true);
   }
+  publishPreferredMarker(expected_marker_id_);   // 도크 마커를 우선 (랙 마커가 더 가까워도)
   RCLCPP_INFO(
     get_logger(), "도킹 시작: %s (standoff %.3f m, 최대 %d 회)", goal->dock_id.c_str(),
     params.standoff, attempts);
@@ -500,6 +503,7 @@ void DockingServerNode::endSession()
   session_active_ = false;
   last_obs_.reset();
   setDetectorEnabled(false);
+  publishPreferredMarker(-1);    // 다시 가장 가까운 마커 (위치 표지 재위치추정용)
   RCLCPP_INFO(get_logger(), "도킹 세션 종료 (예외 사각형 발행 중단)");
 }
 
@@ -537,6 +541,16 @@ void DockingServerNode::publishCommand(const Command & cmd)
   twist.linear.x = cmd.linear;
   twist.angular.z = cmd.angular;
   cmd_pub_->publish(twist);
+}
+
+void DockingServerNode::publishPreferredMarker(int marker_id)
+{
+  if (!preferred_id_pub_) {
+    return;
+  }
+  std_msgs::msg::Int32 msg;
+  msg.data = marker_id;
+  preferred_id_pub_->publish(msg);
 }
 
 void DockingServerNode::setDetectorEnabled(bool enabled)
