@@ -158,6 +158,25 @@ DockingServerNode::DockingServerNode(const rclcpp::NodeOptions & options)
   reloc_position_sigma_ = declare_parameter<double>(
     "relocalization.position_sigma", reloc_position_sigma_);
   reloc_yaw_sigma_ = declare_parameter<double>("relocalization.yaw_sigma", reloc_yaw_sigma_);
+  // 도크가 아닌 위치 표지 마커 (기둥 네 면). 창고 통로는 랙 열 간격 6 m 로 주기적이라 통로 방향
+  // 6 m 순간 이동은 LiDAR + 지도만으로 구별할 수 없다 — 스캔이 옆 통로에 그대로 맞아 AMCL 추정이
+  // 움직이지 않는다 (통합 11 실측). 전역 기준점을 레지스트리에 함께 넣는다.
+  const auto lm_ids = declare_parameter<std::vector<int64_t>>(
+    "relocalization.landmark_ids", std::vector<int64_t>{});
+  const auto lm_poses = declare_parameter<std::vector<double>>(
+    "relocalization.landmark_poses", std::vector<double>{});
+  if (lm_poses.size() == 3 * lm_ids.size()) {
+    for (std::size_t i = 0; i < lm_ids.size(); ++i) {
+      marker_poses_[static_cast<int>(lm_ids[i])] =
+        MapPose2D{lm_poses[3 * i], lm_poses[3 * i + 1], lm_poses[3 * i + 2]};
+    }
+    RCLCPP_INFO(get_logger(), "위치 표지 마커 %zu 개를 레지스트리에 넣었다", lm_ids.size());
+  } else if (!lm_ids.empty() || !lm_poses.empty()) {
+    RCLCPP_WARN(
+      get_logger(),
+      "relocalization.landmark_poses 는 landmark_ids 개수의 3 배여야 한다 (%zu vs %zu) → 무시",
+      lm_poses.size(), 3 * lm_ids.size());
+  }
   marker_id_max_age_ = declare_parameter<double>("marker_id_max_age", marker_id_max_age_);
 
   tf_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
@@ -267,7 +286,8 @@ void DockingServerNode::onAccepted(const std::shared_ptr<GoalHandle> handle)
 
 void DockingServerNode::onMarker(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
 {
-  if (!active_ && !session_active_) {
+  const bool idle = !active_ && !session_active_;
+  if (idle && !reloc_enabled_) {
     return;
   }
   const double now_s = now().seconds();
@@ -295,6 +315,11 @@ void DockingServerNode::onMarker(const geometry_msgs::msg::PoseStamped::SharedPt
     }
   }
   if (auto obs = markerToObservation(pose, normal_axis_)) {
+    if (idle) {
+      // 도킹 중이 아니다: 도킹에는 쓰지 않고 위치 표지로만 쓴다 (주행 중 기둥 마커를 보면 보정).
+      publishMarkerFix(last_marker_id_, *obs);
+      return;
+    }
     if (wrong) {
       // 다른 도크의 마커다: 도킹에는 쓰지 않되(관측 버림), 위치 추정이 틀어졌다는 증거로는 쓴다.
       RCLCPP_WARN_THROTTLE(
