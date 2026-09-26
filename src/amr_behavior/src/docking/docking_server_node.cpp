@@ -448,6 +448,29 @@ void DockingServerNode::controlStep()
   exclusionStep(t);
 }
 
+std::optional<double> DockingServerNode::markerBearingError()
+{
+  // 지도에 등록된 도크 마커 방향 − 로봇 헤딩. 탐색 단계에서 그쪽을 먼저 보게 한다
+  // (docking_controller.hpp setMarkerBearing 의 실측 근거 참고).
+  const auto it = marker_poses_.find(expected_marker_id_);
+  if (expected_marker_id_ < 0 || it == marker_poses_.end()) {
+    return std::nullopt;
+  }
+  geometry_msgs::msg::TransformStamped tf;
+  try {
+    tf = tf_buffer_->lookupTransform("map", base_frame_, tf2::TimePointZero);
+  } catch (const tf2::TransformException &) {
+    return std::nullopt;   // 지도 기준 자세를 모르면 예전처럼 삼각파 탐색만 한다
+  }
+  const double rx = tf.transform.translation.x;
+  const double ry = tf.transform.translation.y;
+  const auto & q = tf.transform.rotation;
+  const double yaw = std::atan2(
+    2.0 * (q.w * q.z + q.x * q.y),
+    1.0 - 2.0 * (q.y * q.y + q.z * q.z));
+  return wrapAngle(std::atan2(it->second.y - ry, it->second.x - rx) - yaw);
+}
+
 void DockingServerNode::goalStep(double t)
 {
   if (active_->is_canceling()) {
@@ -455,6 +478,7 @@ void DockingServerNode::goalStep(double t)
     finish(true);
     return;
   }
+  controller_->setMarkerBearing(markerBearingError());
   const Command cmd = controller_->update(t, pending_obs_);
   pending_obs_.reset();
   publishCommand(cmd);

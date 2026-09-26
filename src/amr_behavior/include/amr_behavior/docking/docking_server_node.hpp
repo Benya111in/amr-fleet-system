@@ -107,13 +107,15 @@ private:
   void publishPreferredMarker(int marker_id);
   /// 마지막 마커 자세가 모호한가 (회전 공분산이 임계 초과·없음·오래됨)
   bool ambiguousMarker() const;
+  /// 지도에 등록된 도크 마커 방향과 로봇 헤딩의 차 (모르면 nullopt)
+  std::optional<double> markerBearingError();
 
   Params base_params_;
   std::map<std::string, double> standoffs_;
   std::map<std::string, int> marker_ids_;
   std::map<int, MapPose2D> marker_poses_;     ///< ArUco id → 마커 지도 자세 (계약 C3: +x 바깥 법선)
   bool reloc_enabled_{true};
-  double reloc_max_range_{3.0};               ///< [m] 이보다 먼 관측은 쓰지 않는다
+  double reloc_max_range_{6.5};               ///< [m] 이보다 먼 관측은 쓰지 않는다
   double reloc_tolerance_{0.30};              ///< [m] 연속 관측이 이 안에 들어와야 한다
   int reloc_min_observations_{3};
   double reloc_position_sigma_{0.05};         ///< [m] 발행 공분산

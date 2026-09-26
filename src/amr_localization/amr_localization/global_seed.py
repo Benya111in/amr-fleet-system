@@ -176,6 +176,27 @@ def pose_close(a: Tuple[float, float, float], b: Tuple[float, float, float], dis
     return math.hypot(a[0] - b[0], a[1] - b[1]) <= dist and abs(dyaw) <= ang
 
 
+def select_seed(hyps: Sequence[Hypothesis], attempt: int,
+                alias_margin: float = 0.15) -> Optional[Hypothesis]:
+    """
+    몇 번째로 심을 가설인가 — 1 순위가 확연히 우세하면 아래 순위로 내려가지 않는다.
+
+    창고 지도는 점대칭이라 탐색이 정답을 1 순위(인라이어 0.97)로, ±60 m 떨어진 미러를 2~3 순위
+    (0.70)로 내놓는다. 1 순위가 아직 수렴하지 않았다고 미러를 심으면 추정치가 그만큼 날아가고
+    복구가 "exhausted" 로 끝난다 (통합 11 실측: 한 실행에서 61 m 점프와 재초기화 루프가 d11 19 회,
+    lm2 64 회, lm1 44 회, w11 15 회). 인라이어 격차가 alias_margin 을 넘으면 1 순위를 다시 심어
+    회전으로 관측을 더 모으게 한다.
+    """
+    if not hyps:
+        return None
+    if attempt <= 1:
+        return hyps[0]
+    if attempt > len(hyps):
+        return None
+    cand = hyps[attempt - 1]
+    return hyps[0] if hyps[0].ratio - cand.ratio > alias_margin else cand
+
+
 def alternative_poses(hyps: Sequence[Hypothesis], current: Tuple[float, float, float],
                       motion: Tuple[float, float, float], dist: float = 1.0,
                       ang: float = math.radians(20.0)) -> List[Tuple[float, float, float]]:

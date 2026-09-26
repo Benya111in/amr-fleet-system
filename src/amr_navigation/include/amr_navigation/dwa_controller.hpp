@@ -12,7 +12,8 @@
 //   [cycle_ms, n_samples, n_valid, n_collision, n_vo_rejected, vo_saturated, best_ttc, v, w,
 //    d_goal, n_recentered, yield_state (0 clear / 1 yield / 2 committed), yield_stop_distance,
 //    yield_zone_entry (로봇 → 교차 구간 입구, 없으면 −1e9 — 음수면 이미 구간 안), yield_obstacle
-//    (상한을 정한 장애물 색인, 없으면 −1)]
+//    (상한을 정한 장애물 색인, 없으면 −1), n_obstacles (DWA 가 이번 주기에 본 동적 장애물 수),
+//    track_age_s (그 트랙 메시지의 나이 — track_timeout 을 넘으면 목록이 비워진다)]
 //   (best_ttc·yield_stop_distance 는 없으면 −1: 유한하지 않은 값)
 #ifndef AMR_NAVIGATION__DWA_CONTROLLER_HPP_
 #define AMR_NAVIGATION__DWA_CONTROLLER_HPP_
@@ -116,6 +117,7 @@ private:
   double track_timeout_{0.5};
   /// [s] 통로 예측용 속도의 지수 평활 시간 상수 (0 = 끔 — 원시 속도를 그대로 쓴다)
   double yield_velocity_tau_{0.5};
+  double last_track_age_{-1.0};   ///< [s] 마지막으로 본 트랙 메시지의 나이 (dwa/stats 진단)
   struct VelocityFilter
   {
     double vx{0.0};

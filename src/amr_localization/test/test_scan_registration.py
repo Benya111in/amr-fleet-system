@@ -144,3 +144,22 @@ def test_from_occupancy_grid_and_surface_offset():
     assert len(base) == len(moved)
     shift = np.einsum('ij,ij->i', moved.points - base.points, base.normals)
     assert np.allclose(shift, 0.02)
+
+
+def test_select_seed_does_not_fall_back_to_a_mirror_alias():
+    """
+    1 순위가 확연히 우세하면 아래 순위(점대칭 별칭)로 내려가지 않는다.
+
+    창고 지도가 점대칭이라 탐색이 정답을 1 순위(인라이어 0.97)로, ±60 m 미러를 2~3 순위(0.70)로
+    내놓는다. 미러를 심으면 추정치가 그만큼 날아가 복구가 exhausted 로 끝난다 — 통합 11 실측:
+    61 m 점프와 재초기화 루프가 한 실행에서 d11 19 회, lm2 64 회, lm1 44 회, w11 15 회.
+    """
+    from amr_localization.global_seed import Hypothesis, select_seed
+    best = Hypothesis(x=-27.2, y=12.7, yaw=2.55, score=0.002, ratio=0.972)
+    mirror = Hypothesis(x=27.2, y=-12.7, yaw=-0.59, score=0.31, ratio=0.697)
+    close = Hypothesis(x=-27.0, y=12.4, yaw=2.50, score=0.01, ratio=0.900)
+    assert select_seed([best, mirror], 1) is best
+    assert select_seed([best, mirror], 2) is best      # 격차 0.275 > 0.15 → 1 순위를 다시 심는다
+    assert select_seed([best, close], 2) is close      # 격차 0.072 → 정상적으로 2 순위
+    assert select_seed([best, mirror], 3) is None      # 가설이 모자라면 없음
+    assert select_seed([], 1) is None

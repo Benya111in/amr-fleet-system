@@ -73,6 +73,9 @@ class KidnapMonitorNode(Node):
         self.declare_parameter('initial_pose_topic', 'initialpose')
         self.declare_parameter('map_frame', 'map')
         self.declare_parameter('seed_attempts', 3)                   # 0 = 시드 없이 AMCL 전역만
+        # 지도가 점대칭이라 2~3 순위 가설이 ±60 m 미러다. 1 순위와 인라이어 격차가 이보다 크면
+        # 아래 순위로 내려가지 않고 1 순위를 다시 심는다 (global_seed.select_seed 참고).
+        self.declare_parameter('alias_reject_margin', 0.15)
         self.declare_parameter('seed_cov_xy', 0.0625)                # [m²] σ 0.25 m
         self.declare_parameter('seed_var_yaw', 0.01)                 # [rad²] (σ ≈ 5.7°)
         self.declare_parameter('scan_topic', 'scan_filtered')
@@ -329,9 +332,14 @@ class KidnapMonitorNode(Node):
                     f'({h.x:.2f}, {h.y:.2f}, {math.degrees(h.yaw):.0f} deg, '
                     f'{h.score:.3f} m, inlier {h.ratio:.3f})'
                     for h in self.seeds))
-        if attempt > len(self.seeds):
+        h = global_seed.select_seed(
+            self.seeds, attempt, float(self.get_parameter('alias_reject_margin').value))
+        if h is None:
             return False
-        h = self.seeds[attempt - 1]
+        if attempt <= len(self.seeds) and h is not self.seeds[attempt - 1]:
+            self.get_logger().warn(
+                f'가설 #{attempt} 은 1 순위보다 인라이어가 많이 낮다 (별칭 의심) '
+                f'→ 1 순위를 다시 심는다')
         # 탐색 이후 제자리 회전한 만큼 헤딩을 옮긴다 (odom 헤딩 변화, 위치는 그대로)
         yaw = h.yaw + kd.wrap_angle(self.last_odom_yaw - self.seed_odom_yaw)
         msg = PoseWithCovarianceStamped()
