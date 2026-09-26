@@ -503,8 +503,16 @@ DwaResult DwaPlanner::compute(
       const double rc = config_.robot_radius + o.radius + config_.yield_corridor_margin;
       // 경로에서 더 벗어나며 빠지는 후보에는 이득을 주지 않는다: 통로는 경로를 가로지르므로
       // 빠져나가는 방향은 경로를 따라(대개 뒤로)다. 옆으로 휘면 이탈 예산(명세 1 m)만 쓴다.
+      // 통로가 경로와 나란하면(마주 오거나 뒤따라오는 기하) 경로를 따라 움직여도 통로 축까지의
+      // 거리가 변하지 않는다 — 빠져나갈 길은 옆으로 비키는 것뿐이라 이탈 억제를 풀어야 한다.
+      // 08 실측: 작업자가 경로와 154° 로 마주 오고 로봇은 축에서 β ≈ 0.5 m 떨어져 선다. 반경 합
+      // 0.611 m 안이라 서 있으면 반드시 스친다 (접촉 51/52 가 이 모양). 필요한 것은 0.1~0.6 m 의
+      // 가로 이동이고 이탈 예산(1 m) 안이다.
+      const double pyaw = interpolateAt(path, cum_s, robot_proj.s).theta;
+      const double align = std::abs(std::cos(pyaw) * ux + std::sin(pyaw) * uy);
       const double drift = c.max_cte - std::abs(robot_proj.cte) - config_.yield_escape_drift;
-      c.terms.escape = drift > 0.0 ? 1.0 :
+      const bool block_drift = drift > 0.0 && align < config_.yield_parallel_cos;
+      c.terms.escape = block_drift ? 1.0 :
         std::clamp(1.0 - beta / std::max(1e-6, rc), 0.0, 1.0);
     }
     c.cost = W.heading * c.terms.heading + W.clearance * c.terms.clearance +

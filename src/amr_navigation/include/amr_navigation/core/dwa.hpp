@@ -140,7 +140,11 @@ struct DwaConfig
   /// (yield_escape_drift 0.15 m / R_c 1.3 m ≈ 0.115) 뿐이라 걸러진다 — 그때는 정지가 옳다
   /// (단위 시험 ClosedLoopHeadOnYields). 08 기하(통로가 경로와 26°)에서는 경로를 따라 0.85 m
   /// 물러나면 축까지 0.37 m 를 벌어 0.28 이 된다.
-  double escape_spread_min{0.25};     // [m/s] 측정 속도가 이보다 낮을 때만 (정지·후진 중)
+  double escape_spread_min{0.25};
+  /// 통로 축과 경로 방향의 |cos| 가 이보다 크면 "나란한 기하" 로 보고 이탈 억제를 푼다.
+  /// 그 경우 경로를 따라 움직여도 통로 축까지의 거리가 변하지 않아, 옆으로 비키는 것 외에
+  /// 빠져나갈 길이 없다 (08 실측: 작업자가 경로와 154° 로 마주 온다).
+  double yield_parallel_cos{0.7};     // [m/s] 측정 속도가 이보다 낮을 때만 (정지·후진 중)
   // 좁은 곳 경로 재중심 (0 단계)
   bool recenter_narrow{true};
   double recenter_min_cost{100.0};  // 이 비용 이상인 경로 점만 (지역 s = 3: 장애물 ≈ 0.5 m 이내)
