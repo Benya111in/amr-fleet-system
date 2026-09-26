@@ -106,3 +106,26 @@ def test_filters_and_errors():
         aruco.render_marker_image(0, 0.18, K, np.eye(3), np.array([0.0, 0.0, -1.0]))
     assert aruco.rotation_angle(np.eye(3)) == pytest.approx(0.0)
     assert aruco.ArucoPoseEstimator._covariance(np.zeros((8, 15)), 0.1) is None
+
+
+def test_per_id_marker_size_is_used_for_pose():
+    """
+    등록된 id 별 크기로 자세를 푼다 — 크기를 하나로 가정하면 그 비율만큼 틀어진다.
+
+    도크 마커(0.18 m)와 위치 표지(0.30 m)가 섞여 있다. 크기를 하나로 가정하면 거리가
+    비율(0.30/0.18 = 1.67)만큼 어긋나고, 그 자세로 역산한 로봇 위치가 그만큼 날아간다.
+    """
+    big, dist = 0.30, 2.5
+    r, t = aruco.look_at_marker_pose(dist, 0.0, 0.0, 0.0, 0.0)
+    img = aruco.render_marker_image(11, big, K, r, t, noise_std=1.0,
+                                    rng=np.random.default_rng(1), supersample=3)
+    wrong = aruco.ArucoPoseEstimator('DICT_4X4_50', 0.18)          # 크기를 하나로 가정
+    right = aruco.ArucoPoseEstimator('DICT_4X4_50', 0.18, marker_sizes={11: big})
+    d_wrong = wrong.detect(img, K, up_hint=UP)
+    d_right = right.detect(img, K, up_hint=UP)
+    assert len(d_wrong) == 1 and len(d_right) == 1
+    r_err = abs(np.linalg.norm(d_right[0].translation) - dist)
+    w_err = abs(np.linalg.norm(d_wrong[0].translation) - dist)
+    assert r_err < 0.05, f'등록된 크기로는 정확해야 한다 (오차 {r_err:.3f} m)'
+    # 크기를 틀리면 거리가 그 비율만큼 어긋난다 (0.18/0.30 = 0.6 → 2.5 m 가 1.5 m 로 보인다)
+    assert abs(np.linalg.norm(d_wrong[0].translation) - dist * 0.18 / big) < 0.1, w_err

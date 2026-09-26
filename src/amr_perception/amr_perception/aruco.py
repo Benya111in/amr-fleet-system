@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from typing import List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
@@ -90,8 +90,12 @@ class ArucoPoseEstimator:
 
     def __init__(self, dictionary: str = 'DICT_4X4_50', marker_size: float = 0.18,
                  min_side_px: float = 12.0, sigma_floor_px: float = 0.1,
-                 ambiguity_px: float = 1.0):
+                 ambiguity_px: float = 1.0, marker_sizes: Optional[Dict[int, float]] = None):
+        # marker_sizes: id 별 크기 [m] (없으면 marker_size). 도크 마커는 근거리 정밀 도킹용이라
+        # 작고(0.18 m), 위치 표지는 통로에서 4~5 m 떨어져 보이므로 크다(0.30 m) — 크기를 하나로
+        # 가정하면 자세가 그 비율만큼 틀어진다.
         self.marker_size = float(marker_size)
+        self.marker_sizes = {int(k): float(v) for k, v in (marker_sizes or {}).items()}
         self.min_side_px = float(min_side_px)
         self.sigma_floor_px = float(sigma_floor_px)
         self.ambiguity_px = float(ambiguity_px)
@@ -103,6 +107,11 @@ class ArucoPoseEstimator:
         params.cornerRefinementMinAccuracy = 0.01
         self.detector = cv2.aruco.ArucoDetector(self.dictionary, params)
         self.object_points = marker_object_points(self.marker_size)
+        self._points_by_id = {i: marker_object_points(v) for i, v in self.marker_sizes.items()}
+
+    def objectPointsFor(self, marker_id: int) -> np.ndarray:
+        """해당 id 의 마커 코너 (등록된 크기가 없으면 기본 크기)."""
+        return self._points_by_id.get(int(marker_id), self.object_points)
 
     def detect(self, image: np.ndarray, camera_matrix: np.ndarray,
                dist_coeffs: Optional[np.ndarray] = None,
@@ -134,16 +143,17 @@ class ArucoPoseEstimator:
         side = float(np.mean(np.linalg.norm(img_pts - np.roll(img_pts, 1, axis=0), axis=1)))
         if side < self.min_side_px:
             return None
-        n, rvecs, tvecs, errs = cv2.solvePnPGeneric(self.object_points, img_pts, k, d,
+        obj = self.objectPointsFor(marker_id)
+        n, rvecs, tvecs, errs = cv2.solvePnPGeneric(obj, img_pts, k, d,
                                                     flags=cv2.SOLVEPNP_IPPE_SQUARE)
         # SQPnP(전역 최적) 해를 후보에 더한다: 광축 위 완전 정면 마커에서 IPPE 가 수치적으로
         # 퇴화(재투영 오차 수 px, 심하면 뒤집힌 해)하는 경우를 보완한다
-        ok, rv_sq, tv_sq = cv2.solvePnP(self.object_points, img_pts, k, d,
+        ok, rv_sq, tv_sq = cv2.solvePnP(obj, img_pts, k, d,
                                         flags=cv2.SOLVEPNP_SQPNP)
         rvecs, tvecs = list(rvecs), list(tvecs)
         errs = [float(e) for e in np.asarray(errs, dtype=float).reshape(-1)]
         if ok:
-            proj, _ = cv2.projectPoints(self.object_points, rv_sq, tv_sq, k, d)
+            proj, _ = cv2.projectPoints(obj, rv_sq, tv_sq, k, d)
             rvecs.append(rv_sq)
             tvecs.append(tv_sq)
             errs.append(self._rms(proj, img_pts))
@@ -163,9 +173,9 @@ class ArucoPoseEstimator:
             angle = rotation_angle(cv2.Rodrigues(rvecs[i])[0] @ r_best.T)
             if angle > DUPLICATE_ANGLE:  # 같은 해(SQPnP ≈ IPPE)는 모호성이 아니다
                 ambiguity = max(ambiguity, angle)
-        rvec, tvec = cv2.solvePnPRefineLM(self.object_points, img_pts, k, d, rvecs[best],
+        rvec, tvec = cv2.solvePnPRefineLM(obj, img_pts, k, d, rvecs[best],
                                           tvecs[best])
-        proj, jac = cv2.projectPoints(self.object_points, rvec, tvec, k, d)
+        proj, jac = cv2.projectPoints(obj, rvec, tvec, k, d)
         rms = self._rms(proj, img_pts)
         cov = self._covariance(jac, max(rms, self.sigma_floor_px))
         if cov is not None and ambiguity > 0.0:
