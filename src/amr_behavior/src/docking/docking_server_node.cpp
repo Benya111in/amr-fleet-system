@@ -190,11 +190,21 @@ DockingServerNode::DockingServerNode(const rclcpp::NodeOptions & options)
     "localization/marker_fix", rclcpp::QoS(10));
   preferred_id_pub_ = create_publisher<std_msgs::msg::Int32>(
     "perception/aruco/preferred_id", rclcpp::QoS(1).reliable().transient_local());
+  // 마커 관측의 원천은 공분산 토픽이다: 같은 메시지에 자세와 모호성(회전 공분산)이 함께 들어
+  // 있어 둘을 맞출 필요가 없다. 자세만 있는 토픽과 따로 받으면 도착 순서가 보장되지 않아,
+  // 앞 프레임의 공분산을 이 프레임에 쓰게 된다 (통합 10 실측: "yaw 분산 0.0000 > 0.0500" 처럼
+  // 멀쩡한 관측이 '오래됨' 으로 버려졌다).
   marker_cov_sub_ = create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
     "perception/dock_marker_pose_cov", rclcpp::SensorDataQoS(),
     [this](geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr m) {
       marker_cov_yaw_var_ = m->pose.covariance[35];
       marker_cov_time_ = now().seconds();
+      auto p = std::make_shared<geometry_msgs::msg::PoseStamped>();
+      p->header = m->header;
+      p->pose = m->pose.pose;
+      in_cov_callback_ = true;
+      onMarker(p);
+      in_cov_callback_ = false;
     });
   marker_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
     "perception/dock_marker_pose", rclcpp::SensorDataQoS(),
@@ -297,6 +307,14 @@ void DockingServerNode::onAccepted(const std::shared_ptr<GoalHandle> handle)
 
 void DockingServerNode::onMarker(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
 {
+  // 공분산 토픽이 흐르는 동안에는 그쪽이 원천이다 (자세만 있는 토픽은 중복 — 검출기가 공분산을
+  // 내지 않는 구성에서만 쓴다). 이 구분은 발행 주기와 무관하게 성립한다.
+  if (!in_cov_callback_) {
+    if (marker_cov_time_ >= 0.0 && now().seconds() - marker_cov_time_ < cov_source_timeout_) {
+      return;
+    }
+    marker_cov_yaw_var_ = -1.0;    // 공분산을 모르는 경로 → 모호성 판정 없음 (예전 동작)
+  }
   const bool idle = !active_ && !session_active_;
   if (idle && !reloc_enabled_) {
     return;
@@ -545,12 +563,9 @@ void DockingServerNode::publishCommand(const Command & cmd)
 
 bool DockingServerNode::ambiguousMarker() const
 {
-  if (marker_cov_time_ < 0.0) {
-    return false;   // 공분산 토픽을 한 번도 못 받았다 (검출기가 안 내는 구성) → 예전처럼 쓴다
-  }
-  // 받은 적이 있으면 요구한다: 오래됐거나 임계를 넘으면 "모호하지 않다" 를 증명하지 못한 것이다
-  return now().seconds() - marker_cov_time_ > marker_id_max_age_ ||
-         !(marker_cov_yaw_var_ >= 0.0) || marker_cov_yaw_var_ > reloc_max_yaw_var_;
+  // 공분산을 모르는 경로(-1)는 예전처럼 쓴다. 아는 경로는 이 프레임의 값이라 신선도를 따질
+  // 필요가 없다 — 같은 메시지에서 왔다.
+  return marker_cov_yaw_var_ >= 0.0 && marker_cov_yaw_var_ > reloc_max_yaw_var_;
 }
 
 void DockingServerNode::publishPreferredMarker(int marker_id)

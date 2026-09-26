@@ -125,6 +125,8 @@ private:
   double reloc_max_yaw_var_{0.05};
   double marker_cov_yaw_var_{-1.0};           ///< 마지막 마커 자세 공분산의 yaw 성분 (< 0 = 없음)
   double marker_cov_time_{-1.0};              ///< [s] 그 수신 시각
+  bool in_cov_callback_{false};               ///< 공분산 토픽 경로로 들어온 관측인가
+  double cov_source_timeout_{2.0};            ///< [s] 이 안에 공분산이 왔으면 그쪽이 원천이다
   rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr marker_cov_sub_;
   /// 검출기에 "이 id 를 우선 내라" 를 알린다 (-1 = 가장 가까운 마커). 위치 표지 마커가 생기면서
   /// 도크 앞에서도 랙 마커가 더 가까워 도크 마커가 안 나오는 일이 있었다 (통합 10 실측).
