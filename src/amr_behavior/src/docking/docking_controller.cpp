@@ -280,6 +280,16 @@ Command DockingController::update(double now, const std::optional<MarkerObservat
         failAttempt(now, "search_timeout");
         return stop();
       }
+      // 지도에 등록된 마커 방향을 알고 있고 진폭 밖으로 틀어져 있으면 먼저 그쪽을 본다.
+      // 삼각파만으로는 ±search_sweep 밖의 마커에 영원히 닿지 못한다 (docking_controller.hpp
+      // setMarkerBearing 의 실측 근거 참고).
+      if (marker_bearing_.has_value() &&
+        std::abs(*marker_bearing_) > params_.bearing_align_tol)
+      {
+        const double w = std::copysign(params_.search_angular_speed, *marker_bearing_);
+        last_cmd_ = Command{0.0, w};
+        return last_cmd_;
+      }
       // ±search_sweep 삼각파 탐색 (시작 방향 +)
       const double half = params_.search_sweep / params_.search_angular_speed;
       const double tau = std::fmod(now - phase_start_, 4.0 * half);

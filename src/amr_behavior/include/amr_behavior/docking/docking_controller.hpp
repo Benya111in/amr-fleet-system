@@ -61,6 +61,7 @@ struct Params
   double max_angular_speed{0.4};      ///< [rad/s]
   double search_angular_speed{0.25};  ///< 마커 탐색 회전 [rad/s]
   double search_sweep{0.5};           ///< 탐색 회전 진폭 ±[rad] (삼각파)
+  double bearing_align_tol{0.25};     ///< 마커 방향 정렬 허용 오차 [rad] (이 안이면 삼각파 탐색)
   // 비례 법칙 이득
   double k_distance{0.8};             ///< v = k_distance·e_x [1/s]
   double k_heading{1.5};              ///< ω = k_heading·(ψ_d − ψ) [1/s]
@@ -144,6 +145,15 @@ public:
   void start(double now, int max_attempts);
   /// 제어 주기마다 호출. obs = 이번 주기에 새로 받은 관측 (없으면 nullopt).
   Command update(double now, const std::optional<MarkerObservation> & obs);
+
+  /// 지도에 등록된 도크 마커 방향과 로봇 헤딩의 차 [rad] (없으면 사용하지 않는다).
+  ///
+  /// 탐색 진폭(search_sweep)은 ±0.5 rad 라, 로봇이 그보다 크게 틀어져 있으면 아무리 쓸어도
+  /// 마커가 시야에 들어오지 않는다 — 통합 10 실측: 납치 복구 스핀이 길어진 시행에서 잔여 방위가
+  /// 54~65° 였고(마커는 ±30~42° 에서 시야를 벗어난다) 도킹 세션 32 s 내내 마커 관측 0 건,
+  /// 3 회 시도 모두 search_timeout. 복구 ≤ 1.22 s 인 29 건은 전부 성공, ≥ 1.43 s 인 6 건은
+  /// 전부 실패로 완전히 갈렸다. 지도상 마커 위치를 알고 있으므로 먼저 그쪽을 보게 돌린다.
+  void setMarkerBearing(std::optional<double> bearing_error) {marker_bearing_ = bearing_error;}
   /// 취소: 정지 지령만 내고 실패로 끝낸다.
   void cancel();
 
@@ -162,6 +172,7 @@ public:
     return tracker_.hasEstimate() ? std::optional<MarkerObservation>(tracker_.estimate()) :
            std::nullopt;
   }
+  std::optional<double> marker_bearing_;   ///< 지도 기준 마커 방위 오차 (setMarkerBearing)
   /// 마지막 시도 실패 사유 (marker_lost / search_timeout / attempt_timeout / overshoot / lateral /
   /// canceled).
   const std::string & failureReason() const {return failure_reason_;}

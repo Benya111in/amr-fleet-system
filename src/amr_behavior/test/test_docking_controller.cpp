@@ -301,6 +301,37 @@ TEST(DockingController, MarkerLossTriggersBackupAndRetry)
   EXPECT_TRUE(saw_backup);
 }
 
+TEST(DockingController, SearchTurnsTowardTheKnownMarkerBearingFirst)
+{
+  // 탐색 진폭은 ±search_sweep (기본 0.5 rad) 뿐이라, 로봇이 그보다 크게 틀어져 있으면 아무리
+  // 쓸어도 마커가 시야에 들어오지 않는다 — 통합 10 실측: 납치 복구 스핀이 길어진 시행에서 잔여
+  // 방위 54~65° (마커는 ±30~42° 에서 시야를 벗어난다), 도킹 세션 내내 마커 관측 0 건,
+  // 3 회 시도 모두 search_timeout. 지도상 마커 방향을 알면 먼저 그쪽으로 돈다.
+  Params p;
+  DockingController ctl(p);
+  ctl.start(0.0, 1);
+  ctl.setMarkerBearing(1.0);          // 왼쪽으로 57° 틀어져 있다 (진폭 0.5 rad 밖)
+  for (double t = 0.0; t < 0.3; t += 0.05) {
+    const Command c = ctl.update(t, std::nullopt);
+    EXPECT_DOUBLE_EQ(c.linear, 0.0);
+    EXPECT_GT(c.angular, 0.0) << "마커 쪽(+)으로 돌아야 한다";
+  }
+  ctl.setMarkerBearing(-1.0);         // 반대쪽이면 반대로
+  EXPECT_LT(ctl.update(0.35, std::nullopt).angular, 0.0);
+  // 허용 오차 안이면 예전대로 삼각파 탐색 (한쪽으로만 돌지 않는다)
+  DockingController sweep(p);
+  sweep.start(0.0, 1);
+  sweep.setMarkerBearing(0.0);
+  bool pos = false, neg = false;
+  const double half = p.search_sweep / p.search_angular_speed;
+  for (double t = 0.0; t < 4.0 * half; t += 0.05) {
+    const double w = sweep.update(t, std::nullopt).angular;
+    pos = pos || w > 0.0;
+    neg = neg || w < 0.0;
+  }
+  EXPECT_TRUE(pos && neg) << "정렬돼 있으면 양쪽으로 쓸어야 한다";
+}
+
 TEST(DockingController, FailsAfterMaxAttemptsWithoutMarker)
 {
   Params p;
