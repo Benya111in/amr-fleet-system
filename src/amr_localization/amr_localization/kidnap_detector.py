@@ -290,7 +290,9 @@ class KidnapDetector:
         현재 추정과 marker_fix_min_error 이상 어긋나면 LOST 를 선언하고, 역산 자세를 그대로 시드로 준다
         (전역 가설 탐색보다 훨씬 빠르고, 별칭 가설로 다시 수렴할 위험도 없다).
         """
-        if self._amcl_pose is None or t < self._cooldown_until:
+        # 이미 복구 중이면 씨앗은 이미 줬다 — 매 관측마다 다시 심으면 AMCL 이 수렴할 틈이 없다
+        # (통합 10 실측: 한 실행에서 LOST·씨앗이 77 회 반복돼 도킹이 3/10 실패했다).
+        if self._amcl_pose is None or t < self._cooldown_until or self.lost:
             return []
         error = math.hypot(pose[0] - self._amcl_pose[0], pose[1] - self._amcl_pose[1])
         if error < self.params.marker_fix_min_error:
@@ -307,6 +309,7 @@ class KidnapDetector:
         self._set_state(t, State.RECOVERING, f'LOST: {reason}')
         # 시드가 있으므로 전역 재초기화(REINITIALIZE)는 하지 않는다. 회전은 그대로 — AMCL 이 갱신을
         # 하려면 움직여야 하고, 회전은 제자리에서 안전하다.
+        self._cooldown_until = t + self.params.cooldown   # 씨앗이 EKF·AMCL 로 퍼질 시간을 준다
         return ([Action(ActionType.PUBLISH_LOST, True), Action(ActionType.SEED_POSE, pose)]
                 + self._spin(t, reason))
 
