@@ -75,7 +75,12 @@ class KidnapParams:
     reinit_retry: int = 4              # 재초기화 시도 횟수 (노드: 앞 시도는 가설 시드, 마지막은 AMCL 전역)
     recovery_timeout: float = 90.0     # [s] LOST 이후 이 시간 안에 못 찾으면 FAILED
     cooldown: float = 3.0              # [s] 복구 직후 재감지 유예 (EKF 가 새 자세로 옮겨 가는 시간)
-    marker_fix_min_error: float = 1.0  # [m] 마커로 역산한 자세가 이보다 멀면 위치 추정이 틀렸다고 본다
+    # [m] 마커로 역산한 자세가 이보다 멀면 위치 추정이 틀렸다고 본다. 역산 자세 자체의 오차보다
+    # 넉넉해야 한다: 재위치추정은 yaw 표준편차 12.8° 까지 받아들이는데 5 m 거리에서 그만큼이면
+    # 위치로 1.1 m 라, 1.0 m 로 두면 정상 주행 중의 보정 오차가 잘못된 씨앗을 심는다 (통합 10
+    # 실측: 도크 접근이 틀어져 마커를 못 보고 search_timeout, 위치 오차 1.84 m). 실제 납치는
+    # 통로 간격(6 m) 규모라 2.5 m 로도 충분히 걸린다.
+    marker_fix_min_error: float = 2.5
 
 
 @dataclass
