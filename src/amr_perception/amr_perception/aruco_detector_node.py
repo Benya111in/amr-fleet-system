@@ -22,6 +22,7 @@ import cv2
 from cv_bridge import CvBridge
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
 import numpy as np
+from rcl_interfaces.msg import ParameterDescriptor
 import rclpy
 from rclpy.duration import Duration
 from rclpy.node import Node
@@ -86,7 +87,10 @@ class ArucoDetectorNode(Node):
         # id 별 마커 크기 [m]: [id, 크기, id, 크기, ...]. 도크·충전(0~9)은 근거리 정밀 도킹용이라
         # 작고, 위치 표지(10~83)는 통로에서 4~5 m 떨어져 보이므로 크다 — 하나로 가정하면 자세가
         # 그 비율만큼 틀어진다 (amr_simulation LOCATION_PLATE 참고).
-        p('marker_size_by_id', [])
+        # 빈 리스트를 기본값으로 주면 rclpy 가 BYTE_ARRAY 로 추론해, 설정의 실수 배열을 받을 때
+        # InvalidParameterTypeException 으로 죽는다 (통합 08 b8 실측). 타입으로만 선언하면
+        # 설정이 없는 환경에서 미초기화 예외가 난다. 동적 타이핑으로 두 경우를 모두 받는다.
+        p('marker_size_by_id', [], ParameterDescriptor(dynamic_typing=True))
         p('ambiguity_px', 1.0)
         p('use_upright_prior', True)
         p('frame_prefix', '')
@@ -138,8 +142,11 @@ class ArucoDetectorNode(Node):
         # 도크 앞에서도 랙 마커가 더 가까워 도크 마커가 안 나오는 일이 생겼다 (통합 10 실측:
         # search_timeout 으로 도킹 3 회 실패, 2 cm 이내 7/10). 도킹 서버가 원하는 id 를 알려준다.
         self.create_subscription(Int32, gp('topics.preferred_id').value, self.on_preferred, 10)
+        sizes = self.estimator.marker_sizes
+        extra = (f', id 별 크기 {len(sizes)} 개 ({min(sizes.values()):.2f}~'
+                 f'{max(sizes.values()):.2f} m)' if sizes else '')
         self.get_logger().info(
-            f'ArUco {gp("dictionary").value}, 마커 {self.estimator.marker_size:.3f} m, '
+            f'ArUco {gp("dictionary").value}, 마커 {self.estimator.marker_size:.3f} m{extra}, '
             f'출력 프레임 {self.base_frame}, {"켜짐" if self.enabled else "꺼짐"}')
 
     def on_enable(self, req: SetBool.Request, res: SetBool.Response) -> SetBool.Response:
