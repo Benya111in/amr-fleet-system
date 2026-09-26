@@ -286,3 +286,52 @@ def test_aruco_node_debug_image_and_selection():
     assert select_marker([], 1) is None
     assert to_base(a, T_BASE_OPT)[2] is None
     node.destroy_node()
+
+
+def test_aruco_node_accepts_the_shipped_config():
+    """
+    config/perception.yaml 의 값이 노드 선언 타입과 맞아야 한다.
+
+    맞지 않으면 노드가 기동하다 죽는다 — 단위 시험은 전부 통과하는데 통합에서만 드러난다.
+    실제로 marker_size_by_id 에서 두 번 그랬다: (1) 배열에 정수·실수를 섞어 rcl 이 파일 전체를
+    거부, (2) 기본값을 빈 배열로 선언해 타입이 정해지지 않은 채 실수 배열을 받아
+    InvalidParameterTypeException. 둘 다 통합 08 에서 검출기가 죽고서야 드러났다.
+    """
+    import pathlib
+
+    import yaml
+    from rclpy.parameter import Parameter
+
+    cfg = pathlib.Path(__file__).resolve().parents[1] / 'config' / 'perception.yaml'
+    doc = yaml.safe_load(cfg.read_text(encoding='utf-8'))
+    params = {}
+    for key, body in doc.items():
+        if key.endswith('aruco_detector_node') and isinstance(body, dict):
+            params = body.get('ros__parameters', {})
+    assert params, 'perception.yaml 에 aruco_detector_node 설정이 없다'
+
+    node = ArucoDetectorNode()
+    bad = []
+    for name, value in params.items():
+        if isinstance(value, dict):        # topics 같은 중첩은 점 표기로 선언된다
+            for sub, sv in value.items():
+                _check_param(node, f'{name}.{sub}', sv, bad, Parameter)
+            continue
+        _check_param(node, name, value, bad, Parameter)
+    node.destroy_node()
+    assert not bad, f'설정값과 선언 타입이 다르다 (노드가 기동하다 죽는다): {bad}'
+
+
+def _check_param(node, name, value, bad, Parameter) -> None:
+    if not node.has_parameter(name):
+        return
+    if node.describe_parameter(name).dynamic_typing:
+        return                              # 타입이 바뀌어도 되는 파라미터
+    declared = node.get_parameter(name).type_
+    try:
+        incoming = Parameter(name, value=value).type_
+    except TypeError as exc:                # rclpy 가 타입을 못 정하는 값 (예: 섞인 배열)
+        bad.append(f'{name}: {exc}')
+        return
+    if declared != Parameter.Type.NOT_SET and incoming != declared:
+        bad.append(f'{name}: 설정 {incoming.name} vs 선언 {declared.name}')
