@@ -306,8 +306,7 @@ class KidnapDetector:
         스캔-맵 정합은 같은 형태의 평행 통로를 구분하지 못한다 (통합 시나리오 11: 6 m 옆으로 옮겨도
         inlier·공분산·점프 어디에도 안 걸렸다). ArUco 마커는 지도에서 유일하므로 그 애매함을 끊는다.
         현재 추정과 marker_fix_min_error 이상 어긋나면 LOST 를 선언하고, 역산 자세를 그대로 시드로 준다
-        (전역 가설 탐색보다 훨씬 빠르고, 별칭 가설로 다시 수렴할 위험도 없다). 제자리 회전도 하지
-        않는다 — 완전한 자세를 받았으므로 둘러볼 이유가 없다.
+        (전역 가설 탐색보다 훨씬 빠르고, 별칭 가설로 다시 수렴할 위험도 없다).
         """
         # 이미 복구 중이면 씨앗은 이미 줬다 — 매 관측마다 다시 심으면 AMCL 이 수렴할 틈이 없다
         # (통합 10 실측: 한 실행에서 LOST·씨앗이 77 회 반복돼 도킹이 3/10 실패했다).
@@ -337,10 +336,11 @@ class KidnapDetector:
         # 시드가 있으므로 전역 재초기화(REINITIALIZE)는 하지 않는다. 회전은 그대로 — AMCL 이 갱신을
         # 하려면 움직여야 하고, 회전은 제자리에서 안전하다.
         self._cooldown_until = t + self.params.cooldown   # 씨앗이 EKF·AMCL 로 퍼질 시간을 준다
-        # 회전도 하지 않는다: 마커는 완전한 자세를 주므로 둘러볼 이유가 없고, 제자리 회전은 진행
-        # 중인 작업을 망친다 (통합 10 실측: 시행마다 회전이 끼어들어 도크 접근이 틀어지고
-        # search_timeout 으로 3/10 실패했다). 씨앗이 틀렸다면 기존 감지 경로가 다시 잡는다.
-        return [Action(ActionType.PUBLISH_LOST, True), Action(ActionType.SEED_POSE, pose)]
+        # 회전은 남긴다: AMCL 은 움직여야 갱신하므로, 정지 상태로 씨앗만 주면 수렴 판정이 오지
+        # 않아 localization/lost 가 풀리지 않는다 (실측으로 확인 — 회전을 뺐더니 순간 이동 뒤
+        # 안정화가 아예 끝나지 않았다). 제자리 회전이라 위치는 그대로다.
+        return ([Action(ActionType.PUBLISH_LOST, True), Action(ActionType.SEED_POSE, pose)]
+                + self._spin(t, reason))
 
     def on_match(self, t: float, ratio: float, valid_beams: int,
                  alias_margin: Optional[float] = None) -> List[Action]:
