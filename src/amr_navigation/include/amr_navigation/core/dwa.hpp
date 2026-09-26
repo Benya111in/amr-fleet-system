@@ -133,7 +133,14 @@ struct DwaConfig
   // 통로 축에서 멀어지는 후보에 이득을 준다.
   double yield_escape_speed{0.25};      // [m/s] kCommitted 에서 허용하는 후진 속도 (0 = 끔)
   double yield_escape_drift{0.15};      // [m] 이탈이 지금보다 이만큼 넘게 늘면 이득 없음
-  double yield_escape_v_meas{0.05};     // [m/s] 측정 속도가 이보다 낮을 때만 (정지·후진 중)
+  double yield_escape_v_meas{0.05};
+  /// VO 포화 시 "통로에서 빠져나가는 후보" 기준을 쓰려면 후보 간 escape 항 차이가 이보다 커야
+  /// 한다 (= 통로 반폭의 이만큼을 실제로 벌 수 있어야 한다). 정면 접근은 통로 축이 진행선과
+  /// 같아 경로를 따라 움직여도 축까지의 거리가 안 변하고, 남는 차이는 이탈 허용치
+  /// (yield_escape_drift 0.15 m / R_c 1.3 m ≈ 0.115) 뿐이라 걸러진다 — 그때는 정지가 옳다
+  /// (단위 시험 ClosedLoopHeadOnYields). 08 기하(통로가 경로와 26°)에서는 경로를 따라 0.85 m
+  /// 물러나면 축까지 0.37 m 를 벌어 0.28 이 된다.
+  double escape_spread_min{0.25};     // [m/s] 측정 속도가 이보다 낮을 때만 (정지·후진 중)
   // 좁은 곳 경로 재중심 (0 단계)
   bool recenter_narrow{true};
   double recenter_min_cost{100.0};  // 이 비용 이상인 경로 점만 (지역 s = 3: 장애물 ≈ 0.5 m 이내)
