@@ -269,7 +269,10 @@ std::vector<core::DynamicObstacle> DWAController::obstaclesInFrame(const std::st
   }
   const rclcpp::Time stamp(msg->header.stamp, clock_->get_clock_type());
   const double age = (clock_->now() - stamp).seconds();
+  last_track_age_ = age;
   if (age > track_timeout_ || age < -1.0) {
+    // 트랙이 오래됐다고 "장애물 없음" 으로 보는 것은 열린 실패다 — 양보가 풀린다.
+    // 얼마나 자주 일어나는지 dwa/stats 로 드러낸다 (age 가 남으므로 로그에서 구별된다).
     return out;
   }
   core::Pose2D T;
@@ -405,7 +408,8 @@ geometry_msgs::msg::TwistStamped DWAController::computeVelocityCommands(
       static_cast<double>(static_cast<int>(res.yield.state)),
       std::isfinite(res.yield.stop_distance) ? res.yield.stop_distance : -1.0,
       std::isfinite(res.yield.zone_entry) ? res.yield.zone_entry : -1e9,
-      static_cast<double>(res.yield.obstacle)};
+      static_cast<double>(res.yield.obstacle),
+      static_cast<double>(in.obstacles.size()), last_track_age_};
     stats_pub_->publish(st);
   }
   return cmd;
