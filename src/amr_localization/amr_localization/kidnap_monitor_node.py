@@ -142,6 +142,11 @@ class KidnapMonitorNode(Node):
                                  self.on_map, latched)
         self.initial_pose_pub = self.create_publisher(
             PoseWithCovarianceStamped, self.get_parameter('initial_pose_topic').value, 10)
+        self._own_seed_until = -math.inf    # 우리가 initialpose 를 낸 직후 (자기 메시지 무시)
+        # 남이 자세를 재설정하면 그 수렴 구간은 납치가 아니다 (우리가 낸 것은 세지 않는다)
+        self.create_subscription(
+            PoseWithCovarianceStamped, self.get_parameter('initial_pose_topic').value,
+            self.on_initial_pose, 10)
         self.reinit_client = self.create_client(Empty,
                                                 self.get_parameter('reinit_service').value)
         self.stop_scheduler = kd.StopUpdateScheduler(
@@ -300,6 +305,12 @@ class KidnapMonitorNode(Node):
         self.reinit_client.call_async(Empty.Request())
         self.get_logger().warn('AMCL global re-initialization requested')
 
+    def on_initial_pose(self, msg: PoseWithCovarianceStamped) -> None:
+        """자세 재설정 수신 (initialpose) — 우리가 낸 것이 아니면 수렴 구간 동안 납치 판정을 쉰다."""
+        if self._own_seed_until > self.now_sec():
+            return
+        self.detector.on_external_pose_reset(self.now_sec())
+
     def seed_initial_pose(self, attempt: int) -> bool:
         """가설 탐색 (첫 시도에 1 회) 후 attempt 번째 가설을 initialpose 로. 불가하면 False."""
         if attempt == 1 or not self.seeds:
@@ -334,6 +345,7 @@ class KidnapMonitorNode(Node):
         cov[0] = cov[7] = float(self.get_parameter('seed_cov_xy').value)
         cov[35] = float(self.get_parameter('seed_var_yaw').value)
         msg.pose.covariance = cov
+        self._own_seed_until = self.now_sec() + 0.5   # 자기 메시지가 돌아오는 것을 무시한다
         self.initial_pose_pub.publish(msg)
         self.get_logger().warn(
             f'seed #{attempt}: initialpose ({h.x:.2f}, {h.y:.2f}, {math.degrees(yaw):.0f} deg), '
@@ -354,6 +366,7 @@ class KidnapMonitorNode(Node):
         cov[0] = cov[7] = float(self.get_parameter('seed_cov_xy').value)
         cov[35] = float(self.get_parameter('seed_var_yaw').value)
         msg.pose.covariance = cov
+        self._own_seed_until = self.now_sec() + 0.5   # 자기 메시지가 돌아오는 것을 무시한다
         self.initial_pose_pub.publish(msg)
         self.set_ekf_pose((float(x), float(y), float(yaw)),
                           float(self.get_parameter('seed_cov_xy').value),
