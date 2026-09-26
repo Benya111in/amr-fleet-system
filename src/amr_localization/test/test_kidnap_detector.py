@@ -304,6 +304,21 @@ def test_marker_fix_needs_an_estimate_and_respects_cooldown():
         ActionType.PUBLISH_LOST, ActionType.SEED_POSE]
 
 
+def test_external_pose_reset_suppresses_marker_kidnap():
+    """바깥에서 자세를 잡아 주면 그 수렴 구간은 납치가 아니다 (잡아 준 자세를 도로 덮지 않는다)."""
+    det = KidnapDetector()
+    feed_odom(det, 0.0, 2.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 0.01, 0.001)
+    det.on_external_pose_reset(2.0)                           # initialpose 도착
+    assert det.on_marker_fix(2.1, (30.0, 0.0, 0.0)) == []     # 수렴 구간 — 판정하지 않는다
+    assert det.on_marker_fix(3.0, (30.0, 0.0, 0.0)) == []
+    assert det.state == State.TRACKING and not det.lost
+    # 유예(cooldown 3 s)가 지나고도 불일치가 이어지면 그때는 납치다
+    assert det.on_marker_fix(5.1, (30.0, 0.0, 0.0)) == []     # 지속 시작
+    assert kinds(det.on_marker_fix(5.8, (30.0, 0.0, 0.0))) == [
+        ActionType.PUBLISH_LOST, ActionType.SEED_POSE]
+
+
 def test_marker_fix_transient_mismatch_is_not_a_kidnap():
     """불일치가 잠깐 보였다 사라지면 납치가 아니다 (로봇을 옮기고 초기 자세를 알려 주는 전이)."""
     det = KidnapDetector()

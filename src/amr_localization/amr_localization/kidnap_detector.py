@@ -287,6 +287,18 @@ class KidnapDetector:
             return None
         return compose(self._anchor[0], relative_pose(self._anchor[1], odom_now))
 
+    def on_external_pose_reset(self, t: float) -> None:
+        """
+        바깥에서 자세를 재설정했다 (initialpose). 그 수렴 구간은 납치가 아니다.
+
+        운영자나 상위 시스템이 자세를 잡아 주면 추정이 새 자리로 옮겨 가는 동안 마커 보정과
+        크게 어긋난다. 이를 납치로 읽으면 잡아 준 자세를 도로 덮어쓴다 — 통합 10 실측:
+        시행마다 순간 이동 + initialpose 뒤 수렴 구간에 LOST 가 선언돼 하네스의 "안정되었나"
+        확인이 실패했다. 우리가 스스로 시드를 준 뒤와 같은 유예를 준다.
+        """
+        self._cooldown_until = max(self._cooldown_until, t + self.params.cooldown)
+        self._marker_mismatch_since = None
+
     def on_marker_fix(self, t: float, pose: Pose) -> List[Action]:
         """
         지도에 등록된 마커로 역산한 로봇 자세 (외부 증거, amr_behavior docking_server_node).
