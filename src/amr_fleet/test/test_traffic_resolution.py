@@ -401,6 +401,35 @@ def test_estopped_blocker_with_a_task_does_not_block_resolution():
     assert not im.active()
 
 
+def test_single_victim_keeps_retrying_while_the_planner_still_replans():
+    """
+    희생 후보가 하나뿐이면, 계획기가 새 경로를 내는 동안은 기다린다 (아니면 사람을 부른다).
+
+    강제 교착은 상대가 E-stop 이라 희생 후보가 1 대뿐이다. 예전에는 replan_grace_s(5 s) 한 번만
+    써 보고 deadlock_max_s(120 s) 를 남긴 채 영구 UNRESOLVED 로 닫았다 — 통합 12 실측: late12·
+    regress2 가 그렇게 실패했고 성공한 r12 는 첫 재계획(1.06 s)이 우연히 마스크를 피한 경우였다.
+    그 사이 계획기는 같은 마스크로 14 s 에 13 번 새 경로를 내고 있었다.
+    """
+    im = IncidentManager(cfg(replan_grace_s=3.0, deadlock_max_s=100.0))
+    estop = RobotView('E', 10.0, 5.0, 0.0, 0.0, None, False, False, 10, None, frozenset({'c'}),
+                      None, mobile=False)
+
+    def world(k):
+        # 계획기가 매번 새 경로를 낸다 (시작점이 조금씩 다르다) — 다만 어느 것도 마스크를 못 피한다
+        path = line((2.5 + 0.01 * k, 5.0), (18.0, 5.0))
+        w_view = RobotView('W', 2.5, 5.0, 0.0, 0.5, path, True, False, 200, None,
+                           frozenset(), path)
+        return make_world([w_view, estop], zone_map=CORR)
+    im.open(0.0, ['W', 'E'], 'BLOCKED', world(0))
+    assert im.active()[0].strategy == ALT_PATH
+    for k, t in enumerate((2.0, 4.0, 6.0, 8.0), start=1):
+        evs = im.step(t, world(k))
+        assert _names(evs) == [], f't={t} 에서 {_names(evs)}'
+    assert im.active(), '계획기가 살아 있으면 사건을 닫지 않는다'
+    # 예산(deadlock_max_s)을 넘기면 그때는 닫는다
+    assert _names(im.step(101.0, world(9))) == [EV_UNRESOLVED]
+
+
 def test_immobile_members_are_never_victims_and_failures_are_not_repeated():
     im = IncidentManager(cfg())
     mover = view('W', 2.5, 5.0, (18.0, 5.0), 200)                       # 통로 서쪽 입구 앞에서 대기
