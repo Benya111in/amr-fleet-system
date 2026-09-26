@@ -81,6 +81,11 @@ class KidnapParams:
     # 실측: 도크 접근이 틀어져 마커를 못 보고 search_timeout, 위치 오차 1.84 m). 실제 납치는
     # 통로 간격(6 m) 규모라 2.5 m 로도 충분히 걸린다.
     marker_fix_min_error: float = 2.5
+    # [s] 불일치가 이만큼 이어져야 납치로 본다. 한 프레임만 보고 움직이면 정상 상황의 전이를
+    # 납치로 오판한다 — 로봇을 옮기고 곧바로 초기 자세를 알려 주는 구간에서 보정이 먼저 도착하면
+    # 32~57 m 불일치가 잠깐 보인다 (통합 10 실측: 그때마다 360° 회전 복구가 시작돼 도킹이 실패).
+    # 진짜 납치는 알려 주는 쪽이 없으므로 불일치가 사라지지 않는다.
+    marker_fix_persist: float = 0.6
 
 
 @dataclass
@@ -228,6 +233,7 @@ class KidnapDetector:
         self._reinits_done = 0
         self._spin_active = False
         self._cooldown_until = -math.inf
+        self._marker_mismatch_since: Optional[float] = None
         self.detect_time: Optional[float] = None       # 마지막 LOST 선언 시각
         self.recovery_times: List[float] = []          # LOST → TRACKING 소요 [s]
 
@@ -296,8 +302,16 @@ class KidnapDetector:
             return []
         error = math.hypot(pose[0] - self._amcl_pose[0], pose[1] - self._amcl_pose[1])
         if error < self.params.marker_fix_min_error:
+            self._marker_mismatch_since = None
             return []
-        reason = f'marker fix {error:.2f} m from estimate'
+        if self._marker_mismatch_since is None:
+            self._marker_mismatch_since = t
+            return []
+        if t - self._marker_mismatch_since < self.params.marker_fix_persist:
+            return []
+        self._marker_mismatch_since = None
+        reason = (f'marker fix {error:.2f} m from estimate '
+                  f'({self.params.marker_fix_persist:.1f} s 이상 지속)')
         self.lost = True
         self.detect_time = t
         self._lost_since = t

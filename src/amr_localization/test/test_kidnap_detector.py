@@ -273,7 +273,8 @@ def test_marker_fix_declares_lost_and_seeds_that_pose():
     feed_odom(det, 0.0, 2.0)
     det.on_amcl(1.0, (-27.78, 13.0, math.pi), 0.01, 0.001)   # 믿고 있는 자리: dock_2 앞
     truth = (-27.78, 17.0, math.pi)                          # 실제로는 dock_1 앞 (4 m 옆)
-    actions = det.on_marker_fix(2.0, truth)
+    assert det.on_marker_fix(2.0, truth) == []               # 한 번만으로는 움직이지 않는다
+    actions = det.on_marker_fix(2.0 + KidnapParams().marker_fix_persist, truth)
     assert kinds(actions) == [ActionType.PUBLISH_LOST, ActionType.SEED_POSE, ActionType.SPIN]
     assert actions[0].value is True
     assert actions[1].value == truth
@@ -297,5 +298,17 @@ def test_marker_fix_needs_an_estimate_and_respects_cooldown():
     det.on_amcl(1.0, (0.0, 0.0, 0.0), 0.01, 0.001)
     det._cooldown_until = 9.0                                 # 복구 직후 유예 구간
     assert det.on_marker_fix(2.0, (10.0, 0.0, 0.0)) == []
-    assert kinds(det.on_marker_fix(9.0, (10.0, 0.0, 0.0))) == [
+    assert det.on_marker_fix(9.0, (10.0, 0.0, 0.0)) == []     # 유예가 끝난 첫 관측 (지속 시작)
+    assert kinds(det.on_marker_fix(9.7, (10.0, 0.0, 0.0))) == [
         ActionType.PUBLISH_LOST, ActionType.SEED_POSE, ActionType.SPIN]
+
+
+def test_marker_fix_transient_mismatch_is_not_a_kidnap():
+    """불일치가 잠깐 보였다 사라지면 납치가 아니다 (로봇을 옮기고 초기 자세를 알려 주는 전이)."""
+    det = KidnapDetector()
+    feed_odom(det, 0.0, 2.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 0.01, 0.001)
+    assert det.on_marker_fix(2.0, (30.0, 0.0, 0.0)) == []     # 큰 불일치 — 지속 시작
+    assert det.on_marker_fix(2.2, (0.1, 0.0, 0.0)) == []      # 다음 관측은 추정과 일치 → 지속 해제
+    assert det.on_marker_fix(3.0, (30.0, 0.0, 0.0)) == []     # 다시 시작 — 아직 지속 시간 미달
+    assert det.state == State.TRACKING and not det.lost
