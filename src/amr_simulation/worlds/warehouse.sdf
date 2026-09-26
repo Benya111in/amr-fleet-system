@@ -415,11 +415,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -437,11 +437,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -459,11 +459,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -481,11 +481,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -503,11 +503,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -525,11 +525,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -547,11 +547,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -569,11 +569,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -591,11 +591,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -613,11 +613,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -635,11 +635,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -657,11 +657,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -679,11 +679,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -701,11 +701,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -723,11 +723,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -745,11 +745,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -767,11 +767,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -789,11 +789,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -811,11 +811,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -833,11 +833,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -855,11 +855,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -877,11 +877,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -899,11 +899,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -921,11 +921,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -943,11 +943,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -965,11 +965,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -987,11 +987,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1009,11 +1009,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1031,11 +1031,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1053,11 +1053,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1075,11 +1075,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1097,11 +1097,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1119,11 +1119,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1141,11 +1141,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1163,11 +1163,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1185,11 +1185,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1207,11 +1207,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1229,11 +1229,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1251,11 +1251,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1273,11 +1273,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1295,11 +1295,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1317,11 +1317,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1339,11 +1339,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1361,11 +1361,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1383,11 +1383,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1405,11 +1405,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1427,11 +1427,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1449,11 +1449,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1471,11 +1471,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1493,11 +1493,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1515,11 +1515,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1537,11 +1537,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1559,11 +1559,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1581,11 +1581,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1603,11 +1603,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1625,11 +1625,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1647,11 +1647,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1669,11 +1669,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1691,11 +1691,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1713,11 +1713,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1735,11 +1735,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1757,11 +1757,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1779,11 +1779,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1801,11 +1801,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1823,11 +1823,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1845,11 +1845,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1867,11 +1867,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1889,11 +1889,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1911,11 +1911,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1933,11 +1933,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1955,11 +1955,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1977,11 +1977,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -1999,11 +1999,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
@@ -2021,11 +2021,11 @@
       <link name="link">
         <collision name="plate_collision">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
         </collision>
         <visual name="plate">
           <pose>0 0 0.250 0 0 0</pose>
-          <geometry><box><size>0.02 0.30 0.30</size></box></geometry>
+          <geometry><box><size>0.02 0.50 0.50</size></box></geometry>
           <material>
             <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>

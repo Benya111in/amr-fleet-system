@@ -549,6 +549,11 @@ class Incident:
     attempts: List[str] = dataclasses.field(default_factory=list)
     original_paths: Dict[str, Optional[np.ndarray]] = dataclasses.field(default_factory=dict)
     immobile: Tuple[str, ...] = ()               # 스스로 못 움직이는 로봇 (희생 로봇 후보 아님)
+    # 마스크를 건 뒤 희생 로봇이 새 경로를 받은 적이 있는가 (계획기가 살아 있는가). 후보가
+    # 하나뿐일 때 "더 기다릴 가치가 있는지" 를 가른다 — 계획기가 새 경로를 내고 있는데 아직
+    # 마스크를 못 피한 것이면 시간이 답이고, 아예 안 내면 사람을 불러야 한다.
+    victim_path_sig: Optional[Tuple] = None
+    victim_replanned: bool = False
 
     @property
     def victim(self) -> str:
@@ -713,6 +718,11 @@ class IncidentManager:
         # ALT_PATH: 희생 로봇의 지금 경로가 마스크를 피하면 대체 경로를 찾은 것
         #           (꼭짓점만 보면 긴 직선 구간이 마스크를 건너가도 모른다 → 마스크 해상도로 다시 뽑는다)
         v = views.get(victim)
+        if v is not None and v.path is not None and len(v.path):
+            sig = (len(v.path), tuple(np.round(v.path[0], 3)), tuple(np.round(v.path[-1], 3)))
+            if inc.victim_path_sig is not None and sig != inc.victim_path_sig:
+                inc.victim_replanned = True     # 계획기가 새 경로를 냈다 (마스크는 아직 못 피함)
+            inc.victim_path_sig = sig
         plan_ok = (v is None or not v.active or v.path is None
                    or not bool(inc.mask.blocks(
                        _resample(v.path, 0.5 * inc.mask.spec.resolution)).any()))
@@ -884,6 +894,24 @@ class IncidentManager:
 
     def _next_victim(self, inc: Incident, now: float, world: WorldView,
                      reason: str) -> List[ResolutionEvent]:
+        # 바꿀 희생 로봇이 없으면 같은 마스크로 유예를 다시 준다. 강제 교착처럼 상대가 E-stop
+        # (mobile False) 이면 희생 후보가 1 대뿐이라, 예전에는 replan_grace_s(5 s) 한 번만 써 보고
+        # deadlock_max_s(120 s) 를 남긴 채 영구 UNRESOLVED 로 닫았다 — 통합 12 실측: late12·
+        # regress2 가 그렇게 실패했고, 성공한 r12 는 첫 재계획(1.06 s)이 우연히 마스크를 피한
+        # 경우였다 (갈린 변수는 희생 로봇 위치 x 1.6~1.7 vs 1.1~1.4 이지 부하가 아니다). 그 사이
+        # 계획기는 같은 마스크로 14 s 에 13 번 재계획하고 있었다 — 필요한 것은 시간이었다.
+        # 지도에 애초에 길이 없는 실패(no_route·no_pocket)는 기다려도 달라지지 않는다 — 그대로
+        # 소진 처리한다. 계획기가 아직 못 찾은 것(no_alt_path·alt_timeout)만 시간을 더 준다.
+        # 범위는 "희생 후보가 처음부터 하나뿐이고, 계획기가 새 경로를 내고 있는" 경우로 한정한다.
+        # 후보가 여럿이면 사다리를 다 밟은 뒤 소진하는 기존 설계가 맞고(한 로봇만 붙들지 않는다),
+        # 계획기가 새 경로를 아예 못 내면 기다려도 달라지지 않으니 사람을 불러야 한다.
+        retryable = (reason in ('no_alt_path', 'alt_timeout') and len(inc.victims) == 1
+                     and inc.victim_replanned)
+        if retryable:
+            if now - inc.detected_at < self.cfg.deadlock_max_s:
+                inc.step_started = now      # 마스크·희생 로봇은 그대로, 유예만 다시
+                return []
+            return self._unresolved(inc, now, f'exhausted({reason})')
         inc.pocket, inc.mask = None, None
         inc.victim_index += 1
         if inc.victim_index >= len(inc.victims):

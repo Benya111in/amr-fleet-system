@@ -62,6 +62,15 @@ def to_base(det: MarkerDetection, tf_base: Transform):
     return p, r, cov
 
 
+def _size_map(flat, logger) -> dict:
+    """[id, 크기, id, 크기, ...] → {id: 크기}. 길이가 홀수면 무시한다."""
+    vals = [float(v) for v in (flat or [])]
+    if len(vals) % 2:
+        logger.warn(f'marker_size_by_id 는 [id, 크기] 쌍이어야 한다 ({len(vals)} 개) → 무시')
+        return {}
+    return {int(vals[i]): vals[i + 1] for i in range(0, len(vals), 2)}
+
+
 class ArucoDetectorNode(Node):
     """camera/image_raw → ArUco → perception/dock_marker_pose (base_link)."""
 
@@ -74,6 +83,10 @@ class ArucoDetectorNode(Node):
         p('marker_ids', [-1])
         p('preferred_id', -1)          # 시작값 (topics.preferred_id 로 바꿀 수 있다)
         p('min_side_px', 12.0)
+        # id 별 마커 크기 [m]: [id, 크기, id, 크기, ...]. 도크·충전(0~9)은 근거리 정밀 도킹용이라
+        # 작고, 위치 표지(10~83)는 통로에서 4~5 m 떨어져 보이므로 크다 — 하나로 가정하면 자세가
+        # 그 비율만큼 틀어진다 (amr_simulation LOCATION_PLATE 참고).
+        p('marker_size_by_id', [])
         p('ambiguity_px', 1.0)
         p('use_upright_prior', True)
         p('frame_prefix', '')
@@ -93,7 +106,8 @@ class ArucoDetectorNode(Node):
         self.enabled = bool(gp('enabled').value)
         self.estimator = ArucoPoseEstimator(
             str(gp('dictionary').value), float(gp('marker_size').value),
-            float(gp('min_side_px').value), ambiguity_px=float(gp('ambiguity_px').value))
+            float(gp('min_side_px').value), ambiguity_px=float(gp('ambiguity_px').value),
+            marker_sizes=_size_map(gp('marker_size_by_id').value, self.get_logger()))
         ids = [int(i) for i in gp('marker_ids').value if int(i) >= 0]
         self.marker_ids = ids or None
         self.preferred = int(gp('preferred_id').value)

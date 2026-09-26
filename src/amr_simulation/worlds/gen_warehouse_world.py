@@ -310,9 +310,16 @@ def plate_model(name, tex, x, y, z, yaw, w, h, collide=False):
 """
 
 
-def marker_model(name, mid, x, y, yaw):
+# 위치 표지 판은 도크 마커(0.30 m 판 / 0.18 m 마커)보다 크다. 통합 11 실측: 납치 지점에서
+# 통로를 따라 보이는 랙 표지까지 4~5 m 인데, 0.18 m 마커는 그 거리에서 약 12 px 로
+# min_side_px 한계라 **검출 자체가 0 건**이었다 (모호성 거부도 0 — 아예 안 보였다).
+# 0.50 m 판 / 0.30 m 마커면 같은 거리에서 20 px 로 여유가 생긴다. 기둥 면(0.50 m)에 맞춘 상한.
+LOCATION_PLATE = 0.50
+
+
+def marker_model(name, mid, x, y, yaw, plate=0.30):
     """models/dock_marker/model.sdf 와 같은 판을 id 별 텍스처로 인라인 생성. +x 법선이 로봇 쪽."""
-    return plate_model(name, f"{MARKER_TEX}{mid}.png", x, y, MARKER_Z, yaw, 0.30, 0.30,
+    return plate_model(name, f"{MARKER_TEX}{mid}.png", x, y, MARKER_Z, yaw, plate, plate,
                        collide=True)
 
 
@@ -427,7 +434,8 @@ def pillar_markers():
     for i, (px, py) in enumerate(PILLARS, 1):
         for j, (nx, ny, yaw) in enumerate(PILLAR_FACES):
             mid = PILLAR_MARKER_ID0 + 4 * (i - 1) + j
-            out += marker_model(f"pillar_{i}_marker_{j}", mid, px + nx * off, py + ny * off, yaw)
+            out += marker_model(f"pillar_{i}_marker_{j}", mid, px + nx * off, py + ny * off,
+                                yaw, LOCATION_PLATE)
     return out
 
 
@@ -460,7 +468,7 @@ def rack_marker_poses():
 def rack_markers():
     out = ""
     for mid, (x, y, yaw) in sorted(rack_marker_poses().items()):
-        out += marker_model(f"rack_marker_{mid}", mid, x, y, yaw)
+        out += marker_model(f"rack_marker_{mid}", mid, x, y, yaw, LOCATION_PLATE)
     return out
 
 

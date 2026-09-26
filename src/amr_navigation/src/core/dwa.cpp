@@ -530,13 +530,41 @@ DwaResult DwaPlanner::compute(
     // 샘플(= 등속을 유지해도 가장 오래 안전)을 고른다 — 정면 접근이면 제동, 횡단이면 감속·회피 쪽이
     // 뽑히고, 매 주기 한 창씩 VO 밖으로 옮겨 간다. 진입 시각이 vo_time_tie 안으로 같으면 비용 최소.
     res.vo_saturated = true;
+    // 통로 안(kCommitted)에서 포화하면 "가장 늦게 VO 에 들어가는 후보" 는 사실상 **정지**이고,
+    // 통로 안에서 멈추는 것이 바로 접촉 메커니즘이다 — 통합 08 실측: 접촉 52 건이 전부
+    // yield_state=committed 였고 62 %가 속도 0, 침투 중앙 5.8 mm 로 "비키지 않는 보행자가
+    // 서 있는 로봇에 걸어 들어온" 모양이다. 갇혔을 때 정지는 가장 나쁜 선택이므로, 이때는
+    // 통로에서 가장 빨리 벗어나는 후보(escape 항이 작은 쪽)를 고른다. 앞뒤 어느 쪽이든 좋다.
+    // 다만 "빠져나갈 여지" 가 실제로 있을 때만 그 기준을 쓴다. 정면 접근이면 통로 축이 우리
+    // 진행선과 같아 어느 후보를 골라도 통로 축까지의 거리가 같다 — 그때는 정지가 옳고,
+    // 예전처럼 VO 진입이 가장 늦은 후보를 고른다 (단위 시험 ClosedLoopHeadOnYields).
+    double esc_lo = 1e9, esc_hi = -1e9;
+    if (escaping) {
+      for (const auto & c : cands) {
+        if (!c.collision) {
+          esc_lo = std::min(esc_lo, c.terms.escape);
+          esc_hi = std::max(esc_hi, c.terms.escape);
+        }
+      }
+    }
+    // 게다가 **이미 멈춰 있을 때만** 쓴다. 실측상 접촉의 62 %가 속도 0 이고, 그 상태에서
+    // 서 있기가 최악의 선택이라는 것이 확정된 부분이다. 주행 중에는 예전 기준(정면 접근에
+    // 대한 제동)을 그대로 둔다 — 단위 시험 ClosedLoopHeadOnYields.
+    const bool leave_lane = escaping && esc_hi - esc_lo > config_.escape_spread_min;
     for (const auto & c : cands) {
       if (c.collision) {
         continue;
       }
-      if (best == nullptr || c.vo_time > best->vo_time + config_.vo_time_tie ||
-        (std::abs(c.vo_time - best->vo_time) <= config_.vo_time_tie && c.cost < best->cost))
-      {
+      if (best == nullptr) {
+        best = &c;
+        continue;
+      }
+      const bool better = leave_lane ?
+        (c.terms.escape < best->terms.escape - 1e-9 ||
+        (std::abs(c.terms.escape - best->terms.escape) <= 1e-9 && c.cost < best->cost)) :
+        (c.vo_time > best->vo_time + config_.vo_time_tie ||
+        (std::abs(c.vo_time - best->vo_time) <= config_.vo_time_tie && c.cost < best->cost));
+      if (better) {
         best = &c;
       }
     }
