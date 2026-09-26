@@ -122,7 +122,7 @@ private:
   /// 보면 IPPE 두 해의 재투영 오차가 거의 같아 법선이 뒤집힌 해가 뽑힐 수 있다 (통합 11 실측:
   /// 같은 마커를 4.1 m 에서 연속으로 보는데 역산 자세가 (-15.0, -0.3, 82°) 와 (-8.7, 0.0, -179°)
   /// 로 갈렸다). 검출기가 그 모호성을 회전 공분산에 실어 보내므로 여기서 거른다.
-  double reloc_max_yaw_var_{0.05};
+  double reloc_max_yaw_var_{0.02};
   double marker_cov_yaw_var_{-1.0};           ///< 마지막 마커 자세 공분산의 yaw 성분 (< 0 = 없음)
   double marker_cov_time_{-1.0};              ///< [s] 그 수신 시각
   bool in_cov_callback_{false};               ///< 공분산 토픽 경로로 들어온 관측인가
