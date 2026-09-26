@@ -275,12 +275,12 @@ def test_marker_fix_declares_lost_and_seeds_that_pose():
     truth = (-27.78, 17.0, math.pi)                          # 실제로는 dock_1 앞 (4 m 옆)
     assert det.on_marker_fix(2.0, truth) == []               # 한 번만으로는 움직이지 않는다
     actions = det.on_marker_fix(2.0 + KidnapParams().marker_fix_persist, truth)
-    # 회전 없음: 마커가 완전한 자세를 주므로 둘러볼 이유가 없고, 회전은 진행 중인 작업을 망친다
-    assert kinds(actions) == [ActionType.PUBLISH_LOST, ActionType.SEED_POSE]
+    # 회전은 남는다: AMCL 은 움직여야 갱신하므로 정지 상태로는 수렴 판정이 오지 않는다
+    assert kinds(actions) == [ActionType.PUBLISH_LOST, ActionType.SEED_POSE, ActionType.SPIN]
     assert actions[0].value is True
     assert actions[1].value == truth
     assert det.lost and det.state == State.RECOVERING
-    assert 'marker fix' in det.events[-1].reason
+    assert 'marker fix' in det.events[-2].reason
 
 
 def test_marker_fix_consistent_with_estimate_is_ignored():
@@ -301,7 +301,7 @@ def test_marker_fix_needs_an_estimate_and_respects_cooldown():
     assert det.on_marker_fix(2.0, (10.0, 0.0, 0.0)) == []
     assert det.on_marker_fix(9.0, (10.0, 0.0, 0.0)) == []     # 유예가 끝난 첫 관측 (지속 시작)
     assert kinds(det.on_marker_fix(9.7, (10.0, 0.0, 0.0))) == [
-        ActionType.PUBLISH_LOST, ActionType.SEED_POSE]
+        ActionType.PUBLISH_LOST, ActionType.SEED_POSE, ActionType.SPIN]
 
 
 def test_external_pose_reset_suppresses_marker_kidnap():
@@ -316,7 +316,7 @@ def test_external_pose_reset_suppresses_marker_kidnap():
     # 유예(cooldown 3 s)가 지나고도 불일치가 이어지면 그때는 납치다
     assert det.on_marker_fix(5.1, (30.0, 0.0, 0.0)) == []     # 지속 시작
     assert kinds(det.on_marker_fix(5.8, (30.0, 0.0, 0.0))) == [
-        ActionType.PUBLISH_LOST, ActionType.SEED_POSE]
+        ActionType.PUBLISH_LOST, ActionType.SEED_POSE, ActionType.SPIN]
 
 
 def test_marker_fix_transient_mismatch_is_not_a_kidnap():
