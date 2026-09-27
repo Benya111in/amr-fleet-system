@@ -76,6 +76,9 @@ class KidnapParams:
     reg_reject_ratio: float = 0.8      # 창 안 거부 비율이 이보다 크면 경보
     reg_window: int = 20               # 판정 창 (스캔 수)
     reg_min_samples: int = 10          # 창에 이만큼 차야 판정
+    # 마커 보정으로 LOST 를 선언하려면 정합기도 동의해야 한다: 창 안 거부 비율이 이보다 낮으면
+    # (= 정합기가 "여기 맞다") 마커 쪽 오검출로 보고 무시한다.
+    reg_marker_veto_ratio: float = 0.5
     suspect_time: float = 1.0          # [s] SUSPECT 지속 → LOST
     converge_cov: float = 0.1          # [m²] 수렴 판정 trace 상한
     converge_match: float = 0.7        # 수렴 판정 인라이어 비율 하한
@@ -334,6 +337,22 @@ class KidnapDetector:
             self._marker_mismatch_since = t
             return []
         if t - self._marker_mismatch_since < self.params.marker_fix_persist:
+            return []
+        # 스캔 정합기가 "지금 자리가 맞다" 고 하고 있으면 마커 쪽이 틀린 것이다. ArUco 오검출은
+        # 실재한다 — 통합 12 실측(reg1): 정지한 amr_05 가 36 m 밖의 마커 17 을 2.15 m 앞으로
+        # 읽어 30.32 m 어긋난 자세를 냈고, 같은 시각 정합기는 86 ok / 1 rejected (inlier 0.93)
+        # 로 멀쩡했다. 그 LOST 가 풀리지 않아 548 s 동안 작업을 205 회 거절했다 (s12 는 1873 회).
+        # 진짜 납치는 반대다 — 통합 11 reg1 에서 정합기가 0 ok / 300 rejected 를 600 s 연속 냈다.
+        # 그래서 "정합기가 동의하지 않을 때만" 마커 보정을 LOST 근거로 쓴다. 표본이 모자라면
+        # (기동 직후, 지도 없음, lost 중 정합기 정지) 예전처럼 마커를 믿는다.
+        if (len(self._reg_hist) >= self.params.reg_min_samples
+                and 1.0 - sum(self._reg_hist) / len(self._reg_hist)
+                < self.params.reg_marker_veto_ratio):
+            self.events.append(Event(
+                t, self.state.value,
+                f'marker fix {error:.2f} m 무시: 스캔 정합 수락률 '
+                f'{sum(self._reg_hist)}/{len(self._reg_hist)}'))
+            self._marker_mismatch_since = None
             return []
         self._marker_mismatch_since = None
         reason = (f'marker fix {error:.2f} m from estimate '

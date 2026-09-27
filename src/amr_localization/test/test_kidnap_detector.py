@@ -363,3 +363,31 @@ def test_scan_registration_normal_run_does_not_trigger():
         det.tick(k * 0.1)
     assert not det.lost
     assert det.state == State.TRACKING
+
+
+def test_marker_fix_is_ignored_when_scan_registration_agrees():
+    """
+    오검출 마커가 만드는 가짜 LOST 를 스캔 정합기가 막는다.
+
+    통합 12 실측(reg1): 정지한 amr_05 가 36 m 밖의 마커 17 을 "2.15 m 앞" 으로 읽어 30.32 m
+    어긋난 자세를 발행했고, 같은 시각 스캔 정합기는 86 ok / 1 rejected (inlier 0.93) 로 멀쩡했다.
+    그 LOST 가 스스로 풀리지 않아 548 s 동안 작업을 205 회 거절했다 (s12 는 1873 회).
+    진짜 납치는 반대로 정합기가 거부한다 (통합 11 reg1: 0 ok / 300 rejected, 600 s 연속).
+    """
+    det = KidnapDetector(KidnapParams(marker_fix_persist=0.2, reg_min_samples=10))
+    det.on_amcl(0.0, (26.0, -16.0, 0.0), 0.01, 0.01)
+    for k in range(20):                      # 정합기: 거의 전부 수락 = "여기 맞다"
+        det.on_scan_match(k * 0.1, True)
+    det.on_marker_fix(3.0, (9.76, 9.60, 1.17))      # 30 m 를 주장하는 오검출
+    det.on_marker_fix(3.5, (9.76, 9.60, 1.17))      # 지속 게이트도 채운다
+    assert not det.lost
+    assert any('무시' in e.reason for e in det.events)
+
+    # 같은 마커 보정이라도 정합기가 거부 중이면(진짜 납치) 그대로 LOST 를 낸다
+    det2 = KidnapDetector(KidnapParams(marker_fix_persist=0.2, reg_min_samples=10))
+    det2.on_amcl(0.0, (26.0, -16.0, 0.0), 0.01, 0.01)
+    for k in range(20):
+        det2.on_scan_match(k * 0.1, False)
+    det2.on_marker_fix(3.0, (9.76, 9.60, 1.17))
+    det2.on_marker_fix(3.5, (9.76, 9.60, 1.17))
+    assert det2.lost
