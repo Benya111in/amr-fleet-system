@@ -485,6 +485,7 @@ struct CrossRun
   double stopped_s{0.0};       // 정지(|v| < 0.05) 누적 시간 [s]
   double min_lane_offset_stopped{1e9};   // 정지 중 장애물 차선 축까지의 수직 거리 [m]
   bool contact{false};
+  bool saturated_seen{false};  // VO 가 후보를 전부 기각한 주기가 있었는가
 };
 
 // 이상 플랜트(명령 즉시 반영, 20 Hz) 폐루프: 주어진 직선 경로를 따라가다 등속 장애물을 만난다.
@@ -514,6 +515,7 @@ CrossRun crossingRun(
     out.min_clearance = std::min(out.min_clearance, gap);
     out.min_center = std::min(out.min_center, std::hypot(o.x - in.pose.x, o.y - in.pose.y));
     out.contact = out.contact || gap < 0.0;
+    out.saturated_seen = out.saturated_seen || r.vo_saturated;
     const amr_navigation::core::Projection pr =
       amr_navigation::core::projectOntoPath(path, {in.pose.x, in.pose.y}, 0, 0, &cum);
     out.max_cte = std::max(out.max_cte, std::abs(pr.cte));
@@ -958,4 +960,32 @@ TEST(Dwa, CommittedInsideTheLaneBacksOutInsteadOfStandingStill)
   EXPECT_GT(after.min_lane_offset_stopped, before.min_lane_offset_stopped + 0.3);
   // 경로를 따라 뒤로 빠지므로 수직 이탈은 거의 없다 — 명세 이탈 1 m 예산을 쓰지 않는다
   EXPECT_LT(after.max_cte, 0.5);
+}
+
+TEST(Dwa, VoSaturatedEscapeStaysInsideTheDeviationBudget)
+{
+  // VO 가 후보를 전부 기각하면 통로에서 빠져나가는 후보(escape 항이 작은 쪽)를 고른다. 그런데
+  // 그 순위는 escape 항만 보고 비용은 1e-9 동점일 때만 봐서, 비용에 실린 이탈 벌점이 통째로
+  // 빠진다 — 통로 반폭에 닿을 때까지 아무것도 말리지 않는다. 통합 08 실측 e8b 가 그 모양이었다:
+  // 그 구간만 VO 기각이 주기당 17.7 건이었고 이탈이 1.390 m 까지 갔다 (명세 4.7 상한 1.0 m,
+  // 복귀 9.66 s / 상한 5.0 s). 1.390 m 는 그 기하의 통로 반폭 1.311 m 와 같은 값이다.
+  // 여기서는 예산이 실제로 순위를 묶는지만 본다 — 작업자가 165° 로 마주 걸어와 VO 를 포화시키는
+  // 기하에서, 예산을 조이면 이탈이 줄고 그래도 접촉은 없어야 한다.
+  const auto path = straightPath(0.0, 0.0, 12.0);
+  const DynamicObstacle worker{5.30, 0.56, -0.966, -0.259, 0.25};
+  DwaConfig loose = crossingConfig();
+  loose.yield_corridor_margin = 0.7;            // 배포 설정과 같은 반폭 R_c = 1.311 m
+  loose.max_path_offset_hard = 1e9;             // 예산을 보지 않던 예전 순위
+  const CrossRun before = crossingRun(loose, path, worker, 0.8, 8.0);
+  DwaConfig capped = loose;
+  capped.max_path_offset_hard = 0.2;
+  const CrossRun after = crossingRun(capped, path, worker, 0.8, 8.0);
+  std::printf(
+    "[ info ] VO 포화 탈출: 예산 없음 이탈 %.3f m (여유 %.3f, 포화 %d), "
+    "예산 0.2 이탈 %.3f m (여유 %.3f, 포화 %d)\n",
+    before.max_cte, before.min_clearance, static_cast<int>(before.saturated_seen),
+    after.max_cte, after.min_clearance, static_cast<int>(after.saturated_seen));
+  ASSERT_TRUE(before.saturated_seen);           // 이 기하가 실제로 VO 포화를 만든다
+  EXPECT_LT(after.max_cte, before.max_cte - 0.1);   // 예산이 순위를 묶는다
+  EXPECT_GT(after.min_clearance, 0.0);              // 묶여도 접촉은 없다
 }
