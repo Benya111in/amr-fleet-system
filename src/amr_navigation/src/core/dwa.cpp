@@ -326,11 +326,13 @@ DwaResult DwaPlanner::compute(
   bool escaping = res.yield.state == YieldState::kCommitted &&
     config_.yield_escape_speed > 0.0 && res.yield.obstacle >= 0 &&
     static_cast<std::size_t>(res.yield.obstacle) < dyn.size();
+  bool in_body = false;
   if (escaping) {
     const DynamicObstacle & o0 = dyn[static_cast<std::size_t>(res.yield.obstacle)];
     const double su0 = std::max(1e-6, o0.speed());
     const double b0 = std::abs(
       -(in.pose.x - o0.x) * (o0.vy / su0) + (in.pose.y - o0.y) * (o0.vx / su0));
+    in_body = b0 < config_.robot_radius + o0.radius;
     escaping = b0 < config_.robot_radius + o0.radius + config_.yield_vacate_margin ||
       in.v_meas < config_.yield_escape_v_meas;
   }
@@ -340,7 +342,14 @@ DwaResult DwaPlanner::compute(
     res.window.v_lo = std::min(res.window.v_lo, res.window.v_hi);
     // 비켜서되 **가속하지는 않는다**: 마주 오는 장애물을 향해 빨라지는 것은 위험을 키운다.
     // 조향으로 원통에서 벗어나는 것이 목적이지 먼저 지나가려는 것이 아니다.
-    res.window.v_hi = std::min(res.window.v_hi, std::max(in.v_meas, 0.0));
+    // 다만 **몸 원통 안**(β < 반경 합)에서는 다르다. 거기서는 그대로 있는 것이 곧 접촉이고,
+    // 저속에서는 계획 지평 안에 만들 수 있는 가로 이동이 사실상 0 이라 조향할 수단조차 없다 —
+    // 08 실측 g8b/g8c 접촉 2건이 모두 원통 안에서 0.11 / 0.23 m/s 로 기어가던 중이었고, 둘 다
+    // 작업자가 정확히 180° 정면이라 후보 간 β 차이가 없어 탈출 순위도 발동하지 못했다.
+    // 원통 안에서는 창을 열어 조향 권한을 되찾게 한다. 들이받는 후보는 VO/TTC 가 그대로 막는다.
+    if (!in_body) {
+      res.window.v_hi = std::min(res.window.v_hi, std::max(in.v_meas, 0.0));
+    }
     res.window.v_hi = std::max(res.window.v_hi, res.window.v_lo);
   }
 

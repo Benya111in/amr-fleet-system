@@ -30,10 +30,13 @@ struct Corridor
 
   double alpha(double x, double y) const {return (x - ox) * ux + (y - oy) * uy;}
   double beta(double x, double y) const {return (x - ox) * nx + (y - oy) * ny;}
-  bool inside(double x, double y) const
+  bool inside(double x, double y) const {return insideRadius(x, y, R);}
+  /// 부풀린 반폭 R 은 "언제 양보를 시작할지" 를 정하는 값이다. "지금 실제로 길을 막고 있는지" 는
+  /// 몸(반경 합)으로 봐야 한다 — 두 값의 차이(corridor_margin)만큼 통로가 흔들리면 판정이 뒤집힌다.
+  bool insideRadius(double x, double y, double r) const
   {
     const double a = alpha(x, y);
-    return std::abs(beta(x, y)) <= R && a >= -R && a <= L + R;
+    return std::abs(beta(x, y)) <= r && a >= -r && a <= L + r;
   }
 };
 }  // namespace
@@ -191,9 +194,14 @@ YieldResult evaluateYield(
     // corridor_margin 0.7 m ÷ 작업자 1.0 m/s 와 정확히 같다. 그 0.70 s 가 복귀 5.02 s 를
     // 만들어 명세 4.7 상한 5.0 s 를 넘겼다. 접근에는 여유를 두고 해제는 몸 기준으로 재는
     // 비대칭이 맞다 — 여유는 "들어가도 되는가" 를 위한 것이지 "나가도 되는가" 를 위한 것이 아니다.
+    // 기준은 **장애물의 몸이 로봇을 지났는가** 다. 교차 구간의 끝(a_max)으로 재면 안 된다 —
+    // 구간 양 끝은 통로가 조금만 돌아도 크게 움직이기 때문이다 (08 실측 g8b 4번 시행: 구간
+    // 입구가 0.19 s 만에 2.07 m → 0 으로 튀었다). 로봇 위치를 장애물 진행 방향에 투영한 값은
+    // 실제 상대 위치라 진행각이 몇 도 흔들려도 몇 % 밖에 안 변한다.
+    const double r_body = std::max(0.0, c.R - cfg.corridor_margin);
     const bool committed = d_in <= 0.0 || c.inside(robot.x, robot.y);
-    if (committed && (a_max + c.R - cfg.corridor_margin) / su <= 0.0) {
-      continue;   // 장애물이 몸으로 교차 구간을 다 지났다
+    if (committed && c.alpha(robot.x, robot.y) + r_body <= 0.0) {
+      continue;   // 장애물이 몸으로 로봇을 지나갔다
     }
     if (committed) {
       if (out.state != YieldState::kCommitted || d_out > out.zone_exit) {
