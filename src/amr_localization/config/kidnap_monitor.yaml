@@ -14,6 +14,15 @@
     min_match_beams: 30           # 판정에 쓴 빔이 이보다 적으면 판정 보류 (빈 공간, 또는 미지 장애물이
                                   # 시야를 거의 다 막은 경우 — scan_map_match.match_ratio 는 지도에 없는
                                   # 물체에 막혀 일찍 끝난 빔을 분자·분모에서 뺀다)
+    # 스캔 정합기(scan_matcher_node) 거부율 — LiDAR 쪽에서 "옆 통로로 옮겨졌다"를 보는 유일한 신호.
+    # 위 match_thresh 경로는 통로를 막은 미지 장애물 앞의 거짓 LOST 를 없애려고 "지도보다 일찍 끝난
+    # 빔"을 분모에서 빼는 비대칭 지표라(scan_map_match.match_ratio), 옆 통로 이동은 거의 못 본다.
+    # 통합 11 실측 18회: LOST 235 건 중 cov 0 · jump 0 · inlier 1 뿐이고 234 건이 마커 보정이었다.
+    # 정합기 신호의 분리도: 정상 주행(6 m 벽 앞 정지 포함) 283~300/300 수락, 납치 뒤 0/300 이
+    # 600 s 연속(reg1), 복구 직후 288/300. 임계는 그 사이 어디든 되지만 여유를 크게 둔다.
+    reg_reject_ratio: 0.8         # 창 안 거부 비율이 이보다 크면 경보
+    reg_window: 20                # 판정 창 (스캔 수). 10 Hz 스캔이면 2 s
+    reg_min_samples: 10           # 창에 이만큼 차야 판정 (기동 직후·재개 직후 오경보 방지)
     inlier_dist: 0.2              # [m] 인라이어 거리 (σ_lidar 0.03 + 맵 오차 + 보간 오차 여유)
     max_beams: 180                # 일치도 계산 빔 수 (AMCL 과 같게)
     occupied_thresh: 65           # OccupancyGrid 점유 판정 값 (map_server 0.65)

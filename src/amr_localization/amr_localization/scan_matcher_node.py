@@ -5,6 +5,7 @@ scan_matcher_node: 스캔 → 정적 지도 점-대-면 정합 → map EKF 자�
   Sub  scan_filtered        sensor_msgs/LaserScan
   Sub  /map                 nav_msgs/OccupancyGrid (transient_local) — 면 점·법선을 맵당 1 회 만든다
   Sub  localization/lost    std_msgs/Bool (latched) — 위치 상실 중에는 측정을 내지 않는다
+  Pub  scan_match/accepted  std_msgs/Bool — 스캔마다 수락/거부 (납치 감지기 입력)
   TF   map → <prefix>base_footprint (스캔 시각) — 초기 추정 (map EKF 가 낸 자세)
   Pub  scan_match_pose      geometry_msgs/PoseWithCovarianceStamped (frame map, 스캔 시각)
                             → ekf_filter_node_map pose1
@@ -26,8 +27,8 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data, ReliabilityPolicy
 from rclpy.time import Time
-from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool
+from sensor_msgs.msg import LaserScan
 import tf2_ros
 
 
@@ -47,6 +48,7 @@ class ScanMatcherNode(Node):
         self.declare_parameter('scan_topic', 'scan_filtered')
         self.declare_parameter('map_topic', '/map')
         self.declare_parameter('output_topic', 'scan_match_pose')
+        self.declare_parameter('accepted_topic', 'scan_match/accepted')
         self.declare_parameter('lost_topic', 'localization/lost')
         self.declare_parameter('map_frame', 'map')
         self.declare_parameter('base_frame', 'base_footprint')
@@ -80,6 +82,12 @@ class ScanMatcherNode(Node):
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                              durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        # 스캔마다의 수락/거부. 납치 감지기가 쓴다 — 정합기는 360 빔 점-대-면 정합이라
+        # kidnap_monitor 의 match_ratio("지도 벽을 뚫은 빔"만 세는 비대칭 지표)가 못 보는
+        # "옆 통로로 6 m 옮겨진" 불일치를 잡는다 (통합 11 실측: 납치 뒤 0/300 이 600 s 연속,
+        # 복구 직후 288/300; 정상 주행은 6 m 벽 앞 정지를 포함해 283~300/300 수락).
+        self.accept_pub = self.create_publisher(
+            Bool, self.get_parameter('accepted_topic').value, 10)
         self.pub = self.create_publisher(PoseWithCovarianceStamped,
                                          self.get_parameter('output_topic').value, 10)
         self.create_subscription(OccupancyGrid, self.get_parameter('map_topic').value,
@@ -153,8 +161,10 @@ class ScanMatcherNode(Node):
             self.stats['rejected'] += 1
             key = res.reason.split(' ')[0]
             self.reasons[key] = self.reasons.get(key, 0) + 1
+            self.accept_pub.publish(Bool(data=False))
             return
         self.stats['ok'] += 1
+        self.accept_pub.publish(Bool(data=True))
         self.stats['rms'] += res.rms_residual
         self.stats['ratio'] += res.inlier_ratio
         self.stats['correction'] += math.hypot(res.pose[0] - init[0], res.pose[1] - init[1])

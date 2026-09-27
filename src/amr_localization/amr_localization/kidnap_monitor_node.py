@@ -71,6 +71,7 @@ class KidnapMonitorNode(Node):
         self.declare_parameter('amcl_pose_topic', 'amcl_pose')
         self.declare_parameter('odom_topic', 'odometry/filtered')
         self.declare_parameter('initial_pose_topic', 'initialpose')
+        self.declare_parameter('scan_match_accepted_topic', 'scan_match/accepted')
         self.declare_parameter('map_frame', 'map')
         self.declare_parameter('seed_attempts', 3)                   # 0 = 시드 없이 AMCL 전역만
         # 지도가 점대칭이라 2~3 순위 가설이 ±60 m 미러다. 1 순위와 인라이어 격차가 이보다 크면
@@ -150,6 +151,11 @@ class KidnapMonitorNode(Node):
         self.create_subscription(
             PoseWithCovarianceStamped, self.get_parameter('initial_pose_topic').value,
             self.on_initial_pose, 10)
+        # 스캔 정합기의 수락/거부 — LiDAR 쪽 유일하게 옆 통로 이동을 보는 신호 (kidnap_detector
+        # on_scan_match 주석). match_ratio 경로는 통합 11 에서 18회 중 1회만 발화했다.
+        self.create_subscription(
+            Bool, self.get_parameter('scan_match_accepted_topic').value,
+            self.on_scan_match, 10)
         self.reinit_client = self.create_client(Empty,
                                                 self.get_parameter('reinit_service').value)
         self.stop_scheduler = kd.StopUpdateScheduler(
@@ -232,6 +238,10 @@ class KidnapMonitorNode(Node):
         p = msg.pose.pose
         self.execute(self.detector.on_marker_fix(
             self.now_sec(), (p.position.x, p.position.y, yaw_of(p.orientation))))
+
+    def on_scan_match(self, msg: Bool) -> None:
+        """스캔 정합기의 스캔별 수락/거부. 창 안 거부율이 높으면 납치로 본다."""
+        self.execute(self.detector.on_scan_match(self.now_sec(), bool(msg.data)))
 
     def on_match_timer(self) -> None:
         """가장 최근 스캔의 일치도: 스캔 시각 map 자세 = 마지막 AMCL ∘ odom 상대 이동."""

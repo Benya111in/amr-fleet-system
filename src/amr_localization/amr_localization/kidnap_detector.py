@@ -65,6 +65,17 @@ class KidnapParams:
     match_thresh: float = 0.5          # 스캔-맵 인라이어 비율 하한
     match_window: int = 5              # 연속 저하 스캔 수
     min_match_beams: int = 30          # 유효 빔이 이보다 적으면 판정 보류
+    # 스캔 정합기(scan_matcher_node) 거부율 경보 — match_ratio 와는 다른 신호다. 정합기는 360 빔
+    # 점-대-면 정합의 **수렴 여부**를 보고, match_ratio 는 "지도 벽을 뚫은 빔" 비율만 본다.
+    # 후자는 통로를 막은 미지 장애물 앞의 거짓 LOST 를 없애려고 "일찍 끝난 빔"을 분모에서 빼도록
+    # 비대칭으로 만들었는데(scan_map_match.match_ratio 주석), 그 때문에 옆 통로로 6 m 옮겨졌을 때
+    # 생기는 불일치를 거의 못 본다. 통합 11 실측: LOST 235 건 중 cov 0 · jump 0 · inlier 1 건뿐이고
+    # 나머지 234 건이 전부 마커 보정이었다 — LiDAR 경로가 사실상 눈이 멀어 있었다.
+    # 정합기 신호는 분리도가 크다: 정상 주행(6 m 벽 앞 정지 포함) 283~300/300 수락,
+    # 납치 뒤 0/300 이 600 s 연속(reg1), 복구 직후 288/300 복귀.
+    reg_reject_ratio: float = 0.8      # 창 안 거부 비율이 이보다 크면 경보
+    reg_window: int = 20               # 판정 창 (스캔 수)
+    reg_min_samples: int = 10          # 창에 이만큼 차야 판정
     suspect_time: float = 1.0          # [s] SUSPECT 지속 → LOST
     converge_cov: float = 0.1          # [m²] 수렴 판정 trace 상한
     converge_match: float = 0.7        # 수렴 판정 인라이어 비율 하한
@@ -224,6 +235,9 @@ class KidnapDetector:
         self._amcl_reason = ''
         self._match_alarm = False     # 지속 경보: 스캔-맵 불일치
         self._match_reason = ''
+        self._reg_hist: List[bool] = []   # 스캔 정합기 수락/거부 최근 이력
+        self._reg_alarm = False       # 지속 경보: 정합기 거부율
+        self._reg_reason = ''
         self._alarm_reason = ''
         self._alarm_active = False
         self._suspect_since = 0.0
@@ -330,6 +344,7 @@ class KidnapDetector:
         self._reinits_done = 0
         self._converged_count = 0
         self._low_match = 0
+        self._reset_reg()
         self._last_match = None
         self._last_margin = None
         self._set_state(t, State.RECOVERING, f'LOST: {reason}')
@@ -363,6 +378,34 @@ class KidnapDetector:
             f'for {self._low_match} scans' if self._match_alarm else '')
         return self._evaluate(t, '')
 
+    def on_scan_match(self, t: float, accepted: bool) -> List[Action]:
+        """
+        스캔 정합기 한 스캔의 수락/거부. 창 안 거부 비율이 reg_reject_ratio 를 넘으면 경보.
+
+        정합기는 lost 중에는 측정을 멈추므로(scan_matcher.yaml lost_topic) "거부"와 "미발행"은
+        다르다 — 미발행은 여기 들어오지 않아 이력이 그대로 멈춘다.
+        """
+        self._reg_hist.append(bool(accepted))
+        if len(self._reg_hist) > self.params.reg_window:
+            del self._reg_hist[:-self.params.reg_window]
+        n = len(self._reg_hist)
+        if n < self.params.reg_min_samples:
+            self._reg_alarm, self._reg_reason = False, ''
+            return self._evaluate(t, '')
+        rejected = n - sum(self._reg_hist)
+        ratio = rejected / n
+        self._reg_alarm = ratio > self.params.reg_reject_ratio
+        self._reg_reason = (
+            f'scan registration rejected {rejected}/{n} '
+            f'({ratio:.2f} > {self.params.reg_reject_ratio:.2f})' if self._reg_alarm else '')
+        return self._evaluate(t, '')
+
+    def _reset_reg(self) -> None:
+        """정합기 경보 이력 초기화 (상태 전이 때 이전 구간 이력을 끌고 가지 않는다)."""
+        self._reg_hist.clear()
+        self._reg_alarm = False
+        self._reg_reason = ''
+
     def on_spin_done(self, t: float, succeeded: bool) -> List[Action]:
         """회전 동작 종료 (성공/실패/취소)."""
         self._spin_active = False
@@ -395,9 +438,9 @@ class KidnapDetector:
     # ------------------------------------------------------------------ 내부
     def _evaluate(self, t: float, transient: str) -> List[Action]:
         """경보 갱신 + 상태 전이. transient = 순간 사건(점프) 설명, 없으면 ''."""
-        self._alarm_active = self._amcl_alarm or self._match_alarm
+        self._alarm_active = self._amcl_alarm or self._match_alarm or self._reg_alarm
         self._alarm_reason = '; '.join(
-            r for r in (self._amcl_reason, self._match_reason) if r)
+            r for r in (self._amcl_reason, self._match_reason, self._reg_reason) if r)
 
         if self.state == State.TRACKING:
             if (self._alarm_active or transient) and t >= self._cooldown_until:
@@ -438,6 +481,7 @@ class KidnapDetector:
         self._reinits_done = 0
         self._converged_count = 0
         self._low_match = 0
+        self._reset_reg()
         self._last_match = None
         self._last_margin = None
         self._set_state(t, State.RECOVERING, f'LOST: {reason}')
@@ -476,6 +520,7 @@ class KidnapDetector:
         self.lost = False
         self._cooldown_until = t + self.params.cooldown
         self._low_match = 0
+        self._reset_reg()
         self._amcl_alarm = False
         self._match_alarm = False
         self._alarm_active = False
