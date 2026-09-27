@@ -133,6 +133,7 @@ void DWAController::configure(
   c.heading_lookahead_max = param(node, p + "heading_lookahead_max", 1.2);
   c.path_band = param(node, p + "path_band", 0.8);
   c.max_path_offset = param(node, p + "max_path_offset", 0.9);
+  c.max_path_offset_hard = param(node, p + "max_path_offset_hard", 0.95);
   c.off_path_band = param(node, p + "off_path_band", 1.0);
   c.path_eval_time = param(node, p + "path_eval_time", 0.8);
   c.goal_align_distance = param(node, p + "goal_align_distance", 0.08);

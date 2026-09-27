@@ -476,8 +476,15 @@ DwaResult DwaPlanner::compute(
     c.max_cte = cte_max;
     // 이탈 한계 초과 벌점: 한계는 max(d_off, 지금 로봇의 이탈) — 이미 밖이면 그 거리까지는 벌하지
     // 않아 복귀 후보가 살아남고, 한계 밖으로 더 나가는 후보만 강하게 벌한다 (단조 감소 포락선).
+    // 그 래칫에는 반드시 상한이 있어야 한다. 한계가 로봇을 끝없이 따라 올라가면 이탈을 막는
+    // 유일한 항이 영영 켜지지 않아, 남은 탈출 이득(w_e/R_c = 1.91 /m)이 통로 반폭까지 로봇을
+    // 밀어낸다 — 08 실측 e8b 의 이탈 1.39 m 가 반폭 1.31 m 와 같은 값이다. 상한에 닿으면 벌점
+    // 기울기(w_f/off_path_band = 3.0 /m)가 이득(1.91 /m)을 이겨 거기서 멈춘다. 벌하는 대상은
+    // 로봇의 지금 이탈이 아니라 후보 궤적이 예측하는 최대 이탈이라, 실제 이탈은 상한 앞에서 선다.
     if (!path.empty() && config_.max_path_offset > 0.0 && config_.off_path_band > 0.0) {
-      const double limit = std::max(config_.max_path_offset, std::abs(robot_proj.cte));
+      const double limit = std::min(
+        config_.max_path_offset_hard,
+        std::max(config_.max_path_offset, std::abs(robot_proj.cte)));
       c.terms.off_path = std::min(1.0, std::max(0.0, cte_max - limit) / config_.off_path_band);
     }
     c.terms.velocity = std::abs(v_des - c.v) / v_span;
@@ -574,6 +581,12 @@ DwaResult DwaPlanner::compute(
     // 서 있기가 최악의 선택이라는 것이 확정된 부분이다. 주행 중에는 예전 기준(정면 접근에
     // 대한 제동)을 그대로 둔다 — 단위 시험 ClosedLoopHeadOnYields.
     const bool leave_lane = escaping && esc_hi - esc_lo > config_.escape_spread_min;
+    // 다만 escape 항만으로 고르면 비용에 실린 이탈 벌점이 통째로 빠진다 — 통로 반폭(1.31 m)에
+    // 닿을 때까지 아무것도 말리지 않아 명세 4.7 의 이탈 상한(1.0 m)을 넘긴다. 08 실측 e8b 가
+    // 그 모양이었다: 그 구간만 VO 기각이 주기당 17.7 건이었고 이탈이 1.39 m 까지 갔다 (복귀
+    // 9.66 s). 예산 안에 드는 후보가 하나라도 있으면 그 안에서만 고른다. 이미 예산 밖이면
+    // 지금 이탈까지는 허용해 "더 나가지만 않는" 후보가 남는다.
+    const double dev_cap = std::max(config_.max_path_offset_hard, std::abs(robot_proj.cte));
     for (const auto & c : cands) {
       if (c.collision) {
         continue;
@@ -582,9 +595,11 @@ DwaResult DwaPlanner::compute(
         best = &c;
         continue;
       }
+      const bool c_in = c.max_cte <= dev_cap, b_in = best->max_cte <= dev_cap;
       const bool better = leave_lane ?
+        (c_in != b_in ? c_in :
         (c.terms.escape < best->terms.escape - 1e-9 ||
-        (std::abs(c.terms.escape - best->terms.escape) <= 1e-9 && c.cost < best->cost)) :
+        (std::abs(c.terms.escape - best->terms.escape) <= 1e-9 && c.cost < best->cost))) :
         (c.vo_time > best->vo_time + config_.vo_time_tie ||
         (std::abs(c.vo_time - best->vo_time) <= config_.vo_time_tie && c.cost < best->cost));
       if (better) {
