@@ -184,7 +184,17 @@ YieldResult evaluateYield(
     // 정지선을 지키려고 지금 서면 서 있는 자리가 남의 차선이다 (시나리오 08 접촉이 그 모양).
     // 먼저 빠져나가고, 그 사이 다른 장애물은 VO/TTC 가 막는다.
     // 우선순위를 못 박아 장애물 순서에 결과가 달라지지 않게 한다.
+    // 이미 통로 안(kCommitted)일 때 해제는 **몸이 지나간 시점**으로 잰다. t_out 은 통로 반폭
+    // R_c 로 재는데 거기에는 접근 판단용 여유(corridor_margin)가 들어 있어, 그걸로 해제까지
+    // 재면 장애물이 지나간 뒤 corridor_margin/|u| 만큼 더 붙잡힌다. 08 실측 f8a 1번 시행:
+    // 위협이 사라지고도(ttc inf, VO 기각 0) 0.70 s 동안 v ≈ 0.01 로 서 있었고, 그 값이
+    // corridor_margin 0.7 m ÷ 작업자 1.0 m/s 와 정확히 같다. 그 0.70 s 가 복귀 5.02 s 를
+    // 만들어 명세 4.7 상한 5.0 s 를 넘겼다. 접근에는 여유를 두고 해제는 몸 기준으로 재는
+    // 비대칭이 맞다 — 여유는 "들어가도 되는가" 를 위한 것이지 "나가도 되는가" 를 위한 것이 아니다.
     const bool committed = d_in <= 0.0 || c.inside(robot.x, robot.y);
+    if (committed && (a_max + c.R - cfg.corridor_margin) / su <= 0.0) {
+      continue;   // 장애물이 몸으로 교차 구간을 다 지났다
+    }
     if (committed) {
       if (out.state != YieldState::kCommitted || d_out > out.zone_exit) {
         out.state = YieldState::kCommitted;      // 빠져나가는 데 가장 오래 걸리는 통로를 남긴다

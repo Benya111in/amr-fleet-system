@@ -241,3 +241,22 @@ TEST(CrossingYield, DisabledOrShortPathGivesNoLimit)
       one, cumulativeLength(one), {0.0, 0.0, 0.0}, 0.0, 1.0,
       {{5.0, 5.0, 0.0, -1.0, 0.25}}, cfg).state, YieldState::kClear);
 }
+
+TEST(CrossingYield, CommittedReleasesWhenTheBodyHasPassedNotTheMargin)
+{
+  // 통로 반폭 R_c 에는 접근 판단용 여유(corridor_margin)가 들어 있다. 그 여유로 해제까지
+  // 재면 장애물이 지나간 뒤에도 corridor_margin/|u| 만큼 더 붙잡힌다. 08 실측 f8a 1번 시행:
+  // 위협이 사라지고도(ttc inf, VO 기각 0) 0.70 s 동안 v ≈ 0.01 로 서 있었고 — 그 값이
+  // corridor_margin 0.7 m ÷ 작업자 1.0 m/s 와 같다 — 복귀가 5.02 s 로 명세 4.7 상한을 넘겼다.
+  YieldConfig cfg;   // R_c = 0.361 + 0.25 + 0.50 = 1.111 m, 몸 기준 반경 합 = 0.611 m
+  const double body = cfg.robot_radius + 0.25;
+  const double rc = body + cfg.corridor_margin;
+  // 로봇은 통로 안(x = 3.0), 보행자는 경로를 가로질러 +y 로 지나간다.
+  const YieldResult mid = run({3.0, 0.4, 0.0, 1.0, 0.25}, 3.0, 0.5, cfg);
+  EXPECT_EQ(mid.state, YieldState::kCommitted);     // 아직 몸이 교차 구간에 걸쳐 있다 (0.4 < 0.611)
+  const YieldResult past = run({3.0, 0.8, 0.0, 1.0, 0.25}, 3.0, 0.5, cfg);
+  EXPECT_EQ(past.state, YieldState::kClear);        // 몸은 지났다 (0.611 < 0.8 < 1.111)
+  // 여유로 쟀다면 1.111 m 를 지날 때까지 붙잡혔다 — 1.0 m/s 에서 0.5 s 의 헛기다림이다.
+  EXPECT_LT(body, 0.8);
+  EXPECT_LT(0.8, rc);
+}

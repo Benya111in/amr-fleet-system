@@ -972,14 +972,14 @@ TEST(Dwa, VoSaturatedEscapeStaysInsideTheDeviationBudget)
   // 여기서는 예산이 실제로 순위를 묶는지만 본다 — 작업자가 165° 로 마주 걸어와 VO 를 포화시키는
   // 기하에서, 예산을 조이면 이탈이 줄고 그래도 접촉은 없어야 한다.
   const auto path = straightPath(0.0, 0.0, 12.0);
-  const DynamicObstacle worker{5.30, 0.56, -0.966, -0.259, 0.25};
+  const DynamicObstacle worker{5.298, -0.477, -0.966, 0.259, 0.25};
   DwaConfig loose = crossingConfig();
   loose.yield_corridor_margin = 0.7;            // 배포 설정과 같은 반폭 R_c = 1.311 m
   loose.max_path_offset_hard = 1e9;             // 예산을 보지 않던 예전 순위
-  const CrossRun before = crossingRun(loose, path, worker, 0.8, 8.0);
+  const CrossRun before = crossingRun(loose, path, worker, 0.8, 10.0);
   DwaConfig capped = loose;
   capped.max_path_offset_hard = 0.2;
-  const CrossRun after = crossingRun(capped, path, worker, 0.8, 8.0);
+  const CrossRun after = crossingRun(capped, path, worker, 0.8, 10.0);
   std::printf(
     "[ info ] VO 포화 탈출: 예산 없음 이탈 %.3f m (여유 %.3f, 포화 %d), "
     "예산 0.2 이탈 %.3f m (여유 %.3f, 포화 %d)\n",
