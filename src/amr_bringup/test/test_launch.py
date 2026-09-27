@@ -248,7 +248,9 @@ def test_localization_mode_and_map_reach_localization_only(prefix):
     loc = by_file(includes(ctx, lu.stack_actions(spawn.robots[:1], False, opts)),
                   'localization.launch.py')
     assert loc[0]['mode'] == 'slam' and loc[0]['map'] == '/maps/new.yaml'
-    assert lu.stack_extra_arguments('navigation', opts) == {'use_ttc_bt': 'auto'}
+    # 기본은 false — TTC 재계획은 전역 코스트맵이 일부러 빼는 동적 트랙에만 반응해서
+    # 자기를 부른 장애물을 보지 못한 채 경로를 다시 뿌리내린다 (launch_utils 주석, 08 실측 h8a t0).
+    assert lu.stack_extra_arguments('navigation', opts) == {'use_ttc_bt': 'false'}
     assert lu.stack_extra_arguments('perception', opts) == {}
     # 부모 범위 launch 인자는 포함한 런치에 그대로 보인다 → 스택 런치의 인자 이름(map, mode …)을 선언하면
     # 그 기본값을 '' 로 가린다 (실측: map_server 가 yaml_filename 없이 떴다)
