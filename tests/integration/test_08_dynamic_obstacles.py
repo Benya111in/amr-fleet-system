@@ -229,7 +229,8 @@ class TestDynamicObstacles(cases.ProbeCase):
         return [math.hypot(s.x - track[-1].x, s.y - track[-1].y), math.hypot(s.x - gx, s.y - gy)]
 
     def _dump_trial_stats(self, trial: int, w0: float) -> None:
-        """접촉이 난 시행의 제어 이력 전체 (양보 상태가 언제 committed 로 바뀌었는지)."""
+        """실패한 시행(접촉 또는 명세 초과 이탈)의 제어 이력 전체 — 양보 상태가 언제
+        committed 로 바뀌었고 그때 이탈이 어디까지 갔는지."""
         gt = self.gt.messages(w0)
         if len(gt) < 2:
             return
@@ -361,13 +362,16 @@ class TestDynamicObstacles(cases.ProbeCase):
                              for ev, v, a in zip(mine, speeds, attrib)]
             if mine:
                 self.ctx.record.write_csv('contacts.csv', CONTACT_COLUMNS, contact_rows)
-                self._dump_trial_stats(trial, w0)
             devs = [worldmap.polyline_distance(path, s.x, s.y) if len(path) else math.nan
                     for s in track]
             max_dev = max([d for d in devs if math.isfinite(d)], default=math.nan)
             eps = metrics.deviation_episodes([s.t for s in track], devs, DEV_OUT_M, DEV_BACK_M)
             t_last = track[-1].t if track else t0
             ret = max([e.return_time(t_last) for e in eps], default=0.0)
+            # 접촉만이 아니라 명세를 넘긴 이탈도 덤프한다. 접촉이 0 이 된 뒤로 실패가 이탈
+            # 쪽으로 옮겨 갔는데, 접촉 조건만 걸려 있어 정작 실패한 시행의 기록이 없었다.
+            if mine or (math.isfinite(max_dev) and max_dev > DEVIATION_MAX) or ret > RETURN_MAX_S:
+                self._dump_trial_stats(trial, w0)
             eps_all += [e.returned and e.return_time(t_last) <= RETURN_MAX_S for e in eps]
             worst_dev = max(worst_dev, max_dev if math.isfinite(max_dev) else math.inf)
             worst_return = max(worst_return, ret if all(e.returned for e in eps) else math.inf)
