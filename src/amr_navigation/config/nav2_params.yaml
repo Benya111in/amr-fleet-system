@@ -198,7 +198,13 @@ controller_server:
       recenter_max_shift: 0.10         # [m] 탐색 폭 = 최대 이동 (0.60 m 통로 측면 여유)
       recenter_smooth: 4               # 이동량 이동평균 반폭 [경로 점] (0.05 m 간격 → ±0.2 m)
       recenter_goal_keep: 0.5          # [m] 목표에서 이 거리 안은 옮기지 않는다
-      obstacle_radius: 0.25            # [m] 트랙 덮개 반경 (TrackedObstacle 에 반경 필드 없음)
+      obstacle_radius: 0.30            # [m] 트랙 덮개 반경 (TrackedObstacle 에 반경 필드가 없어
+                                       # 여기서 준다). 0.25 는 추정값이었고 **실제와 5 cm 달랐다** —
+                                       # 월드의 사람 액터는 반지름 0.30 (amr_simulation
+                                       # dynamic_obstacles.yaml actor_radius), 충돌 감시도 0.30 을
+                                       # 쓴다. 그래서 DWA 가 "몸 원통 밖" 이라고 믿는 자리가 실제로는
+                                       # 5 cm 안이었다. 08 접촉 4건의 침투가 3.2 / 7.6 / 8.3 / 16.8 mm
+                                       # 로 전부 그 오차 안에 들어간다 (j8c t6·t21, reg1 t12·t13).
       track_timeout: 0.5               # [s] 트랙 메시지 유효 시간
       yield_velocity_tau: 0.5          # [s] 통로 예측용 속도의 지수 평활 시간 상수 (0 = 끔).
                                        # VO·TTC 는 원시 속도를 그대로 쓴다 — 즉각 회피를 늦추면
