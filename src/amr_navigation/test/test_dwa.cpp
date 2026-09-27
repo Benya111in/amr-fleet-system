@@ -453,17 +453,24 @@ TEST(Dwa, ClosedLoopHeadOnYields)
   // 위치가 안 변해 진행선까지 거리가 그대로다).
   // 지금은 원통 안에 있으면 속도가 남아 있을 때 조향으로 벗어난다. 멈추던 시절 최소 중심 거리는
   // 3.0 m 출발 0.256 m / 2.0 m 출발 0.158 m 였다.
-  // 가속은 여전히 금지한다 — 마주 오는 장애물을 향해 빨라지면 위험이 커진다.
-  const double before[] = {0.256, 0.158};
+  // 가속은 **몸 원통 밖에서만** 금지한다. 원통 안에서까지 금지하면 저속으로 갇혀 조향할
+  // 수단이 없어진다 — 08 실측 g8b/g8c 접촉 2건이 모두 원통 안 0.11 / 0.23 m/s 였고, 둘 다
+  // 작업자가 정확히 180° 정면이라 후보 간 β 차이가 없어 탈출 순위조차 발동하지 못했다.
+  // 원통 안에서 창을 열면 여기 정면 여유가 0.473 → 0.727 m 로 늘고, 들이받는 후보는 VO/TTC 가
+  // 그대로 막는다. 사용자 판단(2026-09-27): 세 판정이 상충하면 접촉 0 이 최우선이다.
+  const double before[] = {0.256, 0.158};   // 멈추던 시절
+  const double capped[] = {0.473, 0.281};   // 원통 안에서도 가속을 막던 시절
   int idx = 0;
   for (const double d0 : {3.0, 2.0}) {
     const LoopResult r = closedLoop({d0, 0.0, -1.0, 0.0, 0.25}, 0.8, 3.0);
     std::printf(
-      "[ info ] head-on from %.1f m: min centre %.3f m (멈추던 시절 %.3f), v at closest %.2f, "
-      "v max %.2f\n", d0, r.min_center, before[idx], r.v_at_closest, r.v_max);
+      "[ info ] head-on from %.1f m: min centre %.3f m (멈추던 시절 %.3f, 가속 막던 시절 %.3f), "
+      "v at closest %.2f, v max %.2f\n", d0, r.min_center, before[idx], capped[idx],
+      r.v_at_closest, r.v_max);
     EXPECT_TRUE(r.saturated_seen);
-    EXPECT_LE(r.v_max, 0.8 + 1e-9);                    // 가속하지 않는다
+    EXPECT_LE(r.v_max, 1.0 + 1e-9);                    // 공칭 상한을 넘지는 않는다
     EXPECT_GT(r.min_center, before[idx] + 0.1);        // 멈추던 시절보다 확실히 벌린다
+    EXPECT_GE(r.min_center, capped[idx] - 1e-3);       // 가속을 막던 시절보다 나쁘지 않다
     ++idx;
   }
   // 옆으로 0.7 m 비껴 오는 정면 장애물: 감속·회피로 접촉 없이 지나간다
@@ -978,11 +985,11 @@ TEST(Dwa, VoSaturatedEscapeStaysInsideTheDeviationBudget)
   loose.max_path_offset_hard = 1e9;             // 예산을 보지 않던 예전 순위
   const CrossRun before = crossingRun(loose, path, worker, 0.8, 10.0);
   DwaConfig capped = loose;
-  capped.max_path_offset_hard = 0.2;
+  capped.max_path_offset_hard = 0.12;
   const CrossRun after = crossingRun(capped, path, worker, 0.8, 10.0);
   std::printf(
     "[ info ] VO 포화 탈출: 예산 없음 이탈 %.3f m (여유 %.3f, 포화 %d), "
-    "예산 0.2 이탈 %.3f m (여유 %.3f, 포화 %d)\n",
+    "예산 0.12 이탈 %.3f m (여유 %.3f, 포화 %d)\n",
     before.max_cte, before.min_clearance, static_cast<int>(before.saturated_seen),
     after.max_cte, after.min_clearance, static_cast<int>(after.saturated_seen));
   ASSERT_TRUE(before.saturated_seen);           // 이 기하가 실제로 VO 포화를 만든다
