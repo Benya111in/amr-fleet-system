@@ -190,6 +190,22 @@ DockingServerNode::DockingServerNode(const rclcpp::NodeOptions & options)
     "localization/marker_fix", rclcpp::QoS(10));
   preferred_id_pub_ = create_publisher<std_msgs::msg::Int32>(
     "perception/aruco/preferred_id", rclcpp::QoS(1).reliable().transient_local());
+  // id 는 **공분산(=관측 원천) 보다 먼저 등록한다.** 검출기는 자세 → id → 공분산 순으로 내지만,
+  // 단일 스레드 실행기는 한 주기 안에서 **등록 순서**로 콜백을 돌린다. id 를 뒤에 등록하면 같은
+  // 프레임의 id 가 관측보다 늦게 처리돼, 관측 시점의 last_marker_id_ 가 직전 프레임 것이 된다.
+  // 평소에는 마커가 하나라 같은 값이지만, 마커가 공백 뒤 다시 잡히는 **첫 프레임**에서는 id 가
+  // 공백 길이만큼 오래돼 wrongMarker() 의 나이 검사에 걸리고 — 그 분기는 확인을 생략하므로 —
+  // id 검사가 통째로 꺼진 채 관측이 통과한다. 08/10 로그에 공백 길이와 같은 경고가 남는다
+  // (w10 14.32 s, a10 12.45 s, reg1 32.37 s). reg1 가림 시험에서는 그렇게 통과한 관측이
+  // 위치 5.03 m / 각도 74.3° 였다 — 엉뚱한 마커를 도크 마커로 채택할 수 있는 경로다.
+  // 나이 검사 자체는 그대로 둔다: 검출기가 id 발행을 아예 멈춘 구성에서 관측을 전부 버리면
+  // 도킹이 3 시도를 소진한다 (회귀 시험 StaleMarkerIdSkipsTheIdCheckInsteadOfDroppingObservations).
+  marker_id_sub_ = create_subscription<std_msgs::msg::Int32>(
+    "perception/dock_marker_id", rclcpp::QoS(10),
+    [this](const std_msgs::msg::Int32::SharedPtr msg) {
+      last_marker_id_ = msg->data;
+      last_marker_id_time_ = now().seconds();
+    });
   // 마커 관측의 원천은 공분산 토픽이다: 같은 메시지에 자세와 모호성(회전 공분산)이 함께 들어
   // 있어 둘을 맞출 필요가 없다. 자세만 있는 토픽과 따로 받으면 도착 순서가 보장되지 않아,
   // 앞 프레임의 공분산을 이 프레임에 쓰게 된다 (통합 10 실측: "yaw 분산 0.0000 > 0.0500" 처럼
@@ -209,14 +225,6 @@ DockingServerNode::DockingServerNode(const rclcpp::NodeOptions & options)
   marker_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
     "perception/dock_marker_pose", rclcpp::SensorDataQoS(),
     std::bind(&DockingServerNode::onMarker, this, std::placeholders::_1));
-  // 검출기는 자세 다음에 id 를 낸다 → 자세가 올 때의 최근 id 는 직전 프레임 것
-  // (한 마커만 보이면 같다)
-  marker_id_sub_ = create_subscription<std_msgs::msg::Int32>(
-    "perception/dock_marker_id", rclcpp::QoS(10),
-    [this](const std_msgs::msg::Int32::SharedPtr msg) {
-      last_marker_id_ = msg->data;
-      last_marker_id_time_ = now().seconds();
-    });
   if (!detector_service_.empty()) {
     detector_client_ = create_client<std_srvs::srv::SetBool>(detector_service_);
   }

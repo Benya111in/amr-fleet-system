@@ -69,6 +69,8 @@ public:
     pub_ = node_->create_publisher<geometry_msgs::msg::PoseStamped>(
       "perception/dock_marker_pose", rclcpp::SensorDataQoS());
     id_pub_ = node_->create_publisher<std_msgs::msg::Int32>("perception/dock_marker_id", 10);
+    cov_pub_ = node_->create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>(
+      "perception/dock_marker_pose_cov", rclcpp::SensorDataQoS());
     sub_ = node_->create_subscription<geometry_msgs::msg::Twist>(
       "cmd_vel_nav", rclcpp::QoS(10), [this](const geometry_msgs::msg::Twist::SharedPtr msg) {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -114,6 +116,13 @@ public:
       id.data = marker_id;
       id_pub_->publish(id);
     }
+    if (publish_cov) {      // 그 다음 공분산 — 배포 검출기와 같은 순서 (자세 → id → 공분산)
+      geometry_msgs::msg::PoseWithCovarianceStamped c;
+      c.header = msg.header;
+      c.pose.pose = msg.pose;
+      c.pose.covariance[35] = 1e-4;
+      cov_pub_->publish(c);
+    }
   }
 
   double positionError()
@@ -146,6 +155,7 @@ public:
 
   std::atomic<bool> visible{true};
   std::atomic<int> marker_id{-1};   ///< −1 = id 를 내지 않음
+  std::atomic<bool> publish_cov{false};   ///< 배포 검출기처럼 공분산 토픽도 낸다
 
 private:
   rclcpp::Node::SharedPtr node_;
@@ -158,6 +168,7 @@ private:
   int cmds_{0};
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pub_;
   rclcpp::Publisher<std_msgs::msg::Int32>::SharedPtr id_pub_;
+  rclcpp::Publisher<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr cov_pub_;
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr sub_;
   rclcpp::TimerBase::SharedPtr step_timer_;
   rclcpp::TimerBase::SharedPtr obs_timer_;
