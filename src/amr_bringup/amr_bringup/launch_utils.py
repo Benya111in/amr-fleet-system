@@ -91,10 +91,21 @@ def common_arguments() -> List[DeclareLaunchArgument]:
         DeclareLaunchArgument('localization_mode', default_value='localization',
                               description='localization 스택 mode (localization | slam | odom). '
                                           'slam 은 매핑 — 루트 map_server·AMCL 대신 slam_toolbox'),
-        # auto = amr_navigation 기본 (TTC 재계획 BT). 한때 TTC BT 가 BT tick 마다 재계획하는 결함
-        # (RateController 가 ReactiveFallback 아래서 halt 됨) 때문에 false 로 우회했으나 amr_navigation 이
-        # 구조를 고쳤다 (Gazebo ComputePathToPose 41 → 0.25 회/s, costmap.md). false 는 TTC 조건 없는 BT
-        DeclareLaunchArgument('nav_ttc_bt', default_value='auto',
+        # false = TTC 조건 없는 BT. 한때 TTC BT 가 BT tick 마다 재계획하는 결함(RateController 가
+        # ReactiveFallback 아래서 halt 됨) 때문에 false 로 우회했다가, 구조를 고친 뒤 auto 로 되돌렸었다
+        # (Gazebo ComputePathToPose 41 → 0.25 회/s, costmap.md). 지금 다시 false 인 이유는 다르다 —
+        # **그 재계획은 구조적으로 도움이 될 수 없다.** 조건 IsTTCBelowThreshold 는 only_dynamic=true 라
+        # 동적 트랙에만 반응하는데, 전역 코스트맵은 그 동적 트랙을 일부러 뺀다 (costmap_scan_filter
+        # exclude_dynamic: True, "지나가는 사람·차량은 지역 계획기가 피하고 전역 경로는 뒤집히지 않게").
+        # 즉 A* 는 자기를 부른 사람을 보지 못한 채 다시 계획한다. 할 수 있는 일은 비껴난 현재 자세에서
+        # 경로를 다시 뿌리내리는 것뿐이고, 그러면 원경로와 목표에서만 만나는 다른 길이 나온다.
+        # 08 실측 h8a 시행 0: 목표 7.1 s 뒤 TTC 재계획 1회 → 로봇은 그 새 경로를 따라갔는데,
+        # 하네스는 시행의 첫 계획을 기준으로 재므로(test_08 first_plan) 1.913 m 가 "이탈"로 기록됐다.
+        # 그 구간 내내 양보 clear · VO 기각 0 · 충돌 후보 0 · TTC ∞ 였고, 복귀 3.3 s 동안 로봇은
+        # 총 −2.4° 만 회전했다 — 기동이 아니라 경로가 바뀐 것이다. 작업자와 최소 거리는 1.017 m.
+        # 동적 장애물 회피는 설계대로 지역 계획기(DWA VO/TTC/양보)가 맡는다. 1 Hz IsPathValid
+        # 재계획(경로가 실제로 막혔을 때)은 그대로 살아 있다.
+        DeclareLaunchArgument('nav_ttc_bt', default_value='false',
                               description='navigation.launch.py use_ttc_bt (auto | true | false)'),
         # 로봇 스택을 로봇마다 이만큼 늦춰 띄운다 (stack_actions 주석: 5대 동시 기동 실패)
         DeclareLaunchArgument('stack_stagger_s', default_value='6.0',
@@ -130,7 +141,7 @@ class Options:
     dashboard_port: str = ''
     localization_mode: str = 'localization'
     map_yaml: str = ''
-    nav_ttc_bt: str = 'auto'
+    nav_ttc_bt: str = 'false'
     stack_stagger_s: float = 6.0
     lifecycle_watchdog_grace: float = 90.0
 
@@ -154,7 +165,7 @@ def read_options(context: LaunchContext, entry: str) -> Options:
                    dashboard_port=arg('dashboard_port').strip(),
                    localization_mode=arg('localization_mode').strip() or 'localization',
                    map_yaml=arg('map_yaml').strip(),
-                   nav_ttc_bt=arg('nav_ttc_bt').strip().lower() or 'auto',
+                   nav_ttc_bt=arg('nav_ttc_bt').strip().lower() or 'false',
                    stack_stagger_s=float(arg('stack_stagger_s') or 0.0),
                    lifecycle_watchdog_grace=float(arg('lifecycle_watchdog_grace') or 0.0))
 
@@ -238,7 +249,8 @@ def stack_extra_arguments(label: str, opts: Options) -> Dict[str, str]:
     """
     스택 하나에만 주는 인자 (다른 스택에 새지 않게).
 
-    localization: mode(slam 매핑)·map. navigation: use_ttc_bt (nav_ttc_bt 인자, 기본 auto).
+    localization: mode(slam 매핑)·map. navigation: use_ttc_bt (nav_ttc_bt 인자, 기본 false
+    — 이유는 위 DeclareLaunchArgument 주석).
     """
     if label == 'navigation':
         return {'use_ttc_bt': opts.nav_ttc_bt}
