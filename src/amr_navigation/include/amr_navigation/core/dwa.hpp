@@ -137,6 +137,9 @@ struct DwaConfig
   double yield_escape_speed{0.25};      // [m/s] kCommitted 에서 허용하는 후진 속도 (0 = 끔)
   double yield_escape_drift{0.15};      // [m] 이탈이 지금보다 이만큼 넘게 늘면 이득 없음
   double yield_escape_v_meas{0.05};
+  /// [m/s] 몸 원통 안에서 "움직이는 후보" 로 치는 하한. 이보다 느린 후보는 제자리 회전과 같아
+  /// β 를 바꾸지 못하므로 VO 포화 시 선택에서 뺀다 (움직이는 비충돌 후보가 있을 때만).
+  double escape_min_speed{0.05};
   /// VO 포화 시 "통로에서 빠져나가는 후보" 기준을 쓰려면 후보 간 escape 항 차이가 이보다 커야
   /// 한다 (= 통로 반폭의 이만큼을 실제로 벌 수 있어야 한다). 정면 접근은 통로 축이 진행선과
   /// 같아 경로를 따라 움직여도 축까지의 거리가 안 변하고, 남는 차이는 이탈 허용치

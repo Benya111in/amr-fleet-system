@@ -596,7 +596,29 @@ DwaResult DwaPlanner::compute(
     // 9.66 s). 예산 안에 드는 후보가 하나라도 있으면 그 안에서만 고른다. 이미 예산 밖이면
     // 지금 이탈까지는 허용해 "더 나가지만 않는" 후보가 남는다.
     const double dev_cap = std::max(config_.max_path_offset_hard, std::abs(robot_proj.cte));
+    // 몸 원통 안에서는 **순수 제자리 회전을 고르지 않는다.** 차동 구동은 회전으로 위치가 변하지
+    // 않아 장애물 진행선까지의 거리 β 가 그대로다 — 서 있는 것과 똑같고, 통로 안에서 서 있는
+    // 것이 바로 접촉 기제다. 그런데 VO 포화의 기본 기준("VO 에 가장 늦게 들어가는 후보")은
+    // 정확히 그 정지·회전 후보를 뽑는다. 정면 기하에서는 후보 간 β 차이가 없어 탈출 순위
+    // (leave_lane)도 발동하지 못하므로 이 경로로 빠진다.
+    // 08 실측 reg1: 접촉 2건이 모두 VO 포화 중 v = 0.000 · w = +0.4~1.0 의 순수 제자리 회전이었다
+    // (시행 12 234.4~235.4 s, 시행 13 252.3~252.9 s, 둘 다 ttc 0.000 · committed · 원통 안).
+    // 과거 접촉 51/52 도 같은 모양이었다. 움직이는 비충돌 후보가 하나라도 있으면 그 안에서 고른다
+    // — 충돌 후보는 어차피 제외되므로 장애물로 들어가는 선택이 되지는 않는다.
+    bool has_moving = false;
+    if (in_body) {
+      for (const auto & c : cands) {
+        if (!c.collision && std::abs(c.v) >= config_.escape_min_speed) {
+          has_moving = true;
+          break;
+        }
+      }
+    }
+    const bool drop_spin = in_body && has_moving;
     for (const auto & c : cands) {
+      if (drop_spin && std::abs(c.v) < config_.escape_min_speed) {
+        continue;
+      }
       if (c.collision) {
         continue;
       }
