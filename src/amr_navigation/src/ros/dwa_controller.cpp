@@ -158,6 +158,7 @@ void DWAController::configure(
   c.yield_escape_speed = param(node, p + "yield_escape_speed", 0.25);
   c.yield_escape_drift = param(node, p + "yield_escape_drift", 0.15);
   c.yield_escape_v_meas = param(node, p + "yield_escape_v_meas", 0.05);
+  c.escape_min_speed = param(node, p + "escape_min_speed", 0.05);
   c.recenter_narrow = param(node, p + "recenter_narrow", true);
   c.recenter_min_cost = param(node, p + "recenter_min_cost", 100.0);
   c.recenter_max_shift = param(node, p + "recenter_max_shift", 0.10);

@@ -493,6 +493,7 @@ struct CrossRun
   double min_lane_offset_stopped{1e9};   // 정지 중 장애물 차선 축까지의 수직 거리 [m]
   bool contact{false};
   bool saturated_seen{false};  // VO 가 후보를 전부 기각한 주기가 있었는가
+  double spin_in_body_s{0.0};  // 몸 원통 안에서 순수 제자리 회전(|v|<0.05, |w|>0.1)한 시간 [s]
 };
 
 // 이상 플랜트(명령 즉시 반영, 20 Hz) 폐루프: 주어진 직선 경로를 따라가다 등속 장애물을 만난다.
@@ -523,6 +524,11 @@ CrossRun crossingRun(
     out.min_center = std::min(out.min_center, std::hypot(o.x - in.pose.x, o.y - in.pose.y));
     out.contact = out.contact || gap < 0.0;
     out.saturated_seen = out.saturated_seen || r.vo_saturated;
+    if (std::abs(r.v) < 0.05 && std::abs(r.w) > 0.1 &&
+      std::hypot(in.pose.x - o.x, in.pose.y - o.y) < cfg.robot_radius + o.radius)
+    {
+      out.spin_in_body_s += 0.05;
+    }
     const amr_navigation::core::Projection pr =
       amr_navigation::core::projectOntoPath(path, {in.pose.x, in.pose.y}, 0, 0, &cum);
     out.max_cte = std::max(out.max_cte, std::abs(pr.cte));
@@ -995,4 +1001,33 @@ TEST(Dwa, VoSaturatedEscapeStaysInsideTheDeviationBudget)
   ASSERT_TRUE(before.saturated_seen);           // 이 기하가 실제로 VO 포화를 만든다
   EXPECT_LT(after.max_cte, before.max_cte - 0.1);   // 예산이 순위를 묶는다
   EXPECT_GT(after.min_clearance, 0.0);              // 묶여도 접촉은 없다
+}
+
+TEST(Dwa, InsideTheBodyCylinderDoesNotPickAPureSpin)
+{
+  // 차동 구동은 제자리 회전으로 위치가 변하지 않는다 — 장애물 진행선까지의 거리 β 가 그대로라
+  // 몸 원통 안에서 도는 것은 서 있는 것과 같다. 그런데 VO 포화의 기본 기준("VO 에 가장 늦게
+  // 들어가는 후보")은 정확히 그 후보를 뽑고, 정면 기하에서는 후보 간 β 차이가 없어 탈출
+  // 순위(leave_lane)도 발동하지 못한다. 08 실측 reg1: 접촉 2건이 모두 VO 포화 중
+  // v = 0.000 · w = +0.4~1.0 의 순수 제자리 회전이었다 (시행 12 234.4~235.4 s, 시행 13
+  // 252.3~252.9 s, 둘 다 ttc 0.000 · committed · 원통 안). 과거 접촉 51/52 도 같은 모양이다.
+  // 그 두 접촉의 침투는 3.2 mm 와 8.3 mm 였으므로 수 cm 의 여유가 곧 접촉 여부를 가른다.
+  const auto path = straightPath(0.0, 0.0, 12.0);
+  DwaConfig cfg = crossingConfig();
+  cfg.yield_corridor_margin = 0.7;              // 배포 설정과 같은 반폭
+  DwaConfig spun = cfg;
+  spun.escape_min_speed = 0.0;                  // 제자리 회전을 허용하던 예전 동작
+  // 172°·목표 간격 0.15 m: 예전에는 스쳤고(−0.008) 지금은 스치지 않는다
+  const double ux = std::cos(172.0 * M_PI / 180.0), uy = std::sin(172.0 * M_PI / 180.0);
+  const DynamicObstacle grazing{0.8 * 3.0 - ux * 3.0, 0.15 - uy * 3.0, ux, uy, 0.25};
+  const CrossRun before = crossingRun(spun, path, grazing, 0.8, 10.0);
+  const CrossRun after = crossingRun(cfg, path, grazing, 0.8, 10.0);
+  std::printf(
+    "[ info ] 원통 안 제자리 회전 배제: 전 여유 %+.3f m (회전 %.2f s, 포화 %d), 후 여유 %+.3f m\n",
+    before.min_clearance, before.spin_in_body_s, static_cast<int>(before.saturated_seen),
+    after.min_clearance);
+  ASSERT_TRUE(before.saturated_seen);           // 이 기하가 실제로 VO 를 포화시킨다
+  EXPECT_GT(before.spin_in_body_s, 0.0);        // 예전에는 원통 안에서 제자리 회전을 골랐다
+  EXPECT_LT(before.min_clearance, 0.0);         // 그래서 스쳤다
+  EXPECT_GT(after.min_clearance, 0.0);          // 이제는 스치지 않는다
 }
