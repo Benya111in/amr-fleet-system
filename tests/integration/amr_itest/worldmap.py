@@ -317,7 +317,13 @@ def register(points: np.ndarray, shapes: Sequence[Shape], resolution: float = 0.
         return Registration(math.nan, math.nan, math.nan, math.inf, math.inf, math.inf, 0)
     if len(pts) > max_points:
         pts = pts[np.random.default_rng(0).choice(len(pts), max_points, replace=False)]
-    x0, y0 = pts.min(axis=0) - margin
+    # 참값 격자의 원점은 **월드 좌표 격자에 스냅**한다. 예전에는 pts.min() − margin 을 그대로
+    # 써서, 참값 래스터의 부셀 위상이 SLAM 지도 원점(실행마다 −30.345 ~ −30.374 로 다르다)에
+    # 끌려 무작위로 정해졌다. 참값은 월드 좌표인데 그 이산화가 측정 대상에 의존한 것이다.
+    # 그 결과 **같은 지도라도 위상에 따라 t 가 ≈ 4 cm 흔들린다** (저장된 지도 6개에 위상 16종을
+    # 넣어 확인: itest 3.56~7.74, vworld 3.62~8.09, w38 1.28~5.69 cm). 판정 기준이 5 cm 라
+    # 이 인공물 하나가 통과/실패를 갈랐다 (vworld 의 t 실패 7.12 cm 는 정확 거리장으로 5.79).
+    x0, y0 = np.floor((pts.min(axis=0) - margin) / resolution) * resolution
     x1, y1 = pts.max(axis=0) + margin
     w = int(math.ceil((x1 - x0) / resolution))
     h = int(math.ceil((y1 - y0) / resolution))
