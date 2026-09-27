@@ -317,16 +317,31 @@ DwaResult DwaPlanner::compute(
   // 이미 서 있거나 뒤로 빠지는 중일 때만 연다. 정상 주행 중에는 건드리지 않는다 — 연속 운용(14)
   // 실측: 주행 중에도 열어 두었더니 후진↔전진이 되풀이되어 "Failed to make progress" 58 건과
   // 작업 시간 초과 1 건이 났다 (같은 구성의 앞 실행은 0 건).
+  // 비켜서야 하는가: 장애물이 지나갈 원통(반경 합) 안에 로봇이 있으면, 그대로 있으면 반드시
+  // 스친다. 08 실측: 접촉 51/52 가 β < 0.611 m (로봇 0.361 + 사람 0.25) 였고, 접촉 직전 0.8 s
+  // 동안 로봇은 제자리 회전만 했다 (v 0.000, w 0.5~0.74) — 차동 구동은 회전으로 위치가 변하지
+  // 않으므로 β 가 그대로다. 예전에는 "이미 멈춤(v_meas < 0.05)" 일 때만 탈출을 켰는데, 그때는
+  // 동적 창이 한 주기에 −0.05 m/s 밖에 못 내 계획 지평 안에서 만들 수 있는 가로 이동이 사실상
+  // 0 이다. 즉 비켜야 할 때는 이미 비킬 수 없었다. 속도가 남아 있을 때 켠다.
   bool escaping = res.yield.state == YieldState::kCommitted &&
     config_.yield_escape_speed > 0.0 && res.yield.obstacle >= 0 &&
-    static_cast<std::size_t>(res.yield.obstacle) < dyn.size() &&
-    in.v_meas < config_.yield_escape_v_meas;
-  // (각도 조건은 두지 않는다: 08 경로는 작업자 진행 방향과 26° 라 |cos| 0.9 로 걸러졌고, 실제로
-  //  정지한 채 통로 안에서 접촉이 났다. 정면 접근은 "정지·후진 중" 조건과 VO 가 함께 막는다.)
+    static_cast<std::size_t>(res.yield.obstacle) < dyn.size();
+  if (escaping) {
+    const DynamicObstacle & o0 = dyn[static_cast<std::size_t>(res.yield.obstacle)];
+    const double su0 = std::max(1e-6, o0.speed());
+    const double b0 = std::abs(
+      -(in.pose.x - o0.x) * (o0.vy / su0) + (in.pose.y - o0.y) * (o0.vx / su0));
+    escaping = b0 < config_.robot_radius + o0.radius + config_.yield_vacate_margin ||
+      in.v_meas < config_.yield_escape_v_meas;
+  }
   if (escaping) {
     res.window.v_lo = std::max(
       -config_.yield_escape_speed, v_c - L.decel_lim_x * config_.control_period);
     res.window.v_lo = std::min(res.window.v_lo, res.window.v_hi);
+    // 비켜서되 **가속하지는 않는다**: 마주 오는 장애물을 향해 빨라지는 것은 위험을 키운다.
+    // 조향으로 원통에서 벗어나는 것이 목적이지 먼저 지나가려는 것이 아니다.
+    res.window.v_hi = std::min(res.window.v_hi, std::max(in.v_meas, 0.0));
+    res.window.v_hi = std::max(res.window.v_hi, res.window.v_lo);
   }
 
   // 목표 속도: 접근 감속 + 현재 헤딩 오차가 크면 감속 (경로가 뒤에 있으면 제자리 회전 유도)

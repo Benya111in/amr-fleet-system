@@ -445,17 +445,26 @@ TEST(Dwa, ClosedLoopCrossingKeepsVoRadius)
 
 TEST(Dwa, ClosedLoopHeadOnYields)
 {
-  // 정면 −1 m/s 로 마주 오는 장애물은 후진 없이(min_vel_x 0) 피할 수 없다
-  // (장애물이 비키지 않으면 접촉).
-  // 요구: 가속하지 않고, 장애물이 가까워지기 전에 멈춰 선다 (접근 속도 = 장애물 속도뿐).
+  // 정면으로 마주 오는 장애물 앞에서 **멈추지 않고 비켜선다**. 예전 요구는 "가속하지 말고 멈춰
+  // 선다" 였고 주석도 "후진 없이는 피할 수 없다 (장애물이 비키지 않으면 접촉)" 이라고 적어
+  // 두었지만, 그 전제(min_vel_x 0)는 통로 이탈 후진이 생기면서 깨졌다. 그리고 멈추는 정책으로는
+  // 접촉을 못 피한다 — 통합 08 실측: 접촉 51/52 가 장애물 진행선에서 반경 합(0.611 m) 안에
+  // 서 있던 경우였고, 접촉 직전 0.8 s 동안 로봇은 제자리 회전만 했다 (차동 구동은 회전으로
+  // 위치가 안 변해 진행선까지 거리가 그대로다).
+  // 지금은 원통 안에 있으면 속도가 남아 있을 때 조향으로 벗어난다. 멈추던 시절 최소 중심 거리는
+  // 3.0 m 출발 0.256 m / 2.0 m 출발 0.158 m 였다.
+  // 가속은 여전히 금지한다 — 마주 오는 장애물을 향해 빨라지면 위험이 커진다.
+  const double before[] = {0.256, 0.158};
+  int idx = 0;
   for (const double d0 : {3.0, 2.0}) {
     const LoopResult r = closedLoop({d0, 0.0, -1.0, 0.0, 0.25}, 0.8, 3.0);
     std::printf(
-      "[ info ] head-on from %.1f m: min centre %.3f m, v at closest %.2f, v max %.2f\n", d0,
-      r.min_center, r.v_at_closest, r.v_max);
+      "[ info ] head-on from %.1f m: min centre %.3f m (멈추던 시절 %.3f), v at closest %.2f, "
+      "v max %.2f\n", d0, r.min_center, before[idx], r.v_at_closest, r.v_max);
     EXPECT_TRUE(r.saturated_seen);
-    EXPECT_LE(r.v_max, 0.8 + 1e-9);
-    EXPECT_LT(r.v_at_closest, 0.05);
+    EXPECT_LE(r.v_max, 0.8 + 1e-9);                    // 가속하지 않는다
+    EXPECT_GT(r.min_center, before[idx] + 0.1);        // 멈추던 시절보다 확실히 벌린다
+    ++idx;
   }
   // 옆으로 0.7 m 비껴 오는 정면 장애물: 감속·회피로 접촉 없이 지나간다
   const LoopResult side = closedLoop({3.0, 0.7, -1.0, 0.0, 0.25}, 0.8, 4.0);
