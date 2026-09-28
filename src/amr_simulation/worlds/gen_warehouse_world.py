@@ -822,6 +822,7 @@ def main():
     dyn_xml, specs = dynamic_obstacles()
     check_layout(racks, specs)
 
+    n_loc_markers = 4 * len(PILLARS) + len(rack_marker_poses())
     sdf = f"""<?xml version="1.0" ?>
 <!--
   물류센터 월드 (내부 60 x 40 m) — gen_warehouse_world.py 가 생성 (seed {SEED}). 직접 수정하지 말고 생성기를 고칠 것.
@@ -858,7 +859,7 @@ def main():
     <!-- ===== 바닥 / 외벽 / 천장 ===== -->
 {ground_and_walls()}
 {roof()}
-    <!-- ===== 기둥 {len(PILLARS)}개 + 위치 표지 마커 {4 * len(PILLARS) + len(rack_marker_poses())}개 ===== -->
+    <!-- ===== 기둥 {len(PILLARS)}개 + 위치 표지 마커 {n_loc_markers}개 ===== -->
 {pillars()}{pillar_markers()}{rack_markers()}
     <!-- ===== 랙: A/B/C 열 7베이씩 (21) + 좁은 통로 4베이 (rack_narrow_*) =====
          좁은 통로: 중심 ({NARROW_CX}, {NARROW_CY}), y 방향 4 m,

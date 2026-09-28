@@ -82,7 +82,8 @@ def _png_size(path):
 
 
 def test_location_marker_registry_matches_behavior_config():
-    """위치 표지 마커의 지도 자세가 재위치추정 레지스트리(behavior.yaml)와 같아야 한다.
+    """
+    위치 표지 마커의 지도 자세가 재위치추정 레지스트리(behavior.yaml)와 같아야 한다.
 
     통로가 랙 열 간격 6 m 로 주기적이라 통로 방향 6 m 순간 이동은 LiDAR + 지도만으로 구별할 수
     없다 (통합 11). 이 마커가 유일한 전역 기준점이므로 자세가 어긋나면 복구가 로봇을 엉뚱한 곳으로
