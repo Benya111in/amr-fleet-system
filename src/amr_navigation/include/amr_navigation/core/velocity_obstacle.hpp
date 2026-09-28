@@ -40,6 +40,8 @@ struct DynamicObstacle
   double vx_pred{0.0};
   double vy_pred{0.0};
   bool has_pred{false};
+  /// 추적기 트랙 id (없으면 −1). 횡단 게이트가 커밋 시점에 판정한 트랙을 VO·TTC 에서 빼는 데 쓴다.
+  int id{-1};
 
   Point2D predict(double t) const {return {x + vx * t, y + vy * t};}
   double speed() const;
