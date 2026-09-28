@@ -159,6 +159,14 @@ void DWAController::configure(
   c.yield_escape_drift = param(node, p + "yield_escape_drift", 0.15);
   c.yield_escape_v_meas = param(node, p + "yield_escape_v_meas", 0.05);
   c.escape_min_speed = param(node, p + "escape_min_speed", 0.05);
+  c.yield_decision = param(node, p + "yield_decision", true);
+  c.yield_body_margin = param(node, p + "yield_body_margin", 0.15);
+  c.yield_go_margin = param(node, p + "yield_go_margin", 0.0);
+  c.yield_go_clearance = param(node, p + "yield_go_clearance", 0.40);
+  c.yield_go_hold_clearance = param(node, p + "yield_go_hold_clearance", 0.30);
+  c.yield_go_speed_floor = param(node, p + "yield_go_speed_floor", 1.0);
+  c.yield_hold_slack = param(node, p + "yield_hold_slack", 0.3);
+  c.yield_decision_min_sin = param(node, p + "yield_decision_min_sin", 0.34);
   c.recenter_narrow = param(node, p + "recenter_narrow", true);
   c.recenter_min_cost = param(node, p + "recenter_min_cost", 100.0);
   c.recenter_max_shift = param(node, p + "recenter_max_shift", 0.10);
@@ -354,6 +362,7 @@ geometry_msgs::msg::TwistStamped DWAController::computeVelocityCommands(
   in.w_last = w_last_;
   in.speed_limit = speed_limit_;
   in.yield_limit_last = yield_limit_last_;
+  in.yield_decision_last = yield_decision_last_;
   in.obstacles = obstaclesInFrame(frame);
 
   core::DwaResult res;
@@ -371,6 +380,7 @@ geometry_msgs::msg::TwistStamped DWAController::computeVelocityCommands(
       });
   }
   yield_limit_last_ = res.yield.speed_limit;
+  yield_decision_last_ = static_cast<int>(res.yield.decision);
   const double cycle_ms =
     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 
@@ -411,7 +421,10 @@ geometry_msgs::msg::TwistStamped DWAController::computeVelocityCommands(
       std::isfinite(res.yield.stop_distance) ? res.yield.stop_distance : -1.0,
       std::isfinite(res.yield.zone_entry) ? res.yield.zone_entry : -1e9,
       static_cast<double>(res.yield.obstacle),
-      static_cast<double>(in.obstacles.size()), last_track_age_};
+      static_cast<double>(in.obstacles.size()), last_track_age_,
+      // [17] kCommitted 결정 (0 none · 1 go · 2 hold · 3 retreat), [18] go 여유 [s] (없으면 −1)
+      static_cast<double>(static_cast<int>(res.yield.decision)),
+      std::isfinite(res.yield.margin) ? res.yield.margin : -1.0};
     stats_pub_->publish(st);
   }
   return cmd;

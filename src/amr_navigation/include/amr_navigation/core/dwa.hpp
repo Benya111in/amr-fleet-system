@@ -154,6 +154,22 @@ struct DwaConfig
   /// [m] 장애물 진행선까지의 거리가 (로봇 반경 + 장애물 반경 + 이 값) 보다 가까우면 "그대로 있으면
   /// 스친다" 로 보고, 속도가 남아 있어도 비켜서기를 켠다. 08 실측: 접촉 51/52 가 반경 합 안이었다.
   double yield_vacate_margin{0.05};     // [m/s] 측정 속도가 이보다 낮을 때만 (정지·후진 중)
+  // 통로 안(kCommitted) 진입 시점의 결정 go / hold / retreat (core::YieldDecision,
+  // crossing_yield.hpp).
+  // 08 접촉 4건의 공통 기제(정지선 없이 들어선 채 점진 감속 + 선회)를 끊는다:
+  //   go      — 스칠 때 몸 사이 예측 여유 ≥ yield_go_clearance: 감속 없이 지나간다 (그 장애물 TTC₀
+  //             벌점 끔, VO 유지)
+  //   hold    — 몸 원통 입구 앞에 설 수 있다: 거기까지 속도 상한(d_stop⁻¹) + 바깥으로 조향
+  //   retreat — 그 밖: 축에서 멀어지는 쪽으로만 비켜선다 (가로지르는 후보는 이득 없음)
+  bool yield_decision{true};
+  double yield_body_margin{0.15};       // [m] 몸 원통 여유 (위험 구간 = r_robot + r_obs + 이 값)
+  double yield_go_margin{0.0};          // [s] go 의 시간 여유 하한 (앞서기만 하면 된다)
+  double yield_go_clearance{0.40};      // [m] go 진입: 스칠 때 몸 사이 예측 여유 하한 (교차각 반영)
+  double yield_go_hold_clearance{0.30};   // [m] go 유지 하한 (이력)
+  double yield_go_speed_floor{1.0};       // [m/s] go 여유 계산 시 작업자 속도 하한 (반환점 직후
+                                          //       평활 속도가 오르는 중이라 여유가 부풀려진다)
+  double yield_hold_slack{0.3};         // [m] hold 가능 판정 여유 (제동 중 바깥 조향의 표류 감소분)
+  double yield_decision_min_sin{0.34};  // 결정을 내리는 교차각 하한 sin θ (20°)
   // 좁은 곳 경로 재중심 (0 단계)
   bool recenter_narrow{true};
   double recenter_min_cost{100.0};  // 이 비용 이상인 경로 점만 (지역 s = 3: 장애물 ≈ 0.5 m 이내)
@@ -207,6 +223,9 @@ struct DwaInput
   // clear 로 뒤집히고, 그때마다 상한이 ∞ 로 풀려 로봇이 다시 가속한다 (통합 08 실측). 내리는
   // 쪽은 묶지 않는다. 로봇이 낼 수 없는 가속을 막는 것이라 이 제한으로 더 느려지지 않는다.
   double yield_limit_last{std::numeric_limits<double>::infinity()};
+  // 직전 주기의 kCommitted 결정 (core::YieldDecision 의 정수값). go 의 이력(진입 여유 > 유지
+  // 여유)에 쓴다 — 추적기 속도 추정이 한 주기 튀어도 go 가 retreat 로 뒤집혔다 돌아오지 않게.
+  int yield_decision_last{0};
 };
 
 struct DwaWindow
