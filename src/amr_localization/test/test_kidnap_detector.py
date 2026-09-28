@@ -328,3 +328,66 @@ def test_marker_fix_transient_mismatch_is_not_a_kidnap():
     assert det.on_marker_fix(2.2, (0.1, 0.0, 0.0)) == []      # 다음 관측은 추정과 일치 → 지속 해제
     assert det.on_marker_fix(3.0, (30.0, 0.0, 0.0)) == []     # 다시 시작 — 아직 지속 시간 미달
     assert det.state == State.TRACKING and not det.lost
+
+
+def test_scan_registration_rejections_declare_lost():
+    """
+    옆 통로로 6 m 옮겨졌을 때 LiDAR 쪽에서 유일하게 걸리는 신호.
+
+    통합 11 실측 18회: LOST 235 건 중 cov 0 · jump 0 · scan-map inlier 1 건뿐이고 나머지 234 건이
+    전부 ArUco 마커 보정이었다. 랙 행 간격이 정확히 6 m 라 옆 통로 스캔이 지도에 그대로 맞고,
+    match_ratio 는 "지도 벽을 뚫은 빔" 만 세는 비대칭 지표라 옆 통로 이동을 보지 못한다.
+    한편 스캔 정합기는 같은 구간에서 reg1 기준 0 ok / 300 rejected 를 600 s 연속 냈고
+    (복구 직후 288/300), 정상 주행에서는 6 m 벽 앞 정지를 포함해 283~300/300 을 수락했다.
+    """
+    det = KidnapDetector(KidnapParams(suspect_time=1.0, reg_window=20, reg_min_samples=10))
+    for k in range(30):                     # 정상 주행: 거의 전부 수락
+        det.on_scan_match(k * 0.1, k % 25 != 0)
+    assert not det.lost
+    assert det.state == State.TRACKING
+    t = 3.0
+    for k in range(20):                     # 납치: 정합 전부 거부
+        det.on_scan_match(t + k * 0.1, False)
+    assert not det.lost                     # suspect_time 을 아직 못 채웠다
+    actions = det.tick(t + 4.0)   # SUSPECT 진입(≈ t+1.6) 뒤 suspect_time 경과
+    assert det.lost
+    assert kinds(actions)[0] == ActionType.PUBLISH_LOST
+    assert any('scan registration rejected' in e.reason for e in det.events)
+
+
+def test_scan_registration_normal_run_does_not_trigger():
+    """정상 주행의 산발적 거부(283~300/300)로는 경보가 켜지지 않는다."""
+    det = KidnapDetector(KidnapParams(reg_window=20, reg_min_samples=10))
+    for k in range(200):                    # 300 중 17 거부 = 5.7 %
+        det.on_scan_match(k * 0.1, k % 18 != 0)
+        det.tick(k * 0.1)
+    assert not det.lost
+    assert det.state == State.TRACKING
+
+
+def test_marker_fix_is_ignored_when_scan_registration_agrees():
+    """
+    오검출 마커가 만드는 가짜 LOST 를 스캔 정합기가 막는다.
+
+    통합 12 실측(reg1): 정지한 amr_05 가 36 m 밖의 마커 17 을 "2.15 m 앞" 으로 읽어 30.32 m
+    어긋난 자세를 발행했고, 같은 시각 스캔 정합기는 86 ok / 1 rejected (inlier 0.93) 로 멀쩡했다.
+    그 LOST 가 스스로 풀리지 않아 548 s 동안 작업을 205 회 거절했다 (s12 는 1873 회).
+    진짜 납치는 반대로 정합기가 거부한다 (통합 11 reg1: 0 ok / 300 rejected, 600 s 연속).
+    """
+    det = KidnapDetector(KidnapParams(marker_fix_persist=0.2, reg_min_samples=10))
+    det.on_amcl(0.0, (26.0, -16.0, 0.0), 0.01, 0.01)
+    for k in range(20):                      # 정합기: 거의 전부 수락 = "여기 맞다"
+        det.on_scan_match(k * 0.1, True)
+    det.on_marker_fix(3.0, (9.76, 9.60, 1.17))      # 30 m 를 주장하는 오검출
+    det.on_marker_fix(3.5, (9.76, 9.60, 1.17))      # 지속 게이트도 채운다
+    assert not det.lost
+    assert any('무시' in e.reason for e in det.events)
+
+    # 같은 마커 보정이라도 정합기가 거부 중이면(진짜 납치) 그대로 LOST 를 낸다
+    det2 = KidnapDetector(KidnapParams(marker_fix_persist=0.2, reg_min_samples=10))
+    det2.on_amcl(0.0, (26.0, -16.0, 0.0), 0.01, 0.01)
+    for k in range(20):
+        det2.on_scan_match(k * 0.1, False)
+    det2.on_marker_fix(3.0, (9.76, 9.60, 1.17))
+    det2.on_marker_fix(3.5, (9.76, 9.60, 1.17))
+    assert det2.lost
