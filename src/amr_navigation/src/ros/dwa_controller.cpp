@@ -154,6 +154,7 @@ void DWAController::configure(
   c.yield_stop_margin = param(node, p + "yield_stop_margin", 0.25);
   c.yield_clear_margin = param(node, p + "yield_clear_margin", 1.0);
   c.yield_horizon = param(node, p + "yield_horizon", 8.0);
+  c.yield_nominal_speed = param(node, p + "yield_nominal_speed", 1.0);
   c.yield_max_zone = param(node, p + "yield_max_zone", 6.0);
   c.yield_escape_speed = param(node, p + "yield_escape_speed", 0.25);
   c.yield_escape_drift = param(node, p + "yield_escape_drift", 0.15);

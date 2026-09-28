@@ -44,7 +44,12 @@ struct YieldConfig
   double corridor_margin{0.50};     // [m] 통로 반폭 여유 (critical zone 거리와 같게)
   double stop_margin{0.25};         // [m] 통로 입구 앞 정지선 여유 (경로 호길이)
   double clear_margin{1.0};         // [s] 먼저 빠져나간다고 볼 시간 여유
-  double horizon{8.0};              // [s] 장애물 예측 지평 (통로 길이 = |u|·horizon)
+  // [s] 장애물 예측 지평. 통로 길이 = max(|u|, nominal_speed)·horizon
+  double horizon{8.0};
+  /// [m/s] 통로 길이의 속도 바닥. 반환점에서 돌아서는 작업자는 |u| 가 0.01~0.08 까지 떨어져
+  /// 통로가 사라졌다가 가속하면 폭발한다 — 그때는 이미 로봇이 안에 있다. 명세 4.1 의 동적
+  /// 장애물 속도 범위(0.3~1.5 m/s) 중간값.
+  double nominal_speed{1.0};
   double lookahead{4.0};            // [m] 경로에서 교차 구간을 찾는 최대 거리
   double max_zone{6.0};             // [m] 교차 구간 길이 상한 (넘으면 나란한 주행 — 정지선 없음)
   double min_speed{0.2};            // [m/s] 이보다 느린 트랙은 정적 (코스트맵이 처리)

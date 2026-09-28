@@ -127,7 +127,10 @@ struct DwaConfig
   double yield_corridor_margin{0.50};   // [m] 통로 반폭 여유 (= dynamic_margin, critical zone)
   double yield_stop_margin{0.25};       // [m] 통로 입구 앞 정지선 여유
   double yield_clear_margin{1.0};       // [s] 먼저 빠져나간다고 볼 시간 여유
-  double yield_horizon{8.0};            // [s] 장애물 예측 지평 (통로 길이 = |u|·horizon)
+  double yield_horizon{8.0};
+  /// [m/s] 통로 길이의 속도 바닥 (crossing_yield nominal_speed). 반환점에서 돌아서는 작업자의
+  /// 통로가 사라지는 것을 막는다 — 08 실패 9건이 전부 그 구간이었다.
+  double yield_nominal_speed{1.0};            // [s] 장애물 예측 지평 (통로 길이 = |u|·horizon)
   double yield_lookahead{4.0};          // [m] 경로에서 교차 구간을 찾는 최대 거리
   double yield_max_zone{6.0};           // [m] 교차 구간 길이 상한 (넘으면 나란한 주행)
   // 통로 안(kCommitted)에서 정지해 버리면 장애물이 그대로 걸어 들어온다 (시나리오 08 실측:
