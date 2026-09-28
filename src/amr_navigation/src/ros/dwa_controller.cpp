@@ -158,6 +158,7 @@ void DWAController::configure(
   c.yield_hold_standoff = param(node, p + "yield_hold_standoff", 0.35);
   c.yield_approach_radius = param(node, p + "yield_approach_radius", 3.0);
   c.yield_approach_horizon = param(node, p + "yield_approach_horizon", 3.0);
+  yield_decision_dwell_ = param(node, p + "yield_decision_dwell", 0.8);
   c.yield_max_zone = param(node, p + "yield_max_zone", 6.0);
   c.yield_escape_speed = param(node, p + "yield_escape_speed", 0.25);
   c.yield_escape_drift = param(node, p + "yield_escape_drift", 0.15);
@@ -384,7 +385,23 @@ geometry_msgs::msg::TwistStamped DWAController::computeVelocityCommands(
       });
   }
   yield_limit_last_ = res.yield.speed_limit;
-  yield_decision_last_ = static_cast<int>(res.yield.decision);
+  // 결정 디바운스. 08 실측: 접촉이 난 시행들이 전부 go ↔ hold ↔ retreat 진동이었다
+  // (p8d 5회, p8e 8회, r8d 9회, s8a **31회**/410주기). 매 주기 여유 추정이 조금만 흔들려도
+  // 분기가 바뀌고, 그러면 지나가지도 물러나지도 못한 채 통로 안에서 시간을 쓴다.
+  // "보수적인 쪽으로만" 도 시도했으나(q 계열) retreat 에 영구 고착돼 더 나빴다 — 접촉 5.1 %.
+  // 그래서 방향은 막지 않고 **최소 유지 시간**만 둔다. 바뀔 만한 이유가 계속 있으면 바뀐다.
+  const int dec_now = static_cast<int>(res.yield.decision);
+  const rclcpp::Time now_t = clock_->now();
+  if (dec_now != yield_decision_last_) {
+    if (yield_decision_last_ != 0 && dec_now != 0 &&
+      (now_t - yield_decision_since_).seconds() < yield_decision_dwell_)
+    {
+      res.yield.decision = static_cast<core::YieldDecision>(yield_decision_last_);
+    } else {
+      yield_decision_last_ = dec_now;
+      yield_decision_since_ = now_t;
+    }
+  }
   const double cycle_ms =
     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 
