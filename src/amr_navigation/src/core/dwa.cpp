@@ -73,6 +73,8 @@ YieldConfig DwaPlanner::yieldConfig() const
   y.horizon = config_.yield_horizon;
   y.nominal_speed = config_.yield_nominal_speed;
   y.hold_standoff = config_.yield_hold_standoff;
+  y.approach_radius = config_.yield_approach_radius;
+  y.approach_horizon = config_.yield_approach_horizon;
   y.lookahead = config_.yield_lookahead;
   y.max_zone = config_.yield_max_zone;
   y.min_speed = config_.dynamic_speed_threshold;
