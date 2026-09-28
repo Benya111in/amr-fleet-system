@@ -2,7 +2,7 @@
 
 > 명세 4.10: 통합 테스트 시나리오를 최소 10개 작성하고 자동화한다.
 
-시나리오 14개를 `launch_testing` 파일 하나씩(`test_NN_<slug>.py`)으로 작성했다. 러너는
+시나리오 15개를 `launch_testing` 파일 하나씩(`test_NN_<slug>.py`)으로 작성했다. 러너는
 `launch_testing_ros.LaunchTestRunner`, 기동 게이트는 `launch_testing_ros.WaitForTopics` 다. 실행 방법·결과 형식·하네스
 구조는 [../README.md](../README.md), 최근 실행 결과와 조건은 [docs/reports/integration_tests.md](../../docs/reports/integration_tests.md).
 
@@ -58,6 +58,7 @@ docker compose exec dev ./scripts/run_integration.sh 4 9 13    # 선택
 | 12 | 5대 동시 운용 교착 | (a) 도크 간 작업 → /fleet/task_events 완료, /fleet/traffic_events 탐지·해소, CPU = 시뮬레이터 포함 시스템 프로세스 CPU 합 / 호스트 코어 (b) 강제 교착: 교차로 x_ab_4 안 E-stop 로봇 + 실행기 작업으로 그 교차로를 지나야 하는 로봇 → BLOCKED 탐지·대체 경로 해소 | (a) 로봇 5대, 작업 모두 COMPLETED (작업당 ≤ 600 s), 탐지된 교착은 모두 해소(UNRESOLVED 0), 평균 CPU ≤ 80 % (b) traffic/DEADLOCK ≥ 1 이고 모두 traffic/RESOLVED | `traffic.csv [recv_time, level, event, robot, message] + tasks.csv + cpu.csv [time, system_cpu_percent, host_cpu_percent, cores_used] + forced.csv` | system / gazebo |
 | 13 | 응답 시간 | 작업 명령(assign_task, header.stamp = 발행 시각) → 로봇 첫 움직임 = ground_truth/odom 의 \|v\| ≥ 0.01 m/s 또는 \|ω\| ≥ 0.02 rad/s 첫 표본 (참고: \|v\| ≥ 0.05 m/s 변형). system: 실제 task_executor → Nav2 → velocity_profiler → safety_node / component: 실행기 대역 (체인 회귀용) | 평균 ≤ 200 ms (벽시계, 최대 기록), 샘플 ≥ 50, 무응답 0 | `response_time.csv [cmd_time, response_time, latency_ms, cmd_id] (amr_evaluation response_time_logger, odom 모드) + harness_response_time.csv (+ wall_ms, latency_05_ms, cmd_vel_ms, rtf)` | system, component / gazebo, kinematic |
 | 14 | 4시간 연속 운용 | system 스택에 작업을 반복 투입(작업당 상한 시간)하며 프로세스별 RSS 샘플링(60 s), 선형 회귀 기울기, 프로세스 종료 감시, 완료 작업 수 | 크래시 0, 프로세스별 RSS 증가율 ≤ 5 MB/h (첫 10 분 워밍업 제외, 적합 증가량 ≤ 2 MB 는 할당기 요동으로 봄, 표본 < 5 는 판정 불가 = 실패), 작업 실패율 ≤ 2 % (작업당 900 s 초과 = 실패), 완료 작업 ≥ 4 /h × 기간 (멈춘 실행기 검출) | `memory.csv [time, process, pid, rss_mb] + tasks.csv + soak.json` | system / gazebo, 장시간 (명시 선택 시만) |
+| 15 | AI 인지 (검출·3D 변환·마커) | amr_perception world_objects 지면 진실(월드 SDF include 모델·인라인 표지판·actor 궤적 + 깊이 영상으로 검증한 2D 라벨)로 고른 클래스별 시점에서 perception/detected_objects · markers 수집: 나온 출력 클래스 종류, 배포 설정(perception.yaml)으로 만든 YoloDetector 의 프레임별 추론 지연 중앙값 → FPS (벽시계, RTF 무관 — 토픽 발행률은 30×RTF 라 따로 측정만), pose_3d.header.frame_id, 객체마다 CUBE + TEXT 마커(map), GT 대비 3D 위치 오차와 pose_3d → 픽셀 재투영 잔차(측정만) | 출력 클래스 ≥ 3 종, 추론 FPS ≥ 30 (GPU 경로) 또는 ≥ 10 (CPU 경로), perception/detected_objects 형 = amr_msgs/msg/DetectedObjectArray (필드 채워짐), pose_3d.header.frame_id 전부 map, 객체마다 map 프레임 CUBE + TEXT 마커; 3D 위치 오차·재투영 잔차·재현율·발행률·처리율은 측정만 (명세 4.6 에 수치가 없다 — 3D xy 오차 중앙값 ≤ 1.0 m 만 배관 확인용 하네스 선택(명세 아님)으로 둔다, IoU 0.5 매칭도 COCO 관례이지 명세 아님); map↔월드 항등 정합 (잔여 이동 ≤ 5 cm, 회전 ≤ 0.1°, 거리 중앙값 ≤ 5 cm) | `perception.csv [view, t, class_name, confidence, bbox_x, bbox_y, bbox_width, bbox_height, pose_3d_x, pose_3d_y, pose_3d_z, gt_name, gt_x, gt_y, gt_z, err_m, err_xy_m, reproj_px, distance_m, frame_id, matched] + views.csv [view, target_class, target, x, y, yaw, frames, objects, gt_required, matched, classes] + inference.csv [i, infer_ms] (전부 측정 근거 — 판정은 result.json checks)` | system / gazebo |
 
 시행 수 노브 (명세 캠페인 기본값 — 줄여서 스모크하면 시행 수 판정이 실패로 드러난다): `ITEST_TRIALS` (08, 30),
 `ITEST_RT_SAMPLES` (13, 50), `ITEST_MR_TASKS` (12, 5), `ITEST_MR_ROBOTS` (12, 5 — 줄이면 '로봇 수' 판정 실패),

@@ -185,6 +185,29 @@ SCENARIOS: List[Scenario] = [
                   '완료 작업 ≥ 4 /h × 기간 (멈춘 실행기 검출)',
         log_format='memory.csv [time, process, pid, rss_mb] + tasks.csv + soak.json',
         backends=(GAZEBO,), profiles=(SYSTEM,), long_running=True, needs=FULL),
+    Scenario(
+        number=15, slug='perception_3d', title='AI 인지 (검출·3D 변환·마커)',
+        spec='4.6 AI 기반 인지 시스템 (3종 이상 인식, 커스텀 메시지 발행 + RViz2 마커, CPU ≥ 10 FPS '
+             '또는 GPU ≥ 30 FPS, 2D 픽셀 + Depth → 3D(Map frame) Pinhole 변환, 3D 위치를 지도상 마커로)',
+        metric='amr_perception world_objects 지면 진실(월드 SDF include 모델·인라인 표지판·actor 궤적 + '
+               '깊이 영상으로 검증한 2D 라벨)로 고른 클래스별 시점에서 perception/detected_objects · markers '
+               '수집: 나온 출력 클래스 종류, 배포 설정(perception.yaml)으로 만든 YoloDetector 의 프레임별 '
+               '추론 지연 중앙값 → FPS (벽시계, RTF 무관 — 토픽 발행률은 30×RTF 라 따로 측정만), '
+               'pose_3d.header.frame_id, 객체마다 CUBE + TEXT 마커(map), GT 대비 3D 위치 오차와 '
+               'pose_3d → 픽셀 재투영 잔차(측정만)',
+        threshold='출력 클래스 ≥ 3 종, 추론 FPS ≥ 30 (GPU 경로) 또는 ≥ 10 (CPU 경로), '
+                  'perception/detected_objects 형 = amr_msgs/msg/DetectedObjectArray (필드 채워짐), '
+                  'pose_3d.header.frame_id 전부 map, 객체마다 map 프레임 CUBE + TEXT 마커; '
+                  '3D 위치 오차·재투영 잔차·재현율·발행률·처리율은 측정만 (명세 4.6 에 수치가 없다 — '
+                  '3D xy 오차 중앙값 ≤ 1.0 m 만 배관 확인용 하네스 선택(명세 아님)으로 둔다, '
+                  f'IoU 0.5 매칭도 COCO 관례이지 명세 아님); {REGISTRATION}',
+        log_format='perception.csv [view, t, class_name, confidence, bbox_x, bbox_y, bbox_width, '
+                   'bbox_height, pose_3d_x, pose_3d_y, pose_3d_z, gt_name, gt_x, gt_y, gt_z, '
+                   'err_m, err_xy_m, reproj_px, distance_m, frame_id, matched] + views.csv '
+                   '[view, target_class, target, x, y, yaw, frames, objects, gt_required, '
+                   'matched, classes] + inference.csv [i, infer_ms] (전부 측정 근거 — 판정은 '
+                   'result.json checks)',
+        backends=(GAZEBO,), profiles=(SYSTEM,), needs=NAV + ('amr_msgs',)),
 ]
 
 _BY_NUMBER: Dict[int, Scenario] = {s.number: s for s in SCENARIOS}
