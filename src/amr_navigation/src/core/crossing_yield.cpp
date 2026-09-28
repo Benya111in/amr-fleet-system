@@ -303,7 +303,18 @@ YieldResult evaluateYield(
           m_walker_first = -kInf;   // 이미 안에 있다 — 작업자가 먼저 지나갈 수는 없다
         }
         margin = std::max(m_robot_first, m_walker_first);
-        body_entry = robot_in_body ? 0.0 : std::max(0.0, body_pts.front().first - s_robot);
+        // 정지 목표는 몸 원통 경계가 아니라 **그보다 hold_standoff 만큼 앞**이다.
+        // 08 실측(p·q 계열): hold 가 실제로 선 자리가 차선 축에서 0.756~0.968 m 인데 접촉은
+        // 0.212~0.624 m 에서 났다 — 간격이 겨우 14 cm 다. 침투도 전부 0.7~9.5 mm 로, 추적
+        // 위치 오차(실측 0.1~0.25 m)나 통로 축 오차 하나면 안전한 정지가 접촉이 된다.
+        // 서 있는 로봇은 이탈 0 이고 에피소드도 안 열리므로, 여유를 두고 서는 데 드는 비용은
+        // 시행 시간뿐이다. 오늘 지역 계획기 조정을 여섯 번 했는데 전부 이 14 cm 를 이기려는
+        // 시도였다 — 이길 수 없는 싸움이었다.
+        // 여유는 **차선 거리** 로 정하고 교차각으로 경로 거리로 바꾼다 — 26.6° 에서는 경로로
+        // 0.6 m 물러나도 차선으로는 0.27 m 밖에 안 벌어진다.
+        const double standoff = cfg.hold_standoff / std::max(cfg.decision_min_sin, cross_sin);
+        body_entry = robot_in_body ? 0.0 :
+          std::max(0.0, body_pts.front().first - s_robot - standoff);
         // 스칠 때 몸 사이 예측 여유. 로봇이 먼저: 출구(|β| = r_danger)를 나선 뒤 로봇은 경로를 따라
         // v_max 로 축에서 멀어지고(가로 성분 v·sin θ), 작업자 중심은 (여유·|u| + r_body)/(닫힘
         // 속도) 뒤에 로봇의 α 에 온다 — 마주 오면 닫힘 = |u| + v·|cos θ|, 같은 방향이면
