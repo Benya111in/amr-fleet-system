@@ -258,40 +258,17 @@
     # 예측(escape_horizon) 동안 진행선에서 멀어짐, (3) 풋프린트-몸 여유가 서 있을 때보다 나쁘지 않음이
     # 모두 맞는 트랙만 상한에서 뺀다. 거리 존·STOP 래치·접촉 가드·E-stop·저상 물체 저속은 그대로.
     yield_escape:
-      enabled: true
+      enabled: false
+      # 2026-09-28 측정으로 **껐다.** 이 특례를 켠 채 08 을 150 시행 돌리자 접촉이
+      # 7건(4.7 %/시행)으로 늘었다 — 끄고 돌린 직전 계열은 1건(0.67 %)이었다. 접촉의 성격도
+      # 바뀌었다: 예전에는 로봇이 멈춰 선 채 작업자가 걸어 들어왔는데(v 0.000), 이번에는
+      # 로봇이 0.2~0.47 m/s 로 움직이며 들이받았고 게이트 출력이 0.47~0.87 이었다.
+      # 단위 시험에서 기제 제거는 확인됐지만(끄면 3건 실패·켜면 통과) 실측 효과가 반대였다.
+      # 안전 완화는 도움이 된다는 실측 증명이 있을 때만 켠다. 재검토 전까지 false.
       speed: 0.5                 # [m/s] 특례 명령의 최고 점 속도 (= 계획기 yield_escape_speed 0.5)
       obstacle_radius: 0.30      # [m] 동적 장애물(사람) 몸 반경 — 몸 원통 = 외접원 0.361 + 이 값
       overlap_margin: 0.10       # [m] 몸 원통 판정 여유. 추적기 TTC 는 σ 팽창(k_sigma 0.25, 상한 0.5)만큼
                                  # 몸 원통 밖에서부터 0 이라, 그 띠에서도 특례가 서야 정지가 접촉을 만들지 않는다
       min_gain: 0.02             # [m] 예측 끝에서 진행선(느린 트랙이면 트랙)까지 거리가 이만큼은 늘어야 한다
       min_obstacle_speed: 0.15   # [m/s] 진행선이 정의되는 최소 트랙 속도 (= 추적기 dynamic.v_min)
-    exclusion_stop_distance: 0.10  # [m] 도킹 예외 다각형(safety/dock_exclusion, 계약 C2) 안 점의 정지 거리
-    exclusion_timeout: 0.3       # [s] 예외 다각형 유효 시간 (docking_server_node 가 ≥ 10 Hz 로 계속 발행)
-    odom_frame: odom             # 예외 다각형을 이 프레임에 고정해 두고 스캔마다 base_link 로 다시 옮긴다
-    ttc:
-      enabled: true
-      critical: 2.15             # [s] τ_crit = reaction_latency + v_max/a = 0.15 + 2.0/1.0 (sequences.md §2)
-      max_age: 0.5               # [s] 이보다 오래된 tracked_obstacles 의 TTC 는 무시
-      only_dynamic: true         # TTC 제한은 is_dynamic 트랙만. 정적 구조물은 접근 거리 존이 맡는다 — 추적기의 외접원
-                                 # (0.361 m) TTC 로는 0.60 m 통로 옆 벽(중심에서 0.30 m)이 TTC 0 이 되어 통로 안에서 멈췄다
-    # 센서 생존 감시 (tracking.md §6.8): 수신 간격 > safety.sensor_timeouts (robot_params.yaml, ≈ 3 주기)
-    # → 지연 경고(진단만), > max(그 값, sensor_fault_periods / <센서>.update_rate (sensors.yaml)) → 고장.
-    # 한 번 늦은 메시지(예: 휠 60 ms)는 정지시키지 않고, 실제 끊김은 고장 시간 + 1 주기(20 ms) 안에 대응한다.
-    sensor_fault_periods:
-      lidar: 3                   # 10 Hz → 0.30 s (주 안전 센서 — 부하 시 최대 간격 실측 0.2 s 대)
-      wheel_encoder: 10          # 50 Hz → 0.20 s (부하 시 단발 60~80 ms 간격 실측, 리뷰 오탐 재현)
-      imu: 20                    # 100 Hz → 0.20 s
-      rgb_camera: 9              # 30 Hz → 0.30 s
-      depth_camera: 6            # 15 Hz → 0.40 s
-    sensor_actions:
-      lidar: stop                # LiDAR 고장 → 안전 정지 + estop_active (거리 판정 불가)
-      wheel_encoder: stop        # 엔코더 고장 → 안전 정지 + estop_active (오도메트리·속도 제어 불가)
-      imu: degraded              # IMU 고장 → degraded_mode_max_speed 저속 (EKF 가 휠만으로 유지)
-      rgb_camera: degraded       # 카메라 고장 → 저속 (인식 불가, LiDAR 안전망 유지)
-      depth_camera: degraded     # 깊이 고장 → 저속 (LiDAR 평면 아래 물체를 못 보므로 0.2 m/s)
-    sensor_topics:               # 감시 토픽 (카메라는 이미지와 같은 주기의 가벼운 camera_info 로 감시)
-      lidar: scan_filtered
-      wheel_encoder: wheel_odom
-      imu: imu/data
-      rgb_camera: camera/camera_info
-      depth_camera: camera/depth/camera_info
+    exclusion_stop_distance: 0.10  # [m] 도킹 예
