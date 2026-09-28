@@ -79,6 +79,7 @@ CONTACT_COLUMNS = ['trial', 'time', 'obstacle', 'distance_m', 'robot_speed_mps',
                    'gate_in_v_mps', 'gate_out_v_mps']
 ATTRIB_GAP_S = 0.3                     # 접촉 시각 ↔ 트랙·제어 표본 허용 시차 (넘으면 빈 칸)
 YIELD_STATES = {0: 'clear', 1: 'yield', 2: 'committed'}   # dwa/stats [11]
+DECISIONS = {0: '', 1: 'go', 2: 'hold', 3: 'retreat'}
 DEFAULT_OBSTACLE_R = 0.3               # [m] /info 에 없는 장애물의 반지름 가정
 
 
@@ -246,7 +247,11 @@ class TestDynamicObstacles(cases.ProbeCase):
                          d[12] if d[12] >= 0.0 else math.inf, int(d[4]), int(d[3]),
                          d[6] if d[6] >= 0.0 else math.inf,
                          d[13] if len(d) > 13 and d[13] > -1e8 else math.nan,
-                         int(d[14]) if len(d) > 14 else -1])
+                         int(d[14]) if len(d) > 14 else -1,
+                         # 통로 진입 결정 (0 없음 / 1 go / 2 hold / 3 retreat) 과 그때의 시간 여유.
+                         # 이것이 없으면 이탈·복귀 꼬리가 어느 분기에서 나오는지 가릴 수 없다.
+                         DECISIONS.get(int(d[17]), int(d[17])) if len(d) > 17 else '',
+                         round(float(d[18]), 3) if len(d) > 18 else math.nan])
         # 같은 시행의 추적 속도와 계획 갱신 — 교차 구간이 흔들리는 원인 구분 (잡음 vs 재계획)
         trk = [[round(t, 3), o.track_id, round(o.position.x, 3), round(o.position.y, 3),
                 round(o.velocity.x, 3), round(o.velocity.y, 3),
@@ -263,7 +268,8 @@ class TestDynamicObstacles(cases.ProbeCase):
             self.ctx.record.write_csv(
                 f'stats_trial{trial:02d}.csv',
                 ['t', 'cmd_v', 'cmd_w', 'yield_state', 'stop_distance_m', 'vo_rejected',
-                 'collisions', 'ttc_s', 'zone_entry_m', 'yield_obstacle'], rows)
+                 'collisions', 'ttc_s', 'zone_entry_m', 'yield_obstacle',
+                 'decision', 'decision_margin_s'], rows)
 
     def _cause_stats(self, w0: float, t0: float, t1: float) -> list:
         """구간 [t0, t1] 의 [양보 비율, 계획기 명령 평균, 게이트 출력 평균, VO 기각 평균]."""
