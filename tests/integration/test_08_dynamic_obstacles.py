@@ -271,6 +271,42 @@ class TestDynamicObstacles(cases.ProbeCase):
                  'collisions', 'ttc_s', 'zone_entry_m', 'yield_obstacle',
                  'decision', 'decision_margin_s'], rows)
 
+    def _dump_pose_plan(self, trial: int, w0: float, plan, track, path, devs) -> None:
+        """실패한 시행의 로봇 자세와 **두 기준**의 이탈 — 첫 계획(하네스 기준)과 그 시각의
+        최신 계획(컨트롤러가 실제로 따르는 것).
+
+        진단용이며 판정에는 쓰지 않는다. 두 값이 갈리면 이탈은 계획 교체의 결과이고, 둘 다
+        크면 로봇이 제 경로를 벗어난 것이다 — 후자라면 J_off(이탈 1.269 m 에서 19.1)가 왜
+        듣지 않았는지가 남는다. v8a 에서 재계획 없이 실패한 시행(t12 1.269, t22 1.012)을
+        가릴 자료가 없어 추가한다."""
+        plans = [(m.header.stamp.sec + m.header.stamp.nanosec * 1e-9,
+                  np.array([[p.pose.position.x, p.pose.position.y] for p in m.poses]))
+                 for _, m in plan.messages(w0) if m.poses]
+        rows = []
+        for s, d0 in zip(track, devs):
+            idx = -1
+            for i, (ts, _) in enumerate(plans):
+                if ts > s.t:
+                    break
+                idx = i
+            cur = plans[idx][1] if idx >= 0 else path
+            d1 = worldmap.polyline_distance(cur, s.x, s.y) if len(cur) else math.nan
+            rows.append([round(s.t, 3), round(s.x, 3), round(s.y, 3), round(s.v, 3),
+                         round(d0, 4) if math.isfinite(d0) else math.nan,
+                         round(d1, 4) if math.isfinite(d1) else math.nan,
+                         idx, len(plans)])
+        if rows:
+            self.ctx.record.write_csv(
+                f'pose_trial{trial:02d}.csv',
+                ['t', 'x', 'y', 'v', 'dev_first_m', 'dev_current_m', 'plan_idx', 'n_plans'],
+                rows)
+        # 계획 자체의 기하 (5 점마다) — 모서리를 가로질러 생긴 이탈인지 보려면 필요하다
+        geo = [[i, round(ts, 3), j, round(float(pts[j][0]), 3), round(float(pts[j][1]), 3)]
+               for i, (ts, pts) in enumerate(plans) for j in range(0, len(pts), 5)]
+        if geo:
+            self.ctx.record.write_csv(
+                f'plans_trial{trial:02d}.csv', ['plan_idx', 't', 'seq', 'x', 'y'], geo)
+
     def _cause_stats(self, w0: float, t0: float, t1: float) -> list:
         """구간 [t0, t1] 의 [양보 비율, 계획기 명령 평균, 게이트 출력 평균, VO 기각 평균]."""
         gt = self.gt.messages(w0)
@@ -378,6 +414,7 @@ class TestDynamicObstacles(cases.ProbeCase):
             # 쪽으로 옮겨 갔는데, 접촉 조건만 걸려 있어 정작 실패한 시행의 기록이 없었다.
             if mine or (math.isfinite(max_dev) and max_dev > DEVIATION_MAX) or ret > RETURN_MAX_S:
                 self._dump_trial_stats(trial, w0)
+                self._dump_pose_plan(trial, w0, plan, track, path, devs)
             eps_all += [e.returned and e.return_time(t_last) <= RETURN_MAX_S for e in eps]
             worst_dev = max(worst_dev, max_dev if math.isfinite(max_dev) else math.inf)
             worst_return = max(worst_return, ret if all(e.returned for e in eps) else math.inf)
