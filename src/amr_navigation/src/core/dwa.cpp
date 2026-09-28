@@ -680,7 +680,11 @@ DwaResult DwaPlanner::compute(
     // 그 모양이었다: 그 구간만 VO 기각이 주기당 17.7 건이었고 이탈이 1.39 m 까지 갔다 (복귀
     // 9.66 s). 예산 안에 드는 후보가 하나라도 있으면 그 안에서만 고른다. 이미 예산 밖이면
     // 지금 이탈까지는 허용해 "더 나가지만 않는" 후보가 남는다.
-    const double dev_cap = std::max(config_.max_path_offset_hard, std::abs(robot_proj.cte));
+    // 예산은 **단단한 상한** 이다. 예전에는 max(예산, 지금 이탈) 이라, 예산 밖 후보밖에 없으면
+    // 지금 이탈까지 자격을 넓혀 주었고 그만큼 또 자랐다 — 매 주기 조금씩 밀려 u8a 24번 시행이
+    // 1.363 m 까지 갔다 (그 시행은 작업자와 최소 거리 0.881 m, 재계획 없음, 양보율 0.46 —
+    // 정당한 회피가 그냥 너무 넓었다). 이제 예산 밖이면 **가장 덜 벗어나는 후보** 를 고른다.
+    const double dev_cap = config_.max_path_offset_hard;
     // 몸 원통 안에서는 **순수 제자리 회전을 고르지 않는다.** 차동 구동은 회전으로 위치가 변하지
     // 않아 장애물 진행선까지의 거리 β 가 그대로다 — 서 있는 것과 똑같고, 통로 안에서 서 있는
     // 것이 바로 접촉 기제다. 그런데 VO 포화의 기본 기준("VO 에 가장 늦게 들어가는 후보")은
@@ -714,8 +718,9 @@ DwaResult DwaPlanner::compute(
       const bool c_in = c.max_cte <= dev_cap, b_in = best->max_cte <= dev_cap;
       const bool better = leave_lane ?
         (c_in != b_in ? c_in :
+        (!c_in ? c.max_cte < best->max_cte - 1e-9 :   // 둘 다 예산 밖이면 덜 벗어나는 쪽
         (c.terms.escape < best->terms.escape - 1e-9 ||
-        (std::abs(c.terms.escape - best->terms.escape) <= 1e-9 && c.cost < best->cost))) :
+        (std::abs(c.terms.escape - best->terms.escape) <= 1e-9 && c.cost < best->cost)))) :
         (c.vo_time > best->vo_time + config_.vo_time_tie ||
         (std::abs(c.vo_time - best->vo_time) <= config_.vo_time_tie && c.cost < best->cost));
       if (better) {
