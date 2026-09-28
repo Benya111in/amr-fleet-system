@@ -104,7 +104,7 @@ struct DwaConfig
   /// [m] 이탈 예산. 명세 4.7 의 상한(1.0 m)보다 낮게 둔다. 두 곳에서 쓴다 — "이미 벗어난
   /// 만큼" 으로 한계를 올려 주는 J_off 래칫의 상한, 그리고 VO 포화 시 통로 탈출 후보의 자격.
   double max_path_offset_hard{0.95};
-  double off_path_band{1.0};        // [m] J_off 정규화 폭
+  double off_path_band{0.05};       // [m] J_off 정규화 폭 (명세 한계에서 이기도록)
   double path_eval_time{0.8};       // [s] 헤딩·경로 항을 볼 롤아웃 앞부분 (≤ 0 이면 전체)
   double goal_align_distance{0.15};   // [m] 이 안에서는 목표 방향 정렬(제자리 회전)
   double goal_overshoot_margin{0.1};  // [m] 목표 너머 충돌 검사 여유
