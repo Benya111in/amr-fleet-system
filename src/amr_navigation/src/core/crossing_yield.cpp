@@ -88,6 +88,57 @@ YieldResult evaluateYield(
   double hold_limit = kInf;      // kHold 인 장애물들의 속도 상한 최소
   double hold_entry = kInf;      // 그 입구까지 거리 최소
 
+  // --- 속도 방향에 의존하지 않는 접근 정지선 ---
+  // 통로 모델은 추적 속도의 **방향**에 전적으로 기댄다. 그런데 08 실패는 전부 작업자가 통로
+  // 끝에서 돌아서는 구간이었고(주 트랙 속도 0.01~0.08 → 1.1~1.6, 헤딩 변화 63~360°),
+  // 그 구간에서는 방향이 무의미하다. 길이만 늘려도(nominal_speed 바닥) 엉뚱한 축의 긴 통로는
+  // 보호가 안 된다 — r 계열 접촉 2건이 전부 이미 원통 안에 들어간 뒤의 retreat 였고, 그중
+  // 하나는 101 주기(5 s) 내내 물러났는데도 스쳤다. 안에 들어간 뒤에는 방법이 없다.
+  // 그래서 **위치만 보는** 규칙을 따로 둔다: 로봇이 s 에 닿는 시각 t_r(s) 까지 사람이 갈 수
+  // 있는 거리를 반경에 더해, 그 안에 드는 첫 경로점 앞에서 선다. 방향을 쓰지 않으므로
+  // 반환점의 속도·헤딩 붕괴에 면역이다. 성장 시간은 approach_horizon 으로 묶어 과보수를 막는다.
+  for (std::size_t idx = 0; idx < obstacles.size() && cfg.approach_radius > 0.0; ++idx) {
+    const DynamicObstacle & o = obstacles[idx];
+    // **속도 추정을 못 믿을 때만** 쓴다 — 지금 통로 로직이 통째로 건너뛰는 바로 그 트랙들이다.
+    // 방향을 믿을 수 있는(빠른) 트랙은 통로 모델이 맡는다. 순수 위치 규칙을 전부에 적용하면
+    // 뒤로 지나간 장애물·정면·같은 차선 선행까지 세운다 (시험 ObstaclePassedBehindIsClear,
+    // HeadOnHasNoStopLine, SameLaneLeaderIsNotAStopLineCase 가 그것을 못 박고 있다).
+    if (std::hypot(o.predVx(), o.predVy()) >= cfg.min_speed) {
+      continue;
+    }
+    const double r_body = cfg.robot_radius + o.radius + cfg.hold_standoff;
+    double s_stop = kInf;
+    for (std::size_t i = 0; i < path.size(); ++i) {
+      const double s = cum_s[i];
+      if (s < s_robot) {
+        continue;
+      }
+      if (s > s_end) {
+        break;
+      }
+      const double t_r = std::min(
+        travelTime(s - s_robot, v_robot, cfg.accel, cfg.v_max), cfg.approach_horizon);
+      const double reach =
+        r_body + cfg.approach_radius * t_r / std::max(1e-6, cfg.approach_horizon);
+      if (std::hypot(path[i].x - o.x, path[i].y - o.y) <= reach) {
+        s_stop = s;
+        break;
+      }
+    }
+    if (!std::isfinite(s_stop)) {
+      continue;
+    }
+    const double d = std::max(0.0, s_stop - s_robot);
+    const double limit = SpeedProfile::maxSpeedForStop(d, cfg.decel, cfg.jerk, cfg.latency);
+    if (limit < out.speed_limit) {
+      out.state = YieldState::kYield;
+      out.speed_limit = limit;
+      out.stop_distance = d;
+      out.zone_entry = d;
+      out.obstacle = static_cast<std::ptrdiff_t>(idx);
+    }
+  }
+
   for (std::size_t idx = 0; idx < obstacles.size(); ++idx) {
     const DynamicObstacle & o = obstacles[idx];
     // 통로 축·길이는 평활 속도로 세운다 (velocity_obstacle.hpp 참고): 추적기 진행각이

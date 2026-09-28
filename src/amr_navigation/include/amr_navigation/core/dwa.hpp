@@ -132,7 +132,10 @@ struct DwaConfig
   /// 통로가 사라지는 것을 막는다 — 08 실패 9건이 전부 그 구간이었다.
   double yield_nominal_speed{1.0};
   /// [m] hold 가 몸 원통 경계보다 이만큼 앞에 선다 (crossing_yield hold_standoff).
-  double yield_hold_standoff{0.60};            // [s] 장애물 예측 지평 (통로 길이 = |u|·horizon)
+  double yield_hold_standoff{0.35};
+  /// [m] 접근 정지선 반경 (crossing_yield approach_radius). 방향을 쓰지 않는 규칙.
+  double yield_approach_radius{3.0};
+  double yield_approach_horizon{3.0};            // [s] 장애물 예측 지평 (통로 길이 = |u|·horizon)
   double yield_lookahead{4.0};          // [m] 경로에서 교차 구간을 찾는 최대 거리
   double yield_max_zone{6.0};           // [m] 교차 구간 길이 상한 (넘으면 나란한 주행)
   // 통로 안(kCommitted)에서 정지해 버리면 장애물이 그대로 걸어 들어온다 (시나리오 08 실측:
