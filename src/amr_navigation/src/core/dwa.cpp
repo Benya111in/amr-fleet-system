@@ -541,7 +541,11 @@ DwaResult DwaPlanner::compute(
       const double limit = std::min(
         config_.max_path_offset_hard,
         std::max(config_.max_path_offset, std::abs(robot_proj.cte)));
-      c.terms.off_path = std::min(1.0, std::max(0.0, cte_max - limit) / config_.off_path_band);
+      // 포화(min(1.0, ·))를 두지 않는다. 포화하면 한계 밖에서 기울기가 사라져 **되돌아올 유인이
+      // 없어진다** — 08 실측 u8c t6 의 복귀 10.60 s 가 그 모습이다 (peak 1.058 m 에서 0.15 m 로
+      // 돌아오는 데 10.6 s). 비용이라 위로 열려 있어도 무방하고, 모든 후보가 한계 밖인 상황에서는
+      // 가장 덜 벗어난 후보가 이겨 단조 복귀가 된다.
+      c.terms.off_path = std::max(0.0, cte_max - limit) / config_.off_path_band;
     }
     c.terms.velocity = std::abs(v_des - c.v) / v_span;
     // 진동
