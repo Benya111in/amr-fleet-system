@@ -71,6 +71,7 @@ YieldConfig DwaPlanner::yieldConfig() const
   y.stop_margin = config_.yield_stop_margin;
   y.clear_margin = config_.yield_clear_margin;
   y.horizon = config_.yield_horizon;
+  y.nominal_speed = config_.yield_nominal_speed;
   y.lookahead = config_.yield_lookahead;
   y.max_zone = config_.yield_max_zone;
   y.min_speed = config_.dynamic_speed_threshold;

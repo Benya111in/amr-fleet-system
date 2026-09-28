@@ -109,7 +109,15 @@ YieldResult evaluateYield(
     c.nx = -c.uy;
     c.ny = c.ux;
     c.R = cfg.robot_radius + o.radius + cfg.corridor_margin;
-    c.L = su * cfg.horizon;
+    // 통로 길이는 **지금 속도가 아니라 "낼 수 있는 속도"** 로 잡는다. su·horizon 을 쓰면 반환점에서
+    // 돌아서는 작업자(속도가 0.01~0.08 까지 떨어진다)의 통로가 사실상 사라졌다가, 다시 가속하면
+    // 12 m 로 폭발하며 이미 로봇을 삼킨 채 등장한다 — 08 실측: 실패 9건 전부가 이 구간이고
+    // (주 트랙 속도 0.01~0.08 → 1.1~1.6, 헤딩 변화 63~360°), 구간 입구가 0.19 s 만에
+    // 2.07 m → 0 으로 튀었다. 그러면 로봇은 경고 없이 통로 안에서 발견되고, 그때부터 선택지는
+    // 비켜서기(이탈)뿐이다. 명세 4.1 이 동적 장애물을 0.3~1.5 m/s 로 정의하므로 nominal_speed
+    // 로 바닥을 깔면 느린·도는 작업자도 전장 통로를 갖는다 — 미리 보이면 통로 밖에서 설 수 있고,
+    // 그쪽은 이탈 0 이라 복귀 판정 대상도 아니다.
+    c.L = std::max(su, cfg.nominal_speed) * cfg.horizon;
     // 몸 원통(위험 구간): 접촉이 실제로 나는 반폭. R_c 는 "언제 양보를 시작할지" 의 여유다.
     const double r_body = std::max(0.0, c.R - cfg.corridor_margin);
     const double r_danger = r_body + cfg.body_margin;
