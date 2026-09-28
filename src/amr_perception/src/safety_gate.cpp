@@ -23,6 +23,9 @@ constexpr double kStraightRadius = 1.0e5;
 /// 탈출 판정: 가드 거리(중앙값)가 이만큼 줄어도 "멀어짐" 으로 본다 (중앙값 잡음 σ ≈ 0.01 m)
 constexpr double kEscapeTolerance = 0.01;
 constexpr int kEscapeSteps = 5;
+/// 양보 탈출: 풋프린트-몸 원 여유가 "서 있을 때" 보다 이만큼까지는 나빠도 본다 (트랙 위치 σ 수준).
+/// 끝에서는 진행선 거리가 min_gain 이상 늘어야 하므로 일시적 손해만 허용된다.
+constexpr double kYieldClearanceTolerance = 0.02;
 
 /// 등속 원호(유니사이클) 운동 후 자세 (base_link 기준 상대 변위)
 Pose2D unicycleDelta(double v, double w, double t)
@@ -434,6 +437,16 @@ void SafetyGate::setMinTtc(double ttc, double stamp)
 {
   min_ttc_ = std::isnan(ttc) ? kInf : ttc;
   ttc_stamp_ = stamp;
+  tracks_.clear();  // 기하 없는 TTC — 옛 기하와 새 TTC 를 짝짓지 않는다
+  tracks_stamp_ = -1.0;
+}
+
+void SafetyGate::setTracks(const std::vector<TrackTtc> & tracks, double capture, double received)
+{
+  tracks_ = tracks;
+  tracks_stamp_ = capture;
+  min_ttc_ = minTrackTtc(tracks, params_.ttc_only_dynamic);
+  ttc_stamp_ = received;
 }
 
 bool SafetyGate::allSourcesClear() const
@@ -564,6 +577,68 @@ bool SafetyGate::escapeAllowed(double v, double w, const Pose2D & scan_correctio
     }
   }
   return true;
+}
+
+bool SafetyGate::yieldEscapeAllowed(
+  const TrackTtc & t, double v, double w, double now, double * gain) const
+{
+  // 동적 트랙만, 기하가 있는 트랙만, 신선한 트랙만. 정적 구조물·벽은 애초에 트랙 기하가 없거나
+  // is_dynamic 이 아니라 여기 들어오지 못한다 — 거리 존·STOP 래치가 그대로 맡는다.
+  const SafetyParams & p = params_;
+  if (!t.is_dynamic || !std::isfinite(t.position.x()) || !std::isfinite(t.position.y()) ||
+    !std::isfinite(t.velocity.x()) || !std::isfinite(t.velocity.y()))
+  {
+    return false;
+  }
+  if (tracks_stamp_ < 0.0 || now - tracks_stamp_ > p.ttc_max_age) {
+    return false;
+  }
+  // 촬영 뒤 지난 시간만큼 장애물(등속)과 로봇(측정 운동)을 지금 base_link 로 옮긴다
+  const double age = std::clamp(now - tracks_stamp_, 0.0, p.max_compensation_age);
+  const Pose2D corr = latencyCorrection(tracks_stamp_, now);
+  const Vec2 o0 = corr.apply(Vec2(t.position + age * t.velocity));
+  const Vec2 vo = corr.rotate(t.velocity);
+  // (1) 로봇 중심이 그 트랙의 몸 원통 안 — 서 있으면 곧 접촉인 자리
+  const double r_sum = circumscribedRadius() + p.dynamic_obstacle_radius;
+  if (o0.norm() > r_sum + p.yield_escape_overlap_margin) {
+    return false;
+  }
+  // (2) 명령 예측 동안 로봇 중심이 트랙 진행선(느린 트랙이면 트랙 자체)에서 멀어진다:
+  //     한 단계도 (잡음 여유 이상) 줄지 않고, 끝에서는 min_gain 이상 늘어야 한다
+  // (3) 풋프린트-몸 원 여유가 어느 단계에서도 "서 있을 때" 보다 나빠지지 않는다 — 진행선에서
+  //     멀어지면서도 꼬리를 몸에 휘두르는 원호는 여기서 걸린다
+  const double speed = vo.norm();
+  const bool has_line = speed >= p.yield_escape_min_obstacle_speed;
+  const Vec2 u = has_line ? Vec2(vo / speed) : Vec2(0.0, 0.0);
+  auto lateral = [&](const Vec2 & c) {
+      const Vec2 d = c - o0;
+      return std::abs(u.x() * d.y() - u.y() * d.x());
+    };
+  auto clearance = [&](const Pose2D & robot, const Vec2 & o) {
+      return distanceToRectangle(
+        robot.inverse().apply(o), p.footprint_length, p.footprint_width) -
+             p.dynamic_obstacle_radius;
+    };
+  const double start = has_line ? lateral(Vec2::Zero()) : o0.norm();
+  double prev = start;
+  for (int step = 1; step <= kEscapeSteps; ++step) {
+    const double tau = p.escape_horizon * step / kEscapeSteps;
+    const Pose2D robot = unicycleDelta(v, w, tau);
+    const Vec2 o = o0 + tau * vo;
+    const double cur = has_line ? lateral(robot.translation()) :
+      (robot.translation() - o).norm();
+    if (cur < prev - kEscapeTolerance) {
+      return false;
+    }
+    prev = std::max(prev, cur);
+    if (clearance(robot, o) < clearance(Pose2D{}, o) - kYieldClearanceTolerance) {
+      return false;
+    }
+  }
+  if (gain != nullptr) {
+    *gain = prev - start;
+  }
+  return prev >= start + p.yield_escape_min_gain;
 }
 
 SafetyStatus SafetyGate::evaluate(double now)
@@ -854,13 +929,50 @@ SafetyStatus SafetyGate::evaluate(double now)
     const bool ttc_binds = std::isfinite(v_ttc) && v_ttc < std::abs(v_in) && v_ttc < u_cap;
     const bool retreat = ttc_binds && p.allow_escape && cloud_fresh && !beams_.empty() &&
       escapeAllowed(v_in, w_in, scan_corr);   // 빔이 없으면 증명이 아니라 무근거다
+    // 몸 원통 안 양보 탈출 (동적 트랙 특례). 통합 08 실측(j8c 21회, k8a 18회): 작업자 통로 안에 선
+    // 로봇에 작업자가 걸어 들어와 스쳤고, 계획기가 가로질러 빠져나가라고 낸 0.368 / 0.631 m/s 를
+    // 추적기 TTC 0(이미 몸 원통 안) 의 상한이 0 으로 만들었다 — 근접 STOP 로그 없이. 그 자리에 서
+    // 있는 것이 곧 접촉인데, 위의 "증명된 후퇴" 는 스캔 가드 거리로만 보므로 몸을 스치며 도는 원호
+    // (꼬리가 몸 쪽으로 0.01 m 넘게 다가간다) 를 증명하지 못한다. 여기서는 트랙 기하로 증명한다:
+    // 로봇 중심이 그 트랙의 몸 원통 안이고, 명령 예측 동안 진행선에서 멀어지며, 풋프린트-몸 여유가
+    // 서 있을 때보다 나빠지지 않는 트랙만 상한에서 뺀다. 다른 트랙은 계속 상한을 걸고(v_rest),
+    // 거리 존·STOP 래치·E-stop·저상 물체(v_fwd)는 그대로다. 점 속도 상한 yield_escape_speed.
+    double v_yield = v_ttc;
+    bool yield_escape = false;
+    if (!retreat && ttc_binds && p.allow_escape && p.yield_escape_enabled && !tracks_.empty()) {
+      double ttc_rest = kInf;
+      bool exempt = false;
+      for (const auto & t : tracks_) {
+        if (std::isnan(t.ttc) || (p.ttc_only_dynamic && !t.is_dynamic)) {
+          continue;
+        }
+        if (t.ttc <= p.ttc_critical && yieldEscapeAllowed(t, v_in, w_in, now)) {
+          exempt = true;
+          continue;
+        }
+        ttc_rest = std::min(ttc_rest, t.ttc);
+      }
+      if (exempt) {
+        const double v_rest = ttc_rest <= p.ttc_critical ?
+          std::max(0.0, p.max_deceleration * (ttc_rest - p.reaction_latency)) : kInf;
+        v_yield = std::min(v_rest, p.yield_escape_speed);
+        yield_escape = v_yield > v_ttc;   // 상한이 실제로 올라갈 때만 특례다
+      }
+    }
+    double u_lim = u_cap;
+    double v_lim = v_ttc;
     if (retreat) {
       st.reasons.emplace_back("ttc_retreat");
-      scale(v, w, std::min(u_cap, p.retreat_max_speed), v > 0.0 ? v_fwd : kInf);
-    } else {
-      scale(v, w, u_cap, v > 0.0 ? std::min(v_ttc, v_fwd) : v_ttc);
+      u_lim = std::min(u_cap, p.retreat_max_speed);
+      v_lim = kInf;
+    } else if (yield_escape) {
+      st.yield_escaping = true;
+      st.reasons.emplace_back("ttc_yield_escape");
+      u_lim = std::min(u_cap, p.yield_escape_speed);
+      v_lim = v_yield;
     }
-    ttc_limited = !retreat && std::isfinite(v_ttc) && std::abs(v_in) > v_ttc && v_ttc <= u_cap;
+    scale(v, w, u_lim, v > 0.0 ? std::min(v_lim, v_fwd) : v_lim);
+    ttc_limited = std::isfinite(v_lim) && std::abs(v_in) > v_lim && v_lim <= u_cap;
   }
   if (ttc_limited) {
     st.reasons.emplace_back("ttc_limit");

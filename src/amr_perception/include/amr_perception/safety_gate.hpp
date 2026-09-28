@@ -24,7 +24,10 @@
 //   접촉 가드: 모든 방향, 풋프린트까지 거리의 창 중앙값 최소 <= contact_guard_distance → STOP.
 //     그 점들에서 멀어지는(거리가 줄지 않는) 명령만 escape_max_speed 로 통과.
 //   도킹 예외 다각형 안 점: 정지 거리 exclusion_stop_distance, CRITICAL 상한 (계약 C2).
-//   TTC <= τ_crit(2.15 s) → v <= a·(TTC - t_react)
+//   TTC <= τ_crit(2.15 s) → v <= a·(TTC - t_react). 특례 둘 (둘 다 TTC 채널 안에서만):
+//     증명된 후퇴 — 스캔 가드 거리가 줄지 않는 명령은 retreat_max_speed 까지,
+//     몸 원통 안 양보 탈출 — 동적 트랙의 몸 원통 안에서 그 진행선에서 멀어지는(풋프린트-몸 여유가
+//     서 있을 때보다 나쁘지 않은) 명령은 그 트랙의 TTC 를 빼고 yield_escape_speed 까지.
 //   센서: 간격 > late_timeout → 지연 경고(진단만), > fault_timeout → 고장
 //     (stop → 정지 + estop_active, degraded → degraded_mode_max_speed).
 //   E-stop 입력(estop, /fleet/estop): true 수신 즉시 래치. 해제는 모든 입력이 명시적 false 인
@@ -68,10 +71,15 @@ struct SensorWatch
 };
 
 /// 추적 결과 한 개의 TTC 와 동적 여부 (safety_node 가 perception/tracked_obstacles 에서 채운다).
+/// position/velocity 는 촬영 시각 base_link 기준 (위치 [m], 월드 기준 속도를 base_link 축으로
+/// [m/s]). 위치가 NaN 이면 TTC 만 있는 트랙 — 몸 원통 안 양보 탈출 특례(§6.5)에는 쓰지 않는다.
 struct TrackTtc
 {
   double ttc{std::numeric_limits<double>::infinity()};
   bool is_dynamic{false};
+  Vec2 position{Vec2(
+      std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN())};
+  Vec2 velocity{Vec2(0.0, 0.0)};
 };
 
 /// TTC 제한에 쓸 최소 TTC. only_dynamic 이면 동적 트랙만 본다 — 정적 구조물(벽·랙)은
@@ -139,6 +147,21 @@ struct SafetyParams
   /// (escape_max_speed) 과 따로 둔다: 이쪽은 정지 원인이 아직 없고 TTC 만 걸린 상태라
   /// 계획기가 낸 통로 이탈 속도(yield_escape_speed 0.5)를 그대로 낼 수 있어야 한다.
   double retreat_max_speed{0.5};
+  bool ttc_only_dynamic{true};          ///< TTC 상한에 동적 트랙만 (minTrackTtc)
+  // 몸 원통 안 양보 탈출 (TTC 채널 특례, 동적 트랙만). 통합 08 실측: 작업자 통로 안에 선 로봇에
+  // 작업자가 걸어 들어와 스쳤고, 계획기의 "가로질러 빠져나가라"(0.37·0.63 m/s) 명령을 TTC 0
+  // 상한이 0 으로 만들었다 — 서 있는 것이 곧 접촉인 자리에서 정지는 안전한 선택이 아니다.
+  // 로봇 중심이 그 트랙의 몸 원통(외접원 0.361 + dynamic_obstacle_radius) 안이고, 명령 예측
+  // (escape_horizon) 동안 (1) 로봇 중심이 트랙 진행선에서 멀어지며(느린 트랙이면 트랙에서
+  // 멀어지며), (2) 풋프린트-몸 원 여유가 "서 있을 때" 보다 어느 순간도 나빠지지 않을 때만 그 트랙의
+  // TTC 를 상한에서 뺀다 (다른 트랙·거리 존·STOP 래치·E-stop 은 그대로).
+  // 점 속도 상한 yield_escape_speed.
+  bool yield_escape_enabled{true};
+  double yield_escape_speed{0.5};       ///< 특례 명령의 최고 점 속도 [m/s] (= 계획기 이탈 속도)
+  double dynamic_obstacle_radius{0.30};  ///< 동적 장애물(사람) 몸 반경 [m]
+  double yield_escape_overlap_margin{0.10};  ///< 몸 원통 판정 여유 [m] (TTC 0 이 되는 σ 팽창 폭)
+  double yield_escape_min_gain{0.02};   ///< 예측 끝에서 진행선(트랙)까지 거리 최소 증가 [m]
+  double yield_escape_min_obstacle_speed{0.15};  ///< 진행선이 정의되는 최소 트랙 속도 [m/s]
   // 도킹 예외 (계약 C2)
   double exclusion_stop_distance{0.10};  ///< 도킹 예외 다각형 안 점의 정지 거리 [m]
   double exclusion_timeout{0.3};        ///< 예외 다각형 유효 시간 [s]
@@ -162,6 +185,7 @@ struct SafetyStatus
   bool cloud_stale{false};      ///< 필수 깊이 점군이 없거나 늦다 → 전진 저속
   bool command_stale{false};
   bool escaping{false};         ///< 접촉 가드 중 멀어지는 명령 통과
+  bool yield_escaping{false};   ///< 몸 원통 안 양보 탈출 특례로 TTC 상한을 면제받은 명령
   double speed_limit{0.0};      ///< 적용된 선속도 상한 [m/s]
   double angular_limit{0.0};    ///< 적용된 각속도 상한 [rad/s]
   double min_distance{std::numeric_limits<double>::infinity()};  ///< 존 판정 접근 거리 D [m]
@@ -262,8 +286,11 @@ public:
   void setCommand(double linear, double angular, double stamp);
   /// 측정 속도 (wheel_odom twist). 1차 저역 통과 후 운동 가설로 쓴다
   void setMeasuredVelocity(double linear, double angular, double stamp);
-  /// 추적기 최소 TTC (없으면 +inf)
+  /// 추적기 최소 TTC (없으면 +inf). 트랙 기하 없이 TTC 만 주는 경로 — 양보 탈출 특례는 꺼진다.
   void setMinTtc(double ttc, double stamp);
+  /// 추적 결과 전체 (TTC + base_link 기하). 최소 TTC 는 ttc_only_dynamic 에 따라 여기서 고른다.
+  /// capture: 촬영 시각 (기하 지연 보정), received: 수신 시각 (ttc_max_age 기준)
+  void setTracks(const std::vector<TrackTtc> & tracks, double capture, double received);
   /// E-stop 입력 (source: "estop", "fleet_estop" 등)
   void setEstopSource(const std::string & source, bool active);
   /// E-stop 래치 해제 요청 (safety/reset_estop).
@@ -312,6 +339,9 @@ private:
   bool isSelf(const Vec2 & p) const;
   bool excluded(const Vec2 & p, double now) const;
   bool escapeAllowed(double v, double w, const Pose2D & scan_correction) const;
+  /// 몸 원통 안 양보 탈출 특례 판정 (트랙 하나에 대해). gain: 예측 끝의 진행선(트랙) 거리 증가량
+  bool yieldEscapeAllowed(
+    const TrackTtc & track, double v, double w, double now, double * gain = nullptr) const;
   bool allSourcesClear() const;
   static void updateChannel(Channel & ch, double value, double threshold, bool new_frame);
   bool confirmed(const Channel & ch, double threshold) const;
@@ -339,6 +369,8 @@ private:
   bool have_intent_{false};
   double min_ttc_{std::numeric_limits<double>::infinity()};
   double ttc_stamp_{-1.0};
+  std::vector<TrackTtc> tracks_;   ///< 마지막 추적 결과 (촬영 시각 base_link 기하)
+  double tracks_stamp_{-1.0};      ///< 그 촬영 시각
   std::map<std::string, bool> estop_sources_;
   bool estop_latched_{false};
   std::vector<Vec2> exclusion_;

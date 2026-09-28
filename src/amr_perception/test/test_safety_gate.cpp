@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <limits>
 #include <random>
 #include <string>
@@ -794,6 +795,268 @@ TEST(SafetyGate, TtcLimitDoesNotFreezeAProvenRetreat)
   EXPECT_TRUE(hasReason(st, "ttc_retreat"));
   EXPECT_NEAR(st.command.linear, -p.retreat_max_speed, 1e-12);
   EXPECT_FALSE(hasReason(st, "ttc_limit"));
+}
+
+namespace
+{
+/// 통합 08 j8c 21회 시행 접촉(t = 403.40 s) 0.1 s 전의 재구성 — base_link 기준.
+/// GT(contacts.csv): 작업자(반지름 0.30) 진행 0°(월드 +x) 1.0 m/s, 로봇은 진행선 왼쪽 0.483 m ·
+/// 앞 0.293 m 에 정지(중심 거리 0.565 < 0.661, 침투 7.6 mm), 계획기 (0.368, -0.351) · 게이트 입력
+/// 0.396 → 출력 0.000, 근접 STOP 로그 없음. 로봇 방위는 기록이 없어 침투 깊이(모서리 방향 ±60°)와
+/// B→A 진행(153°)·우회전 명령으로 119° 를 택했다: 작업자 중심 base_link (-0.278, +0.492) ·
+/// 속도 (-0.786, -1.03). 0.1 s 전(로봇 정지) = (-0.199, 0.595): 몸 원통 안(0.627), 왼쪽 옆면에서
+/// 0.095 m — 접근 영역(앞)·접촉 가드(0.02) 어느 거리 채널에도 걸리지 않는다.
+struct WorkerScene
+{
+  Vec2 center;
+  Vec2 velocity;
+  double radius{0.30};
+};
+const WorkerScene kJ8cT21{Vec2(-0.199, 0.595), Vec2(-0.786, -1.03)};
+
+std::vector<Vec2> workerBeams(const WorkerScene & s)
+{
+  return simulateBeams({}, {scan_sim::Circle{s.center, s.radius}}, 0.0, nullptr);
+}
+
+TrackTtc workerTrack(const WorkerScene & s, double ttc = 0.0, bool dynamic = true)
+{
+  TrackTtc t;
+  t.ttc = ttc;
+  t.is_dynamic = dynamic;
+  t.position = s.center;
+  t.velocity = s.velocity;
+  return t;
+}
+
+void freshCloud(SafetyGate & g, double t)
+{
+  g.setCloud({Vec2(3.0, 0.0), Vec2(3.0, 0.05), Vec2(3.0, 0.1)}, t);
+}
+
+void printGate(const char * tag, const SafetyStatus & st)
+{
+  std::string reasons;
+  for (const auto & r : st.reasons) {
+    reasons += (reasons.empty() ? "" : ",") + r;
+  }
+  std::printf(
+    "[ info ] %s: 게이트 (%.3f, %.3f) D %.3f 가드 %.3f 존 %s 사유 [%s]\n", tag, st.command.linear,
+    st.command.angular, st.min_distance, st.contact_distance, amr_perception::zoneName(st.zone),
+    reasons.c_str());
+}
+}  // namespace
+
+TEST(SafetyGate, YieldEscapeInsideWorkerCylinderIsNotFrozenByTtc)
+{
+  // 통합 08 실측(j8c 21회): 작업자 통로 안에 선 로봇에 작업자가 걸어 들어와 스쳤다. 접촉 기제는
+  // "그 자리에 서 있는 것" 이고 계획기는 가로질러 빠져나가라(0.368 m/s)고 했는데, 추적기 TTC 0
+  // (이미 몸 원통 안) → v_ttc 0 이 그 명령을 0 으로 만들었다. 증명된 후퇴(escapeAllowed)도 아니다 —
+  // 우회전 원호가 꼬리를 몸 쪽으로 휘둘러 스캔 가드 거리가 0.01 m 넘게 준다. 게이트가 막으려던
+  // 결과를 게이트가 만든다. 특례: 몸 원통 안 + 진행선에서 멀어짐 + 풋프린트-몸 여유가 서 있을
+  // 때보다 나쁘지 않음 → 그 트랙의 TTC 를 상한에서 빼고 yield_escape_speed(0.5) 점 속도로 묶는다.
+  SafetyParams p;
+  const auto beams = workerBeams(kJ8cT21);
+  SafetyGate g(p, {}, 0.0);
+  freshCloud(g, 0.0);
+  g.setMeasuredVelocity(0.0, 0.0, 0.0);   // GT 로봇 속도 0.000
+  g.setTracks({workerTrack(kJ8cT21)}, 0.0, 0.0);
+  const auto st = frame(g, beams, 0.368, -0.351, 0.0);
+  printGate("j8c t21 재구성, 계획기 (0.368, -0.351)", st);
+  // 거리 채널은 이 명령을 막지 않는다 (몸이 뒤-왼쪽: 접근 영역 밖, 가드 밖) — 문제는 TTC 채널뿐
+  EXPECT_TRUE(std::isinf(st.min_distance));
+  EXPECT_GT(st.contact_distance, p.contact_guard_distance);
+  EXPECT_FALSE(st.proximity_stop);
+  EXPECT_EQ(st.zone, SafetyZone::kClear);
+  // 고치기 전: 0.000 (ttc_limit). 고친 뒤: 계획기 명령 그대로 (점 속도 0.45 < 0.5)
+  EXPECT_TRUE(st.yield_escaping);
+  EXPECT_TRUE(hasReason(st, "ttc_yield_escape"));
+  EXPECT_FALSE(hasReason(st, "ttc_retreat"));
+  EXPECT_FALSE(hasReason(st, "ttc_limit"));
+  EXPECT_NEAR(st.command.linear, 0.368, 1e-9);
+  EXPECT_NEAR(st.command.angular, -0.351, 1e-9);
+
+  // 상한: 점 속도 0.5 — k8a 18회 시행의 계획기 선속도 0.631 을 같은 원호에 얹으면 점 속도 0.709 →
+  // 0.5 로 줄고 곡률은 유지된다. (k8a 의 실제 w -0.184 는 꼬리 휘두름이 작아 특례 1 이 먼저
+  // 통과시킨다.)
+  SafetyGate g2(p, {}, 0.0);
+  freshCloud(g2, 0.0);
+  g2.setMeasuredVelocity(0.0, 0.0, 0.0);
+  g2.setTracks({workerTrack(kJ8cT21)}, 0.0, 0.0);
+  const auto capped = frame(g2, beams, 0.631, -0.351, 0.0);
+  printGate("같은 기하, 계획기 (0.631, -0.351)", capped);
+  EXPECT_TRUE(capped.yield_escaping);
+  EXPECT_NEAR(pointSpeed(capped), p.yield_escape_speed, 1e-9);
+  EXPECT_NEAR(capped.command.angular / capped.command.linear, -0.351 / 0.631, 1e-9);  // 곡률 유지
+
+  // 특례를 끄면 예전 동작 — 회귀 기준선 (통합 실측 출력 0.000 과 같다)
+  SafetyParams off = p;
+  off.yield_escape_enabled = false;
+  SafetyGate g0(off, {}, 0.0);
+  freshCloud(g0, 0.0);
+  g0.setMeasuredVelocity(0.0, 0.0, 0.0);
+  g0.setTracks({workerTrack(kJ8cT21)}, 0.0, 0.0);
+  const auto before = frame(g0, beams, 0.368, -0.351, 0.0);
+  printGate("특례 끔 (예전 동작)", before);
+  EXPECT_DOUBLE_EQ(before.command.linear, 0.0);
+  EXPECT_DOUBLE_EQ(before.command.angular, 0.0);
+  EXPECT_TRUE(hasReason(before, "ttc_limit"));
+  EXPECT_FALSE(hasReason(before, "ttc_retreat"));
+}
+
+TEST(SafetyGate, YieldEscapeNeverRelaxesDistanceStopOrEstop)
+{
+  // 특례는 TTC 상한만 뺀다. 같은 기하에 정지 채널 원인을 하나씩 얹으면 결과는 예전과 같아야 한다 —
+  // 시나리오 09(긴급 정지)의 경로: 여유 거리 제한 첫 프레임 0 → 2 프레임 STOP 확정, E-stop 즉시 0.
+  SafetyParams p;
+  const auto worker = workerBeams(kJ8cT21);
+
+  // (a) 명령 경로 앞 0.28 m 정적 판: 첫 프레임 0 (여유 거리 제한), 둘째 프레임 STOP 래치
+  //     (stop_lidar)
+  {
+    SafetyGate g(p, {}, 0.0);
+    const auto beams = concat(worker, plate(0.28));
+    freshCloud(g, 0.0);
+    g.setMeasuredVelocity(0.0, 0.0, 0.0);
+    g.setTracks({workerTrack(kJ8cT21)}, 0.0, 0.0);
+    auto st = frame(g, beams, 0.368, 0.0, 0.0);
+    printGate("(a) 앞 0.28 m 정적 판, 1 프레임", st);
+    EXPECT_NEAR(st.min_distance, 0.28, 1e-9);
+    EXPECT_DOUBLE_EQ(st.command.linear, 0.0);
+    EXPECT_DOUBLE_EQ(st.command.angular, 0.0);
+    EXPECT_FALSE(st.yield_escaping);
+    EXPECT_EQ(st.zone, SafetyZone::kCritical);   // 확정 대기 — 속도는 이미 0
+    freshCloud(g, 0.1);
+    g.setTracks({workerTrack(kJ8cT21)}, 0.1, 0.1);
+    st = frame(g, beams, 0.368, 0.0, 0.1);
+    printGate("(a) 앞 0.28 m 정적 판, 2 프레임", st);
+    EXPECT_EQ(st.zone, SafetyZone::kStop);
+    EXPECT_TRUE(hasCause(st, "lidar"));
+    EXPECT_FALSE(st.estop_active);
+    EXPECT_DOUBLE_EQ(st.command.linear, 0.0);
+    EXPECT_FALSE(st.yield_escaping);
+  }
+  // (b) E-stop 래치: 특례 조건이 다 맞아도 0, estop_active
+  {
+    SafetyGate g(p, {}, 0.0);
+    freshCloud(g, 0.0);
+    g.setMeasuredVelocity(0.0, 0.0, 0.0);
+    g.setTracks({workerTrack(kJ8cT21)}, 0.0, 0.0);
+    g.setEstopSource("estop", true);
+    const auto st = frame(g, worker, 0.368, -0.351, 0.0);
+    printGate("(b) E-stop", st);
+    EXPECT_TRUE(st.estop_active);
+    EXPECT_DOUBLE_EQ(st.command.linear, 0.0);
+    EXPECT_DOUBLE_EQ(st.command.angular, 0.0);
+    EXPECT_FALSE(st.yield_escaping);
+  }
+  // (c) 정적으로 분류된 트랙(벽·랙 조각)에는 특례가 없다 — only_dynamic 을 꺼서 TTC 가 걸리게
+  //     해도 0
+  {
+    SafetyParams all = p;
+    all.ttc_only_dynamic = false;
+    SafetyGate g(all, {}, 0.0);
+    freshCloud(g, 0.0);
+    g.setMeasuredVelocity(0.0, 0.0, 0.0);
+    g.setTracks({workerTrack(kJ8cT21, 0.0, false)}, 0.0, 0.0);
+    const auto st = frame(g, worker, 0.368, -0.351, 0.0);
+    printGate("(c) 정적 트랙", st);
+    EXPECT_DOUBLE_EQ(st.command.linear, 0.0);
+    EXPECT_FALSE(st.yield_escaping);
+    EXPECT_TRUE(hasReason(st, "ttc_limit"));
+  }
+  // (d) 진행선 쪽으로 가는 명령(후진: 꼬리가 몸으로, 중심은 진행선으로)은 특례가 아니다
+  {
+    SafetyGate g(p, {}, 0.0);
+    freshCloud(g, 0.0);
+    g.setMeasuredVelocity(0.0, 0.0, 0.0);
+    g.setTracks({workerTrack(kJ8cT21)}, 0.0, 0.0);
+    const auto st = frame(g, worker, -0.368, -0.351, 0.0);
+    printGate("(d) 후진 (-0.368, -0.351)", st);
+    EXPECT_DOUBLE_EQ(st.command.linear, 0.0);
+    EXPECT_FALSE(st.yield_escaping);
+  }
+  // (e) 몸 원통 밖(중심 거리 0.985 > 0.661 + 0.10)이면 특례 2 가 아니다 — 예전 규칙 그대로
+  //     (여기서는 몸이 멀어 꼬리 휘두름이 가드 거리를 안 줄이므로 특례 1(증명된 후퇴)이 통과시킨다)
+  {
+    const WorkerScene far{Vec2(-0.4, 0.9), kJ8cT21.velocity};
+    SafetyGate g(p, {}, 0.0);
+    freshCloud(g, 0.0);
+    g.setMeasuredVelocity(0.0, 0.0, 0.0);
+    g.setTracks({workerTrack(far, 0.1)}, 0.0, 0.0);
+    const auto st = frame(g, workerBeams(far), 0.368, -0.351, 0.0);
+    printGate("(e) 몸 원통 밖 (0.985 m)", st);
+    EXPECT_FALSE(st.yield_escaping);
+    EXPECT_FALSE(hasReason(st, "ttc_yield_escape"));
+    EXPECT_TRUE(hasReason(st, "ttc_retreat"));
+    // 특례 1 도 끄면(점군 없음 = 증명 불가) 예전과 같이 0
+    SafetyGate g1(p, {}, 0.0);
+    g1.setMeasuredVelocity(0.0, 0.0, 0.0);
+    g1.setTracks({workerTrack(far, 0.1)}, 0.0, 0.0);
+    const auto st1 = frame(g1, workerBeams(far), 0.368, -0.351, 0.0);
+    EXPECT_FALSE(st1.yield_escaping);
+    EXPECT_DOUBLE_EQ(st1.command.linear, 0.0);
+  }
+  // (f) 트랙별 면제: 앞에서 오는 둘째 동적 트랙(TTC 0.5 s)은 계속 상한을 건다
+  //     → v ≤ 1.0·(0.5 − 0.15)
+  {
+    TrackTtc ahead;
+    ahead.ttc = 0.5;
+    ahead.is_dynamic = true;
+    ahead.position = Vec2(2.0, 0.0);
+    ahead.velocity = Vec2(-1.0, 0.0);
+    SafetyGate g(p, {}, 0.0);
+    freshCloud(g, 0.0);
+    g.setMeasuredVelocity(0.0, 0.0, 0.0);
+    g.setTracks({workerTrack(kJ8cT21), ahead}, 0.0, 0.0);
+    const auto st = frame(g, worker, 0.368, -0.351, 0.0);
+    printGate("(f) 둘째 트랙 TTC 0.5 s", st);
+    EXPECT_TRUE(st.yield_escaping);
+    EXPECT_TRUE(hasReason(st, "ttc_limit"));
+    EXPECT_NEAR(st.command.linear, 0.35, 1e-9);
+    EXPECT_NEAR(st.command.angular, -0.351 * 0.35 / 0.368, 1e-9);
+  }
+  // (g) 트랙이 늦으면(ttc_max_age 0.5 s 초과) TTC 도 특례도 없다 — 예전과 같이 상한 없음이 아니라,
+  //     TTC 자체가 무시되므로 명령 통과. 특례 플래그는 서지 않는다
+  {
+    SafetyGate g(p, {}, 0.0);
+    freshCloud(g, 0.0);
+    g.setMeasuredVelocity(0.0, 0.0, 0.0);
+    g.setTracks({workerTrack(kJ8cT21)}, -0.6, -0.6);
+    const auto st = frame(g, worker, 0.368, -0.351, 0.0);
+    EXPECT_FALSE(st.yield_escaping);
+    EXPECT_TRUE(std::isinf(st.min_ttc));
+  }
+}
+
+TEST(SafetyGate, YieldEscapeFromAStoppedPersonUsesDistanceRule)
+{
+  // 진행선이 정의되지 않는 느린 트랙(≤ 0.15 m/s, 옆에 멈춰 선 사람)에는 "트랙에서 멀어진다" 로
+  // 판정한다. 직진은 멀어지고(0.627 → 0.669), 후진은 가까워진다(0.600). 우회전 원호는 중심은
+  // 멀어져도 꼬리를 몸 쪽으로 휘둘러 풋프린트-몸 여유가 서 있을 때보다 0.02 m 넘게 나빠지므로 불허.
+  // 점군을 주지 않아 특례 1(증명된 후퇴)은 꺼진 상태 — 특례 2 만 따로 본다.
+  SafetyParams p;
+  const WorkerScene standing{kJ8cT21.center, Vec2(0.05, 0.0)};
+  const auto beams = workerBeams(standing);
+  auto run = [&](double v, double w) {
+      SafetyGate g(p, {}, 0.0);
+      g.setMeasuredVelocity(0.0, 0.0, 0.0);
+      g.setTracks({workerTrack(standing)}, 0.0, 0.0);
+      return frame(g, beams, v, w, 0.0);
+    };
+  const auto straight = run(0.368, 0.0);
+  printGate("멈춘 사람, 직진", straight);
+  EXPECT_TRUE(straight.yield_escaping);
+  EXPECT_FALSE(hasReason(straight, "ttc_retreat"));
+  EXPECT_NEAR(straight.command.linear, 0.368, 1e-9);
+  const auto reverse = run(-0.368, 0.0);
+  printGate("멈춘 사람, 후진", reverse);
+  EXPECT_FALSE(reverse.yield_escaping);
+  EXPECT_DOUBLE_EQ(reverse.command.linear, 0.0);
+  const auto arc = run(0.368, -0.351);
+  printGate("멈춘 사람, 우회전 원호", arc);
+  EXPECT_FALSE(arc.yield_escaping);
+  EXPECT_DOUBLE_EQ(arc.command.linear, 0.0);
 }
 
 TEST(SafetyGate, PointSpeedLimitPreservesCurvature)

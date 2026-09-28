@@ -127,7 +127,7 @@ public:
     p.ttc_limit_enabled = declare_parameter<bool>("ttc.enabled", true);
     p.ttc_critical = declare_parameter<double>("ttc.critical", 2.15);
     p.ttc_max_age = declare_parameter<double>("ttc.max_age", 0.5);
-    ttc_only_dynamic_ = declare_parameter<bool>("ttc.only_dynamic", true);
+    p.ttc_only_dynamic = declare_parameter<bool>("ttc.only_dynamic", true);
     p.command_timeout = declare_parameter<double>("command_timeout", 0.5);
     p.estop_release_requires_reset = declare_parameter<bool>("estop_release_requires_reset", true);
     p.swept_margin = declare_parameter<double>("approach.swept_margin", 0.0);
@@ -154,6 +154,17 @@ public:
     p.escape_horizon = declare_parameter<double>("escape_horizon", 0.3);
     p.escape_max_speed = declare_parameter<double>("escape_max_speed", p.critical_zone_max_speed);
     p.retreat_max_speed = declare_parameter<double>("retreat_max_speed", p.retreat_max_speed);
+    p.yield_escape_enabled =
+      declare_parameter<bool>("yield_escape.enabled", p.yield_escape_enabled);
+    p.yield_escape_speed = declare_parameter<double>("yield_escape.speed", p.yield_escape_speed);
+    p.dynamic_obstacle_radius =
+      declare_parameter<double>("yield_escape.obstacle_radius", p.dynamic_obstacle_radius);
+    p.yield_escape_overlap_margin =
+      declare_parameter<double>("yield_escape.overlap_margin", p.yield_escape_overlap_margin);
+    p.yield_escape_min_gain =
+      declare_parameter<double>("yield_escape.min_gain", p.yield_escape_min_gain);
+    p.yield_escape_min_obstacle_speed = declare_parameter<double>(
+      "yield_escape.min_obstacle_speed", p.yield_escape_min_obstacle_speed);
     p.exclusion_stop_distance = declare_parameter<double>("exclusion_stop_distance", 0.10);
     p.exclusion_timeout = declare_parameter<double>("exclusion_timeout", 0.3);
     cloud_enabled_ = declare_parameter<bool>("depth_cloud.enabled", true);
@@ -241,14 +252,7 @@ public:
     tracked_sub_ = create_subscription<amr_msgs::msg::TrackedObstacleArray>(
       declare_parameter<std::string>("topics.tracked_obstacles", "perception/tracked_obstacles"),
       rclcpp::QoS(10).reliable(),
-      [this](amr_msgs::msg::TrackedObstacleArray::ConstSharedPtr msg) {
-        std::vector<TrackTtc> tracks;
-        tracks.reserve(msg->obstacles.size());
-        for (const auto & o : msg->obstacles) {
-          tracks.push_back({static_cast<double>(o.time_to_collision), o.is_dynamic});
-        }
-        gate_->setMinTtc(minTrackTtc(tracks, ttc_only_dynamic_), now().seconds());
-      });
+      [this](amr_msgs::msg::TrackedObstacleArray::ConstSharedPtr msg) {onTracks(*msg);});
     // E-stop: transient_local 구독(늦게 떠도 latched 마지막 값) + volatile 구독(volatile 발행자).
     // volatile 구독은 두 종류 발행자와 모두 맞으므로 같은 표본이 두 번 올 수 있다
     // → 발행자별 원천 시각으로 거른다.
@@ -378,6 +382,31 @@ private:
         frame.c_str(), e.what());
       return false;
     }
+  }
+
+  /// 추적 결과 → 게이트. TTC 는 그대로 쓰고, 기하(위치·속도)는 base_link 로 옮겨 몸 원통 안 양보
+  /// 탈출 특례(safety_gate.hpp SafetyParams::yield_escape_*)에 준다. 메시지 프레임(보통 map)에서
+  /// base_link 로 가는 TF 가 없으면 기하 없이 TTC 만 준다 — 특례가 서지 않는 쪽(보수적)이다.
+  void onTracks(const amr_msgs::msg::TrackedObstacleArray & msg)
+  {
+    const std::string frame = msg.header.frame_id.empty() ? base_frame_ : msg.header.frame_id;
+    Pose2D base_from_msg;
+    const bool have_pose = frame == base_frame_ || lookup2D(base_frame_, frame, base_from_msg);
+    std::vector<TrackTtc> tracks;
+    tracks.reserve(msg.obstacles.size());
+    for (const auto & o : msg.obstacles) {
+      TrackTtc t;
+      t.ttc = static_cast<double>(o.time_to_collision);
+      t.is_dynamic = o.is_dynamic;
+      if (have_pose) {
+        t.position = base_from_msg.apply(Vec2(o.position.x, o.position.y));
+        t.velocity = base_from_msg.rotate(Vec2(o.velocity.x, o.velocity.y));
+      }
+      tracks.push_back(t);
+    }
+    const double received = now().seconds();
+    const double stamp = rclcpp::Time(msg.header.stamp, get_clock()->get_clock_type()).seconds();
+    gate_->setTracks(tracks, stamp > 0.0 ? stamp : received, received);
   }
 
   void onScan(const sensor_msgs::msg::LaserScan & scan)
@@ -608,6 +637,7 @@ private:
     kv("speed_limit_mps", std::to_string(st.speed_limit));
     kv("estop_latched", st.estop_latched ? "true" : "false");
     kv("proximity_stop", st.proximity_stop ? "true" : "false");
+    kv("yield_escaping", st.yield_escaping ? "true" : "false");
     kv("stop_causes", join(st.stop_causes));
     kv("failed_sensors", join(st.failed_sensors));
     kv("late_sensors", join(st.late_sensors));
@@ -635,7 +665,6 @@ private:
   double exclusion_received_{-1.0};
   rclcpp::Time last_diag_{0, 0, RCL_ROS_TIME};
   bool published_once_{false};
-  bool ttc_only_dynamic_{true};   ///< TTC 제한에 동적 트랙만 (minTrackTtc)
   SafetyZone last_zone_{SafetyZone::kClear};
   bool last_estop_{false};
   bool last_degraded_{false};
