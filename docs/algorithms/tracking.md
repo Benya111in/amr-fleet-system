@@ -276,6 +276,26 @@ $$v_\max(D) = -at + \sqrt{(at)^2 + 2a(D - 0.30)}$$
 안에서 로봇을 세웠다 (navigation 통합 시험 0/3 → 수정 뒤 10/10, costmap.md §6.2). Nav2 BT 의 `IsTTCBelowThreshold
 only_dynamic="true"` 와 같은 규칙이다.
 
+**증명된 후퇴 (TTC 특례 1)**: TTC 는 측정 속도로 계산돼 서 있으면 0 에 머문다. TTC 가 실제로 명령을 깎을 때, 스캔 가드
+거리(§6.4)가 운동 예측 동안 줄지 않는 명령은 상한에서 빼고 `retreat_max_speed` 0.5 m/s 로 묶는다 (`ttc_retreat`,
+`TtcLimitDoesNotFreezeAProvenRetreat`). 깊이 점군이 끊겼거나 빔이 없으면 증명이 아니므로 적용하지 않는다.
+
+**몸 원통 안 양보 탈출 (TTC 특례 2, 동적 트랙만)**: 추적기 TTC 는 로봇 외접원(0.361)과 장애물 원이 겹치면 0 이다. 작업자
+통로 안에 선 로봇은 그래서 굳는데, 거기서 **서 있는 것이 곧 접촉**이다 — 통합 08 실측(j8c 21회, k8a 18회): 계획기가
+가로질러 빠져나가라고 낸 0.368 / 0.631 m/s 를 게이트가 0 으로 만들었고(근접 STOP 로그 없음), 작업자가 멈춘 로봇에 걸어
+들어와 7–8 mm 스쳤다. 특례 1 은 스캔 가드 거리로만 증명하므로 몸 옆을 스치며 도는 원호(꼬리가 몸 쪽으로 0.01 m 넘게)를
+통과시키지 못한다. `setTracks` 로 받은 트랙 기하(base_link 위치·속도, 촬영 후 지연 보정)로 **트랙마다 따로** 증명한다:
+(1) 로봇 중심이 그 트랙의 몸 원통(0.361 + `yield_escape.obstacle_radius` 0.30, 여유 `overlap_margin` 0.10 — TTC 가
+0 이 되는 σ 팽창 띠) 안, (2) 명령 예측(`escape_horizon` 0.3 s, 5 단계) 동안 로봇 중심의 트랙 **진행선**까지 거리가 한
+단계도 0.01 m 넘게 줄지 않고 끝에서 `min_gain` 0.02 m 이상 는다 (트랙이 `min_obstacle_speed` 0.15 m/s 보다 느리면
+진행선 대신 트랙까지 거리), (3) 풋프린트-몸 원 여유가 어느 단계에서도 "서 있을 때" 보다 0.02 m 넘게 나쁘지 않다 (중심은
+멀어져도 꼬리를 몸에 휘두르는 원호는 여기서 걸린다). 셋 다 맞는 트랙만 상한에서 빼고, 남은 트랙의 TTC 상한과
+`yield_escape.speed` 0.5 m/s(점 속도) 중 작은 값으로 묶는다 (`ttc_yield_escape`). 거리 존·여유 거리 제한·STOP 래치·접촉
+가드·E-stop·저상 물체 전진 저속은 그대로다 — 특례는 TTC 채널 안에서만 산다 (`YieldEscapeInsideWorkerCylinderIsNotFrozenByTtc`,
+`YieldEscapeNeverRelaxesDistanceStopOrEstop`). 위험해지는 조건: 트랙 속도 추정이 틀리면(방향 전환 직후, 트랙 분열·교체)
+진행선이 틀린 채 ≤ 0.5 m/s 로 움직인다 — 몸이 접근 영역(앞)에 들면 거리 존이 받지만 옆구리 접촉은 서 있을 때와 같이 막지
+못하고, 트랙이 사람이 아닌 큰 차량이면 몸 반경 0.30 가정이 작다 (그 경우 중심이 몸 원통 안이 되기 전에 거리 존이 세운다).
+
 **정지 해제와 원인 센서**: STOP 은 원인이 된 센서가 다시 "치웠다" 고 보여 줄 때만 푼다. 깊이 점군이 끊기면 그 채널 거리는
 +inf 라 합친 거리로는 장애물이 사라진 것처럼 보이는데, 실제로는 평면 아래 물체가 그대로 있다 — 이전 판은 그 사이 STOP 을
 풀고(그리고 탈출 판정도 LiDAR 빔만 보므로 통과시켜) 다시 움직였다 (통합 시나리오 09 실측). 지금은 깊이가 원인인 STOP 은
@@ -344,6 +364,8 @@ fleet_adapter_node 구독), `safety/zone_name` (String), `diagnostics` 1 Hz + �
 | `dynamic.window` / `chi2` / `v_min` | 10 / 13.82 / 0.15 | 스캔 / – / m/s | 1 s 창, χ²₂(0.999), 명세 최저 0.3 m/s 의 절반 |
 | `ttc.horizon` / `k_sigma` / `sigma_cap` | 5.0 / 0.5 / 0.5 | s / – / m | > τ_warn 3.0 s, ±0.3 s 안의 가장 큰 팽창 (§9.2), 상한 |
 | `safety_node.ttc.critical` | 2.15 | s | $t + v_\max/a$ |
+| `safety_node.retreat_max_speed` | 0.5 | m/s | 증명된 후퇴 상한 = 계획기 이탈 속도 (§6.5) |
+| `safety_node.yield_escape.speed` / `obstacle_radius` / `overlap_margin` / `min_gain` | 0.5 / 0.30 / 0.10 / 0.02 | m/s / m / m / m | 몸 원통 안 양보 탈출 (§6.5): 계획기 이탈 속도, 사람 몸 반경, TTC 0 σ 띠, 진행선 거리 최소 증가 |
 | `safety_node.stop_release_distance` | 0.50 | m | 같은 운동에서 0.3 m 정지 히스테리시스 |
 | `safety_node.zone_hysteresis` | 0.05 | m | 스캔 σ 의 약 1.7 배 |
 | `safety_node.approach.swept_margin` / `region_margin` | 0 / 0.10 | m | 갇힘 방지 (§6.1) / 영역 길이 여유 |
