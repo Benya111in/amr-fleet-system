@@ -13,11 +13,25 @@
 //    d_goal, n_recentered, yield_state (0 clear / 1 yield / 2 committed), yield_stop_distance,
 //    yield_zone_entry (로봇 → 교차 구간 입구, 없으면 −1e9 — 음수면 이미 구간 안), yield_obstacle
 //    (상한을 정한 장애물 색인, 없으면 −1), n_obstacles (DWA 가 이번 주기에 본 동적 장애물 수),
-//    track_age_s (그 트랙 메시지의 나이 — track_timeout 을 넘으면 목록이 비워진다)]
+//    track_age_s (그 트랙 메시지의 나이 — track_timeout 을 넘으면 목록이 비워진다),
+//    [17] yield_decision (0 없음 · 1 go · 2 hold · 3 retreat), [18] go 여유 [s] (없으면 −1),
+//    --- 횡단 게이트 (yield_gate, core::crossing_gate) ---
+//    [19] gate_phase (0 open · 1 approach · 2 hold · 3 committed · 4 retreat),
+//    [20] gate_reason (core::GateReason: 0 없음 · 1 clear · 2 앞으로 옴 · 3 방향 모름 ·
+//         4 되돌아옴 · 5 강제 커밋 · 6 정지 자리 위협 · 7 판정 커밋 · 8 이미 반경 안),
+//    [21] gate_window_s (지금 상태에서 노출 구간 출구까지 주행 시간 [s], 없으면 −1),
+//    [22] gate_hold_m (정지점까지 경로 거리 [m], 없으면 −1e9),
+//    [23] gate_threats (닿을 수 있는 트랙 수),
+//    [24] gate_tracks (게이트가 본 트랙 수 — 기억 속 트랙 포함),
+//    [25] gate_zone_in_m (구간 시작까지 [m], 없으면 −1e9),
+//    [26] gate_zone_out_m (구간 끝까지 [m], 없으면 −1e9),
+//    [27] gate_exempt (VO·TTC 면제 트랙 수)]
 //   (best_ttc·yield_stop_distance 는 없으면 −1: 유한하지 않은 값)
 #ifndef AMR_NAVIGATION__DWA_CONTROLLER_HPP_
 #define AMR_NAVIGATION__DWA_CONTROLLER_HPP_
 
+#include <array>
+#include <deque>
 #include <limits>
 #include <memory>
 #include <unordered_map>
@@ -55,12 +69,16 @@ public:
   ///   [m] 까지. end_is_goal: 마지막 점 포함 여부.
   std::vector<core::Pose2D> window(
     const core::Pose2D & T, const core::Pose2D & robot, double horizon, bool & end_is_goal);
+  /// 로봇이 창 시작보다 뒤로 갈 수 있을 때(횡단 게이트의 경로 후진) 직전 색인에서 이만큼 뒤부터
+  /// 최근접을 찾는다. 0 이면 예전처럼 앞쪽만 본다.
+  void setBackSearch(std::size_t points) {back_search_ = points;}
 
 private:
   nav_msgs::msg::Path plan_;
   std::vector<core::Pose2D> poses_;   // plan 프레임
   std::size_t hint_{0};
   bool fresh_{true};
+  std::size_t back_search_{0};
 };
 
 class DWAController : public nav2_core::Controller
@@ -86,6 +104,10 @@ private:
   void onObstacles(const amr_msgs::msg::TrackedObstacleArray::SharedPtr msg);
   void onPayload(const std_msgs::msg::Float32::SharedPtr msg);
   std::vector<core::DynamicObstacle> obstaclesInFrame(const std::string & frame);
+  /// 횡단 게이트용 트랙: 확정 트랙 전부(속도·is_dynamic 으로 거르지 않음) + 방금 사라진 트랙의
+  /// 기억. 진행 방향은 최근 gate_line_window 동안의 **변위**로 정한다 (평균 속력 ≥ vknown 일
+  /// 때만 부호를 믿는다).
+  std::vector<core::GateTrack> gateTracksInFrame(const std::string & frame);
 
   rclcpp_lifecycle::LifecycleNode::WeakPtr node_;
   std::shared_ptr<tf2_ros::Buffer> tf_;
@@ -131,6 +153,26 @@ private:
   rclcpp::Time yield_decision_since_{0, 0, RCL_ROS_TIME};   ///< 그 결정이 시작된 시각
   double yield_decision_dwell_{0.8};   ///< [s] 결정 최소 유지 시간 (진동 억제)
   double robot_mass_{47.6};
+
+  // 횡단 게이트 (core::crossing_gate) — yield_gate 가 true 일 때만
+  bool gate_enable_{false};
+  double gate_lookahead_{8.0};        ///< [m] 게이트가 볼 경로 길이 (창 = max(path_horizon, 이 값))
+  double gate_line_window_{1.5};      ///< [s] 진행 방향을 정하는 변위 창
+  double gate_track_memory_{2.0};     ///< [s] 사라진 트랙을 방향 모름 위협으로 기억하는 시간
+  double gate_vknown_{0.3};           ///< [m/s] 변위 평균 속력이 이 이상이면 방향 부호를 믿는다
+  core::GateState gate_state_;
+  struct TrackHistory
+  {
+    std::deque<std::array<double, 3>> samples;   // (stamp, x, y) 코스트맵 프레임
+    double first_seen{-1.0};
+    double last_seen{-1.0};
+    double last_moving{-1.0};
+    double x{0.0};
+    double y{0.0};
+    bool in_latest{false};
+  };
+  std::unordered_map<int, TrackHistory> gate_hist_;
+  double gate_hist_stamp_{-1.0};      ///< 마지막으로 기록에 넣은 트랙 메시지 스탬프
 
   rclcpp::Subscription<amr_msgs::msg::TrackedObstacleArray>::SharedPtr obs_sub_;
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr payload_sub_;

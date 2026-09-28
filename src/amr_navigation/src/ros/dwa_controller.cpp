@@ -40,7 +40,7 @@ std::vector<core::Pose2D> PlanWindow::window(
   const core::Pose2D r = core::compose(core::inverse(T), robot);
   constexpr std::size_t kFreshWindow = 400;   // 0.05 m 간격 기준 20 m
   constexpr std::size_t kTrackWindow = 200;   // 10 m
-  const std::size_t begin = fresh_ ? 0 : hint_;
+  const std::size_t begin = fresh_ ? 0 : (hint_ > back_search_ ? hint_ - back_search_ : 0);
   const std::size_t end = std::min(poses_.size(), begin + (fresh_ ? kFreshWindow : kTrackWindow));
   double best = std::numeric_limits<double>::infinity();
   std::size_t best_i = begin;
@@ -172,6 +172,31 @@ void DWAController::configure(
   c.yield_go_speed_floor = param(node, p + "yield_go_speed_floor", 1.0);
   c.yield_hold_slack = param(node, p + "yield_hold_slack", 0.3);
   c.yield_decision_min_sin = param(node, p + "yield_decision_min_sin", 0.34);
+  // 횡단 게이트 (T안, crossing_gate.hpp). 기본값은 시뮬레이션에서 접촉 0/610 을 낸 값 그대로다.
+  c.gate.enable = param(node, p + "yield_gate", false);
+  c.gate.pos_err = param(node, p + "gate_pos_err", 0.25);
+  c.gate.heading_unc = param(node, p + "gate_heading_unc", 0.1);
+  c.gate.v_max = param(node, p + "gate_v_max", 1.0);
+  c.gate.delay = param(node, p + "gate_delay", 0.3);
+  c.gate.hold_back = param(node, p + "gate_hold_back", 1.2);
+  c.gate.turn_time = param(node, p + "gate_turn_time", 1.57);
+  c.gate.walk_accel = param(node, p + "gate_walk_accel", 0.6);
+  c.gate.vknown = param(node, p + "gate_vknown", 0.3);
+  c.gate.static_timeout = param(node, p + "gate_static_timeout", 5.0);
+  c.gate.lookahead = param(node, p + "gate_lookahead", 8.0);
+  c.gate.group_gap = param(node, p + "gate_group_gap", 1.5);
+  c.gate.hold_tol = param(node, p + "gate_hold_tol", 0.3);
+  c.gate.hold_threat_horizon = param(node, p + "gate_hold_threat_horizon", 3.0);
+  c.gate.hold_exclusion_horizon = param(node, p + "gate_hold_exclusion_horizon", 10.0);
+  c.gate.commit_max_run = param(node, p + "gate_commit_max_run", 2.0);
+  c.gate.retreat_enable = param(node, p + "gate_retreat", true);
+  c.gate.retreat_speed = param(node, p + "gate_retreat_speed", 0.5);
+  c.gate.retreat_max = param(node, p + "gate_retreat_max", 4.0);
+  gate_enable_ = c.gate.enable;
+  gate_lookahead_ = c.gate.lookahead;
+  gate_vknown_ = c.gate.vknown;
+  gate_line_window_ = param(node, p + "gate_line_window", 1.5);
+  gate_track_memory_ = param(node, p + "gate_track_memory", 2.0);
   c.recenter_narrow = param(node, p + "recenter_narrow", true);
   c.recenter_min_cost = param(node, p + "recenter_min_cost", 100.0);
   c.recenter_max_shift = param(node, p + "recenter_max_shift", 0.10);
@@ -227,6 +252,9 @@ void DWAController::activate()
   local_plan_pub_->on_activate();
   stats_pub_->on_activate();
   has_last_ = false;
+  gate_state_ = core::GateState{};
+  gate_hist_.clear();
+  gate_hist_stamp_ = -1.0;
 }
 
 void DWAController::deactivate()
@@ -313,6 +341,7 @@ std::vector<core::DynamicObstacle> DWAController::obstaclesInFrame(const std::st
     d.vx = c * o.velocity.x - s * o.velocity.y;
     d.vy = s * o.velocity.x + c * o.velocity.y;
     d.radius = obstacle_radius_;
+    d.id = static_cast<int>(o.track_id);
     // 통로 예측용 평활 속도 (트랙별 지수 필터). VO·TTC 는 위의 원시 속도를 그대로 쓴다.
     if (yield_velocity_tau_ > 0.0) {
       VelocityFilter & f = vel_filter_[o.track_id];
@@ -339,6 +368,93 @@ std::vector<core::DynamicObstacle> DWAController::obstaclesInFrame(const std::st
   return out;
 }
 
+std::vector<core::GateTrack> DWAController::gateTracksInFrame(const std::string & frame)
+{
+  amr_msgs::msg::TrackedObstacleArray::SharedPtr msg;
+  {
+    std::lock_guard<std::mutex> lock(obs_mutex_);
+    msg = obstacles_;
+  }
+  const double now = clock_->now().seconds();
+  for (auto & kv : gate_hist_) {
+    kv.second.in_latest = false;
+  }
+  if (msg && !msg->obstacles.empty()) {
+    const rclcpp::Time stamp(msg->header.stamp, clock_->get_clock_type());
+    const double ts = stamp.seconds();
+    const double age = now - ts;
+    core::Pose2D T;
+    if (age <= track_timeout_ && age >= -1.0 && ts > gate_hist_stamp_ &&
+      lookupTransform2D(*tf_, frame, msg->header.frame_id, 0.0, T))
+    {
+      // 등속 외삽 없이 관측 위치 그대로 — 지연은 게이트의 delay 가 도달 시간에 더한다.
+      // 기록은 코스트맵(odom) 프레임: 연속이라 위치추정 보정 점프가 가짜 변위가 되지 않는다.
+      gate_hist_stamp_ = ts;
+      const double c = std::cos(T.theta);
+      const double s = std::sin(T.theta);
+      for (const auto & o : msg->obstacles) {
+        const double px = T.x + c * o.position.x - s * o.position.y;
+        const double py = T.y + s * o.position.x + c * o.position.y;
+        TrackHistory & h = gate_hist_[static_cast<int>(o.track_id)];
+        if (h.first_seen < 0.0) {
+          h.first_seen = ts;
+        }
+        h.last_seen = ts;
+        h.x = px;
+        h.y = py;
+        h.in_latest = true;
+        h.samples.push_back({ts, px, py});
+        while (!h.samples.empty() && ts - h.samples.front()[0] > gate_line_window_) {
+          h.samples.pop_front();
+        }
+      }
+    } else if (age <= track_timeout_ && age >= -1.0) {
+      // 같은 메시지를 다시 봤다 (제어 20 Hz > 추적 10 Hz): 최신 목록의 트랙은 여전히 "보인다"
+      for (const auto & o : msg->obstacles) {
+        auto it = gate_hist_.find(static_cast<int>(o.track_id));
+        if (it != gate_hist_.end()) {
+          it->second.in_latest = true;
+        }
+      }
+    }
+  }
+  std::vector<core::GateTrack> out;
+  for (auto it = gate_hist_.begin(); it != gate_hist_.end(); ) {
+    TrackHistory & h = it->second;
+    if (now - h.last_seen > gate_track_memory_) {
+      it = gate_hist_.erase(it);   // 기억에서도 지운다
+      continue;
+    }
+    core::GateTrack g;
+    g.id = it->first;
+    g.x = h.x;
+    g.y = h.y;
+    g.radius = obstacle_radius_;
+    // 방향: 창 안 첫 표본 → 마지막 표본의 변위. 사라진(기억 속) 트랙은 방향 모름으로 본다 —
+    // 어느 쪽으로든 v_max 로 갈 수 있는 원판. 속도 크기는 되돌아옴 모델의 정지 시간에만 쓴다.
+    if (h.in_latest && h.samples.size() >= 2) {
+      const auto & a = h.samples.front();
+      const auto & b = h.samples.back();
+      const double dt = b[0] - a[0];
+      const double dx = b[1] - a[1];
+      const double dy = b[2] - a[2];
+      const double disp = std::hypot(dx, dy);
+      if (dt >= 0.5 && disp / dt >= gate_vknown_) {
+        g.heading_known = true;
+        g.ux = dx / disp;
+        g.uy = dy / disp;
+        g.speed = disp / dt;
+        h.last_moving = h.last_seen;
+      }
+    }
+    g.stationary_s = g.heading_known ? 0.0 :
+      now - (h.last_moving >= 0.0 ? h.last_moving : h.first_seen);
+    out.push_back(g);
+    ++it;
+  }
+  return out;
+}
+
 geometry_msgs::msg::TwistStamped DWAController::computeVelocityCommands(
   const geometry_msgs::msg::PoseStamped & pose, const geometry_msgs::msg::Twist & velocity,
   nav2_core::GoalChecker * /*goal_checker*/)
@@ -357,7 +473,12 @@ geometry_msgs::msg::TwistStamped DWAController::computeVelocityCommands(
   core::DwaInput in;
   in.pose = toPose2D(pose.pose);
   bool end_is_goal = false;
-  const std::vector<core::Pose2D> path = plan_.window(T, in.pose, path_horizon_, end_is_goal);
+  // 게이트는 노출 구간 출구까지 봐야 하므로 창을 늘리고, 경로 후진 뒤 창이 따라오도록 뒤쪽 탐색을
+  // 연다
+  plan_.setBackSearch(gate_enable_ ? 60 : 0);
+  const std::vector<core::Pose2D> path = plan_.window(
+    T, in.pose, gate_enable_ ? std::max(path_horizon_, gate_lookahead_) : path_horizon_,
+    end_is_goal);
   in.path = &path;
   in.path_end_is_goal = end_is_goal;
   in.v_meas = velocity.linear.x;
@@ -369,6 +490,10 @@ geometry_msgs::msg::TwistStamped DWAController::computeVelocityCommands(
   in.yield_limit_last = yield_limit_last_;
   in.yield_decision_last = yield_decision_last_;
   in.obstacles = obstaclesInFrame(frame);
+  if (gate_enable_) {
+    in.gate_tracks = gateTracksInFrame(frame);
+    in.gate_state = gate_state_;
+  }
 
   core::DwaResult res;
   {
@@ -385,6 +510,9 @@ geometry_msgs::msg::TwistStamped DWAController::computeVelocityCommands(
       });
   }
   yield_limit_last_ = res.yield.speed_limit;
+  if (gate_enable_) {
+    gate_state_ = res.gate.next;
+  }
   // 결정 디바운스. 08 실측: 접촉이 난 시행들이 전부 go ↔ hold ↔ retreat 진동이었다
   // (p8d 5회, p8e 8회, r8d 9회, s8a **31회**/410주기). 매 주기 여유 추정이 조금만 흔들려도
   // 분기가 바뀌고, 그러면 지나가지도 물러나지도 못한 채 통로 안에서 시간을 쓴다.
@@ -445,7 +573,18 @@ geometry_msgs::msg::TwistStamped DWAController::computeVelocityCommands(
       static_cast<double>(in.obstacles.size()), last_track_age_,
       // [17] kCommitted 결정 (0 none · 1 go · 2 hold · 3 retreat), [18] go 여유 [s] (없으면 −1)
       static_cast<double>(static_cast<int>(res.yield.decision)),
-      std::isfinite(res.yield.margin) ? res.yield.margin : -1.0};
+      std::isfinite(res.yield.margin) ? res.yield.margin : -1.0,
+      // [19]~[27] 횡단 게이트 (헤더 주석 참고). 게이트가 꺼져 있으면 0 · 0 · −1 · −1e9 · 0 · 0 ·
+      // −1e9 · −1e9 · 0
+      static_cast<double>(static_cast<int>(res.gate.phase)),
+      static_cast<double>(static_cast<int>(res.gate.reason)),
+      res.gate.window_s,
+      std::isfinite(res.gate.s_hold) ? res.yield.stop_distance : -1e9,
+      static_cast<double>(res.gate.n_threats),
+      static_cast<double>(in.gate_tracks.size()),
+      std::isfinite(res.gate.s_in) ? res.yield.zone_entry : -1e9,
+      std::isfinite(res.gate.s_out) ? res.yield.zone_exit : -1e9,
+      static_cast<double>(res.gate.exempt_ids.size())};
     stats_pub_->publish(st);
   }
   return cmd;

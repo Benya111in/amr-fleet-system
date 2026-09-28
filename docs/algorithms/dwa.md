@@ -309,15 +309,100 @@ committed 진입 상태에서 시작): 전/후 — j8c t6 여유 +0.100(원통 �
 reg1 t12 +0.072(원통 안 정지) → +0.503 (hold·retreat 북측, 이탈 0.54); j8c t21 앞을 가로지르며 이탈 0.923 →
 +0.523 (hold, 이탈 0.02); reg1 t13 통로 안 진입 → hold 3.1 s 에 차선 0.99 m, +0.377.
 
+### 2.5 횡단 게이트: 노출 구간 밖에서 진입 전에 결정한다 (T안, `core/crossing_gate.{hpp,cpp}`)
+
+§2.3–2.4 는 경로가 차선을 26.6° 로 비스듬히 건넌다고 가정했다. **실측 첫 계획은 그렇지 않다.** 좁은 통로 랙
+(x 0.3~1.3, y −12~−8)의 정적 팽창 1.2 m 경계를 따라 북쪽으로 휘어, 보행 차선 y=−7 과 17° 로 나란히 붙어
+달리다 x≈2.1 에서 45° 로 건넌다 (`astar_benchmark` 실행: 길이 9.185/9.273 m, 랙까지 최소 여유 1.202 m —
+직선이면 8.94 m / 0.35 m; w8a 하네스 자세·계획 덤프: 직선 대비 최대 이격 0.92~0.97 m, 교차각 34.7°/41.7°,
+몸 원통 |y+7|<0.661 안 경로 2.74 m, y=−6 띠 |y+6|<0.5 안 3.00 m → 연속 노출 ≈ 5.7 m). 접촉 90건의 로봇
+위치를 액터 스케줄로 복원하면 63건에서 직선 대비 이격이 그 시행의 하네스 최대 이탈보다 크다 — 로봇은 **자기
+계획 위에** 있었다. 그 기하에서는 통로 정지선이 출발 직후부터 "통로 안" 이고, 결정층은 cross_sin ≥ 0.34 인
+곳에 이르면 이미 축에서 0.2 m 라 retreat 밖에 낼 수 없다 (x8a 실측: 되켜면 접촉 4·이탈 1.504 로 더 나쁘다).
+시행 0 은 출발이 sim 10.03~10.21 s 로 결정론적이라 11 실행이 같은 자리(2.06~2.41, −6.79~−7.62)·같은 시각
+(19.32~19.60 s)에 접촉했고, 감속 없이 지나갔다면 여유 +0.57 m 였다 — 양보가 접촉을 만들었다.
+
+게이트는 결정을 **노출 구간 밖 한 점, 진입 전**으로 옮기고, 믿을 수 없는 양(속도 크기, 반환점의 헤딩, 통로
+길이)을 쓰지 않는다:
+
+- **도달가능 집합**: 트랙마다 반경 합 R = r_robot + r_obs + `gate_pos_err`(0.911 m). 방향을 아는 트랙(최근
+  `gate_line_window` 1.5 s 변위의 평균 속력 ≥ `gate_vknown` 0.3 — 부호만 쓴다)은 진행선 통로(반폭 R +
+  |α|·sin `gate_heading_unc`) 안에서 앞으로 [0, v_max·τ], 뒤로는 **되돌아옴 모델**(정지 v/a → 회전
+  `gate_turn_time` 1.57 s → 재가속 `gate_walk_accel` 0.6)이 허용하는 만큼. 방향을 모르는 트랙은 반경 v_max·τ
+  원판. τ 에는 관측 지연 `gate_delay` 0.3 s 를 더한다. 확정 트랙 **전부**가 들어간다 — is_dynamic 이나 속도
+  문턱으로 거르지 않는다 (반환점에 선 보행자가 "정적 물체" 로 사라지는 것이 08 의 "경고 없이 통로 안에서
+  발견" 이었다). 사라진 트랙은 `gate_track_memory` 2 s 동안 방향 모름으로 기억한다.
+- **노출 구간** = 로봇이 전속으로 달릴 때 어떤 트랙이 그 시각에 닿을 수 있는 경로점의 연속 구간
+  (`gate_group_gap` 1.5 m 안이면 병합 — 그 사이에 설 자리가 없다). **정지점** = 첫 구간 시작 − `gate_hold_back`
+  1.2 m 에서 출발해 **기하로** 배제한다: 방향을 아는 어떤 트랙의 진행선 통로 안(앞 전부 + `gate_hold_exclusion_horizon`
+  10 s 안에 되돌아올 수 있는 뒤)이나, 방향 모르는 트랙이 그 시간 안에 닿는 원판 안이면 그 밖까지 뒤로 물린다
+  (뒤따라오는 보행자도 같다 — 경로가 그 진행선으로 모여드는 굽이에 서면 따라잡힌다). 시간이 남는다고 통로 안에 서면
+  기다리는 동안 걸어 들어온다 — 포팅 시뮬레이션에서 시간만 보고 섰더니 B→A 62/610 접촉(전부 차선 축 위
+  정지 중), 방향 모르는 반환점 작업자를 3 s 원판으로만 배제했더니 차선 축 0.3 m 까지 들어간 뒤 통로가 생겨
+  12/610.
+- **판정**: 정지점 앞에서 매 주기. 접근·정지 중에도 닿을 수 있는 트랙은 VO·TTC₀ 에서 뺀다 (게이트가 맡는다;
+  TTC₀ 조향 보조항이 붙으면 서러 가는 로봇이 경로를 0.19 m 벗어났다). 구간이 사라지면(모든 트랙이 못 닿는다)
+  **커밋** — 그 순간 보였던 트랙 전부를 면제하고, 출구를 지날 때까지 양보·hold·retreat·escape 어느 것도
+  개입하지 않는다. 안전한 정지점에 못 미치면(제동거리 초과) **지금 최대 감속으로 선다** — 늦게 발견했거나
+  뒤따르는 보행자에 밀려 노출 구간이 뒤로 자란 경우다. **강제 커밋**(전속 통과, 면제 없음)은 지금 서는 자리가
+  노출 구간 안이고 몸으로도 어떤 보행자의 진행선 위일 때만이다 — 거기 서면 접촉이 확정이다. 뒤따르는
+  보행자에 강제 커밋하면 내리막 굽이에서 따라잡힌다 (포팅 시뮬레이션 여유 +0.015 m). 서 있는 로봇은 강제
+  커밋되지 않는다.
+- **정지**: v = 0, w = 0 (샘플링을 거치지 않는다 — VO 포화·탈출 이득이 선 로봇을 옆으로 밀지 못하게).
+  정지 자리를 어떤 트랙이 `gate_hold_threat_horizon` 3 s 안에 닿을 수 있거나 방향을 아는 트랙의 앞쪽 진행선
+  통로 안이고(나중에 나타난 보행자; 지나간 보행자의 되돌아옴은 보지 않는다 — 보면 매 조우마다 후진했다),
+  창 시작보다 앞이며(첫 계획의 시작점 뒤는 이탈이다), 남은 후진 예산(`gate_retreat_max` 4 m)만큼 경로를 따라 물러난 자리가 그 트랙에서 더 멀 때(`gate_retreat`)는 경로를 따라 곧게 `gate_retreat_speed`
+  0.5 m/s 로 후진한다 — 이탈 0. 0.5 m 앞만 보면 축 위에 선 로봇은 축을 건너는 동안 거리가 줄어 물러나지
+  못한다. 후진 롤아웃이 막혀 있으면 선다.
+
+시뮬레이션 (실제 액터 스케줄, collision_monitor 와 같은 사각형·원 접촉 모델, 추적기급 관측 모델: 위치 ±0.25 m
+최악 부호·지연 0.3 s·방향 부호는 |v| ≥ 0.3 에서만·좁은 랙 가림; 출발 위상 610개, `scratchpad/an08/exp6.out`):
+
+| 정책 (crossing worker) | 접촉 | 최소 여유 | 대기 평균/p90/최대 |
+| --- | --- | --- | --- |
+| 감속 없이 그냥 가기 (현 경로) | 19.3 % | −0.50 m | 0 |
+| 게이트, 되돌아옴 모델 없음 | 39/610 | −0.50 m | 0.9/3.6/6.6 s |
+| **게이트, 되돌아옴 모델 (A→B 1.2 m / B→A 0.7 m 앞)** | **0/610 · 0/610** | **+0.43 / +0.29 m** | 1.7/5.6/7.1 · 1.4/4.9/6.6 s |
+| 게이트, A 에서만 판정 (창 8 s) | 0/610 | +1.40 m | 13.4/25.5/28.6 s |
+
+창 길이가 전부다: 반환점(x=±6)에서 노출 구간 끝(x≈3.4)까지 되돌아오는 최단 시간 ≈ 5~6 s 이므로 정지점에서 본
+통과 창(현 경로 4.4 s)이 그보다 짧아야 하고, A 에서 판정하면(8 s) 동쪽 보행자는 언제나 돌아올 수 있어 대기만
+는다. 현 스택의 접촉 1.3~2.7 % 는 "위험한 위상 19 % 의 90 % 를 해결하고 남은 것" 이다 — 남은 것은 튜닝이
+아니라 구조(차선 안 정지)다.
+
+계약: `test/test_crossing_gate.cpp` (`DefaultsPinTheSimulatedConstants`, `ReversalReturnTime…`,
+`ReachabilityUsesOnlyTheHeadingSign`, `UnknownHeadingIsADiskEitherWay`, `ExposureFollowsTheCrossingLine…`,
+`HoldPointAvoidsSpots…`, `ApproachLimitReachesZero…`, `CannotStopBeforeTheHoldPointCommits…`,
+`DecidedCommitExempts…`, `ReversalThreatKeeps…`, `StaticTimeoutIgnores…`, `RetreatsAlongThePath…`,
+`HoldOutputsZeroVelocityEvenWhenVoSaturates`, `CommittedDisablesYieldEscapeAndVo…`,
+`DisabledGateLeavesTheYieldPathUntouched`, `ClosedLoopWaitsOutsideThenCrosses…`). 기본 꺼짐(`yield_gate`).
+
+구현한 정책(진행선 통로·시간별 도달가능성·기하 배제·되돌아옴·후진)을 파이썬으로 옮겨 같은 액터 스케줄로 다시
+쓸었다 (`scratchpad/an08/gate_port.py`, 추적기 모형: 1.5 s 변위로 방향, 지연 0.3 s, 좁은 랙 가림, 사라진 트랙
+2 s 기억). 결과는 §8.4 의 측정과 같이 커밋 본문에 둔다.
+
+알려진 잔여: (1) B 에서 출발할 때 좁은 통로 랙 뒤(차선 x < −1.4)는 보이지 않는다 — 안 보이는 보행자는 판정에
+없고, 늦게 나타나면 지금 서서 물러난다(후진 0.5 m/s, 2 m). 처음 시뮬레이션의 B→A 0/610 은 액터의 존재를 아는
+가림 모델이었다. (2) 정지 자리에 뒤에서 같은 방향으로 오는 보행자는 물러나도 멀어지지 않아 서 있는다.
+(3) 트랙이 방향 없이 5 s 넘게 서 있으면 정적으로 보고 지나간다 (걷기 시작하면 VO/TTC 몫). (4) 방향을
+모르는 트랙(막 선 사람)이 10 m 안에 있으면 정지점이 창 시작까지 밀려 그 사람이 걷기 시작할 때까지
+(반환점 ≈ 3 s) 기다린다.
+
 ## 3. Nav2 통합
 
 - 전역 경로(map) → 코스트맵 프레임(odom) 변환은 TF 한 번 조회 후 2D 강체 합성, 로봇 최근접 정점부터
   `path_horizon` 4 m (지역 코스트맵 8 × 8 m 의 반폭) 까지만 (새 경로는 앞 20 m, 이후 직전 인덱스부터 10 m 창에서 최근접 탐색 → 되돌아오는
-  경로에서 뒤 구간으로 튀지 않음). 창 끝이 실제 목표가 아니면 목표 감속·목표 너머 검사 제외를 끈다.
+  경로에서 뒤 구간으로 튀지 않음; 게이트가 켜지면 창을 `gate_lookahead` 8 m 로 늘리고 경로 후진 뒤 창이
+  따라오도록 직전 인덱스 60 점 뒤부터 찾는다). 창 끝이 실제 목표가 아니면 목표 감속·목표 너머 검사 제외를 끈다.
 - `payload/mass` (latched) → 가속 한계 × m/(m + m_payload) (공차 47.6 kg).
 - 발행: `local_plan` (선택 궤적), `dwa/stats` [cycle_ms, n_samples, n_valid, n_collision, n_vo_rejected,
-  vo_saturated, best_ttc, v, w, d_goal, n_recentered, yield_state, yield_stop_distance] — 주기 시간·회피 동작·
-  재중심·양보 로그 (yield_state 0 통과 / 1 정지선 / 2 통로 안, stop_distance 없으면 −1, §2.3).
+  vo_saturated, best_ttc, v, w, d_goal, n_recentered, yield_state, yield_stop_distance, yield_zone_entry,
+  yield_obstacle, n_obstacles, track_age_s, yield_decision, yield_margin,
+  **[19] gate_phase** (0 open · 1 approach · 2 hold · 3 committed · 4 retreat), **[20] gate_reason**
+  (`core::GateReason`), **[21] gate_window_s**, **[22] gate_hold_m**, **[23] gate_threats**, **[24] gate_tracks**,
+  **[25] gate_zone_in_m**, **[26] gate_zone_out_m**, **[27] gate_exempt**] — 주기 시간·회피 동작·재중심·양보·
+  게이트 로그 (yield_state 0 통과 / 1 정지선 / 2 통로 안, stop_distance 없으면 −1, §2.3; 게이트가 켜지면
+  yield_state·stop_distance·zone_entry 는 게이트 상태의 투영이다, §2.5).
 - 한계값 기본값은 robot_params.yaml `limits.*` (controller_server 에 함께 로드), 운용 최고속도 `max_vel_x` 1.0 m/s.
 
 ## 4. 파라미터 (`controller_server.DWA.*`)
@@ -349,6 +434,13 @@ reg1 t12 +0.072(원통 안 정지) → +0.503 (hold·retreat 북측, 이탈 0.54
 | `yield_corridor_margin` / `yield_stop_margin` | 0.5 / 0.25 | m | 통로 반폭 여유 (= `dynamic_margin`, critical zone) / 통로 입구 앞 정지선 여유 |
 | `yield_clear_margin` | 1.0 | s | "먼저 빠져나간다" 판정 여유 |
 | `yield_horizon` / `yield_lookahead` / `yield_max_zone` | 8.0 / 4.0 / 6.0 | s / m / m | 장애물 예측 지평 (통로 길이 = \|u\|·8 s) / 경로에서 교차 구간을 찾는 거리 (≤ `path_horizon`) / 교차 구간 길이 상한 = 횡단 각도 하한 (22.6°) |
+| `yield_gate` | false | | 횡단 게이트 (§2.5). 켜면 §2.3–2.4 를 대신한다 |
+| `gate_hold_back` / `gate_delay` / `gate_pos_err` / `gate_v_max` / `gate_vknown` | 1.2 / 0.3 / 0.25 / 1.0 / 0.3 | m / s / m / m/s / m/s | 시뮬레이션 상수 그대로 (접촉 0/610). hold_back 0.7 도 0/610 이고 B→A 대기가 짧다 |
+| `gate_turn_time` / `gate_walk_accel` | 1.57 / 0.6 | s / m/s² | 되돌아옴 모델 — 없으면 39/610 접촉 |
+| `gate_heading_unc` / `gate_static_timeout` / `gate_lookahead` / `gate_group_gap` | 0.1 / 5.0 / 8.0 / 1.5 | rad / s / m / m | 진행선 불확실도 성장 / 정적 판정 / 노출 탐색 길이 / 구간 병합 간격 |
+| `gate_hold_tol` / `gate_hold_threat_horizon` | 0.3 / 3.0 | m / s | 정지점 허용 오차 / 정지 자리 위협 판정 |
+| `gate_retreat` / `gate_retreat_speed` / `gate_retreat_max` | true / 0.5 / 4.0 | – / m/s / m | 위협받는 정지 자리에서 경로를 따라 후진 |
+| `gate_line_window` / `gate_track_memory` | 1.5 / 2.0 | s / s | 변위로 방향을 정하는 창 / 사라진 트랙 기억 |
 | `recenter_narrow` / `recenter_min_cost` / `recenter_max_shift` / `recenter_smooth` / `recenter_goal_keep` | true / 100 / 0.10 / 4 / 0.5 | – / cost / m / 점 / m | 좁은 곳 재중심 (§1.7) |
 | `obstacle_radius` / `track_timeout` | 0.25 / 0.5 | m / s | |
 | `no_valid_patience` | 10 | 주기 | |

@@ -545,53 +545,6 @@ CrossRun crossingRun(
   return out;
 }
 
-// crossingRun 의 다중 장애물 판 — 여유는 모든 장애물에 대해, 차선 지표는 첫 장애물 기준.
-CrossRun crossingRunMulti(
-  const DwaConfig & cfg, const std::vector<Pose2D> & path, std::vector<DynamicObstacle> obs,
-  double v0, double seconds)
-{
-  const DwaPlanner dwa(cfg);
-  DwaInput in = movingInput(&path, v0);
-  in.pose = path.front();
-  CrossRun out;
-  const double su = obs.front().speed();
-  const double bx = su > 1e-9 ? -obs.front().vy / su : 0.0;
-  const double by = su > 1e-9 ? obs.front().vx / su : 1.0;
-  const std::vector<double> cum = amr_navigation::core::cumulativeLength(path);
-  for (int k = 0; k < static_cast<int>(seconds / 0.05); ++k) {
-    in.obstacles = obs;
-    const DwaResult r = dwa.compute(
-      in, [](const Pose2D &) {return 0.0;}, [](double, double) {return 0.0;});
-    in.pose = integrateArc(in.pose, r.v, r.w, 0.05);
-    in.v_meas = in.v_last = r.v;
-    in.w_meas = in.w_last = r.w;
-    in.yield_decision_last = static_cast<int>(r.yield.decision);
-    for (auto & o : obs) {
-      o.x += o.vx * 0.05;
-      o.y += o.vy * 0.05;
-    }
-    double gap = 1e9;
-    for (const auto & o : obs) {
-      gap = std::min(gap, rectClearance(in.pose, o));
-      out.min_center = std::min(out.min_center, std::hypot(o.x - in.pose.x, o.y - in.pose.y));
-    }
-    out.min_clearance = std::min(out.min_clearance, gap);
-    out.contact = out.contact || gap < 0.0;
-    out.saturated_seen = out.saturated_seen || r.vo_saturated;
-    const amr_navigation::core::Projection pr =
-      amr_navigation::core::projectOntoPath(path, {in.pose.x, in.pose.y}, 0, 0, &cum);
-    out.max_cte = std::max(out.max_cte, std::abs(pr.cte));
-    out.s_end = pr.s;
-    if (std::abs(r.v) < 0.05) {
-      out.stopped_s += 0.05;
-      out.min_lane_offset_stopped = std::min(
-        out.min_lane_offset_stopped,
-        std::abs((in.pose.x - obs.front().x) * bx + (in.pose.y - obs.front().y) * by));
-    }
-  }
-  return out;
-}
-
 DwaConfig crossingConfig()
 {
   DwaConfig c;   // nav2_params.yaml 의 DWA 값

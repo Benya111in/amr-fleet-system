@@ -312,22 +312,68 @@ DwaResult DwaPlanner::compute(
 
   // --- 1) 동적 창 (횡단 양보 정지선이 외부 속도 제한과 같은 자리에 들어간다) ---
   const auto [v_c, w_c] = windowCenter(in);
-  res.yield = evaluateYield(
-    path, cum_s, in.pose, robot_proj.s, std::max(0.0, in.v_meas), dyn, yieldConfig(),
-    static_cast<YieldDecision>(in.yield_decision_last));
+  // 횡단 게이트(crossing_gate.hpp)가 켜지면 통로 정지선·결정층(evaluateYield)을 **대신한다**.
+  // 노출 구간 밖 정지점에서 진입 전에 판정하고, 커밋 뒤에는 어떤 양보·hold·retreat·escape 도
+  // 개입하지 않는다 — 진입 뒤 정지가 곧 접촉이라는 것이 08 의 1,500 시행이 확정한 물리다.
+  const bool gate_on = config_.gate.enable;
+  if (gate_on) {
+    GateConfig gc = config_.gate;
+    gc.robot_radius = config_.robot_radius;
+    gc.accel = L.acc_lim_x;
+    gc.decel = L.decel_lim_x;
+    gc.jerk = L.jerk_lim_x;
+    gc.latency = config_.approach_latency;
+    gc.robot_v_max = L.max_vel_x;
+    res.gate = evaluateGate(
+      path, cum_s, in.pose, robot_proj.s, in.v_meas, in.gate_tracks, gc, in.gate_state);
+    // 기록용 투영: dwa/stats 의 yield 열이 뜻을 잃지 않게 (정지점 = 정지선, 커밋 = 통로 안).
+    // 아래 escaping 은 gate_on 이면 켜지지 않으므로 이 투영이 거동을 바꾸지는 않는다.
+    switch (res.gate.phase) {
+      case GatePhase::kApproach:
+      case GatePhase::kHold:
+      case GatePhase::kRetreat:
+        res.yield.state = YieldState::kYield;
+        break;
+      case GatePhase::kCommitted:
+        res.yield.state = YieldState::kCommitted;
+        break;
+      default:
+        res.yield.state = YieldState::kClear;
+        break;
+    }
+    res.yield.speed_limit = res.gate.speed_limit;
+    res.yield.stop_distance = std::isfinite(res.gate.s_hold) ?
+      std::max(0.0, res.gate.s_hold - robot_proj.s) : kInf;
+    res.yield.zone_entry = std::isfinite(res.gate.s_in) ? res.gate.s_in - robot_proj.s : kInf;
+    res.yield.zone_exit = std::isfinite(res.gate.s_out) ? res.gate.s_out - robot_proj.s : kInf;
+  } else {
+    res.yield = evaluateYield(
+      path, cum_s, in.pose, robot_proj.s, std::max(0.0, in.v_meas), dyn, yieldConfig(),
+      static_cast<YieldDecision>(in.yield_decision_last));
+  }
   const YieldDecision dec = res.yield.decision;
   // 양보 상한은 로봇 가속 한계보다 빨리 오를 수 없다 (통로 예측 흔들림이 브레이크를 놓지 못하게).
   // 다만 go / retreat 결정은 의도적인 해제다 — 무너진 정지선의 잔여 상한(08 j8c t6: committed 직후
   // 0.6 m/s)을 이어받으면 지나가거나 비켜설 속도부터 잃는다. hold 는 유한 상한이라 그대로 묶인다.
-  if (std::isfinite(in.yield_limit_last) && dec != YieldDecision::kGo &&
-    dec != YieldDecision::kRetreat)
-  {
+  // 게이트는 접근·정지 중(유한 상한)에만 묶고, 커밋·열림(∞)은 그대로 둔다 — 커밋 뒤 불간섭.
+  const bool limit_rise = gate_on ?
+    (res.gate.phase == GatePhase::kApproach || res.gate.phase == GatePhase::kHold ||
+    res.gate.phase == GatePhase::kRetreat) :
+    (dec != YieldDecision::kGo && dec != YieldDecision::kRetreat);
+  if (std::isfinite(in.yield_limit_last) && limit_rise) {
     res.yield.speed_limit = std::min(
       res.yield.speed_limit, in.yield_limit_last + L.acc_lim_x * config_.control_period);
   }
   const double v_cap = std::min(std::min(L.max_vel_x, in.speed_limit), res.yield.speed_limit);
   res.v_cap = v_cap;
   res.window = dynamicWindow(v_c, w_c, v_cap);
+  // 게이트가 커밋 시점에 판정한 트랙은 VO·TTC 에서도 뺀다 — 게이트가 책임진다. 판정 밖 트랙
+  // (커밋 뒤에 나타난 것, 강제 커밋)은 예전대로 VO·TTC 가 맡는다.
+  auto gate_exempt = [&](const DynamicObstacle & o) {
+      return gate_on && o.id >= 0 &&
+             std::find(res.gate.exempt_ids.begin(), res.gate.exempt_ids.end(), o.id) !=
+             res.gate.exempt_ids.end();
+    };
   // 이미 통로 안(kCommitted): 앞은 VO 가 막으므로 뒤로 빠질 수 있게 창 아래쪽을 연다.
   // 한 주기에 닿을 수 있는 범위(감속 한계) 안에서만 내린다 — 명령이 튀지 않는다.
   // 횡단일 때만 의미가 있다: 정면 접근(장애물 진행 방향이 로봇 헤딩과 나란)은 통로 축이 우리
@@ -341,7 +387,7 @@ DwaResult DwaPlanner::compute(
   // 않으므로 β 가 그대로다. 예전에는 "이미 멈춤(v_meas < 0.05)" 일 때만 탈출을 켰는데, 그때는
   // 동적 창이 한 주기에 −0.05 m/s 밖에 못 내 계획 지평 안에서 만들 수 있는 가로 이동이 사실상
   // 0 이다. 즉 비켜야 할 때는 이미 비킬 수 없었다. 속도가 남아 있을 때 켠다.
-  bool escaping = res.yield.state == YieldState::kCommitted &&
+  bool escaping = !gate_on && res.yield.state == YieldState::kCommitted &&
     config_.yield_escape_speed > 0.0 && res.yield.obstacle >= 0 &&
     static_cast<std::size_t>(res.yield.obstacle) < dyn.size();
   // "지금 누군가의 몸 앞에 서 있는가" 는 **모든 동적 트랙**을 봐야 한다. 예전에는 양보 장애물
@@ -398,6 +444,39 @@ DwaResult DwaPlanner::compute(
       res.window.v_hi = std::min(res.window.v_hi, std::max(in.v_meas, 0.0));
     }
     res.window.v_hi = std::max(res.window.v_hi, res.window.v_lo);
+  }
+
+  // 게이트 정지·후진: 샘플링을 거치지 않는다 — 정지 중에는 v = 0, w = 0 이 계약이고(VO 포화·탈출
+  // 이득이 선 로봇을 옆으로 밀지 못하게), 후진은 경로를 따라 곧게(이탈 0) 롤아웃이 비어 있을 때만.
+  if (gate_on && (res.gate.hard_stop || res.gate.retreat)) {
+    double v_out = 0.0;
+    if (res.gate.retreat) {
+      const std::vector<Pose2D> back = rollout(in.pose, -res.gate.retreat_speed, 0.0, 1.0);
+      bool blocked = false;
+      for (std::size_t k = 1; k < back.size(); ++k) {
+        if (footprint_cost(back[k]) < 0.0) {
+          blocked = true;
+          break;
+        }
+      }
+      if (blocked) {
+        res.gate.retreat = false;
+        res.gate.hard_stop = true;
+        res.gate.reason = GateReason::kHoldThreatened;
+        res.gate.phase = GatePhase::kHold;
+        res.gate.next.phase = GatePhase::kHold;
+      } else {
+        v_out = -res.gate.retreat_speed;
+      }
+    }
+    res.found = true;
+    res.v = v_out;
+    res.w = 0.0;
+    res.best = DwaCandidate{};
+    res.best.v = v_out;
+    res.best.is_brake = true;
+    res.best.poses = {in.pose};
+    return res;
   }
 
   // 목표 속도: 접근 감속 + 현재 헤딩 오차가 크면 감속 (경로가 뒤에 있으면 제자리 회전 유도)
@@ -463,6 +542,9 @@ DwaResult DwaPlanner::compute(
     if (config_.use_velocity_obstacles && !dyn.empty()) {
       const Point2D v_eff = chordVelocity(in.pose.theta, c.v, c.w, config_.vo_time_horizon);
       for (const auto & o : dyn) {
+        if (gate_exempt(o)) {
+          continue;
+        }
         const Point2D p{o.x - in.pose.x, o.y - in.pose.y};
         if (std::hypot(p.x, p.y) > config_.vo_max_range) {
           continue;
@@ -579,6 +661,9 @@ DwaResult DwaPlanner::compute(
           continue;
         }
         const DynamicObstacle & o = dyn[oi];
+        if (gate_exempt(o)) {
+          continue;
+        }
         const double R = config_.robot_radius + o.radius + config_.dynamic_margin;
         ttc = std::min(ttc, firstContactTime(pred, config_.sim_dt, o, R));
       }

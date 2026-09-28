@@ -48,6 +48,7 @@
 #include <utility>
 #include <vector>
 
+#include "amr_navigation/core/crossing_gate.hpp"
 #include "amr_navigation/core/crossing_yield.hpp"
 #include "amr_navigation/core/geometry.hpp"
 #include "amr_navigation/core/velocity_obstacle.hpp"
@@ -178,6 +179,10 @@ struct DwaConfig
                                           //       평활 속도가 오르는 중이라 여유가 부풀려진다)
   double yield_hold_slack{0.3};         // [m] hold 가능 판정 여유 (제동 중 바깥 조향의 표류 감소분)
   double yield_decision_min_sin{0.34};  // 결정을 내리는 교차각 하한 sin θ (20°)
+  /// 횡단 게이트 (crossing_gate.hpp, T안). 켜면 §2.3–2.4 의 통로 정지선·결정층을 **대신한다**:
+  /// 노출 구간 밖 정지점에서 진입 전에 판정하고, 커밋 뒤에는 양보·hold·retreat·escape 가 전부
+  /// 꺼진다 (판정에 들어간 트랙은 VO·TTC 도 면제). 기본 꺼짐 — 기존 거동 유지.
+  GateConfig gate;
   // 좁은 곳 경로 재중심 (0 단계)
   bool recenter_narrow{true};
   double recenter_min_cost{100.0};  // 이 비용 이상인 경로 점만 (지역 s = 3: 장애물 ≈ 0.5 m 이내)
@@ -234,6 +239,10 @@ struct DwaInput
   // 직전 주기의 kCommitted 결정 (core::YieldDecision 의 정수값). go 의 이력(진입 여유 > 유지
   // 여유)에 쓴다 — 추적기 속도 추정이 한 주기 튀어도 go 가 retreat 로 뒤집혔다 돌아오지 않게.
   int yield_decision_last{0};
+  // 횡단 게이트 입력 (config.gate.enable 일 때만 쓴다): 확정 트랙 전부 (속도 문턱으로 거르지 않은
+  // 것 — 반환점에 선 보행자도 들어간다) 와 직전 주기가 남긴 상태.
+  std::vector<GateTrack> gate_tracks;
+  GateState gate_state;
 };
 
 struct DwaWindow
@@ -258,7 +267,8 @@ struct DwaResult
   bool vo_saturated{false};      // VO 가 충돌 없는 샘플을 모두 덮어 VO 진입 최지연 샘플을 골랐음
   std::size_t n_recentered{0};   // 0 단계에서 골 바닥으로 옮긴 기준 경로 점 수
   double d_goal{0.0};
-  YieldResult yield;             // 횡단 양보 판정 (가상 정지선)
+  YieldResult yield;             // 횡단 양보 판정 (가상 정지선). 게이트가 켜지면 기록용 투영
+  GateResult gate;               // 횡단 게이트 판정 (config.gate.enable 일 때만 채워진다)
   double v_cap{0.0};             // 이 주기에 실제로 쓴 속도 상한 [m/s]
 };
 
