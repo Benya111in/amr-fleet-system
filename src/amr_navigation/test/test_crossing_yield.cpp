@@ -270,10 +270,10 @@ namespace
 YieldConfig deployedCfg()
 {
   YieldConfig cfg;
-  cfg.corridor_margin = 0.7;
+  cfg.corridor_margin = 1.2;   // 배포값 (nav2_params.yaml). 여유를 두고 설 공간을 만든다
   cfg.stop_margin = 0.8;
   cfg.clear_margin = 2.0;
-  cfg.max_zone = 7.0;
+  cfg.max_zone = 9.0;          // R_c 1.861 · 26.6° 교차 구간 8.3 m 를 담는다
   cfg.lookahead = 4.0;
   return cfg;
 }
@@ -311,20 +311,22 @@ TEST(CrossingYield, CommittedDecisionGoWhenTheRobotClearsTheBodyZoneFirst)
 
 TEST(CrossingYield, CommittedDecisionHoldStopsBeforeTheBodyZoneAndSticks)
 {
-  // reg1 시행 13 형: 통로 진입점(β 1.30)에서 1.0 m/s, 작업자가 4.5 m 앞에서 마주 온다.
-  // 위험 구간 입구(β = 0.611 + 0.15)까지 경로로 (1.30 − 0.761)/sin 26.6° ≈ 1.2 m ≥ d_stop(1.0) 1.04
-  // → hold, 상한 = d_stop⁻¹(입구까지). 더 다가가 못 설 거리가 돼도 이미 hold 였으면 계속 선다.
+  // reg1 시행 13 형: 통로 안(β 1.60)에서 0.8 m/s, 작업자가 4.5 m 앞에서 마주 온다.
+  // 정지 목표는 위험 구간 입구(β = 0.611 + 0.15)가 아니라 거기서 hold_standoff(차선 0.35 m)
+  // 만큼 앞이다 — 경계에 딱 맞춰 서면 추적 오차 하나로 접촉이 된다 (08 실측: hold 정지 위치
+  // 차선 0.756~0.968 m 와 접촉 위치 0.212~0.624 m 의 간격이 14 cm).
+  // 경로로 (1.60 − 0.761 − 0.35)/sin 26.6° ≈ 1.09 m ≥ d_stop(0.8) 0.72 → hold.
   const YieldConfig cfg = deployedCfg();
   const auto path = obliquePath();
   const auto cum = cumulativeLength(path);
-  const double s0 = sAtBeta(1.30);
+  const double s0 = sAtBeta(1.60);
   const Pose2D robot = robotAt(s0);
   const DynamicObstacle o{robot.x + 4.5, -3.0, -1.0, 0.0, 0.25};
-  const YieldResult r = evaluateYield(path, cum, robot, s0, 1.0, {o}, cfg);
+  const YieldResult r = evaluateYield(path, cum, robot, s0, 0.8, {o}, cfg);
   ASSERT_EQ(r.state, YieldState::kCommitted);
   EXPECT_EQ(r.decision, YieldDecision::kHold);
   EXPECT_LT(r.clearance, cfg.go_clearance);
-  EXPECT_NEAR(r.body_entry, (1.30 - 0.761) / -std::sin(kTh), 0.08);
+  EXPECT_NEAR(r.body_entry, (1.60 - 0.761 - 0.35) / -std::sin(kTh), 0.08);
   EXPECT_TRUE(std::isfinite(r.speed_limit));
   EXPECT_NEAR(
     r.speed_limit, SpeedProfile::maxSpeedForStop(r.body_entry, cfg.decel, cfg.jerk, cfg.latency),
