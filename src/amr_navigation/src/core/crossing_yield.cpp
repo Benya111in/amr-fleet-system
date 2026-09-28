@@ -347,20 +347,6 @@ YieldResult evaluateYield(
           }
         }
       }
-      // **한 조우 안에서 결정은 보수적인 쪽으로만 간다** (go → hold → retreat, 역방향 금지).
-      // 08 실측 p 계열: 접촉이 난 시행 3건이 전부 go ↔ retreat 진동이었다 —
-      //   p8d t19  go → retreat → go → retreat → go → retreat  (전환 5회)
-      //   p8e t01  go → retreat → go → hold → retreat → go → retreat → go → retreat (8회)
-      //   p8b t06  hold ↔ retreat ↔ go  24회
-      // 물러나기로 해 놓고 여유 추정이 한 주기 회복되면 다시 전진하니, 지나가지도 물러나지도
-      // 못한 채 통로 안에서 시간만 쓴다. 되돌아가는 전환(retreat → go)이 가장 위험하다.
-      // 조우가 끝나면(장애물 해제 → dec = kNone) 래치도 같이 풀린다.
-      if (dec != YieldDecision::kNone && severity(prev_decision) > severity(dec)) {
-        dec = prev_decision;
-        if (dec == YieldDecision::kHold) {
-          limit = SpeedProfile::maxSpeedForStop(body_entry, cfg.decel, cfg.jerk, cfg.latency);
-        }
-      }
       out.decided[idx] = dec != YieldDecision::kNone;
       // 기록: 축이 가장 가까운(|β| 최소) 통로를 남긴다 — 근거리에서 사람 하나가 두 트랙으로
       // 갈라지면
