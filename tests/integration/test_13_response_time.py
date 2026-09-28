@@ -179,9 +179,17 @@ class TestResponseTime(cases.ProbeCase):
         events = self.probe.publisher(TASK_EVENTS, self.Task, EVENTS_QOS)
         rows, lat, lat05, wall, cmdvel, no_response, rejected, statuses = \
             [], [], [], [], [], [], [], {}
+        # 예비량은 최악값(TASK_MAX_S 300 s)이 아니라 **직전 시행들의 실측**으로 잡는다.
+        # 실제 시행은 wall 120~136 s 인데 360 s 를 예약해 마지막 2~3 표본을 그냥 버렸다.
+        # 50 표본이 필요한 판정에서 표본을 버리는 것은 곧 실패다. 하한은 최악에 가깝게 남긴다.
+        trial_wall = []
         for i in range(SAMPLES):
-            if not self.budget_for((TASK_MAX_S if system else 30.0) + 60.0, f'trial {i}'):
+            reserve = (TASK_MAX_S if system else 30.0) + 60.0
+            if len(trial_wall) >= 3:
+                reserve = max(120.0, 1.5 * sorted(trial_wall)[len(trial_wall) // 2])
+            if not self.budget_for(reserve, f'trial {i}'):
                 break
+            t_trial = self.probe.wall()
             if system:
                 idle = self.probe.wait_until(self._idle, self.timeout(TASK_MAX_S), 0.1)
                 self.assertTrue(idle, f'trial {i}: executor/phase 가 IDLE 로 돌아오지 않음 '
@@ -225,6 +233,7 @@ class TestResponseTime(cases.ProbeCase):
                          wall[-1] if first else math.nan, lat05[-1] if first else math.nan,
                          cmdvel[-1] if first else math.nan, rtf, statuses[tid]])
             self.ctx.record.write_csv('harness_response_time.csv', COLUMNS, rows)
+            trial_wall.append(self.probe.wall() - t_trial)
         s = metrics.latency_summary(wall)
         self.measure('response_wall_ms', {'definition': f'GT |v|>={MOTION_V} or |w|>={MOTION_W}, '
                                                         'wall clock (judged)', **s})

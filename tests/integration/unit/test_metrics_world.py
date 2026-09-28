@@ -321,3 +321,27 @@ def test_evaluation_helpers(monkeypatch):
     monkeypatch.setattr(evaluation.req, 'has_executable', lambda p, e: e == 'cte_logger')
     assert evaluation.available() and evaluation.available('cte_logger')
     assert not evaluation.available('pose_error_logger')
+
+
+def test_registration_is_not_sensitive_to_the_truth_raster_phase():
+    """
+    참값 거리장의 격자 위상이 측정 대상(지도)에 끌려가면 안 된다.
+
+    예전에는 원점이 `pts.min() - margin` 이라, 참값 래스터의 부셀 위상이 SLAM 지도 원점
+    (실행마다 −30.345 ~ −30.374 로 다르다)에 따라 무작위로 정해졌다. 그래서 **같은 지도라도
+    위상에 따라 잔여 이동이 ≈ 4 cm 흔들렸고** (저장된 지도 6개 × 위상 16종으로 확인),
+    판정 기준이 5 cm 라 이 인공물 하나가 통과/실패를 갈랐다 (시나리오 03 은 6회 중 3회 통과).
+    월드 격자에 스냅하면 위상이 실행과 무관하게 고정된다 — 아래 폭이 6.45 → 1.94 cm 로 줄었다.
+    """
+    shapes = [worldmap.Rect(0.0, 0.0, 0.0, 40.0, 24.0)]
+    t = np.linspace(-20.0, 20.0, 900)
+    u = np.linspace(-12.0, 12.0, 540)
+    pts = np.vstack([
+        np.column_stack([t, np.full_like(t, -12.0)]),
+        np.column_stack([t, np.full_like(t, 12.0)]),
+        np.column_stack([np.full_like(u, -20.0), u]),
+        np.column_stack([np.full_like(u, 20.0), u])])
+    residual = [worldmap.register(pts + k * 0.05 / 16.0, shapes).translation - k * 0.05 / 16.0
+                for k in range(16)]
+    spread = max(residual) - min(residual)
+    assert spread < 0.03, f'위상에 따른 잔여 이동 폭 {spread * 100:.2f} cm (스냅 전 6.45)'

@@ -215,7 +215,17 @@ for id in "${IDS[@]}"; do
     dir="${LOG_DIR}/${id}"
     mkdir -p "${dir}"
     rm -f "${dir}/junit.xml" "${dir}/launch.log"
-    limit="${SCENARIO_TIMEOUT:-1800}"
+    # 시나리오별 기본 상한. 1800 일괄값은 sim 시간을 모르는 값이라, RTF 가 낮은 시나리오를
+    # 구조적으로 실패시킨다 — 12 는 5대 동거로 RTF 0.21~0.32 이고 5 작업 완주에 sim 280 s
+    # (= wall 900~1300 s) 가 필요한데 기동·wedge 우회까지 합치면 1800 s 로는 못 끝낸다.
+    # 13 은 시행 간격이 sim 120 s 로 고정이라 50 표본에 wall 6800~7500 s 가 필요하다
+    # (실측: 1800 s 에서 9~12 표본). 실제로 통과한 실행들이 쓴 값을 기본값으로 올린다.
+    case "${id}" in
+        12_*) default_limit=7200 ;;
+        13_*) default_limit=9000 ;;
+        *)    default_limit=1800 ;;
+    esac
+    limit="${SCENARIO_TIMEOUT:-${default_limit}}"
     if [ "${id}" = "14_soak" ] && [ -z "${SCENARIO_TIMEOUT}" ]; then
         # 운용 시간 + 30 분 (기동·준비·종료)
         limit=$(python3 -c 'import math, os; print(int(math.ceil(float(os.environ.get("ITEST_SOAK_HOURS", "4.0")) * 3600)) + 1800)')

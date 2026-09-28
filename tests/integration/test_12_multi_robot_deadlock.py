@@ -150,8 +150,16 @@ class TestMultiRobotDeadlock(cases.ProbeCase):
             self.assertTrue(res is not None and res.success, f'작업 {i} 거절 {res}')
             ids.append(task.task_id)
             t_assign[task.task_id] = self.probe.now()
-        w0 = self.probe.wall()
+        # 작업 대기 상한은 **sim 시간**으로 잰다. 판정 문구의 "작업당 600 s" 는 로봇의 거동에
+        # 대한 명세이지 호스트 속도에 대한 명세가 아닌데, 예전에는 벽시계로 쟀다. 5대 동거는
+        # RTF 0.21~0.32 라 660 벽시계 초가 sim 140~210 초밖에 사지 못했고, 5 작업 완주에는
+        # sim 280 초가 필요하다 (b12 278.7 s / v12 271.8 s 실측). 그래서 11회 실행 중 sim
+        # 270 초를 넘긴 4회만 작업이 완료됐고(5/4/3/0) 나머지 7회는 전부 0~1 이었다 —
+        # 로봇이 느린 게 아니라 하네스가 먼저 포기한 것이다.
+        # 벽시계 쪽은 /clock 이 멈췄을 때를 위한 안전망으로만 남긴다 (RTF 0.15 가정).
+        s0, w0 = self.probe.now(), self.probe.wall()
         run_max = TASK_MAX_S * math.ceil(N_TASKS / ROBOTS) + 60.0
+        wall_guard = self.timeout(run_max / 0.15)
         cpu_rows = []
 
         def final():
@@ -162,7 +170,8 @@ class TestMultiRobotDeadlock(cases.ProbeCase):
             return all(f.get(t) in (self.Task.STATUS_COMPLETED, self.Task.STATUS_FAILED)
                        for t in ids)
 
-        while not done() and self.probe.wall() - w0 < self.timeout(run_max):
+        while (not done() and self.probe.now() - s0 < run_max
+               and self.probe.wall() - w0 < wall_guard):
             if self.time_left() < 60.0 + FORCED_MAX_S + 300.0:
                 self.ctx.record.note('러너 상한이 가까워 동시 작업 대기를 멈춘다')
                 break
