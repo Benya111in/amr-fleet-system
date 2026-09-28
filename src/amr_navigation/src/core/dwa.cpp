@@ -326,13 +326,30 @@ DwaResult DwaPlanner::compute(
   bool escaping = res.yield.state == YieldState::kCommitted &&
     config_.yield_escape_speed > 0.0 && res.yield.obstacle >= 0 &&
     static_cast<std::size_t>(res.yield.obstacle) < dyn.size();
+  // "지금 누군가의 몸 앞에 서 있는가" 는 **모든 동적 트랙**을 봐야 한다. 예전에는 양보 장애물
+  // 하나의 축으로만 쟀는데, 근거리에서 사람 하나가 두 트랙으로 갈라지면(다리 분리) 양보 선택
+  // 규칙(통로 출구가 가장 먼 트랙, crossing_yield.cpp)이 체계적으로 비낀 쪽을 고른다. 그러면
+  // 로봇 β 가 비낀 축 기준으로 계산돼 실제보다 커지고, 원통 안에서 켜져야 할 두 규칙(가속
+  // 허용·제자리 회전 배제)이 하필 마지막 순간에 꺼진다.
+  // 08 실측: 접촉 4건 모두 0.4~1.0 s 전에 진짜 축에서 0.35~0.39 m 비낀 중복 트랙이 생겼다.
+  // j8c 시행 6 은 주기 단위로 확인된다 — 142.108~142.199 진짜 트랙(β≈0.30)일 때 cmd_v 0.057
+  // (배제 규칙이 살아 0.05 이상 유지), 142.244 중복 트랙으로 바뀌자 0.007 → 142.296 부터
+  // 0.000, 접촉 0.25 s 뒤 중복 트랙 축이 붙자 다시 0.050.
   bool in_body = false;
   if (escaping) {
+    for (const DynamicObstacle & o : dyn) {
+      const double su = std::max(1e-6, o.speed());
+      const double b = std::abs(
+        -(in.pose.x - o.x) * (o.vy / su) + (in.pose.y - o.y) * (o.vx / su));
+      if (b < config_.robot_radius + o.radius) {
+        in_body = true;
+        break;
+      }
+    }
     const DynamicObstacle & o0 = dyn[static_cast<std::size_t>(res.yield.obstacle)];
     const double su0 = std::max(1e-6, o0.speed());
     const double b0 = std::abs(
       -(in.pose.x - o0.x) * (o0.vy / su0) + (in.pose.y - o0.y) * (o0.vx / su0));
-    in_body = b0 < config_.robot_radius + o0.radius;
     escaping = b0 < config_.robot_radius + o0.radius + config_.yield_vacate_margin ||
       in.v_meas < config_.yield_escape_v_meas;
   }
