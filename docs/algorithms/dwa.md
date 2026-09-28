@@ -335,7 +335,7 @@ reg1 t12 +0.072(원통 안 정지) → +0.503 (hold·retreat 북측, 이탈 0.54
 | `path_eval_time` | 0.8 | s | 헤딩·경로 항 평가 지평 (§1.5; 충돌·여유는 전체 T_sim) |
 | `heading_lookahead_{gain,offset,min,max}` | 0.4 / 0.3 / 0.4 / 1.2 | s, m | ℓ(v) = clip(0.4v + 0.3, 0.4, 1.2) |
 | `path_band` | 0.8 | m | J_path 정규화 |
-| `off_path_weight` / `max_path_offset` / `off_path_band` | 3.0 / 0.9 / 1.0 | – / m / m | J_off (§1.5). 한계 0.9 m 는 명세 4.7 이탈 상한 1.0 m 안쪽 |
+| `off_path_weight` / `max_path_offset` / `off_path_band` | 3.0 / 0.9 / 0.05 | – / m / m | J_off (§1.5). 한계 0.9 m 는 명세 4.7 이탈 상한 1.0 m 안쪽. 폭 0.05 는 이탈 1.0 m 에서 J_off = 3.0 이 되어 경쟁 항(J_dyn ≤ 1.5)을 이기게 하는 값 — 폭 1.0 일 때는 1.45 m 까지 넓게 도는 쪽이 이득이었다 (08 실측 최대 이탈 1.426 m) |
 | `goal_align_distance` | 0.08 | m | ≤ goal checker xy 0.10 (그래야 정렬 중 멈춰도 목표 판정) |
 | `path_horizon` | 4.0 | m | 로컬 코스트맵 반폭 (8 × 8 m) |
 | `use_dynamic_obstacles` / `use_velocity_obstacles` | true / true | | |
