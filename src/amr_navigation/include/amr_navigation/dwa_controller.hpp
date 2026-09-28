@@ -128,6 +128,8 @@ private:
   /// 직전 주기의 횡단 양보 속도 상한 (오르는 속도를 가속 한계로 묶는다 — core::DwaInput 참고)
   double yield_limit_last_{std::numeric_limits<double>::infinity()};
   int yield_decision_last_{0};    ///< 직전 주기의 kCommitted 결정 (core::YieldDecision)
+  rclcpp::Time yield_decision_since_{0, 0, RCL_ROS_TIME};   ///< 그 결정이 시작된 시각
+  double yield_decision_dwell_{0.8};   ///< [s] 결정 최소 유지 시간 (진동 억제)
   double robot_mass_{47.6};
 
   rclcpp::Subscription<amr_msgs::msg::TrackedObstacleArray>::SharedPtr obs_sub_;
