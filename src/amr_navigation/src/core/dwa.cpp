@@ -79,6 +79,14 @@ YieldConfig DwaPlanner::yieldConfig() const
   y.jerk = config_.limits.jerk_lim_x;
   y.latency = config_.approach_latency;
   y.v_max = config_.limits.max_vel_x;
+  y.decision_enable = config_.yield_decision;
+  y.body_margin = config_.yield_body_margin;
+  y.go_margin = config_.yield_go_margin;
+  y.go_clearance = config_.yield_go_clearance;
+  y.go_hold_clearance = config_.yield_go_hold_clearance;
+  y.go_speed_floor = config_.yield_go_speed_floor;
+  y.hold_slack = config_.yield_hold_slack;
+  y.decision_min_sin = config_.yield_decision_min_sin;
   return y;
 }
 
@@ -301,9 +309,15 @@ DwaResult DwaPlanner::compute(
   // --- 1) 동적 창 (횡단 양보 정지선이 외부 속도 제한과 같은 자리에 들어간다) ---
   const auto [v_c, w_c] = windowCenter(in);
   res.yield = evaluateYield(
-    path, cum_s, in.pose, robot_proj.s, std::max(0.0, in.v_meas), dyn, yieldConfig());
-  // 양보 상한은 로봇 가속 한계보다 빨리 오를 수 없다 (통로 예측 흔들림이 브레이크를 놓지 못하게)
-  if (std::isfinite(in.yield_limit_last)) {
+    path, cum_s, in.pose, robot_proj.s, std::max(0.0, in.v_meas), dyn, yieldConfig(),
+    static_cast<YieldDecision>(in.yield_decision_last));
+  const YieldDecision dec = res.yield.decision;
+  // 양보 상한은 로봇 가속 한계보다 빨리 오를 수 없다 (통로 예측 흔들림이 브레이크를 놓지 못하게).
+  // 다만 go / retreat 결정은 의도적인 해제다 — 무너진 정지선의 잔여 상한(08 j8c t6: committed 직후
+  // 0.6 m/s)을 이어받으면 지나가거나 비켜설 속도부터 잃는다. hold 는 유한 상한이라 그대로 묶인다.
+  if (std::isfinite(in.yield_limit_last) && dec != YieldDecision::kGo &&
+    dec != YieldDecision::kRetreat)
+  {
     res.yield.speed_limit = std::min(
       res.yield.speed_limit, in.yield_limit_last + L.acc_lim_x * config_.control_period);
   }
@@ -350,8 +364,20 @@ DwaResult DwaPlanner::compute(
     const double su0 = std::max(1e-6, o0.speed());
     const double b0 = std::abs(
       -(in.pose.x - o0.x) * (o0.vy / su0) + (in.pose.y - o0.y) * (o0.vx / su0));
-    escaping = b0 < config_.robot_radius + o0.radius + config_.yield_vacate_margin ||
-      in.v_meas < config_.yield_escape_v_meas;
+    // 진입 시점의 결정(crossing_yield.hpp YieldDecision)이 있으면 그것이 우선한다.
+    //   go      — 감속 없이 지나간다: 비켜서기 이득도 후진 창도 없다 (아래 TTC₀ 벌점도 끈다).
+    //   hold / retreat — 몸 원통 **밖**에서도 바깥으로 조향해야 하므로 비켜서기를 켠다. 예전에는
+    //             원통 + 5 cm 안이거나 서 있을 때만 켰다 — 그래서 R_c 통로와 몸 원통 사이(08 기하:
+    //             경로로 1.2~1.5 m)에서는 순수 경로 추종 + VO/TTC 감속뿐이었고, 로봇은 그 띠를
+    //             지나 원통 안까지 들어간 뒤에야 비켜서기를 시작했다 (접촉 4건 공통).
+    if (dec == YieldDecision::kGo) {
+      escaping = false;
+    } else if (dec == YieldDecision::kHold || dec == YieldDecision::kRetreat) {
+      escaping = true;
+    } else {
+      escaping = b0 < config_.robot_radius + o0.radius + config_.yield_vacate_margin ||
+        in.v_meas < config_.yield_escape_v_meas;
+    }
   }
   if (escaping) {
     res.window.v_lo = std::max(
@@ -529,7 +555,22 @@ DwaResult DwaPlanner::compute(
     if (!dyn.empty()) {
       const std::vector<Pose2D> pred = rollout(in.pose, c.v, c.w, config_.prediction_time);
       double ttc = kInf;
-      for (const auto & o : dyn) {
+      for (std::size_t oi = 0; oi < dyn.size(); ++oi) {
+        // 결정 층(go/hold/retreat)이 맡은 장애물은 TTC₀ 벌점에서 뺀다. go 는 몸 원통 기준으로 여유
+        // 있게 지나간다고 계산한 장애물을 "예측 접촉 전에 설 수 있는 속도" 로 감속시키는 것이 08
+        // 접촉의 첫 단계였기 때문이고 (j8c t6: committed 직후 0.8 → 0.6, 이어서 우선회), hold 와
+        // retreat 는 TTC₀ 의 조향 보조항(1 − TTC₀/T_pred, 5 s 원호)이 **앞을 가로지르는** 후보에
+        // 0.2~0.3 의 이득을 줘 바깥으로 비켜서는 이득(0.1~0.25/0.1 rad/s)을 뒤집기 때문이다
+        // (재현 j8c t6 근접판: 작업자 4.7 m 에서 retreat 인데 오른쪽으로 돌아 축을 가로질렀다).
+        // 다만 hold/retreat 는 **몸 원통 안**일 때만 뺀다 — 밖에서는 TTC₀ 의 감속이 이롭고
+        // (재현 t12/t21: 밖에서까지 빼면 스칠 때 여유 0.50 → 0.30), 안에서는 가로 권한이 먼저다.
+        // VO 는 그대로 둔다 — 마지막 방어선. 결정 없는 장애물(다른 작업자)은 예전 그대로.
+        if (oi < res.yield.decided.size() && res.yield.decided[oi] &&
+          (dec == YieldDecision::kGo || in_body))
+        {
+          continue;
+        }
+        const DynamicObstacle & o = dyn[oi];
         const double R = config_.robot_radius + o.radius + config_.dynamic_margin;
         ttc = std::min(ttc, firstContactTime(pred, config_.sim_dt, o, R));
       }
@@ -547,8 +588,31 @@ DwaResult DwaPlanner::compute(
       const double su = std::max(1e-6, o.speed());
       const double ux = o.vx / su, uy = o.vy / su;
       const Pose2D & end = c.poses.back();
-      const double beta = std::abs(-(end.x - o.x) * uy + (end.y - o.y) * ux);
+      const double beta_end = -(end.x - o.x) * uy + (end.y - o.y) * ux;      // 부호 있음 (좌 +)
+      const double beta = std::abs(beta_end);
       const double rc = config_.robot_radius + o.radius + config_.yield_corridor_margin;
+      // hold / retreat 에서는 **축에서 멀어지는 쪽으로만** 이득을 준다. 예전에는 |β| 만 봐서 축을
+      // 가로질러 반대편으로 빠지는 후보(= 작업자 앞을 가로지르기)도 같은 이득을 받았다. 08 실측에서
+      // 그 방향이 두 번 죽었다: A→B 에서 남측은 랙 포켓(축~랙 0.99 m, 몸 원통 0.661 밖에 설 자리가
+      // 랙과 나란히 붙어야 0.13 m)이고, 앞을 가로지르는 명령은 안전 게이트가 0.5/0.2/0 으로 깎는다
+      // (j8c t21: cmd 0.368 → gate_out 0.000). 지금 있는 쪽에서 더 멀어지는 후보만 이득을 받는다.
+      // 축 기준 "지금 있는 쪽" 의 부호로 잰 끝점 거리 β_dir. 클수록 이득이고, 음수(축을 가로질러
+      // 반대편)는 1 을 넘는 벌점으로 이어진다 — 기울기를 끊지 않는 것이 요점이다. 재현 시험에서
+      // 두 번 확인했다: "안쪽이면 전부 1.0" 이면 초기 선회가 안쪽일 때 후보가 전부 같아지고,
+      // "가로지르면 1.0" 이면 축 가까이에서 안쪽을 향할 때 롤아웃 1.5 s 안에 전부 가로질러 또
+      // 전부 같아진다. 두 경우 다 경로 항이 그대로 축을 가로지르게 만들었다.
+      const double beta_now = -(in.pose.x - o.x) * uy + (in.pose.y - o.y) * ux;
+      const bool directed = (dec == YieldDecision::kHold || dec == YieldDecision::kRetreat) &&
+        std::abs(beta_now) > 0.05;
+      // 결정이 있는 비켜서기의 목적은 몸 원통을 여유 있게 벗어나는 것이지 통로 반폭까지 나가는
+      // 것이 아니다. 이득은 β = 몸 원통 + 2·body_margin (여유 0.30 m = e-stop 거리) 에서 포화한다
+      // — 그 너머는 이탈 예산만 쓴다 (재현 j8c t6: R_c 까지 끌면 이탈 1.25 m, 명세 1.0 초과).
+      // 반증됐던 "기준 반경 0.661(겨우 벗어나는 반경)" 과 다르다: 그쪽은 여유 0 에서 포화해 스쳤고,
+      // 여기는 여유 0.30 이며 결정 없는 원통 안 탈출(legacy)은 그대로 R_c 다.
+      const double beta_target =
+        config_.robot_radius + o.radius + 2.0 * config_.yield_body_margin;
+      const double beta_dir = directed ?
+        std::min(beta_end * (beta_now > 0.0 ? 1.0 : -1.0), beta_target) : beta;
       // 경로에서 더 벗어나며 빠지는 후보에는 이득을 주지 않는다: 통로는 경로를 가로지르므로
       // 빠져나가는 방향은 경로를 따라(대개 뒤로)다. 옆으로 휘면 이탈 예산(명세 1 m)만 쓴다.
       // 통로가 경로와 나란하면(마주 오거나 뒤따라오는 기하) 경로를 따라 움직여도 통로 축까지의
@@ -561,7 +625,7 @@ DwaResult DwaPlanner::compute(
       const double drift = c.max_cte - std::abs(robot_proj.cte) - config_.yield_escape_drift;
       const bool block_drift = drift > 0.0 && align < config_.yield_parallel_cos;
       c.terms.escape = block_drift ? 1.0 :
-        std::clamp(1.0 - beta / std::max(1e-6, rc), 0.0, 1.0);
+        std::clamp(1.0 - beta_dir / std::max(1e-6, rc), 0.0, directed ? 2.0 : 1.0);
     }
     c.cost = W.heading * c.terms.heading + W.clearance * c.terms.clearance +
       W.velocity * c.terms.velocity + W.path * c.terms.path +

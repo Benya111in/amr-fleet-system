@@ -127,6 +127,7 @@ private:
   std::unordered_map<int, VelocityFilter> vel_filter_;
   /// 직전 주기의 횡단 양보 속도 상한 (오르는 속도를 가속 한계로 묶는다 — core::DwaInput 참고)
   double yield_limit_last_{std::numeric_limits<double>::infinity()};
+  int yield_decision_last_{0};    ///< 직전 주기의 kCommitted 결정 (core::YieldDecision)
   double robot_mass_{47.6};
 
   rclcpp::Subscription<amr_msgs::msg::TrackedObstacleArray>::SharedPtr obs_sub_;

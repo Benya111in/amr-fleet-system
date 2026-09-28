@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <utility>
 #include <limits>
 #include <vector>
@@ -406,6 +407,7 @@ LoopResult closedLoop(DynamicObstacle o, double v0, double seconds)
     in.pose = integrateArc(in.pose, r.v, r.w, 0.05);
     in.v_meas = in.v_last = r.v;
     in.w_meas = in.w_last = r.w;
+    in.yield_decision_last = static_cast<int>(r.yield.decision);
     o.x += o.vx * 0.05;
     o.y += o.vy * 0.05;
     const double d = std::hypot(o.x - in.pose.x, o.y - in.pose.y);
@@ -517,6 +519,7 @@ CrossRun crossingRun(
     in.pose = integrateArc(in.pose, r.v, r.w, 0.05);
     in.v_meas = in.v_last = r.v;
     in.w_meas = in.w_last = r.w;
+    in.yield_decision_last = static_cast<int>(r.yield.decision);
     o.x += o.vx * 0.05;
     o.y += o.vy * 0.05;
     const double gap = rectClearance(in.pose, o);
@@ -562,6 +565,7 @@ CrossRun crossingRunMulti(
     in.pose = integrateArc(in.pose, r.v, r.w, 0.05);
     in.v_meas = in.v_last = r.v;
     in.w_meas = in.w_last = r.w;
+    in.yield_decision_last = static_cast<int>(r.yield.decision);
     for (auto & o : obs) {
       o.x += o.vx * 0.05;
       o.y += o.vy * 0.05;
@@ -911,6 +915,7 @@ double sCurveMeanCte(double path_eval_time)
     in.pose = pose;
     in.v_meas = in.v_last = r.v;
     in.w_meas = in.w_last = r.w;
+    in.yield_decision_last = static_cast<int>(r.yield.decision);
     in.has_last = true;
     const auto pr = amr_navigation::core::projectOntoPath(path, {pose.x, pose.y}, 0, 0, &cum);
     if (pr.s > cum.back() - 0.3) {
@@ -1063,6 +1068,9 @@ TEST(Dwa, InsideTheBodyCylinderDoesNotPickAPureSpin)
   cfg.yield_corridor_margin = 0.7;              // 배포 설정과 같은 반폭
   DwaConfig spun = cfg;
   spun.escape_min_speed = 0.0;                  // 제자리 회전을 허용하던 예전 동작
+  spun.yield_decision = false;                  // 진입 결정(go/hold/retreat)도 없던 시절 — 그
+                                                // 결정이 있으면 이 기하에서 애초에 원통 안에서 돌지
+                                                // 않는다
   // 172°·목표 간격 0.15 m: 예전에는 스쳤고(−0.008) 지금은 스치지 않는다
   const double ux = std::cos(172.0 * M_PI / 180.0), uy = std::sin(172.0 * M_PI / 180.0);
   const DynamicObstacle grazing{0.8 * 3.0 - ux * 3.0, 0.15 - uy * 3.0, ux, uy, 0.25};
@@ -1076,4 +1084,336 @@ TEST(Dwa, InsideTheBodyCylinderDoesNotPickAPureSpin)
   EXPECT_GT(before.spin_in_body_s, 0.0);        // 예전에는 원통 안에서 제자리 회전을 골랐다
   EXPECT_LT(before.min_clearance, 0.0);         // 그래서 스쳤다
   EXPECT_GT(after.min_clearance, 0.0);          // 이제는 스치지 않는다
+}
+
+// ---------------------------------------------------------------------------------------------
+// 통합 08 접촉 4건 재현 (j8c 시행 6·21, reg1 시행 12·13)
+//
+// crossingRun 은 세 가지를 이상화한다 — 코스트맵이 비어 있고, 명령이 즉시 반영되며, 안전 게이트가
+// 없다. 접촉 4건에는 셋 다 관여했다: 남측 랙 포켓(회피 방향), 안전 게이트(탈출 속도 상한 0.5 /
+// 0.2 / 0 m/s — j8c t21 은 cmd 0.368 → gate_out 0.000), 명령→실속도 지연(reg1 t12 의 창 리셋
+// 0.465 → 0.107). 그래서 이 재현 루프는 (1) 지도의 랙 두 줄을 코스트맵에 넣고, (2) 게이트를
+// safety_gate.hpp 의 규칙으로
+// 근사하며 (명령 방향 스윕 띠 안 장애물까지 D ≤ 1.0 / 0.5 / 0.30 m → |u| ≤ 0.5 / 0.2 / 0, STOP 래치
+// 중에는 멀어지는 명령만 0.2), (3) 명령→실속도 1차 지연(τ 0.2 s)을 넣는다. 로봇 위치·속도는 접촉
+// 시행 덤프(stats/tracks_trialNN.csv)에서 committed 진입 순간을 역산한 값이다 (±0.4 m).
+namespace
+{
+using amr_navigation::core::Point2D;
+
+struct ReplayResult
+{
+  double min_clearance{1e9};             // 로봇 사각형 ↔ 작업자 원판 최소 여유 [m] (< 0 접촉)
+  bool contact{false};
+  double max_cte{0.0};                   // 기준 경로 대비 최대 이탈 [m]
+  double stopped_s{0.0};                 // 실속도 |v| < 0.05 누적 [s]
+  double min_lane_offset_stopped{1e9};   // 정지 중 차선 축까지 |β| 최소 [m]
+  double lane_offset_at_pass{1e9};       // 작업자 중심이 로봇의 α 를 지날 때 |β| [m]
+  bool crossed_axis{false};              // 작업자가 지나기 전에 차선 축을 가로질렀는가
+  int gate_zeroed{0};                    // 게이트가 0 아닌 명령을 0 으로 만든 주기 수
+  bool saturated_seen{false};
+  double t_pass{-1.0};
+  double s_end{0.0};
+  int cycles_go{0}, cycles_hold{0}, cycles_retreat{0};   // kCommitted 결정별 주기 수
+  double min_v_before_pass{1e9};         // 작업자가 지나기 전 실속도 최솟값 [m/s]
+};
+
+struct ReplayScene
+{
+  // x ∈ [−6, 6], y ∈ [−12, 0] — A(−4,−5)·B(4,−9)·차선 y = −7 을 담는다
+  OwnedGrid grid{240, 240, 0.05, 0, -6.0, -12.0};
+  std::vector<Point2D> fp = FootprintChecker::rectangle(0.60, 0.40);
+  ReplayScene()
+  {
+    grid.fillRect(-1.33, -12.0, 1.32, -7.99, kLethalObstacle);   // 좁은 랙 두 개 (지도 실측)
+    grid.fillRect(-1.30, -3.55, 1.30, -2.45, kLethalObstacle);   // 북쪽 랙
+    inflate(grid, 0.2, 0.8, 3.0);
+  }
+};
+
+// 안전 게이트 근사 (safety_gate.hpp): 명령 방향의 스윕 띠 안 장애물까지 거리 D 로 상한을 낸다.
+struct GateModel
+{
+  bool latched{false};
+  double cap(
+    const Pose2D & p, double v_cmd, const std::vector<DynamicObstacle> & obs, double guard)
+  {
+    double d = 1e9;
+    for (const auto & o : obs) {
+      const double c = std::cos(p.theta), s = std::sin(p.theta);
+      const double dx = o.x - p.x, dy = o.y - p.y;
+      double lx = c * dx + s * dy;
+      const double ly = -s * dx + c * dy;
+      if (v_cmd < 0.0) {
+        lx = -lx;
+      }
+      if (lx > 0.0 && std::abs(ly) <= 0.20 + o.radius) {
+        d = std::min(d, lx - 0.30 - o.radius);
+      }
+    }
+    if (guard <= 0.02 || d <= 0.30) {
+      latched = true;
+    } else if (latched && guard > 0.07 && d > 0.35) {
+      latched = false;
+    }
+    if (latched) {
+      return d > 0.30 ? 0.2 : 0.0;     // 멀어지는(그 방향이 비어 있는) 명령만 탈출 속도로
+    }
+    if (d <= 0.50) {
+      return 0.2;
+    }
+    if (d <= 1.00) {
+      return 0.5;
+    }
+    return 1e9;
+  }
+};
+
+ReplayResult replay08(
+  const DwaConfig & cfg, const std::vector<Pose2D> & path, std::vector<DynamicObstacle> obs,
+  double v0, double w0, double cap0, double seconds, bool with_gate = true,
+  double exec_tau = 0.2)
+{
+  const ReplayScene sc;
+  const FootprintChecker chk(
+    sc.grid.view(), sc.fp, inflationCost(FootprintChecker::circumscribedRadius(sc.fp), 0.2, 3.0));
+  const auto view = sc.grid.view();
+  const DwaPlanner dwa(cfg);
+  DwaInput in = movingInput(&path, v0, w0);
+  in.pose = path.front();
+  in.yield_limit_last = cap0;        // 직전 주기의 양보 상한 (무너진 정지선의 잔여 램프)
+  ReplayResult out;
+  GateModel gate;
+  const DynamicObstacle walker0 = obs.front();
+  const double su = walker0.speed();
+  const double ux = walker0.vx / su, uy = walker0.vy / su;
+  const double nx = -uy, ny = ux;
+  const std::vector<double> cum = amr_navigation::core::cumulativeLength(path);
+  double v_exec = v0, w_exec = w0;
+  const double beta0 = (in.pose.x - walker0.x) * nx + (in.pose.y - walker0.y) * ny;
+  for (int k = 0; k < static_cast<int>(seconds / 0.05); ++k) {
+    const double t = k * 0.05;
+    in.obstacles = obs;
+    const DwaResult r = dwa.compute(
+      in, [&chk](const Pose2D & p) {return chk.cost(p);},
+      [view](double x, double y) {return static_cast<double>(view.costAtWorld(x, y));});
+    out.saturated_seen = out.saturated_seen || r.vo_saturated;
+    double v_cmd = r.v;
+    if (with_gate) {
+      double guard = 1e9;
+      for (const auto & o : obs) {
+        guard = std::min(guard, rectClearance(in.pose, o));
+      }
+      const double c = gate.cap(in.pose, v_cmd, obs, guard);
+      const double clipped = std::clamp(v_cmd, -c, c);
+      if (std::abs(v_cmd) > 1e-6 && std::abs(clipped) < 1e-6) {
+        ++out.gate_zeroed;
+      }
+      v_cmd = clipped;
+    }
+    const double a = exec_tau > 0.0 ? std::min(1.0, 0.05 / exec_tau) : 1.0;
+    v_exec += a * (v_cmd - v_exec);
+    w_exec += a * (r.w - w_exec);
+    in.pose = integrateArc(in.pose, v_exec, w_exec, 0.05);
+    in.v_meas = v_exec;
+    in.w_meas = w_exec;
+    in.v_last = r.v;
+    in.w_last = r.w;
+    in.yield_limit_last = r.yield.speed_limit;      // 제어기와 같이 직전 상한을 넘긴다
+    in.yield_decision_last = static_cast<int>(r.yield.decision);
+    if (out.t_pass < 0.0) {
+      out.min_v_before_pass = std::min(out.min_v_before_pass, v_exec);
+    }
+    switch (r.yield.decision) {
+      case amr_navigation::core::YieldDecision::kGo: ++out.cycles_go; break;
+      case amr_navigation::core::YieldDecision::kHold: ++out.cycles_hold; break;
+      case amr_navigation::core::YieldDecision::kRetreat: ++out.cycles_retreat; break;
+      default: break;
+    }
+    for (auto & o : obs) {
+      o.x += o.vx * 0.05;
+      o.y += o.vy * 0.05;
+    }
+    double gap = 1e9;
+    for (const auto & o : obs) {
+      gap = std::min(gap, rectClearance(in.pose, o));
+    }
+    out.min_clearance = std::min(out.min_clearance, gap);
+    out.contact = out.contact || gap < 0.0;
+    const DynamicObstacle & w = obs.front();
+    const double alpha = (in.pose.x - w.x) * ux + (in.pose.y - w.y) * uy;
+    const double beta = (in.pose.x - w.x) * nx + (in.pose.y - w.y) * ny;
+    if (out.t_pass < 0.0 && alpha <= 0.0) {          // 작업자 중심이 로봇을 지났다
+      out.t_pass = t;
+      out.lane_offset_at_pass = std::abs(beta);
+      out.crossed_axis = beta * beta0 < 0.0;           // 지날 때 반대쪽에 있다 = 앞을 가로질렀다
+    }
+    if (std::getenv("REPLAY_DEBUG") != nullptr) {
+      std::printf(
+        "  t %.2f v_cmd %.2f w %.2f exec %.2f | state %d dec %d margin %.2f entry %.2f cap %.2f | "
+        "α %.2f β %.2f gap %.3f vo %zu sat %d\n", t, r.v, r.w, v_exec,
+        static_cast<int>(r.yield.state), static_cast<int>(r.yield.decision), r.yield.margin,
+        r.yield.body_entry, r.v_cap, alpha, beta, gap, r.n_vo_rejected,
+        static_cast<int>(r.vo_saturated));
+    }
+    const amr_navigation::core::Projection pr =
+      amr_navigation::core::projectOntoPath(path, {in.pose.x, in.pose.y}, 0, 0, &cum);
+    out.max_cte = std::max(out.max_cte, std::abs(pr.cte));
+    out.s_end = pr.s;
+    if (std::abs(v_exec) < 0.05) {
+      out.stopped_s += 0.05;
+      out.min_lane_offset_stopped = std::min(out.min_lane_offset_stopped, std::abs(beta));
+    }
+  }
+  return out;
+}
+
+// nav2_params.yaml 의 DWA 값 중 DwaConfig 기본값과 다른 것 (08 배포 설정)
+DwaConfig deployed08Config()
+{
+  DwaConfig c = crossingConfig();
+  c.yield_corridor_margin = 0.7;
+  c.yield_stop_margin = 0.8;
+  c.yield_clear_margin = 2.0;
+  c.yield_max_zone = 7.0;
+  c.yield_escape_speed = 0.5;
+  return c;
+}
+
+struct Replay08Case
+{
+  const char * name;
+  Pose2D start;               // committed 진입 순간의 로봇 (경로 위)
+  double v0;
+  double w0;                  // 그 순간의 각속도 명령 (stats cmd_w)
+  double cap0;                // 직전 주기의 양보 속도 상한 (무너진 정지선의 잔여, ∞ = 없음)
+  DynamicObstacle walker;     // worker_crossing (반지름 0.30, 1.0 m/s)
+};
+
+constexpr double kThAB = -0.4636476;   // A(−4,−5) → B(4,−9): atan2(−4, 8)
+constexpr double kThBA = 2.6779450;    // B → A
+
+const double kInfCap = std::numeric_limits<double>::infinity();
+const Replay08Case kReplay08[] = {
+  // j8c 시행 6 (138.79 s): A→B, 작업자 x 5.41 서향. 로봇은 이미 몸 원통 안(β 0.25) 0.8 m/s, 무너진
+  //   정지선(1.43 → 0.01 m / 0.35 s)을 향해 제동·우선회 중(w −0.49, 잔여 상한 ≈ 0.6). 실측:
+  //   3.5 s 뒤
+  //   −133° 를 돌아 남측 랙 포켓에서 뒤를 받혔다 (침투 16.8 mm).
+  {"j8c t6", {-0.5, -6.75, kThAB}, 0.8, -0.49, 0.60, {5.41, -7.0, -1.0, 0.0, 0.30}},
+  // reg1 시행 12 (230.00 s): A→B, 작업자 x 5.55 서향, 로봇 β 0.95 · 1.0 m/s (통로 진입 직후).
+  //   실측: 우선회로 축을 가로질러 포켓, 원통 안 가속 → 창 리셋 → 정지 (침투 3.2 mm).
+  {"reg1 t12", {-1.9, -6.05, kThAB}, 1.0, 0.0, kInfCap, {5.55, -7.0, -1.0, 0.0, 0.30}},
+  // j8c 시행 21 (398.30 s): B→A, 작업자 x −5.03 동향, 로봇 β 1.05 · 1.0 m/s. 실측: 점진 감속·표류,
+  //   탈출 명령 0.37 m/s 를 게이트가 0 으로 (침투 7.6 mm).
+  {"j8c t21", {2.1, -8.05, kThBA}, 1.0, -0.10, kInfCap, {-5.03, -7.0, 1.0, 0.0, 0.30}},
+  // reg1 시행 13 (248.97 s): B→A, 작업자 x −1.85 동향(이미 위험 구간 안), 로봇 통로 진입점(β 1.30)
+  //   0.99 m/s. 실측: clear → committed 직접, VO 0 인 채 0.98 m/s 로 진입, 1.1 s 전에야 포화
+  //   (침투 8.3 mm).
+  {"reg1 t13", {2.6, -8.30, kThBA}, 0.99, 0.0, kInfCap, {-1.85, -7.0, 1.0, 0.0, 0.30}},
+};
+
+void printReplay08(const char * tag, const char * name, const ReplayResult & r)
+{
+  std::printf(
+    "[ info ] 08 replay %-9s %-6s: clearance %+.3f m (contact %d), |β| at pass %.3f m (t %.2f s), "
+    "crossed axis %d, max deviation %.3f m, stopped %.2f s (lane %.3f m), gate zeroed %d, "
+    "saturated %d, s_end %.2f m, min v before pass %.2f, decisions go/hold/retreat %d/%d/%d\n",
+    name, tag, r.min_clearance, static_cast<int>(r.contact), r.lane_offset_at_pass, r.t_pass,
+    static_cast<int>(r.crossed_axis), r.max_cte, r.stopped_s, r.min_lane_offset_stopped,
+    r.gate_zeroed, static_cast<int>(r.saturated_seen), r.s_end, r.min_v_before_pass,
+    r.cycles_go, r.cycles_hold, r.cycles_retreat);
+}
+
+// 결정 층을 끈 예전 동작(before)과 켠 동작(after)을 나란히 남긴다. 반환은 after.
+ReplayResult runReplay08(const Replay08Case & k)
+{
+  const auto path = straightPath(k.start.x, k.start.y, 7.0, k.start.theta);
+  DwaConfig legacy = deployed08Config();
+  legacy.yield_decision = false;
+  printReplay08("before", k.name, replay08(legacy, path, {k.walker}, k.v0, k.w0, k.cap0, 8.0));
+  const ReplayResult r = replay08(deployed08Config(), path, {k.walker}, k.v0, k.w0, k.cap0, 8.0);
+  printReplay08("after", k.name, r);
+  return r;
+}
+
+void expectReplay08Clean(const ReplayResult & r)
+{
+  EXPECT_FALSE(r.contact);
+  EXPECT_GT(r.min_clearance, 0.10);   // 접촉 0 에 10 cm 여유 (추적 가로 오차·발자국 방향 여유)
+  EXPECT_FALSE(r.crossed_axis);       // 작업자 앞을 가로지르지 않는다 — 포켓·게이트가 죽이는 방향
+  EXPECT_LE(r.max_cte, 0.95);         // 이탈 예산 안 (명세 1.0 m)
+}
+}  // namespace
+
+TEST(Dwa, Replay08_j8cTrial6_InsideBodyGoesWhenTheMarginAllows)
+{
+  // 몸 원통 안(β 0.25)·0.8 m/s, 작업자 5.9 m: 위험 구간 출구까지 2.4 s vs 작업자 앞 3.1 s → 시간
+  // 여유 0.78 s → 스칠 때 예측 여유 0.15 + 0.236·(0.78 + 0.661) ≈ 0.49 m ≥ 0.40 → go. 감속·선회
+  // 없이 지나간다 (예전: 잔여 상한 0.6 으로 감속 + 우선회 → 축을 가로질러 남측 포켓에서 원통 안
+  // 정지, 여유 +0.100 → Gazebo 에서는 접촉).
+  const ReplayResult r = runReplay08(kReplay08[0]);
+  EXPECT_FALSE(r.contact);
+  EXPECT_GT(r.cycles_go, 20);
+  EXPECT_GT(r.min_clearance, 0.30);                 // e-stop 거리 이상
+  EXPECT_GT(r.min_v_before_pass, 0.6);              // 지나기 전에 감속하지 않는다
+  EXPECT_LT(r.max_cte, 0.30);                       // 경로 위에서 지나간다
+  EXPECT_LE(r.max_cte, 0.95);
+}
+
+TEST(Dwa, Replay08_j8cTrial6Closer_InsideBodyRetreatsToTheFreeSide)
+{
+  // 같은 배치에서 작업자만 0.7 m 가까이(x 4.7): 시간 여유 ≈ 0.1 s → 예측 여유 ≈ 0.33 m < 0.40 →
+  // go 가 아니다. 원통 안이므로
+  // retreat — 지금 있는 쪽(북, 자유 공간)으로만 비켜서고 축을 가로지르지 않는다. 이 기하에서 옆으로
+  // 물러나면 경로 자체가 남쪽으로 멀어지므로 이탈은 예산(0.95)을 넘길 수 있다 — 접촉 0 이
+  // 우선이다(사용자 판단 2026-09-27). 이탈은 출력으로 남긴다.
+  Replay08Case k = kReplay08[0];
+  k.name = "t6 closer";
+  k.walker.x = 4.7;
+  const ReplayResult r = runReplay08(k);
+  EXPECT_FALSE(r.contact);
+  EXPECT_GT(r.min_clearance, 0.10);
+  EXPECT_FALSE(r.crossed_axis);                     // 작업자 앞을 가로지르지 않는다
+  EXPECT_GT(r.cycles_retreat, 20);
+  EXPECT_EQ(r.cycles_go, 0);
+}
+
+TEST(Dwa, Replay08_reg1Trial12_EntryHoldsOrRetreatsNorth)
+{
+  expectReplay08Clean(runReplay08(kReplay08[1]));
+}
+
+TEST(Dwa, Replay08_j8cTrial21_EntryDoesNotDriftIntoTheLane)
+{
+  expectReplay08Clean(runReplay08(kReplay08[2]));
+}
+
+TEST(Dwa, Replay08_GoWhenTheWalkerIsStillFar)
+{
+  // j8c t6 의 배치에서 작업자만 1.1 m 더 멀리 (x 6.5): 몸 원통 출구까지 로봇 2.4 s vs 작업자 앞
+  // 4.2 s → 시간 여유 ≈ 1.8 s, 예측 여유 ≈ 0.73 m. go 는 감속 없이 지나간다 — TTC₀ 벌점을 끈
+  // 결과, 지나기 전 실속도가 떨어지지 않아야 한다 (예전 동작: TTC₀ 감속 + 선회가 여기서 접촉의
+  // 첫 단계였다).
+  Replay08Case k = kReplay08[0];
+  k.name = "go (far)";
+  k.w0 = 0.0;
+  k.cap0 = std::numeric_limits<double>::infinity();
+  k.walker.x = 6.5;
+  const ReplayResult r = runReplay08(k);
+  EXPECT_FALSE(r.contact);
+  EXPECT_GT(r.cycles_go, 20);                       // go 를 실제로 골랐다 (≥ 1 s)
+  EXPECT_GT(r.min_v_before_pass, 0.75);             // 지나기 전에 감속하지 않는다 (서지도 않는다)
+  EXPECT_GT(r.min_clearance, 0.30);                 // e-stop 거리 이상
+  EXPECT_LT(r.max_cte, 0.30);                       // 경로 위에서 지나간다 (이탈 0)
+}
+
+TEST(Dwa, Replay08_reg1Trial13_HoldsBeforeTheBodyZone)
+{
+  const ReplayResult r = runReplay08(kReplay08[3]);
+  expectReplay08Clean(r);
+  EXPECT_GT(r.cycles_hold, 20);                     // 입구 앞 정지(hold)를 실제로 골랐다 (≥ 1 s)
+  EXPECT_GT(r.min_clearance, 0.30);                 // e-stop 거리 이상
+  if (r.stopped_s > 0.0) {
+    EXPECT_GT(r.min_lane_offset_stopped, 0.661 + 0.1);   // 섰다면 몸 원통(0.361 + 0.30) 밖에서
+  }
 }
