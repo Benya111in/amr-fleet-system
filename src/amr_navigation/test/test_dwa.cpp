@@ -1370,3 +1370,140 @@ TEST(Dwa, Replay08_reg1Trial13_HoldsBeforeTheBodyZone)
     EXPECT_GT(r.min_lane_offset_stopped, 0.661 + 0.1);   // 섰다면 몸 원통(0.361 + 0.30) 밖에서
   }
 }
+
+// ---------------------------------------------------------------- R1+R2 후보 표현력
+//
+// 왜 필요한가 (R0 실측, logs/R0a 30 시행 9674 주기):
+//   창 폭 v 중앙 0.0500 m/s · 후보 종점 변위 스팬 중앙 0.0771 m.
+//   즉 v_meas≈0 에서 342 개 후보가 1.5 s 뒤 7.7 cm 안에 모여 있어 **물리적으로 같다**.
+//   비용 가중치를 아무리 흔들어도 argmin 이 바뀌지 않는다 — 116 구성 스윕이 무반응이었던 이유.
+//   같은 실측에서 조기 반환(‖p‖ < R_vo)은 조우 중 주기의 1.6 %, VO 전면 포화는 0.1 % 뿐이라
+//   지배적 결손은 후보 집합의 표현력이다 (docs/research/dynamic-avoidance-root-cause §6 R0).
+//
+// 고치는 방법: 표본을 1주기 도달속도가 아니라 **지속 목표 명령**으로 잡고, 롤아웃은 가속·저크
+// 한계로 목표까지 램프한 뒤 유지한다. 방출은 t = control_period 의 램프 상태이므로 하류가 보는
+// 명령의 1주기 가속 계약은 **그대로**다.
+
+TEST(DwaRamp, RampStepRespectsAccelAndJerk)
+{
+  double v = 0.0, a = 0.0;
+  const double dt = 0.05, a_max = 1.0, j_max = 2.0;
+  double a_prev = 0.0;
+  for (int k = 0; k < 100; ++k) {
+    DwaPlanner::rampStep(&v, &a, 1.0, a_max, j_max, dt);
+    EXPECT_LE(std::abs(a), a_max + 1e-9) << "가속 한계 위반, k=" << k;
+    EXPECT_LE(std::abs(a - a_prev), j_max * dt + 1e-9) << "저크 한계 위반, k=" << k;
+    a_prev = a;
+  }
+  EXPECT_NEAR(1.0, v, 1e-6) << "목표에 수렴해야 한다";
+  EXPECT_NEAR(0.0, a, 1e-9) << "목표에 붙으면 가속은 0";
+}
+
+TEST(DwaRamp, RampStepDoesNotOvershoot)
+{
+  for (double target : {0.1, 0.3, 1.0}) {
+    double v = 0.0, a = 0.0;
+    double vmax = 0.0;
+    for (int k = 0; k < 200; ++k) {
+      DwaPlanner::rampStep(&v, &a, target, 1.0, 2.0, 0.05);
+      vmax = std::max(vmax, v);
+    }
+    EXPECT_LE(vmax, target + 1e-6) << "목표 " << target << " 를 지나쳤다";
+  }
+}
+
+// 핵심 계약: 정지에서 출발해도 후보들이 서로 구별된다.
+TEST(DwaRamp, SustainedSamplingRestoresCandidateSpread)
+{
+  const auto path = straightPath(0.0, 0.0, 6.0);
+  Scene sc;
+  sc.finalize();
+  auto in = movingInput(&path, 0.0);      // v_meas = 0 — 실측에서 접촉의 52 % 가 이 상태다
+
+  DwaConfig off;                          // 종전 경로
+  off.sustained_sampling = false;
+  const DwaResult r_off = sc.run(DwaPlanner(off), in);
+
+  DwaConfig on = off;
+  on.sustained_sampling = true;
+  const DwaResult r_on = sc.run(DwaPlanner(on), in);
+
+  // 후보 수는 같아야 한다 (주기 예산이 바뀌면 안 된다)
+  EXPECT_EQ(r_off.n_samples, r_on.n_samples);
+  // 종전: 342 개 후보가 7.5 cm 안에 모여 있다 (R0 실측 중앙 0.0771 m 와 일치)
+  EXPECT_LT(r_off.diag.disp_span, 0.10) << "종전 롤아웃이 이미 퍼져 있다면 이 계약은 헛돈다";
+  // 제안: 저크 2.0 를 지키고도 한 자릿수 이상 넓어진다 (원형 계산 0.85 m)
+  EXPECT_GT(r_on.diag.disp_span, 0.60);
+  EXPECT_GT(r_on.diag.disp_span, 6.0 * r_off.diag.disp_span);
+}
+
+// 하류 계약: 방출 명령은 여전히 1주기 도달집합 안이다.
+TEST(DwaRamp, EmittedCommandStaysInsideOneCycleWindow)
+{
+  const auto path = straightPath(0.0, 0.0, 6.0);
+  Scene sc;
+  sc.finalize();
+  DwaConfig cfg;
+  cfg.sustained_sampling = true;
+  for (double vm : {0.0, 0.2, 0.6}) {
+    auto in = movingInput(&path, vm);
+    const DwaResult r = sc.run(DwaPlanner(cfg), in);
+    const DwaWindow w = DwaPlanner(cfg).dynamicWindow(vm, 0.0, cfg.limits.max_vel_x);
+    EXPECT_GE(r.v, w.v_lo - 1e-9) << "v_meas=" << vm;
+    EXPECT_LE(r.v, w.v_hi + 1e-9) << "v_meas=" << vm;
+    EXPECT_GE(r.w, w.w_lo - 1e-9) << "v_meas=" << vm;
+    EXPECT_LE(r.w, w.w_hi + 1e-9) << "v_meas=" << vm;
+  }
+}
+
+// 비회귀: 꺼 두면 종전 경로와 **같은 명령**이 나와야 한다.
+TEST(DwaRamp, DisabledMatchesLegacyExactly)
+{
+  const auto path = straightPath(0.0, 0.0, 6.0);
+  Scene sc;
+  sc.finalize();
+  DwaConfig cfg;
+  cfg.sustained_sampling = false;
+  for (double vm : {0.0, 0.3, 0.8}) {
+    const DwaResult r = sc.run(DwaPlanner(cfg), movingInput(&path, vm));
+    EXPECT_DOUBLE_EQ(r.best.v, r.best.v_emit) << "꺼진 경로에서 v_emit 은 v 와 같아야 한다";
+    EXPECT_DOUBLE_EQ(r.best.w, r.best.w_emit);
+    EXPECT_DOUBLE_EQ(r.v, r.best.v);
+  }
+}
+
+// 호길이는 등속 가정이 아니라 실제 프로파일의 적분이어야 한다.
+TEST(DwaRamp, ArcLengthIntegratesActualProfile)
+{
+  DwaConfig cfg;
+  cfg.sustained_sampling = true;
+  const DwaPlanner dwa(cfg);
+  std::vector<double> arc, speeds;
+  const auto poses = dwa.rolloutRamp({0.0, 0.0, 0.0}, 0.0, 0.0, 1.0, 0.0, 1.5, &arc, &speeds);
+  ASSERT_EQ(poses.size(), arc.size());
+  ASSERT_EQ(poses.size(), speeds.size());
+  EXPECT_DOUBLE_EQ(0.0, arc.front());
+  double s = 0.0;
+  for (std::size_t k = 1; k < speeds.size(); ++k) {
+    s += std::abs(speeds[k]) * cfg.sim_dt;
+    EXPECT_NEAR(s, arc[k], 1e-12) << "k=" << k;
+    EXPECT_GE(arc[k], arc[k - 1]) << "호길이는 단조 증가";
+  }
+  // 등속 가정이면 1.0 * 1.5 = 1.5 m 지만, 저크 2.0 · 가속 1.0 램프에서는 그보다 작다
+  EXPECT_LT(arc.back(), 1.5);
+  EXPECT_GT(arc.back(), 0.5);
+}
+
+// v=0 에서 회전 후보가 동적 술어에 **보여야** 한다 (연구 브리프 §3.2).
+// 종전에는 chordVelocity 가 v=0 에서 ω 와 무관하게 정확히 (0,0) 이라 회전이 보이지 않았다.
+TEST(DwaRamp, RotationBecomesVisibleAtZeroSpeed)
+{
+  const auto path = straightPath(0.0, 0.0, 6.0);
+  Scene sc;
+  sc.finalize();
+  DwaConfig cfg;
+  cfg.sustained_sampling = true;
+  const DwaResult r = sc.run(DwaPlanner(cfg), movingInput(&path, 0.0));
+  // 후보 종점 요가 실제로 퍼져 있어야 회전이 비용에 나타날 수 있다
+  EXPECT_GT(r.diag.w_hi - r.diag.w_lo, 1.0) << "ω 목표 범위가 창에 갇혀 있다";
+}

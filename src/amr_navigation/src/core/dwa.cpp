@@ -109,8 +109,9 @@ DwaWindow DwaPlanner::dynamicWindow(double v_c, double w_c, double v_cap) const
   const auto & L = config_.limits;
   const double dt = config_.control_period;
   DwaWindow win;
+  win.v_cap = std::min(L.max_vel_x, v_cap);
   win.v_lo = std::max(L.min_vel_x, v_c - L.decel_lim_x * dt);
-  win.v_hi = std::min(std::min(L.max_vel_x, v_cap), v_c + L.acc_lim_x * dt);
+  win.v_hi = std::min(win.v_cap, v_c + L.acc_lim_x * dt);
   if (v_c + L.acc_lim_x * dt < L.min_vel_x) {
     // 허용 범위 한참 아래(후진 복구 직후 등): 한 주기에 닿을 수 있는 만큼만 범위 쪽으로
     win.v_lo = win.v_hi = v_c + L.acc_lim_x * dt;
@@ -135,10 +136,18 @@ DwaWindow DwaPlanner::dynamicWindow(double v_c, double w_c, double v_cap) const
 std::vector<std::pair<double, double>> DwaPlanner::sampleVelocities(
   const DwaWindow & win, double v_c, double w_c) const
 {
-  std::vector<double> vs = linspace(win.v_lo, win.v_hi, std::max(1, config_.vx_samples));
-  std::vector<double> ws = linspace(win.w_lo, win.w_hi, std::max(1, config_.vth_samples));
+  // R2: 창을 "표본 필터" 가 아니라 "방출 명령 클램프" 로 재정의한다.
+  // 표본은 **지속 목표 명령**이고 롤아웃(rolloutRamp)이 가속·저크로 거기까지 램프한다.
+  // 방출은 t = control_period 의 램프 상태라 여전히 창 안이다 — 하류 계약 불변.
+  // 창 격자로 뽑으면 v_meas=0 에서 후보가 [0, 0.05] 뿐이고 342 개가 물리적으로 같아진다.
+  const double lo = config_.sustained_sampling ? config_.limits.min_vel_x : win.v_lo;
+  const double hi = config_.sustained_sampling ? win.v_cap : win.v_hi;
+  const double wlo = config_.sustained_sampling ? -config_.limits.max_vel_theta : win.w_lo;
+  const double whi = config_.sustained_sampling ? config_.limits.max_vel_theta : win.w_hi;
+  std::vector<double> vs = linspace(lo, hi, std::max(1, config_.vx_samples));
+  std::vector<double> ws = linspace(wlo, whi, std::max(1, config_.vth_samples));
   // 직진(ω = 0) 열을 정확히 포함
-  if (win.w_lo <= 0.0 && win.w_hi >= 0.0 &&
+  if (wlo <= 0.0 && whi >= 0.0 &&
     std::none_of(ws.begin(), ws.end(), [](double w) {return std::abs(w) < 1e-9;}))
   {
     ws.push_back(0.0);
@@ -155,9 +164,9 @@ std::vector<std::pair<double, double>> DwaPlanner::sampleVelocities(
   const double dt = config_.control_period;
   double vb = v_c > 0.0 ? std::max(0.0, v_c - L.decel_lim_x * dt) :
     std::min(0.0, v_c + L.decel_lim_x * dt);
-  vb = std::clamp(vb, win.v_lo, win.v_hi);
+  vb = std::clamp(vb, lo, hi);
   double wb = w_c - (w_c > 0.0 ? 1.0 : -1.0) * std::min(std::abs(w_c), L.acc_lim_theta * dt);
-  wb = std::clamp(wb, win.w_lo, win.w_hi);
+  wb = std::clamp(wb, wlo, whi);
   out.emplace_back(vb, wb);
   return out;
 }
@@ -172,6 +181,77 @@ std::vector<Pose2D> DwaPlanner::rollout(const Pose2D & start, double v, double w
   // 매 스텝을 시작 자세에서 정확 적분 (오차 누적 없음)
   for (int k = 1; k <= n; ++k) {
     poses.push_back(integrateArc(start, v, w, k * dt));
+  }
+  return poses;
+}
+
+void DwaPlanner::rampStep(
+  double * v, double * a, double target, double a_max, double j_max, double dt)
+{
+  const double j = std::max(j_max, 1e-9);
+  const double dv = target - *v;
+  // 목표에 도달: 속도는 붙잡고 가속도만 저크 안에서 0 으로 내린다.
+  // (예전에는 여기서 a 를 0 으로 **급변**시켜 저크 한계를 깼다
+  //  — 계약 RampStepRespectsAccelAndJerk 가 잡았다.)
+  if (std::abs(dv) < 1e-9) {
+    *a += std::clamp(-*a, -j * dt, j * dt);
+    *v = target;
+    return;
+  }
+  // 지금 가속도를 저크로 0 까지 줄이는 동안 더 벌어지는 속도 — 이만큼 남았으면 가속을 접는다
+  const double a_settle = 0.5 * (*a) * std::abs(*a) / j;
+  double a_des = (dv - a_settle) > 0.0 ? a_max : -a_max;
+  // 이 스텝에 목표에 정확히 닿을 수 있으면 그 가속도를 쓴다 (한계 안일 때만)
+  const double a_land = dv / dt;
+  if (std::abs(a_land) <= a_max && std::abs(a_land - *a) <= j * dt) {
+    a_des = a_land;
+  }
+  double a_new = *a + std::clamp(a_des - *a, -j * dt, j * dt);
+  a_new = std::clamp(a_new, -a_max, a_max);
+  double v_new = *v + a_new * dt;
+  // 저크 한계 안에서 막을 수 없는 오버슛이면 속도만 목표에 붙인다. 가속도는 연속으로 두고
+  // 다음 스텝의 위 분기가 0 으로 내린다 — 저크 한계를 깨지 않는 유일한 방법이다.
+  if ((dv > 0.0 && v_new > target) || (dv < 0.0 && v_new < target)) {
+    v_new = target;
+  }
+  *a = a_new;
+  *v = v_new;
+}
+
+std::vector<Pose2D> DwaPlanner::rolloutRamp(
+  const Pose2D & start, double v0, double w0, double v_t, double w_t, double T,
+  std::vector<double> * arc, std::vector<double> * speeds) const
+{
+  const double dt = config_.sim_dt;
+  const int n = std::max(1, static_cast<int>(std::ceil(T / dt - 1e-9)));
+  std::vector<Pose2D> poses;
+  poses.reserve(static_cast<std::size_t>(n) + 1);
+  poses.push_back(start);
+  if (arc != nullptr) {
+    arc->assign(1, 0.0);
+    arc->reserve(static_cast<std::size_t>(n) + 1);
+  }
+  if (speeds != nullptr) {
+    speeds->assign(1, v0);
+    speeds->reserve(static_cast<std::size_t>(n) + 1);
+  }
+  const auto & L = config_.limits;
+  Pose2D p = start;
+  double v = v0, av = 0.0, w = w0, aw = 0.0, s_cum = 0.0;
+  for (int k = 1; k <= n; ++k) {
+    rampStep(
+      &v, &av, v_t, v_t > v ? L.acc_lim_x : L.decel_lim_x,
+      std::max(1e-6, config_.limits.jerk_lim_x), dt);
+    rampStep(&w, &aw, w_t, L.acc_lim_theta, std::max(1e-6, config_.jerk_lim_theta), dt);
+    p = integrateArc(p, v, w, dt);
+    s_cum += std::abs(v) * dt;
+    poses.push_back(p);
+    if (arc != nullptr) {
+      arc->push_back(s_cum);
+    }
+    if (speeds != nullptr) {
+      speeds->push_back(v);
+    }
   }
   return poses;
 }
@@ -517,12 +597,40 @@ DwaResult DwaPlanner::compute(
     c.w = samples[si].second;
     c.is_brake = (si + 1 == samples.size());
     const double T = simTime(c.v);
-    c.poses = rollout(in.pose, c.v, c.w, T);
+    if (config_.sustained_sampling) {
+      // R1: (c.v, c.w) 는 **목표 명령**이고 롤아웃이 가속·저크로 거기까지 램프한다.
+      // 호길이는 |c.v|·k·dt 가 아니라 실제 프로파일의 적분이다 (등속 가정이 깨졌으므로).
+      std::vector<double> speeds;
+      c.poses = rolloutRamp(in.pose, in.v_meas, in.w_meas, c.v, c.w, T, &c.arc, &speeds);
+      c.v_peak = 0.0;
+      for (double sp : speeds) {
+        c.v_peak = std::max(c.v_peak, std::abs(sp));
+      }
+      // 방출값 = 한 제어 주기 뒤의 램프 상태. 정의상 1주기 도달집합 안이다.
+      double ve = in.v_meas, ae = 0.0, we = in.w_meas, aw = 0.0;
+      rampStep(
+        &ve, &ae, c.v, c.v > in.v_meas ? L.acc_lim_x : L.decel_lim_x,
+        std::max(1e-6, L.jerk_lim_x), config_.control_period);
+      rampStep(
+        &we, &aw, c.w, L.acc_lim_theta, std::max(1e-6, config_.jerk_lim_theta),
+        config_.control_period);
+      c.v_emit = std::clamp(ve, res.window.v_lo, res.window.v_hi);
+      c.w_emit = std::clamp(we, res.window.w_lo, res.window.w_hi);
+    } else {
+      c.poses = rollout(in.pose, c.v, c.w, T);
+      c.v_emit = c.v;
+      c.w_emit = c.w;
+      c.v_peak = std::abs(c.v);
+      c.arc.resize(c.poses.size());
+      for (std::size_t k = 0; k < c.poses.size(); ++k) {
+        c.arc[k] = std::abs(c.v) * static_cast<double>(k) * config_.sim_dt;
+      }
+    }
 
     // --- 4) 충돌 검사 (목표 너머 제외) ---
     std::size_t n_check = c.poses.size();
     for (std::size_t k = 1; k < c.poses.size(); ++k) {
-      const double s_k = std::abs(c.v) * k * config_.sim_dt;
+      const double s_k = c.arc[k];
       if (std::isfinite(d_goal) && s_k > d_goal + config_.goal_overshoot_margin) {
         n_check = k;
         break;
@@ -541,7 +649,21 @@ DwaResult DwaPlanner::compute(
 
     // --- 5) VO 원뿔 판정 (진입 시각도 기록: 포화 시 선택 기준) ---
     if (config_.use_velocity_obstacles && !dyn.empty()) {
-      const Point2D v_eff = chordVelocity(in.pose.theta, c.v, c.w, config_.vo_time_horizon);
+      // R1: 램프에서는 등속 현 근사가 틀린다 — 게다가 chordVelocity 는 v=0 에서 ω 와 무관하게
+      // 정확히 (0,0) 이라 회전 후보가 VO 에 전혀 보이지 않았다 (연구 브리프 §3.2).
+      // 실제 롤아웃의 시작→τ 변위를 τ 로 나눈 것이 정의상 그 구간의 유효 속도다.
+      Point2D v_eff = chordVelocity(in.pose.theta, c.v, c.w, config_.vo_time_horizon);
+      if (config_.sustained_sampling) {
+        const double tau = std::max(1e-6, config_.vo_time_horizon);
+        const std::size_t kt = std::min(
+          c.poses.size() - 1,
+          static_cast<std::size_t>(std::llround(tau / config_.sim_dt)));
+        const double used = static_cast<double>(kt) * config_.sim_dt;
+        if (used > 1e-9) {
+          v_eff = Point2D{(c.poses[kt].x - in.pose.x) / used,
+            (c.poses[kt].y - in.pose.y) / used};
+        }
+      }
       for (const auto & o : dyn) {
         if (gate_exempt(o)) {
           continue;
@@ -598,7 +720,7 @@ DwaResult DwaPlanner::compute(
       const double cp = point_cost(p.x, p.y);
       double cg = 0.0;
       if (!path.empty()) {
-        const double s_ref = robot_proj.s + std::abs(c.v) * k * config_.sim_dt;
+        const double s_ref = robot_proj.s + c.arc[k];
         const Pose2D g = interpolateAt(path, cum_s, s_ref);
         cg = point_cost(g.x, g.y);
         if (k <= k_eval) {
@@ -644,7 +766,9 @@ DwaResult DwaPlanner::compute(
     // w_v/v_span 보다 커야 감속이 이긴다 (w_d 1.5 > w_v 0.4). 1 − TTC₀/T_pred 는 같은 속도에서
     // TTC 가 긴 쪽(회피 방향)을 고르는 보조항 (dwa.md §2.2).
     if (!dyn.empty()) {
-      const std::vector<Pose2D> pred = rollout(in.pose, c.v, c.w, config_.prediction_time);
+      const std::vector<Pose2D> pred = config_.sustained_sampling ?
+        rolloutRamp(in.pose, in.v_meas, in.w_meas, c.v, c.w, config_.prediction_time) :
+        rollout(in.pose, c.v, c.w, config_.prediction_time);
       double ttc = kInf;
       for (std::size_t oi = 0; oi < dyn.size(); ++oi) {
         // 결정 층(go/hold/retreat)이 맡은 장애물은 TTC₀ 벌점에서 뺀다. go 는 몸 원통 기준으로 여유
@@ -671,7 +795,7 @@ DwaResult DwaPlanner::compute(
       c.ttc = ttc;
       if (std::isfinite(ttc)) {
         const double v_safe = L.decel_lim_x * std::max(0.0, ttc - t_lag);
-        const double excess = std::max(0.0, std::abs(c.v) - v_safe) / v_span;
+        const double excess = std::max(0.0, c.v_peak - v_safe) / v_span;
         const double urgency = std::max(0.0, 1.0 - ttc / std::max(1e-6, config_.prediction_time));
         c.terms.dynamic = std::min(1.0, excess + config_.dynamic_steer_gain * urgency);
       }
@@ -822,14 +946,16 @@ DwaResult DwaPlanner::compute(
   if (best != nullptr) {
     res.found = true;
     res.best = *best;
-    res.v = best->v;
-    res.w = best->w;
+    // R2: 후보의 v·w 는 지속 목표이고 실제로 내보내는 것은 한 주기 뒤 램프 상태다
+    // (sustained_sampling 이 꺼져 있으면 v_emit == v 이므로 종전과 같다).
+    res.v = best->v_emit;
+    res.w = best->w_emit;
   } else {
     // 유효 샘플 없음 → 제동 후보 (마지막 샘플)
     res.found = false;
     res.best = cands.back();
-    res.v = cands.back().v;
-    res.w = cands.back().w;
+    res.v = cands.back().v_emit;
+    res.w = cands.back().w_emit;
   }
 
   // --- R0 계측 (거동에 쓰이지 않는다. 위에서 이미 계산된 값만 읽는다) ---

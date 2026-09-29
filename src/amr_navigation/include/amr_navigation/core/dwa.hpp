@@ -89,6 +89,16 @@ struct DwaConfig
   int vx_samples{11};
   int vth_samples{21};
   double sim_dt{0.1};               // [s]
+  // R1+R2 — 후보 집합의 표현력 복원 (docs/research/dynamic-avoidance-root-cause §6).
+  // false 면 종전 그대로: 1주기 도달집합 격자 + 등속 원호 롤아웃.
+  // true  면 표본이 **지속 목표 명령** [min_vel_x, v_cap] x [±max_vel_theta] 이고 롤아웃은
+  //         가속·저크 한계로 목표까지 램프한 뒤 유지한다. 방출은 t = control_period 의 램프
+  //         상태이므로 **하류가 보는 명령의 1주기 가속 계약은 그대로다**.
+  // 근거: 현행은 v_meas=0 에서 후보 342 개의 1.5 s 종점 변위가 0.075 m 안에 갇힌다
+  //       (R0 실측 중앙 0.0775 m). 램프+지속명령이면 0.850 m 로 11.3 배가 된다.
+  bool sustained_sampling{false};
+  // [rad/s³] 램프용 각저크 (velocity_profiler.yaml max_angular_jerk)
+  double jerk_lim_theta{6.0};
   double sim_time_min{1.5};         // [s]
   double sim_time_max{2.5};         // [s]
   double commit_time{0.2};          // [s] T_c: 명령 유지 후 제동 시작 (정지거리 계산)
@@ -217,6 +227,12 @@ struct DwaCandidate
   double ttc{std::numeric_limits<double>::infinity()};       // 원호 예측 TTC₀ (R_d)
   double vo_time{std::numeric_limits<double>::infinity()};   // VO 진입 시각 (R, τ 안), 없으면 +inf
   double max_cte{0.0};          // 평가 구간(k ≤ k_E) 롤아웃의 최대 |경로 수직 거리| [m]
+  // --- R1/R2 (sustained_sampling 일 때만 의미 있다) ---
+  // v·w 는 **지속 목표 명령**이고, 실제로 방출하는 것은 한 제어 주기 뒤의 램프 상태다.
+  double v_emit{0.0};           // t = control_period 의 램프 선속도 — 이것이 cmd 로 나간다
+  double w_emit{0.0};
+  std::vector<double> arc;      // 누적 호길이 [m] (poses 와 같은 길이). 등속 가정을 대신한다
+  double v_peak{0.0};           // 롤아웃 중 최대 |v| — 위험 평가용
 };
 
 struct DwaInput
@@ -251,6 +267,9 @@ struct DwaWindow
   double v_hi{0.0};
   double w_lo{0.0};
   double w_hi{0.0};
+  /// 이 주기의 속도 상한 (min(max_vel_x, 외부 제한)). R2 의 지속 목표 명령 상한이고,
+  /// 종전 경로에서는 v_hi 계산에만 쓰여 밖으로 나오지 않았다.
+  double v_cap{0.0};
 };
 
 /// R0 계측 — **런타임 거동에 쓰이지 않는다.** 이미 계산된 후보 자료에서 읽기만 한다.
@@ -319,6 +338,21 @@ public:
   std::vector<std::pair<double, double>> sampleVelocities(
     const DwaWindow & win, double v_c, double w_c) const;
   double simTime(double v) const;
+  /// 램프 롤아웃 (R1): 목표 (v_t, w_t) 로 가속·저크 한계 안에서 램프한 뒤 유지한다.
+  /// 스텝마다 그 스텝의 (v, w) 로 정확 원호 적분을 합성한다 (스텝 안에서는 ZOH).
+  /// arc 가 nullptr 이 아니면 누적 호길이를, speeds 가 nullptr 이 아니면 스텝 속도를 채운다.
+  /// 등속 롤아웃과 달리 **후보마다 다른 궤적**이 나오고, v0 = 0 에서도 움직인다.
+  std::vector<Pose2D> rolloutRamp(
+    const Pose2D & start, double v0, double w0, double v_t, double w_t, double T,
+    std::vector<double> * arc = nullptr, std::vector<double> * speeds = nullptr) const;
+
+  /// 목표까지 한 스텝. 가속 한계 a_max 와 저크 한계 j_max 를 지키는 S-커브.
+  /// (v, a) 를 제자리에서 갱신한다. 하류 velocity_profiler 가 내는 모양과 같아야
+  /// 계획기가 낙관적이 되지 않는다.
+  static void rampStep(
+    double * v, double * a, double target, double a_max, double j_max,
+    double dt);
+
   /// 원호 롤아웃: poses[0] = start, 간격 sim_dt, 총 n = ceil(T/dt) 스텝.
   std::vector<Pose2D> rollout(const Pose2D & start, double v, double w, double T) const;
   /// 저크 제한 정지거리: 명령 유지 T_c 후 가속 0 에서 저크 j 로 −a 까지 램프, 등감속 정지.
