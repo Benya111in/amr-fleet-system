@@ -50,7 +50,6 @@
 
 #include "amr_navigation/core/crossing_gate.hpp"
 #include "amr_navigation/core/crossing_yield.hpp"
-#include "amr_navigation/core/footprint_reach.hpp"
 #include "amr_navigation/core/geometry.hpp"
 #include "amr_navigation/core/velocity_obstacle.hpp"
 
@@ -116,16 +115,6 @@ struct DwaConfig
   bool use_velocity_obstacles{true};
   double prediction_time{5.0};      // [s] TTC₀ 지평 (평균 예측)
   double robot_radius{0.361};       // [m] 로봇 덮개 원 (외접 반경)
-  // 발자국 반길이·반폭 [m]. 동적 장애물의 **충돌 반경**은 외접원(robot_radius)을 그대로 쓰고
-  // (안전 여유를 깎지 않는다), 이 둘은 **방위가 여유에 주는 영향**을 표현하는 데만 쓴다.
-  // 접촉 판정이 직사각형 대 원이라 도달거리가 0.20~0.3606 m 로 변하는데 외접원은 회전 불변이라
-  // 그 여유가 비용에 나타나지 않았다 (core/footprint_reach.hpp 머리말 · 접촉 132 건 실측).
-  // ≤ 0 이면 방위 고려를 끈다 (외접원만 쓰던 예전 거동).
-  double footprint_half_length{0.0};
-  double footprint_half_width{0.0};
-  // [m] 몸 원통 안 제자리 회전을 허용할 최소 여유 이득. 관측 침투 중앙 6.0 mm 보다 크게 잡아
-  // "거의 이득 없는 회전" 은 계속 배제한다 (그 회전이 접촉 기제였다 — 6c584bd).
-  double footprint_reach_gain_min{0.02};
   double dynamic_margin{0.5};       // [m] TTC₀ 계산 여유 (critical zone 거리)
   double vo_time_horizon{2.0};      // [s] τ
   double vo_margin{0.3};            // [m] VO 합성 반경 여유 (emergency_stop_distance)
