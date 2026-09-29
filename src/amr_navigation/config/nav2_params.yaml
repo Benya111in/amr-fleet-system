@@ -108,6 +108,12 @@ controller_server:
       # max_linear_jerk} 가 기본값 (단일 출처). 실험 시에만 여기서 덮어쓴다.
       vx_samples: 11                  # 동적 창 v 샘플 수 (창 폭 0.10 m/s → 0.01 m/s 해상도)
       vth_samples: 31                  # ω 샘플 수 (창 폭 0.20 rad/s → 0.0067 rad/s 해상도)
+      # R1+R2 — 후보를 1주기 도달속도가 아니라 **지속 목표 명령**으로 잡고 롤아웃을 가속·저크
+      # 램프로 적분한다. 방출은 t = control_period 의 램프 상태라 하류의 1주기 가속 계약은 그대로.
+      # 근거 (logs/R0a+R0b 60 시행 20 013 주기, docs/research/dynamic-avoidance-root-cause §6):
+      #   위험 구간 후보 종점 변위 스팬 중앙 0.0719 m — 후보 342 개가 물리적으로 거의 같았다.
+      #   원형 계산으로 이 값이 0.85 m (11.3 배) 가 된다.
+      sustained_sampling: true
       sim_dt: 0.1                      # [s] 롤아웃 간격
       sim_time_min: 1.5                # [s] T_sim(v) = clip(|v|/a + 0.5, min, max) — 정지거리 이상을 본다
       sim_time_max: 2.5                # [s]

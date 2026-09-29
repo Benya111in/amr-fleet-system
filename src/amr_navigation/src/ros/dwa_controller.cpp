@@ -120,6 +120,11 @@ void DWAController::configure(
   c.control_period = 1.0 / std::max(1.0, controller_frequency);
   c.vx_samples = param(node, p + "vx_samples", 11);
   c.vth_samples = param(node, p + "vth_samples", 31);
+  // R1+R2: 표본을 지속 목표 명령으로, 롤아웃을 가속·저크 램프로 (연구 브리프 §6).
+  // 각저크 기본값은 velocity_profiler 의 max_angular_jerk 와 같은 출처를 쓴다.
+  c.sustained_sampling = param(node, p + "sustained_sampling", false);
+  c.jerk_lim_theta = param(
+    node, p + "jerk_lim_theta", param(node, "limits.max_angular_jerk", 6.0));
   c.sim_dt = param(node, p + "sim_dt", 0.1);
   c.sim_time_min = param(node, p + "sim_time_min", 1.5);
   c.sim_time_max = param(node, p + "sim_time_max", 2.5);
@@ -237,6 +242,10 @@ void DWAController::configure(
     "DWAController '%s': v [%.2f, %.2f] m/s, w %.2f rad/s, %d x %d samples, VO %s, robot radius "
     "%.3f m", name_.c_str(), L.min_vel_x, L.max_vel_x, L.max_vel_theta, c.vx_samples,
     c.vth_samples, c.use_velocity_obstacles ? "on" : "off", c.robot_radius);
+  RCLCPP_INFO(
+    node->get_logger(), "  표본: %s (지속 목표 명령 + 램프 롤아웃 = %s)",
+    c.sustained_sampling ? "sustained" : "1주기 창",
+    c.sustained_sampling ? "on" : "off");
 }
 
 void DWAController::cleanup()
