@@ -344,17 +344,13 @@ std::vector<core::DynamicObstacle> DWAController::obstaclesInFrame(const std::st
     d.id = static_cast<int>(o.track_id);
     // 통로 예측용 평활 속도 (트랙별 지수 필터). VO·TTC 는 위의 원시 속도를 그대로 쓴다.
     if (yield_velocity_tau_ > 0.0) {
-      VelocityFilter & f = vel_filter_[o.track_id];
-      const double gap = f.stamp > 0.0 ? stamp.seconds() - f.stamp : 0.0;
-      if (f.stamp <= 0.0 || gap <= 0.0 || gap > track_timeout_) {
-        f.vx = d.vx;                      // 새 트랙이거나 끊겼다 — 현재 값으로 시작
-        f.vy = d.vy;
-      } else {
-        const double a = 1.0 - std::exp(-gap / yield_velocity_tau_);
-        f.vx += a * (d.vx - f.vx);
-        f.vy += a * (d.vy - f.vy);
-      }
-      f.stamp = stamp.seconds();
+      // 시간은 **제어 틱이 아니라 트랙 메시지 스탬프**로 센다. 이 함수는 매 제어 주기(20 Hz)
+      // 호출되면서 캐시된 최신 메시지를 쓰므로, 추적기가 더 느리면 같은 스탬프를 여러 번 본다.
+      // 예전에는 그것을 `gap <= 0.0` 으로 불연속과 함께 묶어 매번 원시값으로 리셋했고, 그래서
+      // τ 평활이 사실상 꺼져 있었다 (실측 재현: 20 Hz × 10 Hz 에서 0.5 s 뒤 잔량 0.000,
+      // 고친 뒤 exp(-1)=0.368 — test_track_velocity_filter.cpp).
+      core::TrackVelocityFilter & f = vel_filter_[o.track_id];
+      f.update(d.vx, d.vy, stamp.seconds(), yield_velocity_tau_, track_timeout_);
       d.vx_pred = f.vx;
       d.vy_pred = f.vy;
       d.has_pred = true;
