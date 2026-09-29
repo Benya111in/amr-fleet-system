@@ -580,7 +580,22 @@ geometry_msgs::msg::TwistStamped DWAController::computeVelocityCommands(
       static_cast<double>(in.gate_tracks.size()),
       std::isfinite(res.gate.s_in) ? res.yield.zone_entry : -1e9,
       std::isfinite(res.gate.s_out) ? res.yield.zone_exit : -1e9,
-      static_cast<double>(res.gate.exempt_ids.size())};
+      static_cast<double>(res.gate.exempt_ids.size()),
+      // [28]~[39] R0 계측 (docs/research/dynamic-avoidance-root-cause §6 R0).
+      // 거동에 쓰이지 않는다 — 접촉률 대신 **주기당** 기제 지표를 남겨 검정력을 확보한다.
+      // [28] 선택 가능 후보 수, [29] 충돌 없는 후보 수, [30] 비용 max-min (평탄도),
+      // [31] 후보 롤아웃 종점 변위 스팬 [m], [32][33] 후보 v 범위, [34][35] 후보 ω 범위,
+      // [36] min_k TTC₀, [37] 최근접 동적 장애물 ‖p‖, [38] escaping, [39] leave_lane,
+      // [40] 게이트 **전** 계획기 출력 v (res.v 는 상한 적용 후라 따로 남긴다),
+      // [41] 이 주기에 쓴 속도 상한 v_cap
+      static_cast<double>(res.diag.n_selectable),
+      static_cast<double>(res.diag.n_collision_free),
+      res.diag.n_selectable > 0 ? res.diag.cost_max - res.diag.cost_min : -1.0,
+      res.diag.disp_span,
+      res.diag.v_lo, res.diag.v_hi, res.diag.w_lo, res.diag.w_hi,
+      res.diag.ttc_min, res.diag.nearest_obs,
+      res.diag.escaping ? 1.0 : 0.0, res.diag.leave_lane ? 1.0 : 0.0,
+      res.best.v, res.v_cap};
     stats_pub_->publish(st);
   }
   return cmd;

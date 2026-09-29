@@ -81,6 +81,24 @@ CONTACT_COLUMNS = ['trial', 'time', 'obstacle', 'distance_m', 'robot_speed_mps',
                    'footprint_reach_m', 'footprint_reach_min_m']
 ATTRIB_GAP_S = 0.3                     # 접촉 시각 ↔ 트랙·제어 표본 허용 시차 (넘으면 빈 칸)
 YIELD_STATES = {0: 'clear', 1: 'yield', 2: 'committed'}   # dwa/stats [11]
+
+# R0 계측 열 — dwa/stats [28]~[41] (dwa_controller.cpp 의 주석과 순서가 같아야 한다).
+# 접촉은 30 시행당 1 건이라 A/B 에 팔당 633 시행이 필요하다. 아래는 제어 주기마다 나오므로
+# 시행당 수천 표본이고 기제 수준 가설을 검정력 있게 판정할 수 있다.
+R0_COLUMNS = ['n_selectable', 'n_collision_free', 'cost_span', 'disp_span_m',
+              'v_lo', 'v_hi', 'w_lo', 'w_hi', 'ttc_min_s', 'nearest_obs_m',
+              'escaping', 'leave_lane', 'planner_v', 'v_cap']
+
+
+def _r0_cols(d: list) -> list:
+    """dwa/stats 배열에서 R0 열을 꺼낸다. 옛 로그(28 칸 미만)면 빈 값으로 채운다."""
+    if len(d) < 42:
+        return [math.nan] * len(R0_COLUMNS)
+    return [int(d[28]), int(d[29]), round(float(d[30]), 4), round(float(d[31]), 4),
+            round(float(d[32]), 4), round(float(d[33]), 4),
+            round(float(d[34]), 4), round(float(d[35]), 4),
+            round(float(d[36]), 4), round(float(d[37]), 4),
+            int(d[38]), int(d[39]), round(float(d[40]), 4), round(float(d[41]), 4)]
 DECISIONS = {0: '', 1: 'go', 2: 'hold', 3: 'retreat'}
 DEFAULT_OBSTACLE_R = 0.3               # [m] /info 에 없는 장애물의 반지름 가정
 
@@ -271,7 +289,8 @@ class TestDynamicObstacles(cases.ProbeCase):
                          # 통로 진입 결정 (0 없음 / 1 go / 2 hold / 3 retreat) 과 그때의 시간 여유.
                          # 이것이 없으면 이탈·복귀 꼬리가 어느 분기에서 나오는지 가릴 수 없다.
                          DECISIONS.get(int(d[17]), int(d[17])) if len(d) > 17 else '',
-                         round(float(d[18]), 3) if len(d) > 18 else math.nan])
+                         round(float(d[18]), 3) if len(d) > 18 else math.nan]
+                        + _r0_cols(d))
         # 같은 시행의 추적 속도와 계획 갱신 — 교차 구간이 흔들리는 원인 구분 (잡음 vs 재계획)
         trk = [[round(t, 3), o.track_id, round(o.position.x, 3), round(o.position.y, 3),
                 round(o.velocity.x, 3), round(o.velocity.y, 3),
@@ -289,7 +308,7 @@ class TestDynamicObstacles(cases.ProbeCase):
                 f'stats_trial{trial:02d}.csv',
                 ['t', 'cmd_v', 'cmd_w', 'yield_state', 'stop_distance_m', 'vo_rejected',
                  'collisions', 'ttc_s', 'zone_entry_m', 'yield_obstacle',
-                 'decision', 'decision_margin_s'], rows)
+                 'decision', 'decision_margin_s'] + R0_COLUMNS, rows)
 
     def _dump_pose_plan(self, trial: int, w0: float, plan, track, path, devs) -> None:
         """실패한 시행의 로봇 자세와 **두 기준**의 이탈 — 첫 계획(하네스 기준)과 그 시각의
@@ -432,8 +451,11 @@ class TestDynamicObstacles(cases.ProbeCase):
             ret = max([e.return_time(t_last) for e in eps], default=0.0)
             # 접촉만이 아니라 명세를 넘긴 이탈도 덤프한다. 접촉이 0 이 된 뒤로 실패가 이탈
             # 쪽으로 옮겨 갔는데, 접촉 조건만 걸려 있어 정작 실패한 시행의 기록이 없었다.
+            # R0: 제어 이력은 **모든 시행**에서 남긴다. 예전에는 실패 조건이 걸려 있어
+            # 표본이 접촉 조건부였고, 그 자료로는 "churn 이 접촉의 원인" 과 "churn 은 어디나
+            # 있고 접촉과 무관" 을 구분할 수 없었다 (연구 브리프 §6 R0).
+            self._dump_trial_stats(trial, w0)
             if mine or (math.isfinite(max_dev) and max_dev > DEVIATION_MAX) or ret > RETURN_MAX_S:
-                self._dump_trial_stats(trial, w0)
                 self._dump_pose_plan(trial, w0, plan, track, path, devs)
             eps_all += [e.returned and e.return_time(t_last) <= RETURN_MAX_S for e in eps]
             worst_dev = max(worst_dev, max_dev if math.isfinite(max_dev) else math.inf)

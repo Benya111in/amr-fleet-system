@@ -253,6 +253,28 @@ struct DwaWindow
   double w_hi{0.0};
 };
 
+/// R0 계측 — **런타임 거동에 쓰이지 않는다.** 이미 계산된 후보 자료에서 읽기만 한다.
+///
+/// 왜 필요한가: 접촉률은 30 시행당 1 건이라 A/B 에 팔당 633 시행이 필요하다
+/// (docs/research/dynamic-avoidance-root-cause §2). 아래 값은 제어 주기마다 나오므로
+/// 시행당 수천 표본이고, 기제 수준 가설을 검정력 있게 판정할 수 있다.
+struct DwaDiag
+{
+  double cost_min{0.0};          ///< 선택 가능 후보의 비용 최소
+  double cost_max{0.0};          ///< 〃 최대. max-min 이 0 에 가까우면 argmin 이 평탄하다 (§3.1)
+  std::size_t n_selectable{0};   ///< 충돌 아님 && VO 기각 아님 — 선택 루프가 실제로 보는 후보 수
+  std::size_t n_collision_free{0};
+  double v_lo{0.0};              ///< 후보 v 의 실제 범위 (창 붕괴 관측)
+  double v_hi{0.0};
+  double w_lo{0.0};
+  double w_hi{0.0};
+  double disp_span{0.0};         ///< 후보 롤아웃 종점 변위의 최대 - 최소 [m] (§3.1 의 0.075 m)
+  double ttc_min{-1.0};          ///< min_k firstContactTime, 없으면 -1
+  double nearest_obs{-1.0};      ///< 최근접 동적 장애물까지 ‖p‖ [m], 없으면 -1 (§3.3 의 R_vo 대비)
+  bool escaping{false};
+  bool leave_lane{false};
+};
+
 struct DwaResult
 {
   bool found{false};
@@ -270,6 +292,7 @@ struct DwaResult
   YieldResult yield;             // 횡단 양보 판정 (가상 정지선). 게이트가 켜지면 기록용 투영
   GateResult gate;               // 횡단 게이트 판정 (config.gate.enable 일 때만 채워진다)
   double v_cap{0.0};             // 이 주기에 실제로 쓴 속도 상한 [m/s]
+  DwaDiag diag;                  // R0 계측 (거동에 영향 없음)
 };
 
 /// 자세의 풋프린트 비용(0~253) 또는 충돌 시 음수.

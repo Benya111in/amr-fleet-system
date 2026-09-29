@@ -1,13 +1,16 @@
 // 발자국 도달거리 계약.
 //
-// 접촉 판정은 로봇 직사각형 0.60 × 0.40 과 장애물 원의 부호 거리인데, DWA 는 동적 장애물에 대해
-// 자기를 외접원(0.361)으로만 본다. 외접원은 회전 불변이라 방위가 비용에 나타나지 않는다.
-// 실측: 접촉 132 건의 침투가 중앙 6.0 mm · 최대 18.8 mm 인데 도달거리는 0.200~0.3606 m 로
-// 변하므로, 방위가 균등하다면 84.8 % 가 최적 방위에서 회피된다.
+// 접촉 판정은 로봇 직사각형 0.60 × 0.40 과 장애물 원의 부호 거리인데, DWA 는 동적 장애물에
+// 대해 자기를 외접원(0.361)으로만 본다. 외접원은 회전 불변이라 방위가 비용에 나타나지 않는다.
+//
+// **정정 (2026-09-29)**: 예전 주석의 "침투 6 mm 대비 도달거리 변동폭이 크므로 84.8 % 가
+// 회피된다" 는 무효다. 침투는 50 Hz 표집에 검열된 관측량이다 (footprint_reach.hpp 머리말).
+// 이 계약들이 지키는 것은 침투 크기가 아니라 **도달거리가 방위에 의존한다는 사실 자체**다.
+#include <gtest/gtest.h>
+
 #include <cmath>
 
 #include "amr_navigation/core/footprint_reach.hpp"
-#include <gtest/gtest.h>
 
 using amr_navigation::core::footprintReach;
 using amr_navigation::core::footprintReachMax;
@@ -87,7 +90,8 @@ TEST(FootprintReach, RotationRescuesMeasuredPenetrationsExceptNearBroadside)
   EXPECT_NEAR(114.0, hi, 1.5) << "구제 불가 방위대 상한";
 }
 
-// Y8a 실측 접촉 1 건을 그대로 재현한다 (상대 방위 48.3°, 도달 0.268 m, 이득 67.7 mm > 침투 17.8 mm).
+// Y8a 실측 접촉 1 건을 그대로 재현한다
+// (상대 방위 48.3°, 도달 0.268 m — 방위 의존성이 실제 자료와 맞는지만 본다).
 TEST(FootprintReach, ReproducesMeasuredContactY8aTrial0)
 {
   const double rel = 0.844;                 // contacts.csv obstacle_bearing_rel_rad
@@ -104,8 +108,9 @@ TEST(FootprintReach, WorldFrameMatchesRelativeBearing)
   const double rx = 1.0, ry = 2.0, d = 3.0;
   const double ox = rx + d * std::cos(yaw + rel);
   const double oy = ry + d * std::sin(yaw + rel);
-  EXPECT_NEAR(footprintReach(kHl, kHw, rel),
-              footprintReachTo(kHl, kHw, rx, ry, yaw, ox, oy), 1e-9);
+  EXPECT_NEAR(
+    footprintReach(kHl, kHw, rel),
+    footprintReachTo(kHl, kHw, rx, ry, yaw, ox, oy), 1e-9);
 }
 
 // 방어: 잘못된 치수는 0 (호출부가 외접원으로 되돌아가도록).

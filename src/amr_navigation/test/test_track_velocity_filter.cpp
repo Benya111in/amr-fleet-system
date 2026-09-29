@@ -8,10 +8,11 @@
 //
 // 아래 `LegacyFilter` 는 **고치기 전 의미론을 그대로 옮긴 참조**다. 계약이 실제로 그 결함을
 // 잡아내는지 보이기 위해 남긴다 (계약이 처음부터 통과하면 결함이 없는 것이므로).
+#include <gtest/gtest.h>
+
 #include <cmath>
 
 #include "amr_navigation/core/track_velocity_filter.hpp"
-#include <gtest/gtest.h>
 
 using amr_navigation::core::FilterStep;
 using amr_navigation::core::TrackVelocityFilter;

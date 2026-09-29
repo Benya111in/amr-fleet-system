@@ -387,6 +387,7 @@ DwaResult DwaPlanner::compute(
   // 않으므로 β 가 그대로다. 예전에는 "이미 멈춤(v_meas < 0.05)" 일 때만 탈출을 켰는데, 그때는
   // 동적 창이 한 주기에 −0.05 m/s 밖에 못 내 계획 지평 안에서 만들 수 있는 가로 이동이 사실상
   // 0 이다. 즉 비켜야 할 때는 이미 비킬 수 없었다. 속도가 남아 있을 때 켠다.
+  bool leave_lane_diag = false;   // R0 계측용 사본 (선택 로직은 블록 안의 leave_lane 을 쓴다)
   bool escaping = !gate_on && res.yield.state == YieldState::kCommitted &&
     config_.yield_escape_speed > 0.0 && res.yield.obstacle >= 0 &&
     static_cast<std::size_t>(res.yield.obstacle) < dyn.size();
@@ -764,6 +765,7 @@ DwaResult DwaPlanner::compute(
     // 서 있기가 최악의 선택이라는 것이 확정된 부분이다. 주행 중에는 예전 기준(정면 접근에
     // 대한 제동)을 그대로 둔다 — 단위 시험 ClosedLoopHeadOnYields.
     const bool leave_lane = escaping && esc_hi - esc_lo > config_.escape_spread_min;
+    leave_lane_diag = leave_lane;
     // 다만 escape 항만으로 고르면 비용에 실린 이탈 벌점이 통째로 빠진다 — 통로 반폭(1.31 m)에
     // 닿을 때까지 아무것도 말리지 않아 명세 4.7 의 이탈 상한(1.0 m)을 넘긴다. 08 실측 e8b 가
     // 그 모양이었다: 그 구간만 VO 기각이 주기당 17.7 건이었고 이탈이 1.39 m 까지 갔다 (복귀
@@ -828,6 +830,62 @@ DwaResult DwaPlanner::compute(
     res.best = cands.back();
     res.v = cands.back().v;
     res.w = cands.back().w;
+  }
+
+  // --- R0 계측 (거동에 쓰이지 않는다. 위에서 이미 계산된 값만 읽는다) ---
+  // 목적: 접촉률(30 시행당 1 건) 대신 **제어 주기당** 기제 지표를 남긴다.
+  // docs/research/dynamic-avoidance-root-cause §6 R0.
+  {
+    DwaDiag & g = res.diag;
+    g.escaping = escaping;
+    g.leave_lane = leave_lane_diag;
+    double cmin = kInf, cmax = -kInf;
+    double vlo = kInf, vhi = -kInf, wlo = kInf, whi = -kInf;
+    double dmin = kInf, dmax = -kInf, tmin = kInf;
+    for (const auto & c : cands) {
+      vlo = std::min(vlo, c.v);
+      vhi = std::max(vhi, c.v);
+      wlo = std::min(wlo, c.w);
+      whi = std::max(whi, c.w);
+      if (std::isfinite(c.ttc)) {
+        tmin = std::min(tmin, c.ttc);
+      }
+      if (!c.collision) {
+        ++g.n_collision_free;
+        // 롤아웃 종점 변위 — "후보들이 서로 구별되는가" 의 직접 관측 (§3.1)
+        if (!c.poses.empty()) {
+          const Pose2D & e = c.poses.back();
+          const double d = std::hypot(e.x - in.pose.x, e.y - in.pose.y);
+          dmin = std::min(dmin, d);
+          dmax = std::max(dmax, d);
+        }
+        if (!c.vo_rejected) {
+          ++g.n_selectable;
+          cmin = std::min(cmin, c.cost);
+          cmax = std::max(cmax, c.cost);
+        }
+      }
+    }
+    if (g.n_selectable > 0) {
+      g.cost_min = cmin;
+      g.cost_max = cmax;
+    }
+    if (std::isfinite(vlo)) {
+      g.v_lo = vlo;
+      g.v_hi = vhi;
+      g.w_lo = wlo;
+      g.w_hi = whi;
+    }
+    if (std::isfinite(dmin) && std::isfinite(dmax)) {
+      g.disp_span = dmax - dmin;
+    }
+    g.ttc_min = std::isfinite(tmin) ? tmin : -1.0;
+    // 최근접 동적 장애물까지의 거리 — §3.3 의 조기 반환(‖p‖ < R_vo) 지배 여부를 본다
+    double pmin = kInf;
+    for (const auto & o : in.obstacles) {
+      pmin = std::min(pmin, std::hypot(o.x - in.pose.x, o.y - in.pose.y));
+    }
+    g.nearest_obs = std::isfinite(pmin) ? pmin : -1.0;
   }
   return res;
 }
