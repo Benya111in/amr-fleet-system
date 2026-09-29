@@ -400,6 +400,7 @@ DwaResult DwaPlanner::compute(
   // (배제 규칙이 살아 0.05 이상 유지), 142.244 중복 트랙으로 바뀌자 0.007 → 142.296 부터
   // 0.000, 접촉 0.25 s 뒤 중복 트랙 축이 붙자 다시 0.050.
   bool in_body = false;
+  double body_ox = 0.0, body_oy = 0.0, body_d = kInf;
   if (escaping) {
     for (const DynamicObstacle & o : dyn) {
       const double su = std::max(1e-6, o.speed());
@@ -407,7 +408,14 @@ DwaResult DwaPlanner::compute(
         -(in.pose.x - o.x) * (o.vy / su) + (in.pose.y - o.y) * (o.vx / su));
       if (b < config_.robot_radius + o.radius) {
         in_body = true;
-        break;
+        // 방위 판단용으로 **가장 가까운** 위협을 남긴다 (break 하지 않는다). 여러 트랙이 원통을
+        // 덮을 때 먼저 만난 것이 아니라 실제로 닿을 것을 기준으로 몸을 돌려야 한다.
+        const double d = std::hypot(o.x - in.pose.x, o.y - in.pose.y);
+        if (d < body_d) {
+          body_d = d;
+          body_ox = o.x;
+          body_oy = o.y;
+        }
       }
     }
     const DynamicObstacle & o0 = dyn[static_cast<std::size_t>(res.yield.obstacle)];
@@ -793,9 +801,34 @@ DwaResult DwaPlanner::compute(
       }
     }
     const bool drop_spin = in_body && has_moving;
+    // 다만 **여유를 실제로 늘리는 회전**은 막지 않는다. 위 논거("회전해도 위치가 안 변한다")는
+    // 로봇을 점으로 본 것인데, 접촉 판정은 발자국(0.60 × 0.40) 대 장애물 원의 부호 거리라
+    // 방위에 따라 도달거리가 0.200(정횡) ~ 0.3606 m(모서리) 로 변한다. 접촉 132 건 실측에서
+    // 침투는 중앙 6.0 mm · 최대 18.8 mm 뿐이라, 방위가 균등하다면 84.8 % 가 최적 방위에서
+    // 회피된다 (core/footprint_reach.hpp). 충돌 반경(VO·TTC)은 외접원 그대로 두므로 안전
+    // 여유는 깎지 않는다 — 선택지만 넓힌다.
+    const bool reach_aware = config_.footprint_half_length > 0.0 &&
+      config_.footprint_half_width > 0.0 && in_body && std::isfinite(body_d);
+    const double reach_now = reach_aware ?
+      footprintReachTo(config_.footprint_half_length, config_.footprint_half_width,
+        in.pose.x, in.pose.y, in.pose.theta, body_ox, body_oy) : 0.0;
+    // 커밋 지평(한 번에 실행하기로 한 구간)의 자세로 본다 — 다음 주기에 다시 고르므로 탐욕적으로
+    // 방향만 맞으면 된다. 지평을 롤아웃 끝까지 늘리면 등곡률 외삽이 과도한 회전을 정당화한다.
+    const std::size_t commit_k = static_cast<std::size_t>(
+      std::max(1.0, std::ceil(config_.commit_time / std::max(1e-9, config_.sim_dt))));
     for (const auto & c : cands) {
       if (drop_spin && std::abs(c.v) < config_.escape_min_speed) {
-        continue;
+        bool helps = false;
+        if (reach_aware && !c.poses.empty()) {
+          const Pose2D & pc = c.poses[std::min(commit_k, c.poses.size() - 1)];
+          const double reach_cand = footprintReachTo(
+            config_.footprint_half_length, config_.footprint_half_width,
+            pc.x, pc.y, pc.theta, body_ox, body_oy);
+          helps = reach_cand < reach_now - config_.footprint_reach_gain_min;
+        }
+        if (!helps) {
+          continue;
+        }
       }
       if (c.collision) {
         continue;

@@ -206,6 +206,18 @@ void DWAController::configure(
   const double robot_radius = param(node, p + "robot_radius", -1.0);
   c.robot_radius = robot_radius > 0.0 ? robot_radius :
     core::FootprintChecker::circumscribedRadius(footprintOf(*costmap_ros_));
+  {
+    // 발자국 반길이·반폭 — 동적 장애물의 **충돌 반경**은 위 외접원을 그대로 쓰고, 이 둘은
+    // 방위가 여유에 주는 영향을 표현하는 데만 쓴다 (core/footprint_reach.hpp).
+    double hl = 0.0, hw = 0.0;
+    for (const auto & pt : footprintOf(*costmap_ros_)) {
+      hl = std::max(hl, std::abs(pt.x));
+      hw = std::max(hw, std::abs(pt.y));
+    }
+    c.footprint_half_length = hl;
+    c.footprint_half_width = hw;
+  }
+  c.footprint_reach_gain_min = param(node, p + "footprint_reach_gain_min", 0.02);
   obstacle_radius_ = param(node, p + "obstacle_radius", 0.25);
   dynamic_fast_speed_ = param(node, p + "dynamic_fast_speed", 0.5);
   track_timeout_ = param(node, p + "track_timeout", 0.5);
