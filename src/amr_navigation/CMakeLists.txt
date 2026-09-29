@@ -101,6 +101,9 @@ add_executable(pid_tuning tools/pid_tuning.cpp)
 target_link_libraries(pid_tuning amr_navigation_core)
 add_executable(astar_benchmark tools/astar_benchmark.cpp)
 target_link_libraries(astar_benchmark amr_navigation_core)
+# R2.5 비용 함수 진단기 — Gazebo 없이 어느 비용항이 argmin 을 결정하는지 본다
+add_executable(cost_probe tools/cost_probe.cpp)
+target_link_libraries(cost_probe amr_navigation_core)
 add_executable(tracking_sim tools/tracking_sim.cpp)
 target_link_libraries(tracking_sim amr_navigation_core)
 
@@ -112,7 +115,7 @@ install(TARGETS amr_navigation_core amr_navigation_plugins amr_velocity_profiler
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
 )
-install(TARGETS velocity_profiler_node costmap_scan_filter_node pid_tuning astar_benchmark tracking_sim
+install(TARGETS velocity_profiler_node costmap_scan_filter_node pid_tuning astar_benchmark cost_probe tracking_sim
   DESTINATION lib/${PROJECT_NAME}
 )
 install(PROGRAMS

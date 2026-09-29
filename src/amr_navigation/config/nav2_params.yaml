@@ -123,7 +123,7 @@ controller_server:
       # 항이었는데, 후보가 넓어지자 빠른 후보에만 큰 벌점을 주는 살아 있는 항이 됐다.
       # 즉 비용 가중치가 **망가진 후보 집합에 맞춰 튜닝돼 있었고**, 후보 집합을 고치면
       # 가중치가 틀렸다는 것이 드러난다. 비용 함수를 먼저 고쳐야 이 플래그를 켤 수 있다.
-      sustained_sampling: false
+      sustained_sampling: true
       sim_dt: 0.1                      # [s] 롤아웃 간격
       sim_time_min: 1.5                # [s] T_sim(v) = clip(|v|/a + 0.5, min, max) — 정지거리 이상을 본다
       sim_time_max: 2.5                # [s]

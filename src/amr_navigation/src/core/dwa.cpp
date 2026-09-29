@@ -1,6 +1,7 @@
 #include "amr_navigation/core/dwa.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <utility>
@@ -349,6 +350,88 @@ std::vector<Pose2D> DwaPlanner::recenterPath(
   return out;
 }
 
+namespace
+{
+/// R0 계측 — **런타임 거동에 쓰이지 않는다.** 선택이 끝난 뒤 후보 자료를 읽기만 한다.
+/// compute() 밖으로 뺀 이유는 함수 길이 때문이다 (cpplint readability/fn_size).
+void fillDiag(
+  DwaDiag * out, const std::vector<DwaCandidate> & cands, const Pose2D & pose,
+  const std::vector<DynamicObstacle> & obstacles, const DwaWeights & W,
+  bool escaping, bool leave_lane)
+{
+  DwaDiag & g = *out;
+  g.escaping = escaping;
+  g.leave_lane = leave_lane;
+  double cmin = kInf, cmax = -kInf;
+  double vlo = kInf, vhi = -kInf, wlo = kInf, whi = -kInf;
+  double dmin = kInf, dmax = -kInf, tmin = kInf;
+  for (const auto & c : cands) {
+    vlo = std::min(vlo, c.v);
+    vhi = std::max(vhi, c.v);
+    wlo = std::min(wlo, c.w);
+    whi = std::max(whi, c.w);
+    if (std::isfinite(c.ttc)) {
+      tmin = std::min(tmin, c.ttc);
+    }
+    if (!c.collision) {
+      ++g.n_collision_free;
+      // 롤아웃 종점 변위 — "후보들이 서로 구별되는가" 의 직접 관측 (§3.1)
+      if (!c.poses.empty()) {
+        const Pose2D & e = c.poses.back();
+        const double d = std::hypot(e.x - pose.x, e.y - pose.y);
+        dmin = std::min(dmin, d);
+        dmax = std::max(dmax, d);
+      }
+      if (!c.vo_rejected) {
+        ++g.n_selectable;
+        cmin = std::min(cmin, c.cost);
+        cmax = std::max(cmax, c.cost);
+      }
+    }
+  }
+  if (g.n_selectable > 0) {
+    g.cost_min = cmin;
+    g.cost_max = cmax;
+    // 항별 가중 기여 폭 — 어느 항이 argmin 을 결정하는가 (R2.5)
+    std::array<double, 8> lo{}, hi{};
+    lo.fill(kInf);
+    hi.fill(-kInf);
+    for (const auto & c : cands) {
+      if (c.collision || c.vo_rejected) {
+        continue;
+      }
+      const std::array<double, 8> t{{c.terms.heading, c.terms.clearance, c.terms.velocity,
+        c.terms.path, c.terms.oscillation, c.terms.dynamic, c.terms.off_path, c.terms.escape}};
+      for (std::size_t i = 0; i < 8; ++i) {
+        lo[i] = std::min(lo[i], t[i]);
+        hi[i] = std::max(hi[i], t[i]);
+      }
+    }
+    const std::array<double, 8> wgt{{W.heading, W.clearance, W.velocity, W.path,
+      W.oscillation, W.dynamic, W.off_path, W.escape}};
+    for (std::size_t i = 0; i < 8; ++i) {
+      g.term_span[i] = std::isfinite(lo[i]) ? wgt[i] * (hi[i] - lo[i]) : 0.0;
+    }
+  }
+  if (std::isfinite(vlo)) {
+    g.v_lo = vlo;
+    g.v_hi = vhi;
+    g.w_lo = wlo;
+    g.w_hi = whi;
+  }
+  if (std::isfinite(dmin) && std::isfinite(dmax)) {
+    g.disp_span = dmax - dmin;
+  }
+  g.ttc_min = std::isfinite(tmin) ? tmin : -1.0;
+  // 최근접 동적 장애물까지의 거리 — §3.3 의 조기 반환(‖p‖ < R_vo) 지배 여부를 본다
+  double pmin = kInf;
+  for (const auto & o : obstacles) {
+    pmin = std::min(pmin, std::hypot(o.x - pose.x, o.y - pose.y));
+  }
+  g.nearest_obs = std::isfinite(pmin) ? pmin : -1.0;
+}
+}  // namespace
+
 DwaResult DwaPlanner::compute(
   const DwaInput & in, const FootprintCostFn & footprint_cost,
   const PointCostFn & point_cost) const
@@ -606,16 +689,14 @@ DwaResult DwaPlanner::compute(
       for (double sp : speeds) {
         c.v_peak = std::max(c.v_peak, std::abs(sp));
       }
-      // 방출값 = 한 제어 주기 뒤의 램프 상태. 정의상 1주기 도달집합 안이다.
-      double ve = in.v_meas, ae = 0.0, we = in.w_meas, aw = 0.0;
-      rampStep(
-        &ve, &ae, c.v, c.v > in.v_meas ? L.acc_lim_x : L.decel_lim_x,
-        std::max(1e-6, L.jerk_lim_x), config_.control_period);
-      rampStep(
-        &we, &aw, c.w, L.acc_lim_theta, std::max(1e-6, config_.jerk_lim_theta),
-        config_.control_period);
-      c.v_emit = std::clamp(ve, res.window.v_lo, res.window.v_hi);
-      c.w_emit = std::clamp(we, res.window.w_lo, res.window.w_hi);
+      // 방출값 = 목표를 1주기 **가속** 창으로 자른 값. 저크는 여기서 걸지 않는다 —
+      // 파이프라인이 dwa -> velocity_profiler(저크 성형) -> safety_node 이므로 계획기가
+      // 저크를 걸면 **두 번 적용**된다. 실측: 저크를 걸면 정지에서 방출이 0.005 m/s 로
+      // 묶여(a = j·dt = 0.1 -> v = 0.005) 종전 창 상한 0.05 의 1/10 이 되고 로봇이 기어간다
+      // (logs/R12a: |cmd_v| 중앙 0.88 -> 0.11, 시행당 주기 322 -> 3261).
+      // 롤아웃은 저크를 계속 모형화한다 — 예측이 낙관적이면 안 되기 때문이다. 방출만 다르다.
+      c.v_emit = std::clamp(c.v, res.window.v_lo, res.window.v_hi);
+      c.w_emit = std::clamp(c.w, res.window.w_lo, res.window.w_hi);
     } else {
       c.poses = rollout(in.pose, c.v, c.w, T);
       c.v_emit = c.v;
@@ -958,61 +1039,8 @@ DwaResult DwaPlanner::compute(
     res.w = cands.back().w_emit;
   }
 
-  // --- R0 계측 (거동에 쓰이지 않는다. 위에서 이미 계산된 값만 읽는다) ---
-  // 목적: 접촉률(30 시행당 1 건) 대신 **제어 주기당** 기제 지표를 남긴다.
-  // docs/research/dynamic-avoidance-root-cause §6 R0.
-  {
-    DwaDiag & g = res.diag;
-    g.escaping = escaping;
-    g.leave_lane = leave_lane_diag;
-    double cmin = kInf, cmax = -kInf;
-    double vlo = kInf, vhi = -kInf, wlo = kInf, whi = -kInf;
-    double dmin = kInf, dmax = -kInf, tmin = kInf;
-    for (const auto & c : cands) {
-      vlo = std::min(vlo, c.v);
-      vhi = std::max(vhi, c.v);
-      wlo = std::min(wlo, c.w);
-      whi = std::max(whi, c.w);
-      if (std::isfinite(c.ttc)) {
-        tmin = std::min(tmin, c.ttc);
-      }
-      if (!c.collision) {
-        ++g.n_collision_free;
-        // 롤아웃 종점 변위 — "후보들이 서로 구별되는가" 의 직접 관측 (§3.1)
-        if (!c.poses.empty()) {
-          const Pose2D & e = c.poses.back();
-          const double d = std::hypot(e.x - in.pose.x, e.y - in.pose.y);
-          dmin = std::min(dmin, d);
-          dmax = std::max(dmax, d);
-        }
-        if (!c.vo_rejected) {
-          ++g.n_selectable;
-          cmin = std::min(cmin, c.cost);
-          cmax = std::max(cmax, c.cost);
-        }
-      }
-    }
-    if (g.n_selectable > 0) {
-      g.cost_min = cmin;
-      g.cost_max = cmax;
-    }
-    if (std::isfinite(vlo)) {
-      g.v_lo = vlo;
-      g.v_hi = vhi;
-      g.w_lo = wlo;
-      g.w_hi = whi;
-    }
-    if (std::isfinite(dmin) && std::isfinite(dmax)) {
-      g.disp_span = dmax - dmin;
-    }
-    g.ttc_min = std::isfinite(tmin) ? tmin : -1.0;
-    // 최근접 동적 장애물까지의 거리 — §3.3 의 조기 반환(‖p‖ < R_vo) 지배 여부를 본다
-    double pmin = kInf;
-    for (const auto & o : in.obstacles) {
-      pmin = std::min(pmin, std::hypot(o.x - in.pose.x, o.y - in.pose.y));
-    }
-    g.nearest_obs = std::isfinite(pmin) ? pmin : -1.0;
-  }
+  fillDiag(
+    &res.diag, cands, in.pose, in.obstacles, W, escaping, leave_lane_diag);
   return res;
 }
 

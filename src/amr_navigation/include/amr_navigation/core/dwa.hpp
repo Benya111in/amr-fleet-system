@@ -43,6 +43,7 @@
 #define AMR_NAVIGATION__CORE__DWA_HPP_
 
 #include <cstddef>
+#include <array>
 #include <functional>
 #include <limits>
 #include <utility>
@@ -292,6 +293,11 @@ struct DwaDiag
   double nearest_obs{-1.0};      ///< 최근접 동적 장애물까지 ‖p‖ [m], 없으면 -1 (§3.3 의 R_vo 대비)
   bool escaping{false};
   bool leave_lane{false};
+  /// 비용항별 **가중** 기여 폭 = W_i · (max_i − min_i), 선택 가능 후보 위에서.
+  /// 순서: heading, clearance, velocity, path, oscillation, dynamic, off_path, escape.
+  /// 어느 항이 실제로 argmin 을 결정하는지 직접 답한다 — 후보가 구별되지 않던 동안에는
+  /// 전부 0 에 가까웠고, 그래서 어떤 가중치든 결과가 같았다 (R2.5).
+  std::array<double, 8> term_span{{0, 0, 0, 0, 0, 0, 0, 0}};
 };
 
 struct DwaResult
