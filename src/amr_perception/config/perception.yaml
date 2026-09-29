@@ -125,7 +125,13 @@
     segmentation:
       lambda_deg: 10.0           # [deg] 적응형 브레이크포인트(ABD) 보조각 λ (Borges & Aldon, 전형값 10~15°)
       sigma_r: 0.03              # [m] LiDAR 거리 σ (sensors.yaml lidar.noise_stddev 를 함께 넘기면 그 값)
-      merge_min_gap: 0.10        # [m] 같은 물체 조각 병합 간격 (사람 두 다리 간격 ≤ 0.3 m 는 ABD 가 대부분 잇는다)
+      merge_min_gap: 0.30        # [m] 같은 물체 조각 병합 간격.
+                                 # 사람 정강이 두 개는 가장자리 간격 0.18 m 다. 다리 사이 빔이 뒤쪽
+                                 # 선반(≈11 m)을 맞히면 반경 도약으로 segmentScan 이 무조건 끊으므로
+                                 # (배경 라벨과 무관하다 — 지도 유무가 결과를 안 바꾼다), 0.10 으로는
+                                 # 1~8 m 전 구간에서 사람 하나가 늘 클러스터 2 개였다. 0.30 이면 1 개다.
+                                 # 상한: 0.40 은 0.8 m 떨어진 두 사람을 뭉친다. 0.30 은 분리한다.
+                                 # 근거 시험: test_scan_clustering.cpp TwoLeggedPersonIsOneClusterAtEveryRange
       min_points_near: 3         # far_range 이내 클러스터 최소 점 수 (잡음 1~2 점 제거)
       min_points_far: 2          # far_range 밖 (0.5° 간격, 6 m 에서 폭 0.1 m = 2 빔)
       far_range: 6.0             # [m]
