@@ -178,15 +178,46 @@ def _setup(context, *args, **kwargs):
                            [('odometry/filtered', 'odometry/filtered_map')]))
         if _flag(context, 'start_map_server'):
             map_yaml = LaunchConfiguration('map').perform(context)
-            actions += [
+            managed = ['map_server']
+            actions.append(
                 node('nav2_map_server', 'map_server', 'map_server',
                      [{'yaml_filename': map_yaml, 'topic_name': 'map', 'frame_id': 'map',
-                       **common}], namespace=''),
+                       **common}], namespace=''))
+            # 보행 차선 비용 마스크 (nav2 KeepoutFilter). 전역 계획이 보행 차선 **안을 따라**
+            # 달리는 것을 막는다 — 실측 A→B 계획 9.00 m 중 8.49 m (94 %) 가 차선 몸 원통
+            # (0.661 m) 안이고 차선 밖 연속 구간이 0.25 m 뿐이라, 로봇이 움직이면 회피 이득에
+            # 밀려 경로를 벗어나고(07·08 이탈) 멈추면 작업자가 걸어 들어온다(08 접촉).
+            # 마스크 점유 90 → 비용 231 (치명 254·외접 253 미만) = 차단이 아니라 기피.
+            # 빈 문자열이면 띄우지 않는다 (마스크 없이 기존 거동).
+            lanes_yaml = LaunchConfiguration('pedestrian_lanes').perform(context)
+            if lanes_yaml and os.path.exists(lanes_yaml):
+                managed += ['pedestrian_lane_mask_server', 'pedestrian_lane_filter_info_server']
+                actions += [
+                    node('nav2_map_server', 'map_server', 'pedestrian_lane_mask_server',
+                         [{'yaml_filename': lanes_yaml, 'topic_name': '/pedestrian_lane_mask',
+                           'frame_id': 'map', **common}], namespace=''),
+                    node('nav2_map_server', 'costmap_filter_info_server',
+                         'pedestrian_lane_filter_info_server',
+                         [{'type': 0,                      # 0 = keepout/차선
+                           'filter_info_topic': '/pedestrian_lane_filter_info',
+                           # **절대 이름**이어야 한다. 상대 이름을 주면 코스트맵 노드의
+                           # 네임스페이스에서 /amr_01/global_costmap/... 으로 풀려 아무도
+                           # 발행하지 않는 토픽을 구독하고, 전역 코스트맵 활성화가 0.1 s →
+                           # 78.8 s 로 늘어 lifecycle_manager 의 change_state 가 시한을 넘겨
+                           # 기동 전체가 무너진다 (실측 lane06). keepout_filter 와 같은 규약.
+                           'mask_topic': '/pedestrian_lane_mask',
+                           # KeepoutFilter 는 base/multiplier 를 쓰지 않고 마스크 점유값을
+                           # nav2 표준 변환(1 + 251·(v−1)/97)으로 비용에 옮긴다. 다른 필터
+                           # 종류와 메시지를 공유하므로 값만 채워 둔다.
+                           'base': 0.0, 'multiplier': 1.0, **common}], namespace=''),
+                ]
+            elif lanes_yaml:
+                actions.append(LogInfo(msg=f'보행 차선 마스크 없음 (건너뜀): {lanes_yaml}'))
+            actions.append(
                 node('nav2_lifecycle_manager', 'lifecycle_manager', 'lifecycle_manager_map',
-                     [{'autostart': True, 'node_names': ['map_server'],
+                     [{'autostart': True, 'node_names': managed,
                        'bond_timeout': BOND_TIMEOUT_S, **common}],
-                     namespace=''),
-            ]
+                     namespace=''))
         initial = {f'initial_pose.{k}': float(LaunchConfiguration(f'initial_{k}').perform(context))
                    for k in ('x', 'y', 'yaw')}
         amcl_map = {}
@@ -236,6 +267,10 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('config_dir', default_value=_ws_path('config')),
         DeclareLaunchArgument('map', default_value=_ws_path('maps', 'warehouse.yaml')),
         DeclareLaunchArgument('start_map_server', default_value='true'),
+        DeclareLaunchArgument('pedestrian_lanes',
+                              default_value=_ws_path('maps', 'pedestrian_lanes.yaml'),
+                              description='보행 차선 비용 마스크 YAML '
+                                          "('' = 쓰지 않음, scripts/gen_pedestrian_lanes.py 가 만든다)"),
         DeclareLaunchArgument('initial_x', default_value='0.0'),
         DeclareLaunchArgument('initial_y', default_value='0.0'),
         DeclareLaunchArgument('initial_yaw', default_value='0.0'),

@@ -76,7 +76,9 @@ COLUMNS = ['trial', 'reached', 'time_s', 'contacts', 'min_distance_m', 'nearest'
 CONTACT_COLUMNS = ['trial', 'time', 'obstacle', 'distance_m', 'robot_speed_mps', 'robot_moving',
                    'obstacle_speed_mps', 'obstacle_heading_deg', 'lane_lateral_m', 'lane_along_m',
                    'yield_state', 'stop_distance_m', 'cmd_v_mps',
-                   'gate_in_v_mps', 'gate_out_v_mps']
+                   'gate_in_v_mps', 'gate_out_v_mps',
+                   'robot_yaw_rad', 'obstacle_bearing_rel_rad',
+                   'footprint_reach_m', 'footprint_reach_min_m']
 ATTRIB_GAP_S = 0.3                     # 접촉 시각 ↔ 트랙·제어 표본 허용 시차 (넘으면 빈 칸)
 YIELD_STATES = {0: 'clear', 1: 'yield', 2: 'committed'}   # dwa/stats [11]
 DECISIONS = {0: '', 1: 'go', 2: 'hold', 3: 'retreat'}
@@ -187,7 +189,8 @@ class TestDynamicObstacles(cases.ProbeCase):
         rows = []
         for ev in events:
             t = float(ev.get('t', math.nan))
-            row = [math.nan] * 4 + ['', math.nan, math.nan, math.nan, math.nan]
+            row = [math.nan] * 4 + ['', math.nan, math.nan, math.nan, math.nan] + \
+                [math.nan] * 4
             ob = self._track_at(tr_t, tr, ev.get('obstacle'), t)
             if ob is not None:
                 row[0] = math.hypot(ob.velocity.x, ob.velocity.y)
@@ -197,6 +200,23 @@ class TestDynamicObstacles(cases.ProbeCase):
                     along, lat = metrics.lane_coords(
                         ob.position.x, ob.position.y, ob.velocity.x, ob.velocity.y, s.x, s.y)
                     row[2], row[3] = lat, along
+                    # 방위 근거 (판정에는 쓰지 않는다). 접촉 판정은 로봇 **직사각형** 0.60×0.40 과
+                    # 장애물 원의 부호 거리인데(collision_monitor_node.py, footprint.rect_circle),
+                    # DWA 는 동적 장애물에 대해 자기를 **외접원 0.361** 로만 본다(dwa.cpp:408·552·
+                    # 667·686). 그래서 "몸을 돌리면 여유가 생긴다"가 비용에 나타나지 않는다.
+                    # 장변 0.30 ↔ 단변 0.20 의 차이 0.10 m 는 관측 침투(최대 18.8 mm)의 5 배다.
+                    # 아래 열로 "그때 발자국을 제대로 봤다면 피했는가"를 오프라인 계산한다.
+                    row[9] = s.yaw
+                    bearing = math.atan2(ob.position.y - s.y, ob.position.x - s.x)
+                    rel = metrics.wrap_angle(bearing - s.yaw) if hasattr(metrics, 'wrap_angle') \
+                        else math.atan2(math.sin(bearing - s.yaw), math.cos(bearing - s.yaw))
+                    row[10] = rel
+                    # 그 상대 방위에서 중심→발자국 경계 거리 (직사각형 반길이 0.30 / 반폭 0.20)
+                    ca, sa = abs(math.cos(rel)), abs(math.sin(rel))
+                    row[11] = min(0.30 / ca if ca > 1e-9 else math.inf,
+                                  0.20 / sa if sa > 1e-9 else math.inf)
+                    # 방위를 최적으로 돌렸을 때의 최소 반경 = 반폭
+                    row[12] = 0.20
             if len(st_w) and len(sim) > 1 and sim[0] <= t <= sim[-1]:   # 외삽 금지 (interp 는 자른다)
                 w = float(np.interp(t, sim, wall))   # 접촉 시각 → 벽시계 (stats 에는 스탬프가 없다)
                 j = int(np.searchsorted(st_w, w)) - 1                   # 접촉 직전 제어 주기
@@ -291,14 +311,14 @@ class TestDynamicObstacles(cases.ProbeCase):
                 idx = i
             cur = plans[idx][1] if idx >= 0 else path
             d1 = worldmap.polyline_distance(cur, s.x, s.y) if len(cur) else math.nan
-            rows.append([round(s.t, 3), round(s.x, 3), round(s.y, 3), round(s.v, 3),
+            rows.append([round(s.t, 3), round(s.x, 3), round(s.y, 3), round(s.yaw, 4), round(s.v, 3),
                          round(d0, 4) if math.isfinite(d0) else math.nan,
                          round(d1, 4) if math.isfinite(d1) else math.nan,
                          idx, len(plans)])
         if rows:
             self.ctx.record.write_csv(
                 f'pose_trial{trial:02d}.csv',
-                ['t', 'x', 'y', 'v', 'dev_first_m', 'dev_current_m', 'plan_idx', 'n_plans'],
+                ['t', 'x', 'y', 'yaw', 'v', 'dev_first_m', 'dev_current_m', 'plan_idx', 'n_plans'],
                 rows)
         # 계획 자체의 기하 (5 점마다) — 모서리를 가로질러 생긴 이탈인지 보려면 필요하다
         geo = [[i, round(ts, 3), j, round(float(pts[j][0]), 3), round(float(pts[j][1]), 3)]
