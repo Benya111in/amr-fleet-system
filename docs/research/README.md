@@ -28,5 +28,14 @@
 | 작업 수행·도킹 | [task-execution-docking](task-execution-docking/task-execution-docking.md) | 4.8 | 42/42 | CGD 공분산 게이트 도킹, 위험 보정 최소 여유(LST) 디스패치, BT.CPP 작업 실행기 |
 | Fleet·교통·교착 | [fleet-traffic-deadlock](fleet-traffic-deadlock/fleet-traffic-deadlock.md) | 4.8, 4.9 | 48/48 | CTR 통로 토큰 예약 교통 관리, HRA 헝가리안 + 후회 교환 할당, 실행 단계 교착 탐지·해소 |
 
+## 구현 후 근본 원인 조사 (성격이 다르다)
+
+위 브리프들은 **구현 전** 설계 문서다. 아래 하나는 **구현 후**, 실측이 명세를 반복해서 못 넘길 때
+원인을 찾으려고 쓴 것이고, 문제가 풀릴 때까지 **작업 기록으로 계속 갱신한다**.
+
+| 영역 | 브리프 | 명세 | 성격 |
+| --- | --- | --- | --- |
+| 동적 회피 근본 원인 | [dynamic-avoidance-root-cause](dynamic-avoidance-root-cause/dynamic-avoidance-root-cause.md) | 4.7 | 7개 분야 문헌 조사(138건) + 실측 148건 전수 + 실행 계획·작업 로그. **"내가 틀렸던 것" 절을 지우지 않는다** |
+
 각 브리프 말미의 "리뷰 반영 이력" 에 리뷰 항목별 처리 내용(수정, 또는 근거를 든 반론)이 있다.
 구현 결과와 튜닝 과정은 `docs/algorithms/` 에, 설계 대비 달라진 점은 해당 구현 문서에 적는다.
