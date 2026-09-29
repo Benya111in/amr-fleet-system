@@ -42,6 +42,7 @@
 
 #include "amr_msgs/msg/tracked_obstacle_array.hpp"
 #include "amr_navigation/core/dwa.hpp"
+#include "amr_navigation/core/track_velocity_filter.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "geometry_msgs/msg/twist_stamped.hpp"
@@ -140,13 +141,10 @@ private:
   /// [s] 통로 예측용 속도의 지수 평활 시간 상수 (0 = 끔 — 원시 속도를 그대로 쓴다)
   double yield_velocity_tau_{0.5};
   double last_track_age_{-1.0};   ///< [s] 마지막으로 본 트랙 메시지의 나이 (dwa/stats 진단)
-  struct VelocityFilter
-  {
-    double vx{0.0};
-    double vy{0.0};
-    double stamp{-1.0};
-  };
-  std::unordered_map<int, VelocityFilter> vel_filter_;
+  // 트랙 속도 평활은 core/track_velocity_filter.hpp 의 순수 구조로 옮겼다 — 갱신 규칙이 여기
+  // 인라인으로 있는 동안 단위 계약을 걸 수 없었고, "같은 메시지 재관측" 을 불연속으로 오인하는
+  // 결함이 숨어 있었다 (test_track_velocity_filter.cpp 참조).
+  std::unordered_map<int, core::TrackVelocityFilter> vel_filter_;
   /// 직전 주기의 횡단 양보 속도 상한 (오르는 속도를 가속 한계로 묶는다 — core::DwaInput 참고)
   double yield_limit_last_{std::numeric_limits<double>::infinity()};
   int yield_decision_last_{0};    ///< 직전 주기의 kCommitted 결정 (core::YieldDecision)
