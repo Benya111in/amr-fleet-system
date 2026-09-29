@@ -89,9 +89,9 @@ struct SegmentationParams
 {
   double lambda{0.17453292519943295};  ///< ABD 보조각 λ [rad] (10°)
   double sigma_r{0.03};                ///< 거리 잡음 σ_r [m] (sensors.yaml lidar.noise_stddev)
-  double merge_min_gap{0.30};          ///< 세그먼트 병합 최소 점간 간격 [m]
-                                       ///< 두 다리 가장자리 간격 0.18 을 덮어야 한 물체가 된다.
-                                       ///< 0.40 은 0.8 m 떨어진 두 사람을 뭉친다 — 상한이다.
+  double merge_min_gap{0.38};          ///< 세그먼트 병합 최소 점간 간격 [m]
+                                       ///< 작업자 정강이 표면 간격 0.235 를 방위 전체에서 덮는다.
+                                       ///< 0.40 은 0.7 m 떨어진 두 작업자를 뭉친다 — 상한이다.
   int min_points_near{3};              ///< far_range 이내 클러스터 최소 점 수
   int min_points_far{2};               ///< far_range 밖 최소 점 수
   double far_range{6.0};               ///< [m]

@@ -417,30 +417,40 @@ TEST(ScanClustering, PoseErrorDoesNotFragmentWallsIntoForeground)
   EXPECT_LE(static_cast<double>(fg), 0.02 * static_cast<double>(pts.size()));
 }
 
-// ---------------------------------------------------------------- 두 다리 사람 (분할 결함)
+// ---------------------------------------------------------------- 두 다리 작업자 (분할 결함)
 //
-// 위 시험들은 사람을 **반지름 0.2~0.25 m 원 하나**로 모형화한다. 그래서 실제 LiDAR 가 보는 것 —
-// 지면 +0.20 m 스캔 평면에서 **정강이 두 개** — 을 한 번도 시험하지 않았고, 아래 결함을 놓쳤다.
+// 위 시험들은 사람을 **반지름 0.2~0.25 m 원 하나**로 모형화한다. 실제 LiDAR 는 지면 +0.20 m
+// (base_link 0.18 + extrinsic 0.02) 평면에서 **정강이 두 개**를 본다. 그래서 아래 결함을 놓쳤다.
 //
-// 결함: 다리 사이를 지나간 빔이 뒤쪽 선반을 맞히면 반경이 r → 11 m 로 도약해 segmentScan 이
-// 무조건 끊는다(scan_clustering.cpp:462-471). mergeSegments 는 점간 간격 < merge_min_gap 일 때만
-// 다시 잇는데, 다리 가장자리 간격은 0.18 m 라 기존 0.10 으로는 **절대 안 붙는다**. 그 결과
-// 사람 하나가 항상 클러스터 두 개 → 추적기는 1:1 이라 형제 트랙 두 개를 만든다.
+// 결함: 다리 사이를 지나간 빔이 뒤쪽 선반(≈11 m)을 맞히면 반경이 도약해 segmentScan 이
+// 무조건 끊는다(scan_clustering.cpp:462-471). mergeSegments 는 점간 간격 < merge_min_gap 일
+// 때만 다시 잇는다. 결과: 작업자 하나가 클러스터 둘 → 추적기는 엄격 1:1 이므로
+// (obstacle_tracker.cpp:74) 남는 클러스터가 곧 새 트랙이 되어 형제 트랙 두 개가 생긴다.
 //
-// 재현 근거(scratchpad/legrepro): 1.0~8.0 m 전 구간에서 merge_min_gap 0.10 은 2.00 개,
-// 0.30 은 1.00 개. 배경 라벨 유무는 결과를 바꾸지 않는다 — 원인은 반경 도약 단독이다.
+// 아래 단면은 gen_worker_dae.py 의 정강이 캡슐을 z = 0.20 에서 자른 것 — 유도해서 확인했다:
+//   hip (0, ±0.095, 0.92), 보폭 ±14°, 허벅지 0.43, 정강이 0.42, 캡슐 반경 0.058 → 0.045
+//   knee_z = 0.92 − 0.43 cos14° = 0.5028
+//   +side: ankle (0.1644, ·, 0.0872) → z=0.20 에서 t = 0.765 → 중심 (+0.1502, +0.0970), r 0.0481
+//   −side: ankle (−0.1226, ·, 0.0832) → z=0.20 에서 t = 0.758 → 중심 (−0.1181, −0.0970), r 0.0477
+//   중심거리 0.331 m, **표면 간격 0.235 m**, 다리 축은 진행방향 대비 35.9°
+// 축이 기울어 있으므로 **투영 간격이 보는 방위에 따라 변한다** — 방위를 훑지 않으면 놓친다.
 namespace
 {
-constexpr double kLegRadius = 0.06;   // 정강이 지름 0.12 m
-constexpr double kLegSpan = 0.30;     // 다리 중심 간격 (가장자리 간격 0.18 m)
-constexpr double kRackX = 11.0;       // 항상 뒤에 있는 선반 열
+// z = 0.20 m 정강이 단면 (몸 좌표, +x = 진행 방향)
+constexpr double kShinAx = 0.1502, kShinAy = 0.0970, kShinAr = 0.0481;
+constexpr double kShinBx = -0.1181, kShinBy = -0.0970, kShinBr = 0.0477;
+constexpr double kRackX = 11.0;   // 창고에는 늘 뒤에 선반 열이 있다
 
-std::vector<scan_sim::Circle> legsAt(double x, double y)
+/// 진행방향 heading 으로 (px, py) 에 선 작업자의 두 정강이 단면
+std::vector<scan_sim::Circle> worker(double px, double py, double heading)
 {
-  return {{Vec2(x, y + kLegSpan / 2), kLegRadius}, {Vec2(x, y - kLegSpan / 2), kLegRadius}};
+  const double c = std::cos(heading), s = std::sin(heading);
+  return {
+    {Vec2(px + c * kShinAx - s * kShinAy, py + s * kShinAx + c * kShinAy), kShinAr},
+    {Vec2(px + c * kShinBx - s * kShinBy, py + s * kShinBx + c * kShinBy), kShinBr}};
 }
 
-/// (x, y) 근처 클러스터 수. 뒤쪽 선반 열은 항상 장면에 있다.
+/// (x, y) 둘레 win 안의 클러스터 수. 뒤쪽 선반 열은 항상 장면에 있다.
 std::size_t clustersNear(
   const std::vector<scan_sim::Circle> & circles, const std::vector<scan_sim::Segment> & extra,
   double merge_min_gap, double x, double y, double win, unsigned seed)
@@ -448,7 +458,7 @@ std::size_t clustersNear(
   std::mt19937 rng(seed);
   const Pose2D sensor{0.0, 0.0, 0.0};
   auto segments = extra;
-  segments.push_back({Vec2(kRackX, -6.0), Vec2(kRackX, 6.0)});
+  segments.push_back({Vec2(kRackX, -8.0), Vec2(kRackX, 8.0)});
   SegmentationParams seg;
   seg.align_to_map = false;
   seg.merge_min_gap = merge_min_gap;
@@ -461,57 +471,67 @@ std::size_t clustersNear(
   }
   return n;
 }
+
+/// 거리 × 방위 격자에서 "클러스터가 정확히 하나가 아닌" 칸 수
+int workerErrors(double merge_min_gap)
+{
+  int bad = 0;
+  for (double r : {1.5, 3.0, 5.0, 7.0}) {
+    for (int hd = 0; hd < 180; hd += 15) {
+      const unsigned seed = 700 + static_cast<unsigned>(r * 10 + hd);
+      if (clustersNear(worker(r, 0.0, hd * M_PI / 180.0), {}, merge_min_gap, r, 0.0, 0.6, seed) !=
+        1U)
+      {
+        ++bad;
+      }
+    }
+  }
+  return bad;
+}
 }  // namespace
 
-// 핵심 계약: 사람 하나는 거리와 무관하게 클러스터 **하나**다. 같은 장면을 옛 간격으로 돌리면
-// 둘이 나온다 — 계약이 헛돌지 않음을 함께 보인다 (결함이 없었다면 이 시험은 처음부터 통과한다).
-TEST(ScanClustering, TwoLeggedPersonIsOneClusterAtEveryRange)
+// 핵심 계약: 작업자 하나는 거리·진행방향과 무관하게 클러스터 **하나**다 (48 칸 전부).
+// 옛 간격 0.10 이 실제로 실패함을 함께 확인한다 — 아니면 이 계약은 아무것도 지키지 않는다.
+TEST(ScanClustering, WorkerIsOneClusterAtEveryRangeAndHeading)
 {
-  const SegmentationParams deployed;   // 배포 기본값
-  for (double r = 1.0; r <= 8.01; r += 0.5) {
-    const unsigned seed = 900 + static_cast<unsigned>(r * 10);
-    EXPECT_EQ(1U, clustersNear(legsAt(r, 0.0), {}, deployed.merge_min_gap, r, 0.0, 0.6, seed))
-      << "배포 설정에서 사람 하나가 한 클러스터가 아니다, r = " << r;
-    // 옛 간격은 **한 번도** 온전한 하나를 내지 못한다: 대개 2 개로 쪼개고, 5.0 m 부근에서는
-    // 쪼갠 조각이 각각 min_points_near 3 에 못 미쳐 0 개가 된다 (아래 dropout 시험 참고).
-    EXPECT_NE(1U, clustersNear(legsAt(r, 0.0), {}, 0.10, r, 0.0, 0.6, seed))
-      << "옛 간격 0.10 이 이미 하나를 낸다면 이 계약은 아무것도 지키지 않는다, r = " << r;
-  }
+  EXPECT_EQ(0, workerErrors(SegmentationParams{}.merge_min_gap)) << "배포 설정에서 오류 칸이 있다";
+  EXPECT_GT(workerErrors(0.10), 20) << "옛 간격 0.10 이 멀쩡하다면 이 계약은 헛돈다";
 }
 
-// 분할이 고쳐지면 5.0 m 부근의 min_points 탈락도 함께 사라진다 — 두 다리(각 2 점)가 합쳐져
-// 4 점이 되어 min_points_near 3 을 넘기 때문이다. 즉 **독립된 두 번째 결함이 아니다.**
-TEST(ScanClustering, MergingAlsoRescuesTheMinPointsDropout)
-{
-  EXPECT_EQ(0U, clustersNear(legsAt(5.0, 0.0), {}, 0.10, 5.0, 0.0, 0.6, 955))
-    << "옛 간격에서 5.0 m 사람은 통째로 사라진다 (다리마다 2 점 < min_points_near 3)";
-  EXPECT_EQ(
-    1U, clustersNear(
-      legsAt(5.0, 0.0), {}, SegmentationParams{}.merge_min_gap,
-      5.0, 0.0, 0.6, 955));
-}
-
-// 대가의 경계: 0.8 m 떨어진 두 사람은 계속 둘로 분리된다. 이보다 가까우면 하나로 뭉치는데,
-// 월드에서 그런 구간은 straight_slow × random 쌍의 0.73 % 뿐이고 그때 최소 거리는 0.014 m 다.
-TEST(ScanClustering, TwoPeopleStayApartAtWalkingSeparation)
+// 값의 상한: 더 키우면 가까이 선 두 작업자가 하나로 뭉친다. 0.7 m 는 분리해야 한다.
+// (월드에서 0.6 m 이하로 붙는 구간은 straight_slow × random 쌍의 0.73 % 뿐이고 그때 최소 거리는
+//  0.014 m 라 사실상 겹쳐 지나간다.)
+TEST(ScanClustering, TwoWorkersAtSevenTenthsOfAMeterStayApart)
 {
   const double gap = SegmentationParams{}.merge_min_gap;
   for (double r : {2.0, 4.0, 6.0}) {
-    auto pair = legsAt(r, -0.4);
-    const auto other = legsAt(r, 0.4);
+    auto pair = worker(r, -0.35, M_PI / 2);
+    const auto other = worker(r, +0.35, M_PI / 2);
     pair.insert(pair.end(), other.begin(), other.end());
-    EXPECT_EQ(2U, clustersNear(pair, {}, gap, r, 0.0, 1.2, 970 + static_cast<unsigned>(r)))
-      << "중심 간격 0.8 m 의 두 사람이 분리되지 않는다, r = " << r;
+    EXPECT_EQ(2U, clustersNear(pair, {}, gap, r, 0.0, 1.2, 810 + static_cast<unsigned>(r)))
+      << "0.7 m 떨어진 두 작업자가 분리되지 않는다, r = " << r;
   }
 }
 
-// 비회귀: 지게차(폭 1.2 m) 옆 0.4 m 를 지나는 사람이 지게차에 흡수되지 않는다.
-TEST(ScanClustering, PersonBesideForkliftIsNotAbsorbed)
+// 분할이 고쳐지면 원거리에서 작업자가 통째로 사라지던 것도 함께 사라진다 — 다리마다 2 점이라
+// min_points_near 3 에 못 미치던 것이 합쳐서 4 점이 되기 때문이다. 독립된 결함이 아니다.
+TEST(ScanClustering, MergingAlsoRescuesTheMinPointsDropout)
+{
+  EXPECT_EQ(0U, clustersNear(worker(7.0, 0.0, 15 * M_PI / 180), {}, 0.10, 7.0, 0.0, 0.6, 771))
+    << "옛 간격에서는 이 자세의 작업자가 통째로 사라진다";
+  EXPECT_EQ(
+    1U, clustersNear(
+      worker(7.0, 0.0, 15 * M_PI / 180), {}, SegmentationParams{}.merge_min_gap, 7.0, 0.0, 0.6,
+      771));
+}
+
+// 비회귀: 지게차(폭 1.2 m) 옆 0.4 m 를 지나는 작업자가 지게차에 흡수되지 않는다.
+TEST(ScanClustering, WorkerBesideForkliftIsNotAbsorbed)
 {
   const double gap = SegmentationParams{}.merge_min_gap;
   const double x = 4.0;
   const std::vector<scan_sim::Segment> body{
     {Vec2(x - 0.4, -0.6), Vec2(x + 0.4, -0.6)}, {Vec2(x + 0.4, -0.6), Vec2(x + 0.4, 0.6)},
     {Vec2(x + 0.4, 0.6), Vec2(x - 0.4, 0.6)}, {Vec2(x - 0.4, 0.6), Vec2(x - 0.4, -0.6)}};
-  EXPECT_EQ(2U, clustersNear(legsAt(x, 1.0 + 0.4), body, gap, x, 0.5, 1.6, 981));
+  EXPECT_EQ(2U, clustersNear(worker(x, 1.0 + 0.4, M_PI / 2), body, gap, x, 0.5, 1.6, 981));
 }
