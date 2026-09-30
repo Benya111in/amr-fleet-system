@@ -75,10 +75,13 @@ add_library(amr_navigation_plugins SHARED
   src/ros/astar_planner.cpp
   src/ros/dwa_controller.cpp
   src/ros/pure_pursuit_controller.cpp
+  src/ros/predicted_obstacle_layer.cpp
 )
 target_link_libraries(amr_navigation_plugins amr_navigation_core)
 ament_target_dependencies(amr_navigation_plugins ${ROS_DEPS})
 pluginlib_export_plugin_description_file(nav2_core plugins/nav2_plugins.xml)
+# 예측 동적 점유 레이어는 base_class 가 nav2_costmap_2d::Layer 라 설명 파일을 따로 낸다
+pluginlib_export_plugin_description_file(nav2_costmap_2d plugins/costmap_plugins.xml)
 
 # --- velocity_profiler_node ---
 add_library(amr_velocity_profiler SHARED src/nodes/velocity_profiler_node.cpp)

@@ -158,26 +158,37 @@ def test_global_sensor_marks_get_narrow_inflation(params):
         [lp['plugins'][-1]]
 
 
-def test_predicted_layer_is_global_only_and_marks_forward(params):
+def test_predicted_layer_avoids_rather_than_blocks(params):
     """
     명세 4.7 "경로를 재계획(Replanning)하여 회피" / 9장 "예측 기반 회피".
 
-    계획 충돌 트랙의 **예측** 점유를 전역 코스트맵에만 넣는다. 지역은 종전대로 DWA 의
-    VO/TTC 가 맡는다 — 지역이 이 토픽을 구독하면 두 계층이 같은 것을 두 번 피한다.
+    계획 충돌 트랙의 예측 점유를 **전역에만**, 그리고 **막지 않고 기피**하도록 찍는다.
 
-    현재 위치가 아니라 예측을 쓰는 이유(기하): 마킹이 경로를 막는 것은 보행자가 경로에서
-    (robot_radius 0.361 + r_obs 0.25) = 0.611 m 안일 때이고 v = 1.0 이면 TTC 0.61 s 인데,
-    재계획에는 코스트맵 0.2 s + BT 1.0 s + A* 0.013 s = 1.21 s 가 든다. 0.61 < 1.21 이라
-    현재 위치 마킹으로는 원리적으로 늦는다.
+    ObstacleLayer 를 쓰면 안 되는 이유(실측 logs/RP3a·b 60 시행): 그것은 항상 LETHAL(254)
+    로 찍어 A* 가 벽으로 본다. 재계획한 시행의 이탈 중앙이 0.574 m 로 안 한 시행(0.162)의
+    3.5 배였고, 명세 1.0 m 초과가 **재계획한 시행에서만** 3/13 이었다 (대조군 60 시행 0/60).
+    그 자리는 벽이 아니라 곧 비워질 자리다.
+
+    지역이 구독하면 두 계층이 같은 것을 두 번 피한다 — 지역 회피는 DWA 의 VO/TTC 몫이다.
     """
-    pred = [s for s in _sources(params) if 'predicted' in s[1]]
-    assert pred, 'predicted_layer 가 없다'
-    assert {s[0] for s in pred} == {'global_costmap'}, '지역 코스트맵이 예측을 구독하면 안 된다'
-    for cm, layer, src, lp, sp in pred:
-        assert sp['data_type'] == 'PointCloud2'
-        assert sp['marking'] is True
-        assert sp['clearing'] is False, '예측은 소거하지 않는다 (발행이 멈추면 만료된다)'
-        assert sp['observation_persistence'] == 0.0, '옛 예측이 남으면 안 된다'
+    found = {}
+    for cm in ('local_costmap', 'global_costmap'):
+        p = params[cm][cm]['ros__parameters']
+        for layer in p.get('plugins', []):
+            if 'predicted' in layer:
+                found[cm] = p[layer]
+    assert 'global_costmap' in found, 'predicted_layer 가 전역 plugins 에 없다'
+    assert 'local_costmap' not in found, '지역이 예측을 구독하면 안 된다'
+    lp = found['global_costmap']
+    assert lp['plugin'] == 'amr_navigation::PredictedObstacleLayer', (
+        'ObstacleLayer 는 항상 LETHAL 이라 이 용도에 쓸 수 없다')
+    assert lp['enabled'] is True
+    # 253 = INSCRIBED. 이 이상이면 계획기가 "막힘" 으로 보고 통째로 돌아간다.
+    assert 0 < lp['cost'] < 253, f"cost {lp['cost']} 는 기피가 아니라 차단이다"
+    assert lp['timeout'] > 0.0, '만료가 없으면 옛 예측이 남는다'
+    # 필터가 내는 토픽과 같아야 한다
+    f = params['costmap_scan_filter_node']['ros__parameters']
+    assert lp['topic'].endswith(f.get('predicted_topic', 'perception/predicted_obstacles'))
 
 
 def test_admit_ttc_leaves_time_to_replan(params):

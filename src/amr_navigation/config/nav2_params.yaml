@@ -620,30 +620,24 @@ global_costmap:
         cost_scaling_factor: 2.0       # [1/m] 완만한 감쇠: 넓은 통로에서는 중앙으로, 0.60 m 통로 중앙은 206 (통과)
         inflation_radius: 1.2          # [m] 비용이 34 까지 내려가는 거리 — A* 가 좁은 통로보다 넓은 통로를 선호
       predicted_layer:                 # 명세 4.7 "재계획하여 회피" / 9장 "예측 기반 회피"
-        # 명세 4장 7절 "경로를 재계획(Replanning)하여 회피" / 9장 "**예측 기반** 회피".
-        # costmap_scan_filter_node 가 **계획 충돌 트랙**(TTC 유한·admit_ttc 이하, 그리고
-        # 그 TTC 가 경로 모형으로 계산된 스캔에서만)의 앞으로 predict_horizon 동안의 점유를
-        # 낸다. 지나가는 사람은 TTC = inf 라 여기 안 들어온다 = 전역 경로 요동은 그대로 막힌다.
-        # **전역에만 넣는다** — 지역 코스트맵은 이 토픽을 구독하지 않고, 지역 회피는 종전대로
-        # DWA 의 VO/TTC 가 한다.
-        # 현재 위치가 아니라 **예측**을 넣는 이유(기하 유도): 마킹이 경로를 실제로 막는 것은
-        # 보행자가 경로에서 (0.361 + 0.25) = 0.611 m 안일 때이고 v = 1.0 이면 TTC 0.61 s 다.
-        # 그런데 재계획에는 코스트맵 5 Hz(0.2 s) + BT 1 Hz(1.0 s) + A* 0.013 s = 1.21 s 가 든다.
-        # 0.61 < 1.21 이므로 **현재 위치 마킹으로는 원리적으로 늦는다.**
-        plugin: "nav2_costmap_2d::ObstacleLayer"
+        # costmap_scan_filter_node 가 **계획 충돌 트랙**(TTC 유한·admit_ttc 이하, 그리고 그
+        # TTC 가 경로 모형으로 계산된 스캔에서만)이 로봇과 만나는 시점의 점유를 낸다.
+        # 지나가는 사람은 TTC = inf 라 안 들어온다 = 전역 경로 요동은 그대로 막힌다.
+        # **전역에만** 넣는다 — 지역 회피는 종전대로 DWA 의 VO/TTC 가 한다.
+        #
+        # ObstacleLayer 가 아니라 전용 레이어인 이유: ObstacleLayer 는 항상 LETHAL(254) 로
+        # 찍어 A* 가 **벽**으로 본다. 실측(logs/RP3a·b 60 시행) 재계획한 시행 이탈 중앙
+        # 0.574 m vs 안 한 시행 0.162 m 이고 명세 1.0 초과가 재계획한 시행에서만 3/13,
+        # 대조군(60 시행)은 0/60 이었다. 그 자리는 벽이 아니라 **곧 비워질 자리**이므로
+        # 막지 않고 기피한다.
+        plugin: "amr_navigation::PredictedObstacleLayer"
         enabled: True
-        max_obstacle_height: 2.0
-        observation_sources: predicted
-        predicted:
-          topic: <robot_ns>/perception/predicted_obstacles
-          data_type: "PointCloud2"
-          marking: True
-          clearing: False              # 예측은 지우지 않는다 (발행이 멈추면 만료된다)
-          min_obstacle_height: 0.05
-          max_obstacle_height: 2.0
-          observation_persistence: 0.0  # 매 스캔 새로 받는다 — 옛 예측이 남으면 안 된다
-          expected_update_rate: 0.0
-          obstacle_max_range: 8.0
+        topic: <robot_ns>/perception/predicted_obstacles
+        # 253(INSCRIBED) 미만이어야 "지나갈 수는 있되 비싸다" 가 된다. 229 는 nav2 의
+        # 점유 90 -> 비용 변환 round(90*254/100) 과 같은 값이다.
+        cost: 229.0
+        radius: 0.30                   # [m] 점마다 채우는 반경 (보행자 반경 0.25 + 여유)
+        timeout: 0.5                   # [s] 이보다 오래된 구름은 쓰지 않는다 (발행 멈추면 만료)
       sensor_inflation_layer:          # 센서 장애물 (정적 셀에는 첫 팽창이 이미 더 큰 값)
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 5.0       # [1/m] r_ins 0.2 에서 253, 0.36 m(외접) 113, 0.6 m 34
