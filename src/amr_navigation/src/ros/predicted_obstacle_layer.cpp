@@ -4,8 +4,10 @@
 #include <cmath>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "amr_navigation/core/predicted_occupancy.hpp"
 #include "nav2_costmap_2d/costmap_math.hpp"
 #include "pluginlib/class_list_macros.hpp"
 #include "sensor_msgs/point_cloud2_iterator.hpp"
@@ -76,12 +78,14 @@ void PredictedObstacleLayer::updateBounds(
   if (!enabled_ || pts_.empty()) {
     return;
   }
-  double lo_x = 1e9, lo_y = 1e9, hi_x = -1e9, hi_y = -1e9;
+  std::vector<std::pair<double, double>> xy;
+  xy.reserve(pts_.size());
   for (const auto & p : pts_) {
-    lo_x = std::min(lo_x, p.x - radius_);
-    lo_y = std::min(lo_y, p.y - radius_);
-    hi_x = std::max(hi_x, p.x + radius_);
-    hi_y = std::max(hi_y, p.y + radius_);
+    xy.emplace_back(p.x, p.y);
+  }
+  double lo_x = 0.0, lo_y = 0.0, hi_x = 0.0, hi_y = 0.0;
+  if (!core::pointsBounds(xy, radius_, &lo_x, &lo_y, &hi_x, &hi_y)) {
+    return;
   }
   *min_x = std::min(*min_x, lo_x);
   *min_y = std::min(*min_y, lo_y);
@@ -106,37 +110,26 @@ void PredictedObstacleLayer::updateCosts(
     auto node = node_.lock();
     if (node && have_ && timeout_ > 0.0) {
       const double age = (node->now() - stamp_).seconds();
-      if (age > timeout_ || age < -timeout_) {
+      if (!core::predictionFresh(age, timeout_)) {
         return;                       // 오래된 예측은 쓰지 않는다 (발행이 멈추면 만료)
       }
     }
     pts = pts_;
   }
   const unsigned char c = static_cast<unsigned char>(std::lround(cost_));
-  const double res = master.getResolution();
-  const int r_cells = std::max(0, static_cast<int>(std::ceil(radius_ / std::max(res, 1e-6))));
   for (const auto & p : pts) {
-    unsigned int mx = 0, my = 0;
-    if (!master.worldToMap(p.x, p.y, mx, my)) {
-      continue;
-    }
-    const int ci = static_cast<int>(mx), cj = static_cast<int>(my);
-    for (int dj = -r_cells; dj <= r_cells; ++dj) {
-      for (int di = -r_cells; di <= r_cells; ++di) {
-        if (di * di + dj * dj > r_cells * r_cells) {
-          continue;
-        }
-        const int i = ci + di, j = cj + dj;
-        if (i < min_i || i >= max_i || j < min_j || j >= max_j) {
-          continue;
-        }
-        const unsigned char old = master.getCost(
-          static_cast<unsigned int>(i),
-          static_cast<unsigned int>(j));
-        // 더 비싼 값(정적 장애물·팽창)은 덮지 않는다 — 기피는 올리기만 한다.
-        if (old == nav2_costmap_2d::NO_INFORMATION || old < c) {
-          master.setCost(static_cast<unsigned int>(i), static_cast<unsigned int>(j), c);
-        }
+    const auto cells = core::discCells(
+      p.x, p.y, radius_, c, master.getOriginX(), master.getOriginY(),
+      master.getResolution(), static_cast<int>(master.getSizeInCellsX()),
+      static_cast<int>(master.getSizeInCellsY()));
+    for (const auto & cell : cells) {
+      if (cell.i < min_i || cell.i >= max_i || cell.j < min_j || cell.j >= max_j) {
+        continue;
+      }
+      const auto ui = static_cast<unsigned int>(cell.i), uj = static_cast<unsigned int>(cell.j);
+      // 더 비싼 값(정적 장애물·팽창)은 덮지 않는다 — 기피는 올리기만 한다.
+      if (core::shouldRaise(master.getCost(ui, uj), cell.cost, nav2_costmap_2d::NO_INFORMATION)) {
+        master.setCost(ui, uj, cell.cost);
       }
     }
   }

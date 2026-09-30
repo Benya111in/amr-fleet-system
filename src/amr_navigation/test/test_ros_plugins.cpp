@@ -484,3 +484,4 @@ int main(int argc, char ** argv)
   ::testing::AddGlobalTestEnvironment(new RosEnv);
   return RUN_ALL_TESTS();
 }
+
