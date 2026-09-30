@@ -94,7 +94,10 @@ def test_scan_sources_contain_lidar_plane(params, sensors):
 
 
 def test_depth_sources_mark_below_lidar_plane(params, sensors):
-    depth = [s for s in _sources(params) if s[4]['data_type'] == 'PointCloud2']
+    # 깊이 레이어의 소스만 본다. 전역에는 예측 점유(predicted_layer)도 PointCloud2 인데
+    # 그것은 깊이 센서가 아니라 추적기 예측이라 규약이 다르다 (아래 별도 계약).
+    depth = [s for s in _sources(params)
+             if s[4]['data_type'] == 'PointCloud2' and 'depth' in s[1]]
     marking = [s for s in depth if s[4]['marking']]
     clearing = [s for s in depth if s[4]['clearing']]
     assert {s[0] for s in marking} == {'local_costmap', 'global_costmap'}
@@ -153,3 +156,43 @@ def test_global_sensor_marks_get_narrow_inflation(params):
     lp = params['local_costmap']['local_costmap']['ros__parameters']
     assert [p for p in lp['plugins'] if lp[p]['plugin'] == 'nav2_costmap_2d::InflationLayer'] == \
         [lp['plugins'][-1]]
+
+
+def test_predicted_layer_is_global_only_and_marks_forward(params):
+    """
+    명세 4.7 "경로를 재계획(Replanning)하여 회피" / 9장 "예측 기반 회피".
+
+    계획 충돌 트랙의 **예측** 점유를 전역 코스트맵에만 넣는다. 지역은 종전대로 DWA 의
+    VO/TTC 가 맡는다 — 지역이 이 토픽을 구독하면 두 계층이 같은 것을 두 번 피한다.
+
+    현재 위치가 아니라 예측을 쓰는 이유(기하): 마킹이 경로를 막는 것은 보행자가 경로에서
+    (robot_radius 0.361 + r_obs 0.25) = 0.611 m 안일 때이고 v = 1.0 이면 TTC 0.61 s 인데,
+    재계획에는 코스트맵 0.2 s + BT 1.0 s + A* 0.013 s = 1.21 s 가 든다. 0.61 < 1.21 이라
+    현재 위치 마킹으로는 원리적으로 늦는다.
+    """
+    pred = [s for s in _sources(params) if 'predicted' in s[1]]
+    assert pred, 'predicted_layer 가 없다'
+    assert {s[0] for s in pred} == {'global_costmap'}, '지역 코스트맵이 예측을 구독하면 안 된다'
+    for cm, layer, src, lp, sp in pred:
+        assert sp['data_type'] == 'PointCloud2'
+        assert sp['marking'] is True
+        assert sp['clearing'] is False, '예측은 소거하지 않는다 (발행이 멈추면 만료된다)'
+        assert sp['observation_persistence'] == 0.0, '옛 예측이 남으면 안 된다'
+
+
+def test_admit_ttc_leaves_time_to_replan(params):
+    """
+    재진입 임계가 재계획 파이프라인 지연보다 커야 의미가 있다.
+
+    지연 = 전역 코스트맵 갱신(1/update_frequency) + BT 재계획 주기 + A* 최대 계획 시간.
+    이보다 늦게 재진입하면 예측을 넣어도 새 경로가 나올 시간이 없다.
+    """
+    f = params['costmap_scan_filter_node']['ros__parameters']
+    admit = f['admit_ttc']
+    if admit <= 0.0:
+        return                                  # 꺼져 있으면 검사하지 않는다
+    g = params['global_costmap']['global_costmap']['ros__parameters']
+    lag = 1.0 / g['update_frequency'] + 1.0 + 0.4   # 코스트맵 + BT 1 Hz + A* max_planning_time
+    assert admit > lag, f'admit_ttc {admit} 이 재계획 지연 {lag:.2f} s 보다 작다'
+    # 예측 구간이 차단 반경을 충분히 쓸고 지나가야 경로를 실제로 가로막는다
+    assert f['predict_horizon'] * 1.0 >= 3 * (0.361 + 0.25)

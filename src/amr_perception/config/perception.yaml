@@ -118,7 +118,11 @@
     output_frame: map            # 출력 프레임 (components.md 계약)
     base_frame: base_link
     tf_timeout: 0.05             # [s]
-    plan_timeout: 5.0            # [s] 이보다 오래된 plan 은 TTC 에 쓰지 않는다 (직선 운동 가정으로 대체)
+    # [s] 계획기가 죽은 경우만 걸러내는 **백스톱**. 나이는 정적인 경로에 대한 틀린 무효화
+    # 기준이다 — 배포 BT 는 경로가 유효하면 재발행하지 않아 실측 73 % 의 시행이 계획을
+    # 1 회만 발행한다. 5.0 이던 시절엔 시행의 81 % 동안 TTC 가 직선 외삽이었다.
+    # 올바른 무효화는 기하이고 ttc.cpp:61 의 max_path_deviation 이 이미 한다.
+    plan_timeout: 120.0
     odom_timeout: 0.5            # [s] 자기 속도(odometry/filtered_map) 유효 시간
     map_occupied_threshold: 65   # /map 점유 판정 (nav2 map_server occupied_thresh 0.65 와 같은 기준)
     publish_markers: true

@@ -450,6 +450,21 @@ costmap_scan_filter_node:            # scan_filtered → 게이트 중앙값 →
     cloud_output_topic: camera/depth/points_static   # 전역 깊이 레이어용: 동적 트랙 근처 점 제외
     tracks_topic: perception/tracked_obstacles
     exclude_dynamic: True              # 지나가는 사람·차량은 지역 계획기(VO/TTC)가 피하고 전역 경로는 뒤집히지 않게
+    # 명세 4.7 "재계획하여 회피" — 제외 대상을 "모든 빠른 동적 트랙" 에서 "**내 경로와
+    # 만나지 않을** 빠른 동적 트랙" 으로 좁힌다. TTC 가 유한하고 이 값 이하면 경로 위에서
+    # 실제로 만난다는 뜻이므로 전역에서 지우지 않고, 그 트랙의 **예측 점유**를
+    # perception/predicted_obstacles 로 낸다 (전역 depth_layer 의 predicted 소스).
+    # 0 이면 끔(종전 거동).
+    #
+    # 임계 유도: 재계획 파이프라인 지연이 코스트맵 0.2 s + BT 1.0 s + A* 0.013 s = 1.21 s 다.
+    # 예측 점유가 경로를 덮는 시점보다 그만큼 앞서 재진입해야 하므로 여유를 두고 2.5 s.
+    # predict_horizon 2.0 s 는 그 예측이 경로를 실제로 가로지르기에 충분해야 한다 —
+    # 보행자 1.0 m/s 면 2.0 m 를 쓸고 지나가고, 차단 반경 0.611 m 의 3 배 이상이다.
+    admit_ttc: 2.5
+    admit_release_s: 1.0               # 재진입 유지 창 (TTC 가 잠깐 튀어도 마킹이 떨지 않게)
+    predict_horizon: 2.0               # [s] 예측 점유를 찍는 구간
+    predict_dt: 0.25                   # [s] 시간 표본 간격 (2.0/0.25 = 8 표본 x 둘레 8 점)
+    predict_z: 0.30                    # [m] 점 높이 (전역 depth_layer 창 0.05~2.0 안)
     dynamic_min_speed: 0.2             # [m/s] DWA dynamic_speed_threshold 와 같게
     dynamic_fast_speed: 0.5            # [m/s] is_dynamic 분류 전이라도 이 속도 이상이면 동적 (분류 지연·ID 교체 대비)
     dynamic_radius: 0.55               # [m] 트랙 중심 반경: 사람 발자국 0.30 + 추적 위치 오차(실측 0.1–0.25)
@@ -543,7 +558,7 @@ global_costmap:
       # 팽창 두 번: 정적 지도는 넓게(1.2 m, A* 가 넓은 통로 선호), 센서 장애물(사람·지게차·박스)은 그 뒤에 좁게(0.6 m) —
       # 지나가는 사람을 1.2 m 로 팽창하면 1 Hz·TTC 재계획이 1 m 넘게 돌아가 복귀가 늦다 (횡단 actor 실측, costmap.md §5.2).
       # 두 번째 팽창도 정적 셀을 다시 팽창하지만 값이 더 작아 max 결합에서 첫 번째가 남는다.
-      plugins: ["static_layer", "inflation_layer", "obstacle_layer", "depth_layer", "sensor_inflation_layer"]
+      plugins: ["static_layer", "inflation_layer", "obstacle_layer", "depth_layer", "predicted_layer", "sensor_inflation_layer"]
       filters: ["keepout_filter"]
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
@@ -596,6 +611,31 @@ global_costmap:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 2.0       # [1/m] 완만한 감쇠: 넓은 통로에서는 중앙으로, 0.60 m 통로 중앙은 206 (통과)
         inflation_radius: 1.2          # [m] 비용이 34 까지 내려가는 거리 — A* 가 좁은 통로보다 넓은 통로를 선호
+      predicted_layer:                 # 명세 4.7 "재계획하여 회피" / 9장 "예측 기반 회피"
+        # 명세 4장 7절 "경로를 재계획(Replanning)하여 회피" / 9장 "**예측 기반** 회피".
+        # costmap_scan_filter_node 가 **계획 충돌 트랙**(TTC 유한·admit_ttc 이하, 그리고
+        # 그 TTC 가 경로 모형으로 계산된 스캔에서만)의 앞으로 predict_horizon 동안의 점유를
+        # 낸다. 지나가는 사람은 TTC = inf 라 여기 안 들어온다 = 전역 경로 요동은 그대로 막힌다.
+        # **전역에만 넣는다** — 지역 코스트맵은 이 토픽을 구독하지 않고, 지역 회피는 종전대로
+        # DWA 의 VO/TTC 가 한다.
+        # 현재 위치가 아니라 **예측**을 넣는 이유(기하 유도): 마킹이 경로를 실제로 막는 것은
+        # 보행자가 경로에서 (0.361 + 0.25) = 0.611 m 안일 때이고 v = 1.0 이면 TTC 0.61 s 다.
+        # 그런데 재계획에는 코스트맵 5 Hz(0.2 s) + BT 1 Hz(1.0 s) + A* 0.013 s = 1.21 s 가 든다.
+        # 0.61 < 1.21 이므로 **현재 위치 마킹으로는 원리적으로 늦는다.**
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        max_obstacle_height: 2.0
+        observation_sources: predicted
+        predicted:
+          topic: <robot_ns>/perception/predicted_obstacles
+          data_type: "PointCloud2"
+          marking: True
+          clearing: False              # 예측은 지우지 않는다 (발행이 멈추면 만료된다)
+          min_obstacle_height: 0.05
+          max_obstacle_height: 2.0
+          observation_persistence: 0.0  # 매 스캔 새로 받는다 — 옛 예측이 남으면 안 된다
+          expected_update_rate: 0.0
+          obstacle_max_range: 8.0
       sensor_inflation_layer:          # 센서 장애물 (정적 셀에는 첫 팽창이 이미 더 큰 값)
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 5.0       # [1/m] r_ins 0.2 에서 253, 0.36 m(외접) 113, 0.6 m 34

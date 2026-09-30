@@ -20,6 +20,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "amr_msgs/msg/tracked_obstacle_array.hpp"
@@ -56,6 +57,26 @@ private:
 
   core::ScanDenoiseConfig config_;
   bool exclude_dynamic_{true};
+  // --- 명세 4.7 "재계획하여 회피": 계획 충돌 트랙만 전역에 돌려보낸다 ---
+  // 0 = 끔(종전 거동). >0 이면 TTC 가 이 값 이하인 트랙을 전역 코스트맵에서 지우지 않는다.
+  // **ttc_path_based 가 true 인 스캔에서만** 적용한다 (그 밖에는 TTC 가 다른 양이다).
+  double admit_ttc_{0.0};
+  double admit_release_s_{1.0};      ///< 한 번 재진입한 트랙을 이만큼 유지 (마킹 떨림 방지)
+  std::unordered_map<uint32_t, double> admitted_;   ///< track_id -> 마지막 충돌 판정 시각 [s]
+  std::size_t admitted_count_{0};    ///< 진단: 재진입시킨 트랙 누적 수
+  /// 재진입시킨 트랙의 예측 점유를 만들기 위한 최소 상태 (위치·속도·반경)
+  struct PredictedTrack
+  {
+    double x, y, vx, vy, r;
+  };
+  std::vector<PredictedTrack> predicted_;
+  double predict_horizon_{2.0};      ///< [s] 예측 점유를 찍는 구간
+  double predict_dt_{0.25};          ///< [s] 시간 표본 간격
+  double predict_z_{0.30};           ///< [m] 점 높이 (전역 depth_layer 창 0.05~2.0 안)
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr predicted_pub_;
+
+  /// 재진입 트랙의 예측 점유를 점구름으로 낸다 (전역 코스트맵 전용 관측 소스)
+  void publishPredicted(const std::string & frame, const rclcpp::Time & stamp);
   double dynamic_min_speed_{0.2};
   double dynamic_fast_speed_{0.5};
   double dynamic_radius_{0.55};

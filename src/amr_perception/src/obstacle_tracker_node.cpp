@@ -53,7 +53,15 @@ public:
     base_frame_ = prefixedFrame(prefix, declare_parameter<std::string>("base_frame", "base_link"));
     output_frame_ = declare_parameter<std::string>("output_frame", "map");
     tf_timeout_ = declare_parameter<double>("tf_timeout", 0.05);
-    plan_timeout_ = declare_parameter<double>("plan_timeout", 5.0);
+    // 나이는 **정적인 경로에 대한 틀린 무효화 기준**이다. 배포 BT 는 경로가 유효한 동안
+    // ComputePathToPose 를 다시 부르지 않으므로(navigate_to_pose_no_ttc.xml 의
+    // RateController -> IsPathValid) /plan 이 재발행되지 않는다 — 실측 86 시행 중 73 % 가
+    // 계획을 **정확히 1 회만** 발행하고, 시행 중앙 26.0 s 이므로 5 s 문턱이면 시행의 81 %
+    // 동안 TTC 로봇 모형이 직선 외삽으로 떨어진다.
+    // 올바른 무효화는 기하다: RobotMotionModel::fromPath 가 로봇이 경로에서
+    // max_path_deviation 밖이면 이미 실패한다(ttc.cpp:61). 그러니 이 값은 "계획기가 죽었다"
+    // 만 걸러내는 **백스톱**으로 두고 길게 잡는다 (시행 지속 p90 62.9 s 를 덮는다).
+    plan_timeout_ = declare_parameter<double>("plan_timeout", 120.0);
     odom_timeout_ = declare_parameter<double>("odom_timeout", 0.5);
     occupied_threshold_ = declare_parameter<int>("map_occupied_threshold", 65);
     publish_markers_ = declare_parameter<bool>("publish_markers", true);
@@ -309,6 +317,9 @@ private:
     amr_msgs::msg::TrackedObstacleArray out;
     out.header.stamp = scan.header.stamp;
     out.header.frame_id = to_map ? output_frame_ : tracking_frame_;
+    // TTC 가 경로 모형으로 계산됐는지 그대로 싣는다. 상위(전역 재진입 판정)가
+    // "내 경로 위에서 만나는가" 로 읽어도 되는지를 이 값으로만 판단한다.
+    out.ttc_path_based = robot.followsPath();
     out.obstacles.reserve(tracks.size());
     std::vector<double> ttcs;
     for (const auto & t : tracks) {
@@ -424,7 +435,7 @@ private:
   std::string base_frame_;
   std::string output_frame_;
   double tf_timeout_{0.05};
-  double plan_timeout_{5.0};
+  double plan_timeout_{120.0};
   double odom_timeout_{0.5};
   int occupied_threshold_{65};
   bool publish_markers_{true};
