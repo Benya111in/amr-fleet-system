@@ -194,5 +194,9 @@ def test_admit_ttc_leaves_time_to_replan(params):
     g = params['global_costmap']['global_costmap']['ros__parameters']
     lag = 1.0 / g['update_frequency'] + 1.0 + 0.4   # 코스트맵 + BT 1 Hz + A* max_planning_time
     assert admit > lag, f'admit_ttc {admit} 이 재계획 지연 {lag:.2f} s 보다 작다'
-    # 예측 구간이 차단 반경을 충분히 쓸고 지나가야 경로를 실제로 가로막는다
-    assert f['predict_horizon'] * 1.0 >= 3 * (0.361 + 0.25)
+    # 예측은 **만나는 지점 둘레만** 찍는다 (복도 전체를 치명 마킹하면 A* 우회가
+    # 명세 이탈 1 m 를 넘는다 — 실측 RP2a 2.75 m). 그러니 조건은 두 가지다:
+    #  (a) 지평이 재진입 임계를 덮어야 admit 된 트랙의 TTC 시점을 찍을 수 있다
+    #  (b) 창이 차단 반경을 덮을 만큼은 넓어야 한 점만 찍고 끝나지 않는다
+    assert f['predict_horizon'] >= admit, 'predict_horizon 이 admit_ttc 보다 짧다'
+    assert f['predict_window'] * 1.0 >= (0.361 + 0.25) / 2

@@ -45,9 +45,10 @@ CostmapScanFilterNode::CostmapScanFilterNode(const rclcpp::NodeOptions & options
   // 명세 4.7 "재계획하여 회피". 임계 유도는 nav2_params.yaml 주석 참고.
   admit_ttc_ = declare_parameter("admit_ttc", 0.0);
   admit_release_s_ = declare_parameter("admit_release_s", 1.0);
-  predict_horizon_ = declare_parameter("predict_horizon", 2.0);
+  predict_horizon_ = declare_parameter("predict_horizon", 3.0);
   predict_dt_ = declare_parameter("predict_dt", 0.25);
   predict_z_ = declare_parameter("predict_z", 0.30);
+  predict_window_ = declare_parameter("predict_window", 0.4);
   if (admit_ttc_ > 0.0) {
     predicted_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(
       declare_parameter("predicted_topic", std::string("perception/predicted_obstacles")),
@@ -150,8 +151,11 @@ std::vector<core::Point2D> CostmapScanFilterNode::dynamicCenters(
         // 원리적으로 늦는다.** 그래서 명세 9장이 요구하는 대로 **예측** 점유를 넣는다.
         // TrackedObstacle 에 반경이 없다 — 이미 스캔 제외에 쓰는 dynamic_radius_ 를 그대로
         // 쓴다 (사람 발자국 반경 이상으로 설정돼 있고 test_costmap_config 가 고정한다).
+        // TTC 를 함께 담는다 — 쓸고 지나갈 복도 전체가 아니라 **로봇이 실제로 만나는
+        // 시점** 둘레만 찍기 위해서다 (아래 publishPredicted 주석).
         predicted->push_back(
-          PredictedTrack{o.position.x, o.position.y, o.velocity.x, o.velocity.y, dynamic_radius_});
+          PredictedTrack{o.position.x, o.position.y, o.velocity.x, o.velocity.y,
+            dynamic_radius_, std::isfinite(ttc) ? ttc : 0.0});
         continue;               // 현재 끝점도 지우지 않는다
       }
     }
@@ -233,15 +237,20 @@ void CostmapScanFilterNode::publishPredicted(
     }
     return;
   }
-  // 시간 표본마다 원판 둘레를 찍는다 (속을 채우면 점이 과하다 — 코스트맵은 셀 단위라
-  // 둘레만 찍어도 팽창이 안쪽을 메운다).
-  const int n_t = std::max(1, static_cast<int>(std::lround(predict_horizon_ / predict_dt_)));
+  // **만나는 지점만** 찍는다. 쓸고 지나갈 복도 전체(2 s x 1 m/s = 2 m)를 치명 마킹하면
+  // A* 가 통째로 돌아가 이탈이 명세 1 m 를 넘는다 (실측 RP2a 2.75 m). 보행자는 2 초 뒤
+  // 사라지는데 2D 마킹은 "곧 비워진다" 를 표현할 수 없다 — 그래서 시간축 대신, 로봇이
+  // 실제로 그 자리에 도달하는 시각(= 추적기가 계산한 TTC) 둘레만 좁게 찍는다.
+  // 창 반폭 predict_window_ 는 "그 시각 전후로 얼마나 여유를 볼 것인가" 다.
   constexpr int kRing = 8;
   std::vector<std::array<float, 3>> pts;
-  pts.reserve(predicted.size() * static_cast<std::size_t>(n_t) * kRing);
+  pts.reserve(predicted.size() * 8 * kRing);
   for (const auto & p : predicted) {
-    for (int k = 1; k <= n_t; ++k) {
-      const double t = static_cast<double>(k) * predict_dt_;
+    const double t0 = std::max(0.0, p.ttc - predict_window_);
+    const double t1 = std::min(predict_horizon_, p.ttc + predict_window_);
+    const int n_t = std::max(1, static_cast<int>(std::lround((t1 - t0) / predict_dt_)));
+    for (int k = 0; k <= n_t; ++k) {
+      const double t = t0 + static_cast<double>(k) * (t1 - t0) / std::max(1, n_t);
       const double cx = p.x + p.vx * t, cy = p.y + p.vy * t;
       for (int a = 0; a < kRing; ++a) {
         const double th = 2.0 * M_PI * a / kRing;

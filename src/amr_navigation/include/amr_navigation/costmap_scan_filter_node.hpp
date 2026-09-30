@@ -52,7 +52,7 @@ private:
   /// 재진입시킨 트랙의 예측 점유를 만들기 위한 최소 상태 (위치·속도·반경)
   struct PredictedTrack
   {
-    double x, y, vx, vy, r;
+    double x, y, vx, vy, r, ttc;
   };
 
   /// 전역에서 지울 동적 트랙 중심. predicted 가 nullptr 이 아니면 **재진입시킨** 트랙의
@@ -74,9 +74,12 @@ private:
   double admit_release_s_{1.0};      ///< 한 번 재진입한 트랙을 이만큼 유지 (마킹 떨림 방지)
   std::unordered_map<uint32_t, double> admitted_;   ///< track_id -> 마지막 충돌 판정 시각 [s]
   std::size_t admitted_count_{0};    ///< 진단: 재진입시킨 트랙 누적 수
-  double predict_horizon_{2.0};      ///< [s] 예측 점유를 찍는 구간
+  double predict_horizon_{3.0};      ///< [s] 예측 점유를 찍는 구간
   double predict_dt_{0.25};          ///< [s] 시간 표본 간격
   double predict_z_{0.30};           ///< [m] 점 높이 (전역 depth_layer 창 0.05~2.0 안)
+  /// [s] TTC 둘레 창 반폭. 쓸고 지나갈 복도 전체가 아니라 **로봇이 그 자리에 도달하는
+  /// 시각** 앞뒤만 찍는다 — 복도 전체를 치명 마킹하면 A* 우회가 명세 이탈 1 m 를 넘는다.
+  double predict_window_{0.4};
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr predicted_pub_;
 
   /// 재진입 트랙의 예측 점유를 점구름으로 낸다 (전역 코스트맵 전용 관측 소스)

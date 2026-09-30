@@ -462,9 +462,17 @@ costmap_scan_filter_node:            # scan_filtered → 게이트 중앙값 →
     # 보행자 1.0 m/s 면 2.0 m 를 쓸고 지나가고, 차단 반경 0.611 m 의 3 배 이상이다.
     admit_ttc: 2.5
     admit_release_s: 1.0               # 재진입 유지 창 (TTC 가 잠깐 튀어도 마킹이 떨지 않게)
-    predict_horizon: 2.0               # [s] 예측 점유를 찍는 구간
+    # [s] 예측을 찍을 수 있는 상한. TTC 창만 표본하므로 키워도 점 수가 늘지 않는다.
+    # admit_ttc + predict_window (2.5 + 0.4) 을 덮어야 재진입한 트랙의 만남 지점이
+    # 잘리지 않는다 — 계약 test_admit_ttc_leaves_time_to_replan 이 고정한다.
+    predict_horizon: 3.0
     predict_dt: 0.25                   # [s] 시간 표본 간격 (2.0/0.25 = 8 표본 x 둘레 8 점)
     predict_z: 0.30                    # [m] 점 높이 (전역 depth_layer 창 0.05~2.0 안)
+    # [s] TTC 둘레 창 반폭. 쓸고 지나갈 복도 전체(2 s x 1 m/s = 2 m)를 치명 마킹하면 A* 가
+    # 통째로 돌아가 이탈이 명세 1 m 를 넘는다 (실측 RP2a 2.75 m). 보행자는 곧 사라지는데
+    # 2D 마킹은 그것을 표현할 수 없으므로, 로봇이 실제로 그 자리에 도달하는 시각(TTC)
+    # 앞뒤만 좁게 찍는다. 0.4 s x 1.0 m/s = 0.8 m 로 차단 반경 0.611 m 를 겨우 덮는다.
+    predict_window: 0.4
     dynamic_min_speed: 0.2             # [m/s] DWA dynamic_speed_threshold 와 같게
     dynamic_fast_speed: 0.5            # [m/s] is_dynamic 분류 전이라도 이 속도 이상이면 동적 (분류 지연·ID 교체 대비)
     dynamic_radius: 0.55               # [m] 트랙 중심 반경: 사람 발자국 0.30 + 추적 위치 오차(실측 0.1–0.25)

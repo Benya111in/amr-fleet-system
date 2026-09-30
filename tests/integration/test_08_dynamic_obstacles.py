@@ -72,7 +72,11 @@ COLUMNS = ['trial', 'reached', 'time_s', 'contacts', 'min_distance_m', 'nearest'
            'max_deviation_m', 'episodes', 'return_s', 'contacts_robot_moving',
            'episodes_open', 'open_peak_m', 'open_peak_t', 'dev_at_end_m',
            'goal_dist_m', 'plan_end_dist_m', 'track_end_gap_s', 'track_n',
-           'loc_err_m', 'loc_goal_dist_m', 'min_goal_dist_m']
+           'loc_err_m', 'loc_goal_dist_m', 'min_goal_dist_m',
+           # 명세 4.7 "경로를 재계획(Replanning)하여 회피" 판정용. 이 시행에서 /plan 이
+           # 몇 번 발행됐는가 — 1 이면 재계획이 한 번도 없었다는 뜻이다. 전 시행에서 세야
+           # 하므로 여기 둔다 (plans_trial*.csv 는 실패 시행에서만 남는다).
+           'n_plans']
 CONTACT_COLUMNS = ['trial', 'time', 'obstacle', 'distance_m', 'robot_speed_mps', 'robot_moving',
                    'obstacle_speed_mps', 'obstacle_heading_deg', 'lane_lateral_m', 'lane_along_m',
                    'yield_state', 'stop_distance_m', 'cmd_v_mps',
@@ -479,7 +483,8 @@ class TestDynamicObstacles(cases.ProbeCase):
                           if track and len(path) else math.nan),
                          t_goal - track[-1].t if track else math.nan, len(track)]
                         + self._localization_end(w0, track, x, y)
-                        + [min((math.hypot(s.x - x, s.y - y) for s in track), default=math.nan)])
+                        + [min((math.hypot(s.x - x, s.y - y) for s in track), default=math.nan),
+                           sum(1 for _, m in plan.messages(w0) if m.poses)])
             self.ctx.record.write_csv('avoidance.csv', COLUMNS, rows)
         in_lane = sum(1 for r in contact_rows
                       if isinstance(r[8], float) and math.isfinite(r[8])
