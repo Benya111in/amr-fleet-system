@@ -49,7 +49,17 @@ private:
   void onCloud(const sensor_msgs::msg::PointCloud2::ConstSharedPtr & msg);
   void onTracks(const amr_msgs::msg::TrackedObstacleArray::ConstSharedPtr & msg);
   /// 시각 stamp 로 예측한 동적 트랙 중심 (트랙 프레임). 없거나 오래되면 빈 목록.
-  std::vector<core::Point2D> dynamicCenters(const rclcpp::Time & stamp, std::string & frame);
+  /// 재진입시킨 트랙의 예측 점유를 만들기 위한 최소 상태 (위치·속도·반경)
+  struct PredictedTrack
+  {
+    double x, y, vx, vy, r;
+  };
+
+  /// 전역에서 지울 동적 트랙 중심. predicted 가 nullptr 이 아니면 **재진입시킨** 트랙의
+  /// 예측 재료를 거기 담는다 (멤버로 두면 onScan/onCloud 두 콜백이 서로 덮어쓴다).
+  std::vector<core::Point2D> dynamicCenters(
+    const rclcpp::Time & stamp, std::string & frame,
+    std::vector<PredictedTrack> * predicted = nullptr);
   /// target ← source 변환: 시각 stamp, 없으면 최신. 둘 다 없으면 false.
   bool lookup(
     const std::string & target, const std::string & source, const rclcpp::Time & stamp,
@@ -64,19 +74,15 @@ private:
   double admit_release_s_{1.0};      ///< 한 번 재진입한 트랙을 이만큼 유지 (마킹 떨림 방지)
   std::unordered_map<uint32_t, double> admitted_;   ///< track_id -> 마지막 충돌 판정 시각 [s]
   std::size_t admitted_count_{0};    ///< 진단: 재진입시킨 트랙 누적 수
-  /// 재진입시킨 트랙의 예측 점유를 만들기 위한 최소 상태 (위치·속도·반경)
-  struct PredictedTrack
-  {
-    double x, y, vx, vy, r;
-  };
-  std::vector<PredictedTrack> predicted_;
   double predict_horizon_{2.0};      ///< [s] 예측 점유를 찍는 구간
   double predict_dt_{0.25};          ///< [s] 시간 표본 간격
   double predict_z_{0.30};           ///< [m] 점 높이 (전역 depth_layer 창 0.05~2.0 안)
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr predicted_pub_;
 
   /// 재진입 트랙의 예측 점유를 점구름으로 낸다 (전역 코스트맵 전용 관측 소스)
-  void publishPredicted(const std::string & frame, const rclcpp::Time & stamp);
+  void publishPredicted(
+    const std::vector<PredictedTrack> & predicted, const std::string & frame,
+    const rclcpp::Time & stamp);
   double dynamic_min_speed_{0.2};
   double dynamic_fast_speed_{0.5};
   double dynamic_radius_{0.55};

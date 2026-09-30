@@ -89,10 +89,9 @@ void CostmapScanFilterNode::onTracks(
 }
 
 std::vector<core::Point2D> CostmapScanFilterNode::dynamicCenters(
-  const rclcpp::Time & stamp, std::string & frame)
+  const rclcpp::Time & stamp, std::string & frame, std::vector<PredictedTrack> * predicted)
 {
   std::vector<core::Point2D> out;
-  predicted_.clear();
   amr_msgs::msg::TrackedObstacleArray::ConstSharedPtr tracks;
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -122,7 +121,7 @@ std::vector<core::Point2D> CostmapScanFilterNode::dynamicCenters(
   // **ttc_path_based 가 false 면 재진입하지 않는다.** 그때의 TTC 는 직선 외삽 또는 정지
   // 모형이라 "내 경로 위에서 만나는가" 가 아닌 다른 양이고, 특히 양보로 멈춘 로봇 옆을
   // 지나가는 보행자가 유한 TTC 를 받아 전역에 찍히면 경로가 이유 없이 흔들린다.
-  const bool may_admit = admit_ttc_ > 0.0 && tracks->ttc_path_based;
+  const bool may_admit = admit_ttc_ > 0.0 && predicted != nullptr && tracks->ttc_path_based;
   const double t_now = stamp.seconds();
   for (const auto & o : tracks->obstacles) {
     // 동적: 추적기 분류(is_dynamic) 이거나 빠른 트랙 (분류가 늦는 첫 0.5–1 s·ID 교체 직후 대비)
@@ -151,7 +150,7 @@ std::vector<core::Point2D> CostmapScanFilterNode::dynamicCenters(
         // 원리적으로 늦는다.** 그래서 명세 9장이 요구하는 대로 **예측** 점유를 넣는다.
         // TrackedObstacle 에 반경이 없다 — 이미 스캔 제외에 쓰는 dynamic_radius_ 를 그대로
         // 쓴다 (사람 발자국 반경 이상으로 설정돼 있고 test_costmap_config 가 고정한다).
-        predicted_.push_back(
+        predicted->push_back(
           PredictedTrack{o.position.x, o.position.y, o.velocity.x, o.velocity.y, dynamic_radius_});
         continue;               // 현재 끝점도 지우지 않는다
       }
@@ -189,7 +188,8 @@ void CostmapScanFilterNode::onScan(const sensor_msgs::msg::LaserScan::ConstShare
 
   std::string frame;
   const rclcpp::Time stamp(msg->header.stamp, get_clock()->get_clock_type());
-  const auto centers = dynamicCenters(stamp, frame);
+  std::vector<PredictedTrack> predicted;
+  const auto centers = dynamicCenters(stamp, frame, &predicted);
   tf2::Transform T;
   // 트랙 프레임(map) → 스캔 프레임 (lidar_link, 수평). 변환 없음 → 빼지 않는다 (전역도 그대로 본다)
   if (!centers.empty() && lookup(msg->header.frame_id, frame, stamp, T)) {
@@ -203,18 +203,24 @@ void CostmapScanFilterNode::onScan(const sensor_msgs::msg::LaserScan::ConstShare
       stat->ranges, stat->angle_min, stat->angle_increment, local, dynamic_radius_);
   }
   static_pub_->publish(std::move(stat));
-  publishPredicted(frame, stamp);
+  publishPredicted(predicted, frame, stamp);
 }
 
 void CostmapScanFilterNode::publishPredicted(
-  const std::string & frame, const rclcpp::Time & stamp)
+  const std::vector<PredictedTrack> & predicted, const std::string & frame,
+  const rclcpp::Time & stamp)
 {
   // 명세 9장 "동적 장애물을 추적하고 **예측 기반** 회피가 수행되는가".
   // 재진입시킨 트랙이 앞으로 predict_horizon 동안 쓸고 지나갈 영역을 점구름으로 낸다.
   // 전역 코스트맵의 별도 관측 소스로만 들어간다 — **지역 코스트맵은 구독하지 않는다**
   // (지역 회피는 종전대로 DWA 의 VO/TTC 가 한다. 불변식 A/B).
-  if (!predicted_pub_ || predicted_.empty() || predict_horizon_ <= 0.0) {
-    if (predicted_pub_ && predicted_.empty()) {
+  // 프레임을 모르면(트랙 없음·만료) 아무것도 내지 않는다 — 빈 frame_id 로 발행하면
+  // 코스트맵이 변환에 실패해 경고만 쌓인다.
+  if (!predicted_pub_ || frame.empty() || predict_horizon_ <= 0.0) {
+    return;
+  }
+  if (predicted.empty()) {
+    {
       sensor_msgs::msg::PointCloud2 empty;   // 비면 빈 구름 — 옛 마킹이 남지 않게
       empty.header.frame_id = frame;
       empty.header.stamp = stamp;
@@ -232,8 +238,8 @@ void CostmapScanFilterNode::publishPredicted(
   const int n_t = std::max(1, static_cast<int>(std::lround(predict_horizon_ / predict_dt_)));
   constexpr int kRing = 8;
   std::vector<std::array<float, 3>> pts;
-  pts.reserve(predicted_.size() * static_cast<std::size_t>(n_t) * kRing);
-  for (const auto & p : predicted_) {
+  pts.reserve(predicted.size() * static_cast<std::size_t>(n_t) * kRing);
+  for (const auto & p : predicted) {
     for (int k = 1; k <= n_t; ++k) {
       const double t = static_cast<double>(k) * predict_dt_;
       const double cx = p.x + p.vx * t, cy = p.y + p.vy * t;
