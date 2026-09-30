@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# C++ 줄 커버리지 (명세 4장 10절 "주요 모듈의 테스트 커버리지 70 % 이상").
+#
+# Python 은 colcon coveragepy-result 로 이미 재고 있지만, 명세가 말하는 "주요 모듈"
+# (DWA · A* · EKF · BT) 은 전부 C++ 이라 그것만으로는 충족을 주장할 수 없다.
+#
+# 사용: ./scripts/cpp_coverage.sh [패키지...]
+#   기본은 C++ 코어가 있는 네 패키지. 별도 빌드 디렉터리를 써서 배포 빌드를 건드리지 않는다.
+set -euo pipefail
+
+PKGS=${*:-"amr_navigation amr_perception amr_localization amr_behavior"}
+BUILD=build_cov
+INSTALL=install_cov
+OUT=logs/coverage
+
+echo "== 커버리지 빌드 ($PKGS) =="
+# --coverage 는 계측 + libgcov 링크. -O0 이어야 줄 대응이 정확하다.
+colcon build --packages-select $PKGS \
+  --build-base "$BUILD" --install-base "$INSTALL" \
+  --cmake-args -DCMAKE_BUILD_TYPE=Debug \
+               -DCMAKE_CXX_FLAGS="--coverage -O0 -g" \
+               -DCMAKE_EXE_LINKER_FLAGS="--coverage" \
+               -DCMAKE_SHARED_LINKER_FLAGS="--coverage" \
+  2>&1 | tail -3
+
+echo "== 기준선(0 카운트) 캡처 =="
+mkdir -p "$OUT"
+lcov --capture --initial --directory "$BUILD" --output-file "$OUT/base.info" \
+  --rc lcov_branch_coverage=0 >/dev/null 2>&1
+
+echo "== 단위 시험 실행 =="
+# 통합 시험(gazebo)은 제외한다 — 여기서 재는 것은 단위 커버리지다.
+colcon test --packages-select $PKGS --build-base "$BUILD" --install-base "$INSTALL" \
+  --ctest-args -LE "linter" 2>&1 | tail -3 || true
+
+echo "== 캡처·병합 =="
+lcov --capture --directory "$BUILD" --output-file "$OUT/test.info" \
+  --rc lcov_branch_coverage=0 >/dev/null 2>&1
+lcov --add-tracefile "$OUT/base.info" --add-tracefile "$OUT/test.info" \
+  --output-file "$OUT/all.info" --rc lcov_branch_coverage=0 >/dev/null 2>&1
+
+# 우리 소스만 남긴다 (시스템 헤더·gtest·시험 코드 제외).
+lcov --extract "$OUT/all.info" "*/src/amr_*/src/*" "*/src/amr_*/include/*" \
+  --output-file "$OUT/src.info" --rc lcov_branch_coverage=0 >/dev/null 2>&1
+lcov --remove "$OUT/src.info" "*/test/*" "*/tools/*" \
+  --output-file "$OUT/final.info" --rc lcov_branch_coverage=0 >/dev/null 2>&1
+
+echo
+echo "== 전체 =="
+lcov --summary "$OUT/final.info" --rc lcov_branch_coverage=0 2>&1 | grep -E "lines|functions"
+
+echo
+echo "== 명세가 말하는 '주요 모듈' (DWA · A* · EKF · BT) =="
+python3 - "$OUT/final.info" <<'PY'
+import re, sys, collections
+key = {'dwa': 'DWA', 'astar': 'A*', 'ekf': 'EKF', 'kalman': 'EKF(칼만)',
+       'behavior_tree': 'BT', 'task_tree': 'BT', 'bt_': 'BT'}
+cur = None
+hit = collections.defaultdict(int); tot = collections.defaultdict(int)
+fhit = 0; ftot = 0
+per = {}
+for line in open(sys.argv[1]):
+    if line.startswith('SF:'):
+        cur = line[3:].strip(); per.setdefault(cur, [0, 0])
+    elif line.startswith('DA:') and cur:
+        _, rest = line.split(':', 1)
+        _, cnt = rest.strip().split(',')[:2]
+        per[cur][1] += 1
+        if int(cnt) > 0:
+            per[cur][0] += 1
+for path, (h, t) in sorted(per.items()):
+    base = path.split('/')[-1].lower()
+    for k, label in key.items():
+        if k in base:
+            hit[label] += h; tot[label] += t
+            break
+for label in sorted(tot):
+    h, t = hit[label], tot[label]
+    mark = 'OK ' if t and 100 * h / t >= 70 else '미달'
+    print(f'  {mark} {label:10s} {h:6d}/{t:<6d} = {100*h/max(t,1):5.1f} %')
+print()
+print('  파일별 상위 미달 (줄 수 50 이상):')
+low = [(100*h/t, p, h, t) for p, (h, t) in per.items() if t >= 50 and 100*h/t < 70]
+for pct, p, h, t in sorted(low)[:12]:
+    print(f'    {pct:5.1f} %  {h:5d}/{t:<5d}  {"/".join(p.split("/")[-2:])}')
+PY
+echo
+echo "출력: $OUT/final.info  (genhtml $OUT/final.info -o $OUT/html 로 HTML)"
