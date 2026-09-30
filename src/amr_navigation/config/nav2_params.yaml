@@ -472,7 +472,10 @@ costmap_scan_filter_node:            # scan_filtered → 게이트 중앙값 →
     # 통째로 돌아가 이탈이 명세 1 m 를 넘는다 (실측 RP2a 2.75 m). 보행자는 곧 사라지는데
     # 2D 마킹은 그것을 표현할 수 없으므로, 로봇이 실제로 그 자리에 도달하는 시각(TTC)
     # 앞뒤만 좁게 찍는다. 0.4 s x 1.0 m/s = 0.8 m 로 차단 반경 0.611 m 를 겨우 덮는다.
-    predict_window: 0.4
+    # 0.4 s x 1.0 m/s = 0.8 m 짜리 치명 블롭은 A* 우회가 커서 이탈이 명세를 넘었다
+    # (logs/RP3a·b 재계획한 시행 3/13 초과, 대조군 0/60). 0.15 s = 0.3 m 로 좁힌다 —
+    # 로봇 내접원(0.20) 수준이라 A* 가 **살짝** 비켜가는 경로를 낸다.
+    predict_window: 0.15
     dynamic_min_speed: 0.2             # [m/s] DWA dynamic_speed_threshold 와 같게
     dynamic_fast_speed: 0.5            # [m/s] is_dynamic 분류 전이라도 이 속도 이상이면 동적 (분류 지연·ID 교체 대비)
     dynamic_radius: 0.55               # [m] 트랙 중심 반경: 사람 발자국 0.30 + 추적 위치 오차(실측 0.1–0.25)
@@ -633,9 +636,11 @@ global_costmap:
         plugin: "amr_navigation::PredictedObstacleLayer"
         enabled: True
         topic: <robot_ns>/perception/predicted_obstacles
-        # 253(INSCRIBED) 미만이어야 "지나갈 수는 있되 비싸다" 가 된다. 229 는 nav2 의
-        # 점유 90 -> 비용 변환 round(90*254/100) 과 같은 값이다.
-        cost: 229.0
+        # 실측이 둘 다 필요함을 보였다:
+        #   229(기피) — A* 가 그냥 통과해 재계획이 22 % -> 7 % 로 죽었다 (logs/CB1a·b)
+        #   254(차단) — 재계획은 22 % 로 살지만 우회가 커 이탈이 넘었다 (logs/RP3a·b)
+        # 차단을 쓰되 창을 좁혀(predict_window) 우회를 제한하는 쪽을 택한다.
+        cost: 254.0
         radius: 0.30                   # [m] 점마다 채우는 반경 (보행자 반경 0.25 + 여유)
         timeout: 0.5                   # [s] 이보다 오래된 구름은 쓰지 않는다 (발행 멈추면 만료)
       sensor_inflation_layer:          # 센서 장애물 (정적 셀에는 첫 팽창이 이미 더 큰 값)

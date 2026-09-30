@@ -183,11 +183,18 @@ def test_predicted_layer_avoids_rather_than_blocks(params):
     assert lp['plugin'] == 'amr_navigation::PredictedObstacleLayer', (
         'ObstacleLayer 는 항상 LETHAL 이라 이 용도에 쓸 수 없다')
     assert lp['enabled'] is True
-    # 253 = INSCRIBED. 이 이상이면 계획기가 "막힘" 으로 보고 통째로 돌아간다.
-    assert 0 < lp['cost'] < 253, f"cost {lp['cost']} 는 기피가 아니라 차단이다"
+    # 실측이 강제한 조건 (logs/RP3a·b vs CB1a·b, 각 60 시행):
+    #   229(기피) 는 A* 가 그냥 통과해 재계획이 22 % -> 7 % 로 죽었다
+    #   254(차단) 는 재계획을 살리지만 창이 넓으면 우회가 명세 이탈 1.0 m 를 넘는다
+    # 그러므로 차단을 쓸 때는 창이 좁아야 한다. 블롭 반폭 = window x 보행자 속도(1.0)
+    # 이고, 여기에 sensor_inflation 반경이 더해진 만큼 A* 가 비켜간다.
+    f = params['costmap_scan_filter_node']['ros__parameters']
+    assert 0 < lp['cost'] <= 254
+    if lp['cost'] >= 253:
+        assert f['predict_window'] * 1.0 <= 0.25, (
+            f"차단({lp['cost']})인데 창 {f['predict_window']} s 가 넓다 — 우회가 커진다")
     assert lp['timeout'] > 0.0, '만료가 없으면 옛 예측이 남는다'
     # 필터가 내는 토픽과 같아야 한다
-    f = params['costmap_scan_filter_node']['ros__parameters']
     assert lp['topic'].endswith(f.get('predicted_topic', 'perception/predicted_obstacles'))
 
 
@@ -208,6 +215,12 @@ def test_admit_ttc_leaves_time_to_replan(params):
     # 예측은 **만나는 지점 둘레만** 찍는다 (복도 전체를 치명 마킹하면 A* 우회가
     # 명세 이탈 1 m 를 넘는다 — 실측 RP2a 2.75 m). 그러니 조건은 두 가지다:
     #  (a) 지평이 재진입 임계를 덮어야 admit 된 트랙의 TTC 시점을 찍을 수 있다
-    #  (b) 창이 차단 반경을 덮을 만큼은 넓어야 한 점만 찍고 끝나지 않는다
+    #  (b) 블롭의 **공간 크기**는 창이 아니라 점마다 채우는 radius 가 정한다.
+    #      창은 보행자 진행 방향 **길이**만 늘린다 — 예전에 여기에 "창이 차단 반경을
+    #      덮어야 한다" 는 조건을 걸었는데, 마킹이 기피였던 시절의 것이고 지금은
+    #      차단이라 아래 "차단이면 창을 좁혀라" 와 정면으로 모순됐다. 걷어낸다.
     assert f['predict_horizon'] >= admit, 'predict_horizon 이 admit_ttc 보다 짧다'
-    assert f['predict_window'] * 1.0 >= (0.361 + 0.25) / 2
+    g2 = params['global_costmap']['global_costmap']['ros__parameters']
+    pl = next((g2[x] for x in g2.get('plugins', []) if 'predicted' in x), None)
+    if pl is not None:
+        assert pl['radius'] >= 0.25, '점 반경이 보행자보다 작으면 블롭이 의미가 없다'

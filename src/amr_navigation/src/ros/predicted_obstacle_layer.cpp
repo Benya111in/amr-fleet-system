@@ -29,8 +29,11 @@ void PredictedObstacleLayer::onInitialize()
   node->get_parameter(name_ + ".cost", cost_);
   node->get_parameter(name_ + ".radius", radius_);
   node->get_parameter(name_ + ".timeout", timeout_);
-  // 253(INSCRIBED) 이상이면 "막힘" 이 되어 이 레이어의 취지(기피)가 사라진다.
-  cost_ = std::clamp(cost_, 1.0, 252.0);
+  // 253(INSCRIBED) 이상이면 계획기가 "막힘" 으로 본다. 실측이 둘 다 필요함을 보였다:
+  //   229(기피): A* 가 그냥 통과해 재계획이 22 % -> 7 % 로 죽는다 (logs/CB1a·b)
+  //   254(차단): 재계획은 22 % 로 살지만 우회가 커 이탈이 명세를 넘는다 (logs/RP3a·b)
+  // 그래서 값을 열어 두고, 차단을 쓸 때는 창(predict_window)을 좁혀 우회를 제한한다.
+  cost_ = std::clamp(cost_, 1.0, 254.0);
   stamp_ = node->now();
   sub_ = node->create_subscription<sensor_msgs::msg::PointCloud2>(
     topic_, rclcpp::SensorDataQoS(),
@@ -58,12 +61,16 @@ void PredictedObstacleLayer::onInitialize()
 void PredictedObstacleLayer::updateBounds(
   double, double, double, double * min_x, double * min_y, double * max_x, double * max_y)
 {
-  // 지난 번 찍은 범위는 항상 다시 포함해야 예측이 사라졌을 때 비용이 지워진다.
-  if (have_) {
+  // 지난 번 찍은 범위를 **한 번** 다시 포함해야 예측이 사라졌을 때 비용이 지워진다.
+  // 계속 포함하면 안 된다 — 1200x806 전역 지도에서 매 주기 큰 영역을 갱신하게 되어
+  // 시뮬레이션 실시간 배율이 떨어진다 (실측 CB1a·b: 시행 sim 시간은 같은데 라운드
+  // 벽시계가 530 -> 1420~1515 s). 포함한 뒤 비운다.
+  if (has_last_) {
     *min_x = std::min(*min_x, last_min_x_);
     *min_y = std::min(*min_y, last_min_y_);
     *max_x = std::max(*max_x, last_max_x_);
     *max_y = std::max(*max_y, last_max_y_);
+    has_last_ = false;
   }
   std::lock_guard<std::mutex> lock(mutex_);
   if (!enabled_ || pts_.empty()) {
@@ -84,6 +91,7 @@ void PredictedObstacleLayer::updateBounds(
   last_min_y_ = lo_y;
   last_max_x_ = hi_x;
   last_max_y_ = hi_y;
+  has_last_ = true;
 }
 
 void PredictedObstacleLayer::updateCosts(

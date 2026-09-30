@@ -59,10 +59,11 @@ private:
   std::vector<Pt> pts_;            ///< 전역 프레임 점 (마지막 수신)
   rclcpp::Time stamp_;
   std::string topic_;
-  double cost_{229.0};             ///< 찍을 비용 (253 미만이어야 "기피", 254 면 "막힘")
+  double cost_{254.0};             ///< 찍을 비용. 253 미만 = 기피, 254 = 차단
   double radius_{0.30};            ///< 점마다 이 반경을 채운다 [m]
   double timeout_{0.5};            ///< [s] 이보다 오래된 구름은 쓰지 않는다
   bool have_{false};
+  bool has_last_{false};   ///< 지난 범위를 아직 한 번 더 포함해야 하는가
   double last_min_x_{0.0}, last_min_y_{0.0}, last_max_x_{0.0}, last_max_y_{0.0};
 };
 
