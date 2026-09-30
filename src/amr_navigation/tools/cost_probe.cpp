@@ -80,7 +80,7 @@ void report(const char * label, const DwaResult & r)
 int main(int argc, char ** argv)
 {
   bool sustained = false;
-  double v_meas = 0.0, dy = 2.0;
+  double v_meas = 0.0, dy = 2.0, aisle = 0.0;
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "--sustained") == 0) {
       sustained = true;
@@ -88,10 +88,24 @@ int main(int argc, char ** argv)
       v_meas = std::stod(argv[++i]);
     } else if (std::strcmp(argv[i], "--dy") == 0 && i + 1 < argc) {
       dy = std::stod(argv[++i]);
+    } else if (std::strcmp(argv[i], "--aisle") == 0 && i + 1 < argc) {
+      aisle = std::stod(argv[++i]);
     }
   }
 
   OwnedGrid grid{300, 300, 0.05, 0, -7.5, -7.5};
+  if (aisle > 0.0) {
+    // 좁은 통로: 경로 양옆에 벽을 세운다 (순폭 aisle). 소크가 도는 랙 사이 통로 모사.
+    auto v = grid.view();
+    for (int gx = 0; gx < 300; ++gx) {
+      for (int gy = 0; gy < 300; ++gy) {
+        const double wx = -7.5 + (gx + 0.5) * 0.05, wy = -7.5 + (gy + 0.5) * 0.05;
+        if (wx > -1.0 && wx < 9.0 && std::abs(wy) > aisle / 2 && std::abs(wy) < aisle / 2 + 0.3) {
+          grid.at(gx, gy) = 254;
+        }
+      }
+    }
+  }
   inflate(grid, 0.2, 0.8, 3.0);
   const auto fp = FootprintChecker::rectangle(0.60, 0.40);
   const FootprintChecker chk(
