@@ -183,12 +183,14 @@ def _setup(context, *args, **kwargs):
                 node('nav2_map_server', 'map_server', 'map_server',
                      [{'yaml_filename': map_yaml, 'topic_name': 'map', 'frame_id': 'map',
                        **common}], namespace=''))
-            # 보행 차선 비용 마스크 (nav2 KeepoutFilter). 전역 계획이 보행 차선 **안을 따라**
-            # 달리는 것을 막는다 — 실측 A→B 계획 9.00 m 중 8.49 m (94 %) 가 차선 몸 원통
-            # (0.661 m) 안이고 차선 밖 연속 구간이 0.25 m 뿐이라, 로봇이 움직이면 회피 이득에
-            # 밀려 경로를 벗어나고(07·08 이탈) 멈추면 작업자가 걸어 들어온다(08 접촉).
-            # 마스크 점유 90 → 비용 231 (치명 254·외접 253 미만) = 차단이 아니라 기피.
-            # 빈 문자열이면 띄우지 않는다 (마스크 없이 기존 거동).
+            # 보행 차선 비용 마스크 (nav2 KeepoutFilter) — **배포에서는 꺼져 있다.**
+            # 애초 의도: 전역 계획이 보행 차선 안을 따라 달리는 것을 막는다 (실측 A→B 계획
+            # 9.00 m 중 8.49 m 가 차선 몸 원통 안, 차선 밖 연속 구간 0.25 m).
+            # 그러나 파라미터 고정 대조(N8 vs i8)에서 **안전 기여가 측정되지 않았고** 이탈·
+            # 복귀·소요는 오히려 나빴다 → nav2_params.yaml 의 filters 에서 뺐다 (커밋 2f28931).
+            # 마스크 점유 90 → 비용 **229** 다. nav2 는 round(v·254/100) 로 옮긴다
+            # (예전 주석의 231 과 "1 + 251·(v−1)/97" 은 틀렸다 — 후자는 비용→점유 역표다).
+            # pedestrian_lanes 인자가 빈 문자열이면(기본) 서버를 띄우지 않는다.
             lanes_yaml = LaunchConfiguration('pedestrian_lanes').perform(context)
             if lanes_yaml and os.path.exists(lanes_yaml):
                 managed += ['pedestrian_lane_mask_server', 'pedestrian_lane_filter_info_server']
@@ -267,10 +269,15 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('config_dir', default_value=_ws_path('config')),
         DeclareLaunchArgument('map', default_value=_ws_path('maps', 'warehouse.yaml')),
         DeclareLaunchArgument('start_map_server', default_value='true'),
-        DeclareLaunchArgument('pedestrian_lanes',
-                              default_value=_ws_path('maps', 'pedestrian_lanes.yaml'),
-                              description='보행 차선 비용 마스크 YAML '
-                                          "('' = 쓰지 않음, scripts/gen_pedestrian_lanes.py 가 만든다)"),
+        # 기본값이 빈 문자열인 이유: 이 마스크를 쓰는 pedestrian_lane_filter 가
+        # nav2_params.yaml 의 filters 목록에 **의도적으로 빠져 있다** (커밋 2f28931 —
+        # 파라미터 고정 대조 N8 vs i8 에서 안전 기여가 측정되지 않았고 이탈·복귀·소요는
+        # 오히려 나빴다). 소비자가 없는데 서버 두 개를 로봇마다 띄우면 5 대 운용 CPU 예산
+        # (명세 4장 10절 80 %)만 축낸다. 다시 쓰려면 이 인자에 yaml 경로를 준다.
+        DeclareLaunchArgument('pedestrian_lanes', default_value='',
+                              description='보행 차선 비용 마스크 YAML (기본 빈 문자열 = 쓰지 않음). '
+                                          'scripts/gen_pedestrian_lanes.py 가 만든다. 쓰려면 '
+                                          'nav2_params.yaml 의 filters 에 pedestrian_lane_filter 도 넣어야 한다'),
         DeclareLaunchArgument('initial_x', default_value='0.0'),
         DeclareLaunchArgument('initial_y', default_value='0.0'),
         DeclareLaunchArgument('initial_yaw', default_value='0.0'),
