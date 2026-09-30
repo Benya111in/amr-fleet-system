@@ -345,3 +345,47 @@ def test_registration_is_not_sensitive_to_the_truth_raster_phase():
                 for k in range(16)]
     spread = max(residual) - min(residual)
     assert spread < 0.03, f'위상에 따른 잔여 이동 폭 {spread * 100:.2f} cm (스냅 전 6.45)'
+
+
+def _plan(y, x0=0.0, x1=10.0, n=51):
+    """y = const 인 수평 직선 경로."""
+    return np.column_stack([np.linspace(x0, x1, n), np.full(n, float(y))])
+
+
+def test_deviation_to_active_plan_switches_at_publish_time():
+    """명세 4.7: 이탈은 **그 시각 유효한** 경로 기준이다 (첫 경로 고정이 아니다).
+
+    경로 0(y=0) 을 따라 가다 t=2 에 경로 1(y=1) 이 발행되고 로봇이 그쪽으로 옮겨 간다.
+    첫 경로 기준이면 1.0 m 이탈로 집계되지만, 로봇은 자기가 따르는 경로 위에 있다.
+    """
+    plans = [(0.0, _plan(0.0)), (2.0, _plan(1.0))]
+    track = [metrics.Sample(0.0, 1.0, 0.0, 0.0, 0.5, 0.0),   # 경로 0 위
+             metrics.Sample(1.9, 2.0, 0.5, 0.0, 0.5, 0.0),   # 아직 경로 0 기준 -> 0.5
+             metrics.Sample(2.0, 3.0, 1.0, 0.0, 0.5, 0.0),   # 경로 1 채택 순간, 그 위 -> 0
+             metrics.Sample(3.0, 4.0, 1.0, 0.0, 0.5, 0.0)]
+    got = metrics.deviation_to_active_plan(plans, track)
+    assert got == pytest.approx([0.0, 0.5, 0.0, 0.0], abs=1e-9)
+    # 첫 경로 고정이었다면 뒤 두 표본이 1.0 으로 잡혔을 것이다 — 그것이 폐기한 기준이다
+    first = [worldmap.polyline_distance(plans[0][1], s.x, s.y) for s in track]
+    assert first == pytest.approx([0.0, 0.5, 1.0, 1.0], abs=1e-9)
+
+
+def test_deviation_to_active_plan_still_catches_real_drift():
+    """경로가 바뀌어도 **그 경로에서** 벗어나면 그대로 잡힌다 (관대한 기준이 아니다).
+
+    x8b t04 형태: 새 경로를 채택한 직후엔 0 이지만 이후 로봇이 1.2 m 밀려난다.
+    """
+    plans = [(0.0, _plan(0.0)), (2.0, _plan(1.0))]
+    track = [metrics.Sample(2.0, 3.0, 1.0, 0.0, 0.1, 0.0),
+             metrics.Sample(3.0, 4.0, 2.2, 0.0, 0.0, 0.0)]
+    got = metrics.deviation_to_active_plan(plans, track)
+    assert got == pytest.approx([0.0, 1.2], abs=1e-9)
+
+
+def test_deviation_to_active_plan_before_first_publish_and_empty():
+    """첫 발행보다 앞선 표본은 첫 경로를 쓴다. 경로가 없으면 전부 nan."""
+    plans = [(5.0, _plan(0.0))]
+    got = metrics.deviation_to_active_plan(plans, [metrics.Sample(0.0, 1.0, 0.7, 0.0, 0.0, 0.0)])
+    assert got == pytest.approx([0.7], abs=1e-9)
+    assert all(math.isnan(d) for d in
+               metrics.deviation_to_active_plan([], [metrics.Sample(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)]))

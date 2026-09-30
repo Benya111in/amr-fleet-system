@@ -11,10 +11,12 @@ amr_simulation 의 지면 진실 노드가 모든 동적 장애물을 판정한�
   접촉     /sim/collision_monitor/events 중 이 로봇 사건 수 (사람·지게차·셔틀 모두)
   조우     시행의 최근접 동적 장애물 부호 거리 (summary per_obstacle_min) ≤ 2.0 m — 실제로 마주쳤는가
   TTC      GT 로봇 속도 · 장애물 지면 진실 속도로 등속 접촉 시간 최솟값 (기록)
-  이탈     목표 직후 첫 plan(전역 경로) 대비 GT 수직 거리 최대
+  이탈     **그 시각 유효한** plan(전역 경로) 대비 GT 수직 거리 최대. 첫 plan 하나로 시행 내내
+           재면 명세 181행이 지시하는 재계획 자체가 이탈로 집계된다 (max_dev_first_m 로 대조)
            (goal_dist_m·plan_end_dist_m: 시행 끝 GT 위치 → 목표·계획 끝점 거리 — 미복귀 구간이
             "목표에 세워 둔 채 기준 경로에서 떨어져 있다" 인지 가리는 근거)
-  복귀     이탈 > 0.3 m 구간마다 최대 이탈 시각 → 0.15 m 이하로 돌아온 시각
+  복귀     이탈 > 0.3 m 구간마다 최대 이탈 시각 → 0.15 m 이하로 돌아온 시각. 명세 191행이
+           "**원래** 경로로 복귀" 라고 한정하므로 현재 경로·첫 경로 **두 기준 모두** 5 s 이하여야 한다
 판정: 접촉 0, 최대 이탈 ≤ 1.0 m, 복귀 ≤ 5 s (모든 구간), 도달 ≥ 시행 − 1, 조우 ≥ 시행/6, 시행 ≥ 30.
 로그 avoidance.csv (시행마다 갱신), contacts.csv (접촉마다 장애물·부호 거리·그 순간 GT 로봇 속도).
 접촉은 로봇 속도로 나눠 기록한다 (> 0.05 m/s = 움직이며 부딪침, 이하 = 멈춘 로봇에 장애물이 닿음) — 판정은
@@ -76,7 +78,13 @@ COLUMNS = ['trial', 'reached', 'time_s', 'contacts', 'min_distance_m', 'nearest'
            # 명세 4.7 "경로를 재계획(Replanning)하여 회피" 판정용. 이 시행에서 /plan 이
            # 몇 번 발행됐는가 — 1 이면 재계획이 한 번도 없었다는 뜻이다. 전 시행에서 세야
            # 하므로 여기 둔다 (plans_trial*.csv 는 실패 시행에서만 남는다).
-           'n_plans']
+           'n_plans',
+           # 첫 계획 기준 이탈. 판정에 쓰지 않지만 반드시 함께 남긴다 — 판정 기준을
+           # 바꿨으므로 두 값을 대조할 수 있어야 그 변경을 검증할 수 있다.
+           'max_dev_first_m',
+           # 원래(첫) 경로 기준 복귀 시간. 명세 191행이 "원래 경로로 복귀" 라고 한정하므로
+           # 판정은 이 값과 return_s 둘 다 5 s 이하를 요구한다.
+           'return_first_s']
 CONTACT_COLUMNS = ['trial', 'time', 'obstacle', 'distance_m', 'robot_speed_mps', 'robot_moving',
                    'obstacle_speed_mps', 'obstacle_heading_deg', 'lane_lateral_m', 'lane_along_m',
                    'yield_state', 'stop_distance_m', 'cmd_v_mps',
@@ -314,30 +322,38 @@ class TestDynamicObstacles(cases.ProbeCase):
                  'collisions', 'ttc_s', 'zone_entry_m', 'yield_obstacle',
                  'decision', 'decision_margin_s'] + R0_COLUMNS, rows)
 
-    def _dump_pose_plan(self, trial: int, w0: float, plan, track, path, devs) -> None:
-        """실패한 시행의 로봇 자세와 **두 기준**의 이탈 — 첫 계획(하네스 기준)과 그 시각의
-        최신 계획(컨트롤러가 실제로 따르는 것).
+    @staticmethod
+    def _plan_series(plan, w0: float) -> list:
+        """이 시행에서 발행된 (발행시각, 점열) 목록. 비어 있는 계획은 뺀다."""
+        return [(m.header.stamp.sec + m.header.stamp.nanosec * 1e-9,
+                 np.array([[p.pose.position.x, p.pose.position.y] for p in m.poses]))
+                for _, m in plan.messages(w0) if m.poses]
 
-        진단용이며 판정에는 쓰지 않는다. 두 값이 갈리면 이탈은 계획 교체의 결과이고, 둘 다
-        크면 로봇이 제 경로를 벗어난 것이다 — 후자라면 J_off(이탈 1.269 m 에서 19.1)가 왜
-        듣지 않았는지가 남는다. v8a 에서 재계획 없이 실패한 시행(t12 1.269, t22 1.012)을
-        가릴 자료가 없어 추가한다."""
-        plans = [(m.header.stamp.sec + m.header.stamp.nanosec * 1e-9,
-                  np.array([[p.pose.position.x, p.pose.position.y] for p in m.poses]))
-                 for _, m in plan.messages(w0) if m.poses]
+    @staticmethod
+    def _dev_current(plans: list, track: list) -> list:
+        """표본마다 그 시각 유효한 계획까지의 거리 — 판정 기준.
+
+        근거·검증은 metrics.deviation_to_active_plan 의 주석에 있다 (단위 시험
+        test_deviation_to_active_plan 이 고정한다)."""
+        return metrics.deviation_to_active_plan(plans, track)
+
+    def _dump_pose_plan(self, trial: int, w0: float, plans, track, devs_first, devs_cur) -> None:
+        """실패한 시행의 로봇 자세와 **두 기준**의 이탈 — 첫 계획과 그 시각의 최신 계획
+        (컨트롤러가 실제로 따르는 것, 판정 기준).
+
+        두 값이 갈리면 첫 계획 기준이 계획 교체를 이탈로 오집계한 것이고, 둘 다 크면 로봇이
+        제 경로를 벗어난 것이다 — 후자라면 J_off(이탈 1.269 m 에서 19.1)가 왜 듣지 않았는지가
+        남는다. v8a 에서 재계획 없이 실패한 시행(t12 1.269, t22 1.012)을 가릴 자료가 없어
+        추가했고, 그 뒤 이 대조 자체가 지표 결함을 드러냈다 (호출부 주석 참조)."""
         rows = []
-        for s, d0 in zip(track, devs):
-            idx = -1
-            for i, (ts, _) in enumerate(plans):
-                if ts > s.t:
-                    break
-                idx = i
-            cur = plans[idx][1] if idx >= 0 else path
-            d1 = worldmap.polyline_distance(cur, s.x, s.y) if len(cur) else math.nan
+        idx = 0
+        for s, d0, d1 in zip(track, devs_first, devs_cur):
+            while plans and idx + 1 < len(plans) and plans[idx + 1][0] <= s.t:
+                idx += 1
             rows.append([round(s.t, 3), round(s.x, 3), round(s.y, 3), round(s.yaw, 4), round(s.v, 3),
                          round(d0, 4) if math.isfinite(d0) else math.nan,
                          round(d1, 4) if math.isfinite(d1) else math.nan,
-                         idx, len(plans)])
+                         idx if plans else -1, len(plans)])
         if rows:
             self.ctx.record.write_csv(
                 f'pose_trial{trial:02d}.csv',
@@ -408,7 +424,7 @@ class TestDynamicObstacles(cases.ProbeCase):
         self.wait_startup_still()
         rows, eps_all, contact_rows, ep_rows = [], [], [], []
         contacts = reached = encounters = moving_contacts = 0
-        worst_dev, worst_return = 0.0, 0.0
+        worst_dev, worst_return, worst_dev_first = 0.0, 0.0, 0.0
         for trial in range(TRIALS):
             if not self.budget_for(TRIAL_TIMEOUT_S * self.settings.timeout_scale + 10.0,
                                    f'trial {trial}'):
@@ -434,9 +450,16 @@ class TestDynamicObstacles(cases.ProbeCase):
             n_contacts = len(mine)
             contacts += n_contacts
             encounters += int(dmin <= ENCOUNTER_M)
-            first_plan = next((m for _, m in plan.messages(w0) if m.poses), None)
-            path = (np.array([[p.pose.position.x, p.pose.position.y] for p in first_plan.poses])
-                    if first_plan is not None else np.zeros((0, 2)))
+            # 명세 190행 "회피 기동 시 경로 이탈이 1m 이내" 의 **"경로"** 는 그 시각 컨트롤러가
+            # 따르는 경로다. 첫 계획 하나로 시행 내내 재면 안 된다 — 명세 181행이 "경로를
+            # 재계획(Replanning)하여 회피" 를 요구하므로, 첫 계획 기준으로 재는 순간 명세가
+            # 지시한 회피 수단 자체가 이탈로 집계된다. 덤프 117 시행에서 양방향 오차를 실측했다:
+            #   유령 이탈 19건 — 새 경로를 0.06~0.91 m 로 잘 따르는데 1.00~2.75 m 로 집계
+            #   과소 보고  2건 — x8b t04 는 따르던 경로에서 1.177 m 벗어났는데 첫 계획 기준 0.530
+            # 즉 현재 경로 기준은 관대한 쪽이 아니라 **더 엄격한** 쪽이다. 판정은 이쪽으로 하고
+            # 첫 계획 기준도 max_dev_first_m 로 남겨 둘을 대조할 수 있게 한다.
+            plans = self._plan_series(plan, w0)
+            path = plans[0][1] if plans else np.zeros((0, 2))
             track = [metrics.sample_from_odom(m) for _, m in self.gt.messages(w0)]
             speeds = metrics.speeds_at(track, [float(ev.get('t', math.nan)) for ev in mine])
             n_moving = sum(1 for v in speeds if v > metrics.CONTACT_MOVING_V)
@@ -447,23 +470,41 @@ class TestDynamicObstacles(cases.ProbeCase):
                              for ev, v, a in zip(mine, speeds, attrib)]
             if mine:
                 self.ctx.record.write_csv('contacts.csv', CONTACT_COLUMNS, contact_rows)
-            devs = [worldmap.polyline_distance(path, s.x, s.y) if len(path) else math.nan
-                    for s in track]
+            devs_first = [worldmap.polyline_distance(path, s.x, s.y) if len(path) else math.nan
+                          for s in track]
+            devs = self._dev_current(plans, track)
             max_dev = max([d for d in devs if math.isfinite(d)], default=math.nan)
+            max_dev_first = max([d for d in devs_first if math.isfinite(d)], default=math.nan)
+            # 명세 191행은 "**원래** 경로로 복귀" 라고 한정한다 (190행의 "경로 이탈" 은 한정이
+            # 없다). 그래서 복귀는 두 기준 **모두** 를 계산하고 둘 다 통과해야 통과로 본다 —
+            # 이탈 기준을 현재 경로로 바꾼 것이 복귀 판정까지 느슨하게 만들지 않도록.
             eps = metrics.deviation_episodes([s.t for s in track], devs, DEV_OUT_M, DEV_BACK_M)
+            eps_f = metrics.deviation_episodes(
+                [s.t for s in track], devs_first, DEV_OUT_M, DEV_BACK_M)
             t_last = track[-1].t if track else t0
             ret = max([e.return_time(t_last) for e in eps], default=0.0)
+            ret_f = max([e.return_time(t_last) for e in eps_f], default=0.0)
             # 접촉만이 아니라 명세를 넘긴 이탈도 덤프한다. 접촉이 0 이 된 뒤로 실패가 이탈
             # 쪽으로 옮겨 갔는데, 접촉 조건만 걸려 있어 정작 실패한 시행의 기록이 없었다.
             # R0: 제어 이력은 **모든 시행**에서 남긴다. 예전에는 실패 조건이 걸려 있어
             # 표본이 접촉 조건부였고, 그 자료로는 "churn 이 접촉의 원인" 과 "churn 은 어디나
             # 있고 접촉과 무관" 을 구분할 수 없었다 (연구 브리프 §6 R0).
             self._dump_trial_stats(trial, w0)
-            if mine or (math.isfinite(max_dev) and max_dev > DEVIATION_MAX) or ret > RETURN_MAX_S:
-                self._dump_pose_plan(trial, w0, plan, track, path, devs)
-            eps_all += [e.returned and e.return_time(t_last) <= RETURN_MAX_S for e in eps]
+            # 두 기준 중 **어느 쪽이라도** 넘으면 덤프한다 — 둘이 갈리는 시행이야말로 지표
+            # 자체를 검증할 자료다 (한쪽만 걸면 그 갈림을 다시 못 본다).
+            if (mine or max(ret, ret_f) > RETURN_MAX_S
+                    or any(math.isfinite(d) and d > DEVIATION_MAX
+                           for d in (max_dev, max_dev_first))):
+                self._dump_pose_plan(trial, w0, plans, track, devs_first, devs)
+            eps_all += [e.returned and e.return_time(t_last) <= RETURN_MAX_S
+                        for e in (eps + eps_f)]
             worst_dev = max(worst_dev, max_dev if math.isfinite(max_dev) else math.inf)
-            worst_return = max(worst_return, ret if all(e.returned for e in eps) else math.inf)
+            worst_dev_first = max(
+                worst_dev_first, max_dev_first if math.isfinite(max_dev_first) else math.inf)
+            worst_return = max(
+                worst_return,
+                *(r if all(e.returned for e in ee) else math.inf
+                  for r, ee in ((ret, eps), (ret_f, eps_f))))
             # 복귀하지 못한 구간이 있으면 그 자리(최대 이탈 크기·시각)와 시행 끝의 이탈을 남긴다 —
             # "5 s 초과" 와 "시행이 끝날 때까지 미복귀" 는 원인이 다르다 (후자는 목표 도착 시점에
             # 원래 경로에서 back_thr 밖인 경우가 많다)
@@ -484,7 +525,8 @@ class TestDynamicObstacles(cases.ProbeCase):
                          t_goal - track[-1].t if track else math.nan, len(track)]
                         + self._localization_end(w0, track, x, y)
                         + [min((math.hypot(s.x - x, s.y - y) for s in track), default=math.nan),
-                           sum(1 for _, m in plan.messages(w0) if m.poses)])
+                           sum(1 for _, m in plan.messages(w0) if m.poses), max_dev_first,
+                           ret_f])
             self.ctx.record.write_csv('avoidance.csv', COLUMNS, rows)
         in_lane = sum(1 for r in contact_rows
                       if isinstance(r[8], float) and math.isfinite(r[8])
@@ -496,6 +538,7 @@ class TestDynamicObstacles(cases.ProbeCase):
                                  'encounters': encounters,
                                  'deviation_episodes': len(eps_all),
                                  'max_deviation_m': cases.fmt(worst_dev),
+                                 'max_deviation_first_plan_m': cases.fmt(worst_dev_first),
                                  'max_return_s': cases.fmt(worst_return, 2),
                                  'min_ttc_s': cases.fmt(min((r[6] for r in rows),
                                                             default=math.inf), 2)})
@@ -503,8 +546,9 @@ class TestDynamicObstacles(cases.ProbeCase):
         for name, value, thr, passed, unit in (
                 ('trials', len(rows), f'>= {SPEC_TRIALS}', len(rows) >= SPEC_TRIALS, ''),
                 ('contacts (all dynamic obstacles)', contacts, 0, contacts == 0, ''),
-                ('max path deviation', worst_dev, DEVIATION_MAX, worst_dev <= DEVIATION_MAX, 'm'),
-                ('return to path', worst_return, RETURN_MAX_S,
+                ('max path deviation (active plan)', worst_dev, DEVIATION_MAX,
+                 worst_dev <= DEVIATION_MAX, 'm'),
+                ('return to path (worst of active/original plan)', worst_return, RETURN_MAX_S,
                  all(eps_all) and worst_return <= RETURN_MAX_S, 's'),
                 ('goals reached', reached, f'>= {len(rows) - 1}',
                  len(rows) > 0 and reached >= len(rows) - 1, ''),

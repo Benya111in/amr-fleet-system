@@ -263,6 +263,40 @@ def deviation_episodes(times: Sequence[float], devs: Sequence[float], out_thr: f
     return out
 
 
+def deviation_to_active_plan(plans: Sequence[Tuple[float, np.ndarray]],
+                            track: Sequence['Sample']) -> List[float]:
+    """표본마다 **그 시각 유효한** 전역 경로까지의 수직 거리 (명세 4.7 "경로 이탈 1 m 이내").
+
+    plans 는 (발행 시각, Nx2 점열) 을 시간순으로 담는다. 유효한 경로 = 발행 시각이 표본
+    시각 이하인 것 중 마지막. 표본이 첫 발행보다 앞서면 첫 경로를 쓴다 (아직 따를 다른
+    경로가 없다).
+
+    **왜 첫 경로 하나로 재면 안 되는가.** 명세 4.7 은 "경로를 재계획(Replanning)하여 회피"
+    를 지시한다. 첫 경로 기준으로 재면 재계획이 그대로 이탈로 집계되어 같은 절의 두 조항이
+    서로를 배제한다. 실측으로 양방향 오차를 확인했다 (덤프 117 시행):
+      유령 이탈 19건 — 새 경로를 0.06~0.91 m 로 따르는데 1.00~2.75 m 로 집계
+      과소 보고  2건 — 따르던 경로에서 1.177 m 벗어났는데 첫 경로 기준 0.530 (x8b t04)
+    즉 이 기준은 관대한 쪽이 아니라 **더 엄격한** 쪽이다.
+
+    nav2 계획기는 로봇 현재 자세에서 경로를 내므로 채택 직후 이 값은 0 근처다 (실측
+    0.012~0.020 m). 그래서 "경로 교체가 이탈 스파이크를 만든다" 는 반대 오염은 생기지 않는다.
+
+    track 은 시간 오름차순이어야 한다 (단조 포인터를 쓴다). 실측 196 시행 · 685,073 표본에서
+    비단조 시행은 없었고, 선형 재탐색 구현과 선택 결과가 전부 일치했다.
+    """
+    from amr_itest import worldmap          # 순환 없음 (worldmap 은 metrics 를 쓰지 않는다)
+    if not plans:
+        return [math.nan] * len(track)
+    out: List[float] = []
+    idx = 0
+    for s in track:
+        while idx + 1 < len(plans) and plans[idx + 1][0] <= s.t:
+            idx += 1
+        pts = plans[idx][1]
+        out.append(worldmap.polyline_distance(pts, s.x, s.y) if len(pts) else math.nan)
+    return out
+
+
 CONTACT_MOVING_V = 0.05     # [m/s] 접촉 순간 로봇이 움직이고 있었다고 보는 GT 속도
 
 
