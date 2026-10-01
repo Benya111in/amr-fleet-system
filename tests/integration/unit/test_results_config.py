@@ -136,8 +136,10 @@ def test_requirements():
 
 
 def test_catalog():
-    assert len(catalog.SCENARIOS) == 14
-    assert [s.number for s in catalog.SCENARIOS] == list(range(1, 15))
+    # 15 번(AI 인지)을 커밋 01f0dac 에서 더하면서 이 단언을 갱신하지 않아 전수 회귀
+    # regG 의 유일한 실패였다. 개수를 박아 두는 단언은 시나리오를 더할 때 같이 고쳐야 한다.
+    assert len(catalog.SCENARIOS) == 15
+    assert [s.number for s in catalog.SCENARIOS] == list(range(1, 16))
     assert catalog.get(9).id == '09_emergency_stop'
     for key in ('9', '09_emergency_stop', 'emergency_stop', 'test_09_emergency_stop.py'):
         assert catalog.by_id(key).number == 9
@@ -152,7 +154,7 @@ def test_catalog():
     assert all(Path(__file__).parents[1].joinpath(f'test_{s.id}.py').is_file()
                for s in catalog.SCENARIOS)
     table = catalog.table_markdown()
-    assert table.count('\n') == 16 and '장시간' in table
+    assert table.count('\n') == 17 and '장시간' in table   # 머리 2 + 시나리오 15
     # README 표는 catalog 에서 생성한다 — 손으로 고친 표가 판정 기준과 어긋나지 않게
     readme = (Path(__file__).parents[1] / 'README.md').read_text(encoding='utf-8')
     stale = [row[:40] for row in table.splitlines() if row.startswith('|') and row not in readme]
