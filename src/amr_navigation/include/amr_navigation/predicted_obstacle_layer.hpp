@@ -54,6 +54,10 @@ private:
     double x, y;
   };
 
+  /// 치명 금지 반경 안에서 대신 찍는 값. 253(INSCRIBED) 미만이어야 계획기가 통과한다.
+  /// 229 는 nav2 의 점유->비용 변환 round(90*254/100) 과 같은 수준이다.
+  static constexpr unsigned char kDemotedCost = 229;
+
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_;
   std::mutex mutex_;
   std::vector<Pt> pts_;            ///< 전역 프레임 점 (마지막 수신)
@@ -62,6 +66,8 @@ private:
   double cost_{254.0};             ///< 찍을 비용. 253 미만 = 기피, 254 = 차단
   double radius_{0.30};            ///< 점마다 이 반경을 채운다 [m]
   double timeout_{0.5};            ///< [s] 이보다 오래된 구름은 쓰지 않는다
+  double lethal_keepout_{0.46};    ///< [m] 이 반경 안에는 치명을 찍지 않는다 (§11)
+  double robot_x_{0.0}, robot_y_{0.0};   ///< updateBounds 가 준 자세 (치명 금지 판정용)
   bool have_{false};
   bool has_last_{false};   ///< 지난 범위를 아직 한 번 더 포함해야 하는가
   double last_min_x_{0.0}, last_min_y_{0.0}, last_max_x_{0.0}, last_max_y_{0.0};

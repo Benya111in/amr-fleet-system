@@ -70,6 +70,46 @@ inline bool predictionFresh(double age_s, double timeout_s)
   return timeout_s <= 0.0 || (age_s <= timeout_s && age_s >= -timeout_s);
 }
 
+/// 이 셀에 **치명(LETHAL)** 을 찍어도 되는가 — 로봇 자기 자리에는 찍으면 안 된다.
+///
+/// 왜 필요한가 (실측). 예측 점유를 cost 254 로 찍는 구성에서만 A* 가
+/// "start blocked (0 expansions)" 로 실패했다 — 168 실행 중 그 구성 4 개에서만 나오고
+/// 나머지 164 개에서 0 건이다. 그 뒤 BT 가 follow_path 를 취소해 **제어 주기가 통째로
+/// 비고, 접촉이 그 공백 안에서 난다** (logs/NW1a 3 건, logs/MX1a 1 건. 공백 1.6~6.4 s).
+/// 연구 브리프 §11.
+///
+/// 기제: 치명 집합은 예측 중심 둘레 dynamic_radius(0.55) 링을 radius(0.30) 로 채운
+/// 고리다. 그런데 예측 중심의 시각은 추적기 TTC 이고, ttc.cpp 가 로봇 속도를 0.2 로
+/// 바닥 치므로 정면 조우에서 "만나는 지점" 이 곧 로봇이 서 있는 자리가 된다. 그러면
+/// astar.cpp 의 start 탈출 예외가 kLethalObstacle 을 제외하므로 start 가 막힌다.
+///
+/// 처방: 로봇 외접원 + 여유 안의 셀에는 치명을 찍지 않는다. **기피(253 미만)는 그대로
+/// 찍는다** — 계획기가 그 자리를 피하도록 유도하는 것은 유효하고, 막는 것만이 문제다.
+/// 그 자리의 실제 안전은 안전 게이트(STOP 래치)가 맡는다. 불변식 A(게이트 거부권 단방향)
+/// 와 충돌하지 않는다 — 이것은 게이트를 **약화하지 않고** 계획기를 되살릴 뿐이다.
+inline bool mayStampLethal(
+  double cx, double cy, double robot_x, double robot_y, double keepout_r)
+{
+  if (!(keepout_r > 0.0)) {
+    return true;
+  }
+  const double dx = cx - robot_x, dy = cy - robot_y;
+  return dx * dx + dy * dy > keepout_r * keepout_r;
+}
+
+/// 치명 금지 반경 안이면 한 단계 낮춘 값(기피)으로, 밖이면 원래 값 그대로.
+/// inscribed(253) 미만이어야 계획기가 통과할 수 있다.
+inline unsigned char stampCost(
+  unsigned char want, double cx, double cy,
+  double robot_x, double robot_y, double keepout_r,
+  unsigned char lethal_floor, unsigned char demoted)
+{
+  if (want < lethal_floor) {
+    return want;                       // 애초에 기피값이면 그대로
+  }
+  return mayStampLethal(cx, cy, robot_x, robot_y, keepout_r) ? want : demoted;
+}
+
 /// 점들을 덮는 사각 범위 (반경 포함). 비었으면 false.
 inline bool pointsBounds(
   const std::vector<std::pair<double, double>> & pts, double r,

@@ -26,11 +26,15 @@ void PredictedObstacleLayer::onInitialize()
   declareParameter("cost", rclcpp::ParameterValue(229.0));
   declareParameter("radius", rclcpp::ParameterValue(0.30));
   declareParameter("timeout", rclcpp::ParameterValue(0.5));
+  // 로봇 자기 자리에는 치명을 찍지 않는다 — 찍으면 A* start 가 막혀 제어가 통째로 멈춘다
+  // (연구 브리프 §11, core::mayStampLethal 주석). 외접원 0.361 + 여유 0.10.
+  declareParameter("lethal_keepout", rclcpp::ParameterValue(0.46));
   node->get_parameter(name_ + ".enabled", enabled_);
   node->get_parameter(name_ + ".topic", topic_);
   node->get_parameter(name_ + ".cost", cost_);
   node->get_parameter(name_ + ".radius", radius_);
   node->get_parameter(name_ + ".timeout", timeout_);
+  node->get_parameter(name_ + ".lethal_keepout", lethal_keepout_);
   // 253(INSCRIBED) 이상이면 계획기가 "막힘" 으로 본다. 실측이 둘 다 필요함을 보였다:
   //   229(기피): A* 가 그냥 통과해 재계획이 22 % -> 7 % 로 죽는다 (logs/CB1a·b)
   //   254(차단): 재계획은 22 % 로 살지만 우회가 커 이탈이 명세를 넘는다 (logs/RP3a·b)
@@ -61,8 +65,13 @@ void PredictedObstacleLayer::onInitialize()
 }
 
 void PredictedObstacleLayer::updateBounds(
-  double, double, double, double * min_x, double * min_y, double * max_x, double * max_y)
+  double robot_x, double robot_y, double, double * min_x, double * min_y,
+  double * max_x, double * max_y)
 {
+  // 자세는 updateCosts 에서 치명 금지 반경 판정에 쓴다. 레이어 API 가 여기서만 주므로
+  // 받아 둔다 (같은 주기에 updateBounds -> updateCosts 순서로 불린다).
+  robot_x_ = robot_x;
+  robot_y_ = robot_y;
   // 지난 번 찍은 범위를 **한 번** 다시 포함해야 예측이 사라졌을 때 비용이 지워진다.
   // 계속 포함하면 안 된다 — 1200x806 전역 지도에서 매 주기 큰 영역을 갱신하게 되어
   // 시뮬레이션 실시간 배율이 떨어진다 (실측 CB1a·b: 시행 sim 시간은 같은데 라운드
@@ -117,19 +126,27 @@ void PredictedObstacleLayer::updateCosts(
     pts = pts_;
   }
   const unsigned char c = static_cast<unsigned char>(std::lround(cost_));
+  const double res = master.getResolution();
+  const double ox = master.getOriginX(), oy = master.getOriginY();
   for (const auto & p : pts) {
     const auto cells = core::discCells(
-      p.x, p.y, radius_, c, master.getOriginX(), master.getOriginY(),
-      master.getResolution(), static_cast<int>(master.getSizeInCellsX()),
+      p.x, p.y, radius_, c, ox, oy, res,
+      static_cast<int>(master.getSizeInCellsX()),
       static_cast<int>(master.getSizeInCellsY()));
     for (const auto & cell : cells) {
       if (cell.i < min_i || cell.i >= max_i || cell.j < min_j || cell.j >= max_j) {
         continue;
       }
+      // 로봇 자기 자리에는 치명을 찍지 않는다 (§11). 기피로 강등해 계획기가 통과할 수
+      // 있게 둔다 — 그 자리의 실제 안전은 안전 게이트가 맡는다.
+      const double cx = ox + (cell.i + 0.5) * res, cy = oy + (cell.j + 0.5) * res;
+      const unsigned char want = core::stampCost(
+        cell.cost, cx, cy, robot_x_, robot_y_, lethal_keepout_,
+        nav2_costmap_2d::INSCRIBED_INFLATED_OBSTACLE, kDemotedCost);
       const auto ui = static_cast<unsigned int>(cell.i), uj = static_cast<unsigned int>(cell.j);
       // 더 비싼 값(정적 장애물·팽창)은 덮지 않는다 — 기피는 올리기만 한다.
-      if (core::shouldRaise(master.getCost(ui, uj), cell.cost, nav2_costmap_2d::NO_INFORMATION)) {
-        master.setCost(ui, uj, cell.cost);
+      if (core::shouldRaise(master.getCost(ui, uj), want, nav2_costmap_2d::NO_INFORMATION)) {
+        master.setCost(ui, uj, want);
       }
     }
   }

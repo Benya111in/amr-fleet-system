@@ -6,6 +6,7 @@
 // 여기서 계약한다 (저장소 규약: core 순수 함수 + 얇은 ROS 래퍼).
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <utility>
 #include <vector>
 
@@ -124,5 +125,58 @@ TEST(PredictedOccupancy, NegativeOffsetUsesFloorNotTruncation)
   // 격자 밖이므로 결과는 비어야 한다 (클리핑이 잡는다)
   for (const auto & c : neg) {
     EXPECT_GE(c.i, 0);
+  }
+}
+
+// --- 치명 금지 반경 (연구 브리프 §11) -------------------------------------------------
+//
+// 실측 근거: predicted_layer.cost 254 를 쓴 4 실행에서만 A* 가 "start blocked" 로 실패했고
+// (나머지 164 실행 0 건), 그 뒤 BT 가 follow_path 를 취소해 제어 주기가 1.6~6.4 s 비었으며
+// 접촉 6 건 중 4 건이 그 공백 안에서 났다 (logs/MX1a t00, logs/NW1a t02·t07·t14).
+
+TEST(PredictedOccupancy, LethalIsNotStampedOnTheRobotsOwnCell)
+{
+  // 로봇 (1.0, 2.0), 금지 반경 0.46. 바로 그 자리는 치명이 아니라 기피로 내려가야 한다.
+  EXPECT_EQ(amr_navigation::core::stampCost(254, 1.00, 2.00, 1.0, 2.0, 0.46, 253, 229), 229);
+  // 0.40 < 0.46 — 금지 반경 안이다
+  EXPECT_EQ(amr_navigation::core::stampCost(254, 1.40, 2.00, 1.0, 2.0, 0.46, 253, 229), 229);
+}
+
+TEST(PredictedOccupancy, LethalSurvivesOutsideTheKeepout)
+{
+  // 금지 반경 밖이면 그대로 치명이어야 한다 — 이 수정이 레이어를 무력화하면 안 된다.
+  EXPECT_EQ(amr_navigation::core::stampCost(254, 1.50, 2.00, 1.0, 2.0, 0.46, 253, 229), 254);
+  EXPECT_EQ(amr_navigation::core::stampCost(254, 1.0, 2.60, 1.0, 2.0, 0.46, 253, 229), 254);
+}
+
+TEST(PredictedOccupancy, AvoidCostIsNeverDemoted)
+{
+  // 253 미만(기피)은 애초에 start 를 막지 않으므로 로봇 자리에서도 손대지 않는다.
+  EXPECT_EQ(amr_navigation::core::stampCost(229, 1.0, 2.0, 1.0, 2.0, 0.46, 253, 229), 229);
+  EXPECT_EQ(amr_navigation::core::stampCost(100, 1.0, 2.0, 1.0, 2.0, 0.46, 253, 229), 100);
+}
+
+TEST(PredictedOccupancy, KeepoutZeroDisablesTheRule)
+{
+  // 반경 0 이면 종전 거동 (구성으로 되돌릴 수 있어야 한다 — 되돌림 조건).
+  EXPECT_EQ(amr_navigation::core::stampCost(254, 1.0, 2.0, 1.0, 2.0, 0.0, 253, 229), 254);
+  EXPECT_TRUE(amr_navigation::core::mayStampLethal(1.0, 2.0, 1.0, 2.0, 0.0));
+}
+
+TEST(PredictedOccupancy, DemotedCostStaysBelowInscribed)
+{
+  // 강등값이 253 이상이면 의미가 없다 — A* 가 여전히 막힌다. 계약으로 고정한다.
+  EXPECT_LT(amr_navigation::core::stampCost(254, 1.0, 2.0, 1.0, 2.0, 0.46, 253, 229), 253);
+}
+
+TEST(PredictedOccupancy, KeepoutCoversTheRobotFootprintCircle)
+{
+  // 외접원 0.361 전체가 덮여야 한다 — 발자국 한 귀퉁이만 치명이어도 start 는 막힌다.
+  const double kRobotR = 0.361, kKeepout = 0.46;
+  ASSERT_GT(kKeepout, kRobotR);
+  for (int deg = 0; deg < 360; deg += 15) {
+    const double a = deg * M_PI / 180.0;
+    const double x = 1.0 + kRobotR * std::cos(a), y = 2.0 + kRobotR * std::sin(a);
+    EXPECT_FALSE(amr_navigation::core::mayStampLethal(x, y, 1.0, 2.0, kKeepout)) << "deg=" << deg;
   }
 }
