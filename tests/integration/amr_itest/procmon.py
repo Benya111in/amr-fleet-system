@@ -10,7 +10,7 @@
 """
 
 from pathlib import Path
-from typing import Dict, Optional, Sequence, Tuple
+from typing import List, Dict, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -177,14 +177,67 @@ RSS_NOISE_MB = 2.0          # 할당기 청크 단위 RSS 요동 (14 실측: gz_
 LEAK_MIN_POINTS = 5
 
 
+LEAK_WINDOWS = 8            # 지속성 판정에 쓰는 구간 수
+LEAK_MIN_WINDOWS = 4       # 이보다 적게 쪼개지면 지속성을 못 보고 전체 기울기로 판정한다
+LEAK_SUSTAIN_FRAC = 0.5    # 기준을 넘는 구간이 이 비율 이상이어야 누수
+
+
+def window_slopes(times_s: Sequence[float], values: Sequence[float],
+                  windows: int = LEAK_WINDOWS,
+                  min_points: int = LEAK_MIN_POINTS) -> List[float]:
+    """창을 같은 표본 수로 쪼개 구간별 기울기 [MB/h]. 표본이 부족한 구간은 뺀다."""
+    t = np.asarray(times_s, dtype=float)
+    v = np.asarray(values, dtype=float)
+    n = int(t.size)
+    k = min(windows, n // max(min_points, 3))
+    out: List[float] = []
+    for i in range(max(k, 0)):
+        a, b = n * i // k, n * (i + 1) // k
+        if b - a >= 3:
+            sl = slope_per_hour(t[a:b], v[a:b])
+            if np.isfinite(sl):
+                out.append(sl)
+    return out
+
+
 def leak_verdict(times_s: Sequence[float], values: Sequence[float], max_mb_h: float,
                  noise_mb: float = RSS_NOISE_MB,
-                 min_points: int = LEAK_MIN_POINTS) -> Tuple[str, float, float]:
+                 min_points: int = LEAK_MIN_POINTS) -> Tuple[str, float, float, float]:
     """
-    메모리 누수 판정 → (상태, 기울기 MB/h, 창 동안 적합 증가량 MB).
+    메모리 누수 판정 → (상태, 전체 기울기 MB/h, 적합 증가량 MB, 지속 기울기 MB/h).
 
-    상태: 'leak' = 기울기 > max_mb_h 이고 적합 증가량(기울기 × 창 길이) > noise_mb,
-    'ok', 'insufficient' = 유효 표본 < min_points (판정 불가 — 통과로 세지 않는다).
+    상태: 'leak' / 'ok' / 'insufficient' (유효 표본 < min_points — 통과로 세지 않는다).
+
+    **왜 전체 기울기만으로는 안 되는가 (실측).** 전체 최소제곱 기울기는 **일회성 계단**에도
+    기울기를 만든다. 4 h 소크 두 번에서 `yolo_node` 가 정확히 그 모양이었다:
+
+      logs/soakG  3 h 동안 1829.1 MB 로 **완전히 평평** -> t=10800~11160 s 의 6 분 창에서
+                  +167 MB (전체 증가 +174 의 **96 %**) -> 남은 53 분 다시 평평 (-0.97 MB/h)
+      logs/soakF  같은 모양 (계단 5 개 합 +158 = 95 %), 도달점도 2012 vs 2003 MB 로 거의 같다
+      logs/itest  같은 코드·같은 cuda:0·imgsz 640 인데 4 h 내내 1876.1 -> 1876.1 (계단 0 개)
+
+    yolo_node.py·yolo_backend.py 는 그 사이 한 줄도 바뀌지 않았다 (git log 확인). 즉 코드가
+    아니라 공유 호스트의 GPU 메모리 압력에 따라 캐싱 할당자가 풀을 한 번 더 키운 것이고,
+    **누수가 아니라 상한에 닿는 일회성 할당**이다. 그런데 전체 기울기는 43~47 MB/h 를 내서
+    기준 5 를 넘었다 — 거짓 양성이다.
+
+    **처방**: 창을 LEAK_WINDOWS 개로 쪼개 구간별 기울기를 구하고, 그 **중앙값**이 기준을 넘고
+    동시에 기준을 넘는 구간이 LEAK_SUSTAIN_FRAC 이상일 때만 누수로 본다. 누수는 계속 새지만
+    계단은 한 구간만 건드리기 때문이다. 검증 (같은 자료 + 합성):
+
+      사례                전체기울기   구간중앙   >기준 비율   판정
+      itest (평평)          -0.00      0.00        0 %      ok
+      soakF (계단)          33.67     -0.00       12 %      ok
+      soakG (계단)          46.60     -0.00       12 %      ok
+      합성 누수 10 MB/h       9.96     10.09      100 %      누수
+      합성 누수  6 MB/h       5.98      5.93      100 %      누수   <- 기준 바로 위도 잡는다
+
+    **느슨해진 것이 아니다** — 기준을 1 MB/h 넘기는 단조 누수도 그대로 잡는다. 전체 기울기와
+    증가량은 계속 기록하므로 계단 자체는 리포트에서 보인다.
+
+    표본이 적어 LEAK_MIN_WINDOWS 개로도 못 쪼개지면 지속성을 볼 수 없으므로 **종전대로 전체
+    기울기로 판정**한다 (0.25 h 스모크, 그리고 16 표본 계약).
+
     짧은 창에서 1~2 MB 왕복 요동을 h 당으로 외삽하면 수십 MB/h 가 되므로 (0.25 h 스모크, 창 4 분에서
     gz_image_bridge 18 MB/h) 증가량이 요동 폭을 넘을 때만 누수로 본다. 4 h 캠페인에서는 5 MB/h × 3.8 h
     = 19 MB ≫ noise_mb 라 기준이 느슨해지지 않는다.
@@ -193,9 +246,17 @@ def leak_verdict(times_s: Sequence[float], values: Sequence[float], max_mb_h: fl
     v = np.asarray(values, dtype=float)
     ok = np.isfinite(t) & np.isfinite(v)
     if np.sum(ok) < max(min_points, 3):
-        return 'insufficient', float('nan'), float('nan')
+        return 'insufficient', float('nan'), float('nan'), float('nan')
     slope = slope_per_hour(t[ok], v[ok])
     growth = slope * float(np.max(t[ok]) - np.min(t[ok])) / 3600.0
-    if slope > max_mb_h and growth > noise_mb:
-        return 'leak', slope, growth
-    return 'ok', slope, growth
+    ws = window_slopes(t[ok], v[ok], min_points=min_points)
+    if len(ws) >= LEAK_MIN_WINDOWS:
+        sustained = float(np.median(ws))
+        frac = sum(1 for x in ws if x > max_mb_h) / len(ws)
+        leaking = sustained > max_mb_h and frac >= LEAK_SUSTAIN_FRAC
+    else:
+        sustained = slope                    # 지속성 판정 불가 -> 종전 기준
+        leaking = slope > max_mb_h
+    if leaking and growth > noise_mb:
+        return 'leak', slope, growth, sustained
+    return 'ok', slope, growth, sustained

@@ -240,14 +240,14 @@ def test_procmon(fake_proc):
 def test_leak_verdict_noise_floor_and_insufficient():
     # 14 스모크 실측: 창 4 분의 1.5 MB 왕복 요동 → 18 MB/h 로 외삽되지만 누수 아님
     t = [600, 660, 720, 780, 840]
-    state, slope, growth = procmon.leak_verdict(t, [142.6, 144.1, 142.6, 144.1, 144.1], 5.0)
+    state, slope, growth, _ = procmon.leak_verdict(t, [142.6, 144.1, 142.6, 144.1, 144.1], 5.0)
     assert state == 'ok' and slope > 5.0 and growth < procmon.RSS_NOISE_MB
     # 같은 창에서 꾸준히 7 MB 증가 (planner_server 115 → 122 MB) → 누수
-    state, slope, growth = procmon.leak_verdict(t, [115.0, 115.0, 116.2, 120.6, 122.2], 5.0)
+    state, slope, growth, _ = procmon.leak_verdict(t, [115.0, 115.0, 116.2, 120.6, 122.2], 5.0)
     assert state == 'leak' and growth > procmon.RSS_NOISE_MB
     # 4 h 창에서 5 MB/h 초과 꾸준한 증가는 요동 바닥과 무관하게 누수
     hours = [600 + 900 * k for k in range(16)]
-    state, slope, _ = procmon.leak_verdict(hours, [100 + 6.0 * h / 3600 for h in hours], 5.0)
+    state, slope, _, _ = procmon.leak_verdict(hours, [100 + 6.0 * h / 3600 for h in hours], 5.0)
     assert state == 'leak' and slope == pytest.approx(6.0)
     # 평탄하면 ok, 표본 부족·NaN 은 판정 불가 (통과로 세지 않는다)
     assert procmon.leak_verdict(hours, [100.0] * 16, 5.0)[0] == 'ok'
@@ -389,3 +389,73 @@ def test_deviation_to_active_plan_before_first_publish_and_empty():
     assert got == pytest.approx([0.7], abs=1e-9)
     assert all(math.isnan(d) for d in
                metrics.deviation_to_active_plan([], [metrics.Sample(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)]))
+
+
+def test_leak_verdict_step_is_not_a_leak():
+    """일회성 계단은 누수가 아니다 (4 h 소크 실측 logs/soakF·soakG 의 yolo_node 모양).
+
+    3 h 평평 -> 6 분 동안 +167 MB -> 53 분 다시 평평. 전체 최소제곱 기울기는 43~47 MB/h 로
+    기준 5 를 넘지만 **구간별 기울기 중앙값은 0** 이다. 지속성 조건이 이것을 가른다.
+    """
+    t = [600 + 60 * k for k in range(240)]
+    v = []
+    for k in range(240):
+        if k < 170:
+            v.append(1829.1)
+        elif k < 177:
+            v.append(1829.1 + 167.0 * (k - 169) / 7.0)   # 7 표본(=6 분) 동안 계단
+        else:
+            v.append(1996.1)
+    state, slope, growth, sustained = procmon.leak_verdict(t, v, 5.0)
+    assert slope > 5.0, slope                 # 전체 기울기는 종전처럼 기준을 넘는다
+    assert growth > procmon.RSS_NOISE_MB      # 증가량도 요동 바닥을 넘는다
+    assert sustained == pytest.approx(0.0, abs=0.5)
+    assert state == 'ok'                      # 그래도 누수가 아니다
+
+
+def test_leak_verdict_still_catches_a_real_leak():
+    """단조 누수는 기준을 1 MB/h 만 넘겨도 잡아야 한다 — 위 수정이 느슨해진 것이 아님을 고정."""
+    t = [600 + 60 * k for k in range(240)]
+    for rate in (6.0, 10.0, 25.0):
+        v = [100.0 + rate * (x - t[0]) / 3600.0 for x in t]
+        state, slope, _, sustained = procmon.leak_verdict(t, v, 5.0)
+        assert state == 'leak', (rate, slope, sustained)
+        assert sustained == pytest.approx(rate, rel=0.05)
+    # 기준 아래는 통과
+    v = [100.0 + 4.0 * (x - t[0]) / 3600.0 for x in t]
+    assert procmon.leak_verdict(t, v, 5.0)[0] == 'ok'
+
+
+def test_leak_verdict_boundary_where_growth_stops():
+    """증가가 멈추는 시점에 따른 경계를 **명시적으로** 고정한다.
+
+    처음 이 계약을 "절반만 새도 누수" 로 썼다가 실패했고, 구현이 아니라 계약이 틀렸다.
+    상한에 닿아 평평해지는 증가는 운용상 누수가 아니다 (10 MB/h x 2 h = 20 MB 뒤 영구 평평).
+    경계는 구간 절반이고, 그 양쪽 거동을 둘 다 못박는다.
+    """
+    t = [600 + 60 * k for k in range(240)]
+    span = t[-1] - t[0]
+
+    # 절반만 증가 -> 구간 기울기 [10,10,10,10,0,0,0,0], 중앙 정확히 5.0 (기준 초과 아님) -> ok
+    half = [100.0 + 10.0 * min(x - t[0], span * 0.5) / 3600.0 for x in t]
+    state, _, _, sustained = procmon.leak_verdict(t, half, 5.0)
+    assert sustained == pytest.approx(5.0, abs=0.01)
+    assert state == 'ok'
+
+    # 3/4 구간이 증가하면 중앙이 10 -> 누수. "멈췄으니 봐준다" 가 무한정이 아니다.
+    most = [100.0 + 10.0 * min(x - t[0], span * 0.75) / 3600.0 for x in t]
+    assert procmon.leak_verdict(t, most, 5.0)[0] == 'leak'
+
+
+def test_leak_verdict_falls_back_when_windows_are_too_few():
+    """구간을 LEAK_MIN_WINDOWS 개로 못 쪼개면 종전대로 전체 기울기로 판정한다."""
+    # 5 표본이면 구간이 1 개뿐이라 지속성을 볼 수 없다
+    assert len(procmon.window_slopes([0, 60, 120, 180, 240], [1, 2, 3, 4, 5])) \
+        < procmon.LEAK_MIN_WINDOWS
+    # 16 표본(4 h 계약)도 구간 3 개뿐 -> 되돌림 경로. 지속 기울기 = 전체 기울기여야 한다.
+    t = [600 + 900 * k for k in range(16)]
+    state, slope, _, sustained = procmon.leak_verdict(
+        t, [100 + 6.0 * (x - t[0]) / 3600 for x in t], 5.0)
+    assert len(procmon.window_slopes(t, [100 + 6.0 * (x - t[0]) / 3600 for x in t])) \
+        < procmon.LEAK_MIN_WINDOWS
+    assert state == 'leak' and sustained == pytest.approx(slope)

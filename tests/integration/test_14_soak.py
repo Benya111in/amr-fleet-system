@@ -7,7 +7,9 @@
 작업(assign_task, 도크 staging 사이 왕복 — behavior.yaml)을 끝날 때마다 다시 넣고, 60 s 마다 시스템 프로세스
 (ROS 노드 + Gazebo 서버)의 RSS 를 잰다. 작업 하나에 900 s 상한: 넘으면 실패(timeout)로 세고 다음 작업을 시도한다
 (멈춘 실행기는 계속 busy 로 거절 → 완료 수가 늘지 않는다).
-판정: 크래시 0 (시작 때 있던 프로세스가 사라지지 않음 + 실행 중 비정상 종료 0), 프로세스별 RSS 기울기 ≤ 5 MB/h
+판정: 크래시 0 (시작 때 있던 프로세스가 사라지지 않음 + 실행 중 비정상 종료 0), 프로세스별 RSS **지속**
+기울기 ≤ 5 MB/h — 전체 최소제곱 기울기는 일회성 계단에도 생기므로 구간별 기울기의 중앙값으로
+판정한다 (근거는 amr_itest/procmon.py 의 leak_verdict 주석: soakF·soakG 실측과 합성 검증)
 (첫 10 분 워밍업 제외 최소제곱), 작업 실패율(실패 + 시간 초과) ≤ 2 %, 완료 작업 ≥ 4 /h × 기간 (최소 1).
 로그 memory.csv, tasks.csv (작업마다 갱신), soak.json.
 """
@@ -128,17 +130,20 @@ class TestSoak(cases.ProbeCase):
         completed = sum(1 for v in outcome.values() if v == 'COMPLETED')
         failed_tasks = sum(1 for v in outcome.values() if v in ('FAILED', 'TIMEOUT'))
         crashed = sorted({name for _, name, _, rss in mem_rows if rss is None})
-        slopes, growth, leaks, unjudged = {}, {}, {}, []
+        slopes, growth, leaks, unjudged, sustained = {}, {}, {}, [], {}
         for pid, name in procs.items():
             if name in crashed:
                 continue                        # 크래시 판정이 따로 잡는다
             pts = [(t, rss) for t, _, p, rss in mem_rows
                    if p == pid and rss is not None and t >= WARMUP_S]
             key = f'{name}[{pid}]'
-            state, slopes[key], growth[key] = procmon.leak_verdict(
+            state, slopes[key], growth[key], sustained[key] = procmon.leak_verdict(
                 [p[0] for p in pts], [p[1] for p in pts], LEAK_MAX_MB_H)
             if state == 'leak':
-                leaks[key] = round(slopes[key], 2)
+                # 판정 근거는 **지속** 기울기다 (전체 기울기는 일회성 계단에도 생긴다 —
+                # procmon.leak_verdict 주석의 soakF·soakG 실측 참조). 둘 다 기록한다.
+                leaks[key] = {'sustained_mb_h': round(sustained[key], 2),
+                              'overall_mb_h': round(slopes[key], 2)}
             elif state == 'insufficient':
                 unjudged.append(key)
         ended = max(len(outcome), 1)
@@ -149,6 +154,7 @@ class TestSoak(cases.ProbeCase):
             'tasks_ended': len(outcome), 'completed': completed, 'failed_or_timeout': failed_tasks,
             'rejected_assign': rejected, 'crashed': crashed,
             'rss_slope_mb_per_h': slopes, 'rss_growth_mb_after_warmup': growth,
+            'rss_sustained_slope_mb_per_h': sustained,
             'leak_unjudged': unjudged}, ensure_ascii=False, indent=2))
         self.measure('soak', {'hours_run': round(elapsed_h, 3), 'completed': completed,
                               'failed_or_timeout': failed_tasks, 'rejected_assign': rejected,
