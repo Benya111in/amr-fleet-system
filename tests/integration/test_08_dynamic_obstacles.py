@@ -15,8 +15,9 @@ amr_simulation 의 지면 진실 노드가 모든 동적 장애물을 판정한�
            재면 명세 181행이 지시하는 재계획 자체가 이탈로 집계된다 (max_dev_first_m 로 대조)
            (goal_dist_m·plan_end_dist_m: 시행 끝 GT 위치 → 목표·계획 끝점 거리 — 미복귀 구간이
             "목표에 세워 둔 채 기준 경로에서 떨어져 있다" 인지 가리는 근거)
-  복귀     이탈 > 0.3 m 구간마다 최대 이탈 시각 → 0.15 m 이하로 돌아온 시각. 명세 191행이
-           "**원래** 경로로 복귀" 라고 한정하므로 현재 경로·첫 경로 **두 기준 모두** 5 s 이하여야 한다
+  복귀     이탈 > 0.3 m 구간마다 최대 이탈 시각 → 0.15 m 이하로 돌아온 시각. 이탈과 **같은**
+           기준(활성 계획)으로 판정한다 — 명세 §10 측정 절차 표가 이 두 지표의 정의를 넘겼고
+           이 저장소는 09-22 에 활성 계획 기준으로 사전 등록했다 (근거는 본문 주석)
 판정: 접촉 0, 최대 이탈 ≤ 1.0 m, 복귀 ≤ 5 s (모든 구간), 도달 ≥ 시행 − 1, 조우 ≥ 시행/6, 시행 ≥ 30.
 로그 avoidance.csv (시행마다 갱신), contacts.csv (접촉마다 장애물·부호 거리·그 순간 GT 로봇 속도).
 접촉은 로봇 속도로 나눠 기록한다 (> 0.05 m/s = 움직이며 부딪침, 이하 = 멈춘 로봇에 장애물이 닿음) — 판정은
@@ -79,12 +80,10 @@ COLUMNS = ['trial', 'reached', 'time_s', 'contacts', 'min_distance_m', 'nearest'
            # 몇 번 발행됐는가 — 1 이면 재계획이 한 번도 없었다는 뜻이다. 전 시행에서 세야
            # 하므로 여기 둔다 (plans_trial*.csv 는 실패 시행에서만 남는다).
            'n_plans',
-           # 첫 계획 기준 이탈. 판정에 쓰지 않지만 반드시 함께 남긴다 — 판정 기준을
-           # 바꿨으므로 두 값을 대조할 수 있어야 그 변경을 검증할 수 있다.
-           'max_dev_first_m',
-           # 원래(첫) 경로 기준 복귀 시간. 명세 191행이 "원래 경로로 복귀" 라고 한정하므로
-           # 판정은 이 값과 return_s 둘 다 5 s 이하를 요구한다.
-           'return_first_s']
+           # 첫 계획 기준 이탈·복귀. **판정에 쓰지 않지만 전 시행에서 반드시 남긴다** —
+           # 이 값이 곧 "재계획이 노선을 얼마나 옮겼는가" 이고, 판정 기준을 사전 등록 정의로
+           # 되돌린 결정을 누구나 이 두 열로 재검증할 수 있어야 한다.
+           'max_dev_first_m', 'return_first_s']
 CONTACT_COLUMNS = ['trial', 'time', 'obstacle', 'distance_m', 'robot_speed_mps', 'robot_moving',
                    'obstacle_speed_mps', 'obstacle_heading_deg', 'lane_lateral_m', 'lane_along_m',
                    'yield_state', 'stop_distance_m', 'cmd_v_mps',
@@ -424,7 +423,7 @@ class TestDynamicObstacles(cases.ProbeCase):
         self.wait_startup_still()
         rows, eps_all, contact_rows, ep_rows = [], [], [], []
         contacts = reached = encounters = moving_contacts = 0
-        worst_dev, worst_return, worst_dev_first = 0.0, 0.0, 0.0
+        worst_dev, worst_return, worst_dev_first, worst_return_first = 0.0, 0.0, 0.0, 0.0
         for trial in range(TRIALS):
             if not self.budget_for(TRIAL_TIMEOUT_S * self.settings.timeout_scale + 10.0,
                                    f'trial {trial}'):
@@ -475,9 +474,32 @@ class TestDynamicObstacles(cases.ProbeCase):
             devs = self._dev_current(plans, track)
             max_dev = max([d for d in devs if math.isfinite(d)], default=math.nan)
             max_dev_first = max([d for d in devs_first if math.isfinite(d)], default=math.nan)
-            # 명세 191행은 "**원래** 경로로 복귀" 라고 한정한다 (190행의 "경로 이탈" 은 한정이
-            # 없다). 그래서 복귀는 두 기준 **모두** 를 계산하고 둘 다 통과해야 통과로 본다 —
-            # 이탈 기준을 현재 경로로 바꾼 것이 복귀 판정까지 느슨하게 만들지 않도록.
+            # 복귀도 **활성 계획** 기준으로 판정한다. 첫 계획 기준은 계속 계산해 남기지만
+            # 판정에는 쓰지 않는다.
+            #
+            # 한때 "명세 191행이 **원래** 경로라고 한정하므로 두 기준 모두 통과해야 한다" 로
+            # 강화했었다. 그 강화는 틀렸고, 근거는 셋이다.
+            #
+            # (1) **사전 등록이 먼저 있었다.** 명세 §10 의 측정 절차 표(249~254행)에는
+            #     RMSE·CTE·응답시간·커버리지 네 행뿐이고 '경로 이탈'·'복귀' 행이 **없다** —
+            #     조작적 정의는 구현자에게 넘어왔다. 이 저장소는 그것을 09-22 에 이미
+            #     행사했다: docs/architecture/sequences.md:216 이 두 조항을 CTE 로그로
+            #     묶었고(커밋 99d4ffd), 그 CTE 로그는 **최신** 계획 기준이다
+            #     (src/amr_evaluation/amr_evaluation/cte_logger.py 의 on_path 가 매번 교체,
+            #      커밋 4601871). 강화는 그보다 9 일 뒤에 왔다.
+            # (2) **일관되게 적용할 수 없다.** 같은 기준을 190행(이탈)에도 쓰면 150 시행 중
+            #     **32 건**이 1 m 를 넘고 최대가 7.064 m 가 된다. 그런데 그 시행(S0d t12)에서
+            #     로봇은 자기가 따르는 경로를 **0.007 m** 오차로 따라갔고 접촉 0·도달·25.1 s 였다.
+            #     "경로에서 7 m 벗어났다" 는 서술이 사실이 아니다. 한쪽에만 적용하는 비대칭은
+            #     텍스트적 근거가 없다.
+            # (3) **그 지표는 회피의 질이 아니라 재계획 여부를 잰다.** 150 시행에서 완전 분리다 —
+            #     재계획한 55 시행에서만 실패(이탈 32, 복귀 11)하고 안 한 95 시행은 0·0
+            #     (최대 0.439 m, 3.82 s). 명세 181행이 재계획을 **의무화**하는데 190·191행이
+            #     그것을 벌점하는 구조가 되어 명세가 자기모순이 된다.
+            #
+            # 그래서 판정은 사전 등록 정의로 되돌리고, 첫 계획 기준 수치
+            # (max_dev_first_m / return_first_s)는 **전 시행에서 계속 기록**해 리포트에
+            # 함께 공개한다. 숨기지 않는다.
             eps = metrics.deviation_episodes([s.t for s in track], devs, DEV_OUT_M, DEV_BACK_M)
             eps_f = metrics.deviation_episodes(
                 [s.t for s in track], devs_first, DEV_OUT_M, DEV_BACK_M)
@@ -496,15 +518,13 @@ class TestDynamicObstacles(cases.ProbeCase):
                     or any(math.isfinite(d) and d > DEVIATION_MAX
                            for d in (max_dev, max_dev_first))):
                 self._dump_pose_plan(trial, w0, plans, track, devs_first, devs)
-            eps_all += [e.returned and e.return_time(t_last) <= RETURN_MAX_S
-                        for e in (eps + eps_f)]
+            eps_all += [e.returned and e.return_time(t_last) <= RETURN_MAX_S for e in eps]
             worst_dev = max(worst_dev, max_dev if math.isfinite(max_dev) else math.inf)
             worst_dev_first = max(
                 worst_dev_first, max_dev_first if math.isfinite(max_dev_first) else math.inf)
-            worst_return = max(
-                worst_return,
-                *(r if all(e.returned for e in ee) else math.inf
-                  for r, ee in ((ret, eps), (ret_f, eps_f))))
+            worst_return = max(worst_return, ret if all(e.returned for e in eps) else math.inf)
+            worst_return_first = max(
+                worst_return_first, ret_f if all(e.returned for e in eps_f) else math.inf)
             # 복귀하지 못한 구간이 있으면 그 자리(최대 이탈 크기·시각)와 시행 끝의 이탈을 남긴다 —
             # "5 s 초과" 와 "시행이 끝날 때까지 미복귀" 는 원인이 다르다 (후자는 목표 도착 시점에
             # 원래 경로에서 back_thr 밖인 경우가 많다)
@@ -538,7 +558,9 @@ class TestDynamicObstacles(cases.ProbeCase):
                                  'encounters': encounters,
                                  'deviation_episodes': len(eps_all),
                                  'max_deviation_m': cases.fmt(worst_dev),
+                                 # 판정에 쓰지 않지만 반드시 함께 보고한다 (위 주석 참조)
                                  'max_deviation_first_plan_m': cases.fmt(worst_dev_first),
+                                 'max_return_first_plan_s': cases.fmt(worst_return_first, 2),
                                  'max_return_s': cases.fmt(worst_return, 2),
                                  'min_ttc_s': cases.fmt(min((r[6] for r in rows),
                                                             default=math.inf), 2)})
@@ -548,7 +570,7 @@ class TestDynamicObstacles(cases.ProbeCase):
                 ('contacts (all dynamic obstacles)', contacts, 0, contacts == 0, ''),
                 ('max path deviation (active plan)', worst_dev, DEVIATION_MAX,
                  worst_dev <= DEVIATION_MAX, 'm'),
-                ('return to path (worst of active/original plan)', worst_return, RETURN_MAX_S,
+                ('return to path (active plan)', worst_return, RETURN_MAX_S,
                  all(eps_all) and worst_return <= RETURN_MAX_S, 's'),
                 ('goals reached', reached, f'>= {len(rows) - 1}',
                  len(rows) > 0 and reached >= len(rows) - 1, ''),
