@@ -277,7 +277,8 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('pedestrian_lanes', default_value='',
                               description='보행 차선 비용 마스크 YAML (기본 빈 문자열 = 쓰지 않음). '
                                           'scripts/gen_pedestrian_lanes.py 가 만든다. 쓰려면 '
-                                          'nav2_params.yaml 의 filters 에 pedestrian_lane_filter 도 넣어야 한다'),
+                                          'nav2_params.yaml 의 filters 에 pedestrian_lane_filter '
+                                          '도 넣어야 한다'),
         DeclareLaunchArgument('initial_x', default_value='0.0'),
         DeclareLaunchArgument('initial_y', default_value='0.0'),
         DeclareLaunchArgument('initial_yaw', default_value='0.0'),
