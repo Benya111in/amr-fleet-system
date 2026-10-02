@@ -54,6 +54,8 @@ docker compose up -d && docker compose wait builder   # builder 종료(exit 0)�
 docker compose exec dev bash          # 셸 접속 — 대화형 bash 만 ROS 와 install/ 오버레이를 자동 소싱한다
                                       # (/etc/bash.bashrc 경유. builder 종료 전에 연 셸은 다시 연다)
 ./scripts/verify_env.sh               # 환경 검증 (37개 항목, 전부 통과해야 한다)
+                                      # 실측 산출물: docs/reports/artifacts/verify_env.txt
+                                      #   (37 통과 / 0 실패, RTX 5090 sm_120 · torch 2.11.0+cu128)
 
 #    셸을 열지 않고 명령 하나만 돌릴 때: exec 는 엔트리포인트를 거치지 않으므로
 #    `exec dev bash -c '...'` / `exec dev ros2 ...` 에는 ROS 환경이 없다. 아래 둘 중 하나를 쓴다

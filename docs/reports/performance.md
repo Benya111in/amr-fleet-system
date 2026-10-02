@@ -292,6 +292,21 @@ p = 0.0145) 유의하다. 그러나 **6 실행 중 1 회라는 빈도는 그 자
 다만 통합 시나리오 12 는 작업 5 · 로봇 5 (작업 ≤ 로봇)라 **그 구성에서는 이득이 0** 이므로,
 바꾸더라도 지금 회귀 집합에서는 차이가 드러나지 않는다.
 
+### 4.9 §9 평가 체크리스트 — 산출물로 닫은 항목
+
+| 체크리스트 | 산출물 | 비고 |
+| --- | --- | --- |
+| 544 `docker-compose up` 환경 구성 | [artifacts/verify_env.txt](artifacts/verify_env.txt) | **37 통과 / 0 실패**. RTX 5090 sm_120 · torch 2.11.0+cu128 · Gazebo Fortress · Nav2 · YOLOv8 · pytest+launch_testing |
+| 552 인지 결과 3D 마커 RViz2 시각화 | `src/amr_bringup/rviz/perception.rviz` | `/amr_01/perception/markers` (CUBE+TEXT) + map · scan · TF · plan. `test_rviz_config.py` 6 계약이 토픽 일치를 고정 |
+| 576 BT 모듈성 (기존 파일 ≤ 3) | [behavior_tree.md §3.4](../algorithms/behavior_tree.md) | 경로 A 1 개 · 경로 B 2 개. `test_bt_extensibility.py` 3 계약 |
+| 117 TF 시각화 자료 | [architecture/figures/tf_tree.svg](../architecture/figures/tf_tree.svg) | 실측 `frames.dot` 렌더 |
+
+**552 의 한계를 명시한다**: 이 서버에는 `DISPLAY` 가 없어 **RViz2 화면 캡처는 불가능**하다.
+시나리오 15 머리말도 같은 이유로 "RViz2 화면이 아니라 토픽으로 판정한다" 고 적는다.
+따라서 제공하는 것은 **(a) 마커가 실제로 발행된다는 실측**(15 통과: 3종 · map 프레임 ·
+객체마다 CUBE+TEXT) 과 **(b) 그것을 보는 설정 파일**이다. 평가자가 DISPLAY 있는 환경에서
+`rviz2 -d .../perception.rviz` 로 확인하면 된다.
+
 ## 5. 마커 기반 재위치추정 (신규)
 
 도킹 서버가 **다른 도크의 마커**를 보면 (`perception/dock_marker_id` 가 기대 id 와 다르면) 그

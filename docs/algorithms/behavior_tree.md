@@ -181,6 +181,46 @@ flowchart TD
 Idle 에서 `ERROR` 로 머문다. 대문자로 발행하고 `fleet_adapter_node` 는 대소문자를 무시해 `RobotState.status` 로 매핑한다
 (`amr_fleet/robot_status.py PHASE_TO_STATUS`: `undocking` → DOCKING 은 이미 있다. `recovering` 은 없어 IDLE 로 보인다 → §8 조율).
 
+### 3.4 확장 — 새 BT 노드를 추가할 때 고치는 기존 파일
+
+> 명세 9장 체크리스트: *"Behavior Tree가 모듈화되어 있는가? **새로운 BT 노드를 추가하여 작업을
+> 확장하는 데 기존 코드 수정이 3개 파일 이내인가?**"*
+
+경로가 **둘**이고, 둘 다 **기존 파일 2 개 이하**다. 아래 수치는 설명이 아니라 구조에서
+유도된 것이고 `test/test_bt_extensibility.py` 3 개 계약이 고정한다.
+
+### 경로 A — 작업 실행기 코어 노드 (기존 파일 **1 개**)
+
+| | 파일 |
+| --- | --- |
+| 신규 | `include/amr_behavior/bt_nodes/<이름>.hpp` (헤더 전용) |
+| **수정** | `src/bt_registry.cpp` — `registerWithArg<T>(factory, "Name", ctx);` **한 줄** |
+
+`CMakeLists.txt` 는 건드리지 않는다. `amr_behavior_bt` 라이브러리의 소스 목록이
+`executor_context.cpp`·`bt_registry.cpp`·`task_tree.cpp` 로 고정이고 노드는 전부 헤더
+전용이기 때문이다 (현재 노드 헤더 29 개, 등록 호출 24 개).
+
+### 경로 B — nav2 `bt_navigator` 플러그인 (기존 파일 **2 개**)
+
+| | 파일 |
+| --- | --- |
+| 신규 | `include/amr_behavior/plugins/<이름>.hpp` + `src/plugins/<이름>.cpp` |
+| **수정** | `CMakeLists.txt` (`add_library(... SHARED)`) |
+| **수정** | `amr_navigation/config/nav2_params.yaml` 의 `plugin_lib_names` (소비자 설정) |
+
+이쪽은 `BT_REGISTER_NODES(factory)` 매크로로 **자기 자신을 등록**하므로
+**`bt_registry.cpp` 를 전혀 건드리지 않는다.** 두 경로가 분리돼 있다는 것이 모듈성의
+실질이고, `test_bt_extensibility.py::test_plugin_path_is_decoupled_from_the_core_registry`
+가 그 분리를 깨뜨리는 변경을 막는다.
+
+**이미 있는 실례**: `src/plugins/is_ttc_below_threshold_condition.cpp` (65 줄).
+`test/test_ttc_trigger.cpp:133` 이 `factory.registerFromPlugin(AMR_TTC_PLUGIN_PATH)` 로
+**실제 로드까지 검증**한다 — bt_navigator 가 `plugin_lib_names` 로 하는 것과 같은 방식이다.
+
+> **왜 시연용 노드를 더 넣지 않았는가.** 체크리스트를 채우려고 쓰이지 않는 노드를 추가하면
+> 죽은 코드가 남는다. 확장 비용은 **구조의 성질**이므로 구조를 계약으로 고정하는 쪽이
+> 검증 가능하고 유지보수에도 낫다. 평가자는 위 표대로 노드를 하나 추가해 보면 바로 확인된다.
+
 ## 4. 복구 로직 (명세: 3가지 이상)
 
 | # | 상황 (감지) | 동작 | 소진 시 |
