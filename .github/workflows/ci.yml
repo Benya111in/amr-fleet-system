@@ -57,6 +57,11 @@ jobs:
           fi
           echo "range=$range" | tee -a "$GITHUB_OUTPUT"
 
+      - name: 검사 스크립트 자체 검증 (수용/거부 표)
+        # 아래 단계는 저장소에 이미 있는(= 통과하는) 메시지만 먹이므로, 규칙이 느슨해지는 회귀를
+        # 잡지 못한다. 이 표가 그 자리를 메운다 — 규칙을 바꾸면 표가 먼저 깨진다.
+        run: bash scripts/test_check_commit_msg.sh
+
       - name: 커밋 메시지 검사 (Conventional Commits)
         env:
           RANGE: ${{ steps.range.outputs.range }}
@@ -82,14 +87,19 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          # squash 병합은 PR 제목을 커밋 첫 줄로 쓰므로 제목도 같은 규칙으로 검사한다
+          # squash 병합이 만드는 커밋 첫 줄은 제목 그대로가 아니라 **제목 + " (#N)"** 이다.
+          # 제목만 검사하면 72자 상한을 7~9자 모자라게 재서, 제목은 통과하는데 squash 결과가
+          # 상한을 넘는 구멍이 생긴다. 그래서 squash 가 실제로 쓸 첫 줄을 검사한다.
           # (README 4장: 저장소 설정에서 Squash and merge 를 끄거나, 제목을 커밋 형식으로 쓴다)
-          shown=${PR_TITLE//::/: :}
-          if printf '%s\n' "$PR_TITLE" | bash scripts/check_commit_msg.sh; then
-            printf '  ok   PR 제목: %s\n' "$shown"
+          squashed="${PR_TITLE} (#${PR_NUMBER})"
+          shown=${squashed//::/: :}
+          if printf '%s\n' "$squashed" | bash scripts/check_commit_msg.sh; then
+            printf '  ok   squash 첫 줄: %s\n' "$shown"
           else
-            printf '::error::PR 제목이 커밋 형식(<type>(<scope>): <subject>)이 아니다: %s\n' "$shown"
+            printf '::error::squash 병합 시 커밋 첫 줄이 규칙에 어긋난다 (제목 + " (#%s)"): %s\n' \
+              "$PR_NUMBER" "$shown"
             exit 1
           fi
 
