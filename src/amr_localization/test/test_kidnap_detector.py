@@ -391,3 +391,109 @@ def test_marker_fix_is_ignored_when_scan_registration_agrees():
     det2.on_marker_fix(3.0, (9.76, 9.60, 1.17))
     det2.on_marker_fix(3.5, (9.76, 9.60, 1.17))
     assert det2.lost
+
+
+def test_external_pose_reset_lets_recovery_converge_in_an_alias_spot():
+    """
+    주기 별칭 자리에서 바깥이 자세를 잡아 주면 여백 게이트가 복구를 막지 않는다.
+
+    회귀 근거: 지도에 ρ 차가 converge_margin 미만인 자리가 실제로 있다 —
+    docs/research/state-estimation/checks/alias_margin.py 가 test_12 피해 로봇 자리
+    (0.8, 5, 0) 에서 0.034 를 낸다. 그 자리에서는 참 자세를 알려 줘도 영원히 lost 였다
+    (test_20_forced_deadlock: "배치 뒤 위치 추정이 안정되지 않음").
+    """
+    p = KidnapParams(suspect_time=0.5, converge_count=2, converge_margin=0.05)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 30.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 2.0, 0.1)
+    det.tick(1.6)
+    assert det.state == State.RECOVERING and det.lost
+
+    # 여백 0.034 (실측값) — 바깥이 잡아 주기 전에는 몇 번을 줘도 수렴하지 않는다
+    det.on_amcl(5.0, (0.8, 5.0, 0.0), 0.02, 0.01)
+    for k in range(6):
+        assert det.on_match(5.1 + 0.5 * k, 0.93, 150, alias_margin=0.034) == []
+    assert det.lost and det.alias_rejections >= 6
+    assert det.external_trust_uses == 0
+
+    # 바깥(운영자/상위 시스템)이 initialpose 로 자세를 잡아 준다 → 같은 여백에서 수렴한다.
+    # on_amcl 도 _evaluate 를 부르므로 수렴 카운트는 on_amcl 1 + on_match 1 로 채워진다.
+    det.on_external_pose_reset(8.5)
+    actions = det.on_amcl(9.0, (0.8, 5.0, 0.0), 0.02, 0.01) \
+        + det.on_match(9.1, 0.93, 150, alias_margin=0.034)
+    assert ActionType.SET_EKF_POSE in kinds(actions)
+    assert det.state == State.TRACKING and not det.lost
+    assert det.external_trust_uses >= 2
+    # 수렴했으면 유예는 닫힌다 — 다음 복구는 다시 여백을 요구한다
+    # (복구 직후 cooldown 3 s 를 지나서 경보를 올린다)
+    det.on_amcl(16.0, (0.0, 0.0, 0.0), 2.0, 0.1)
+    det.tick(16.6)
+    assert det.state == State.RECOVERING
+    rejections = det.alias_rejections
+    det.on_amcl(17.0, (0.8, 5.0, 0.0), 0.02, 0.01)
+    for k in range(4):
+        det.on_match(17.1 + 0.5 * k, 0.93, 150, alias_margin=0.034)
+    assert det.lost and det.alias_rejections > rejections
+
+
+def test_external_trust_does_not_waive_the_other_convergence_conditions():
+    """유예는 **별칭 여백**만 건너뛴다 — ρ 하한과 공분산 조건은 그대로 요구한다."""
+    p = KidnapParams(suspect_time=0.5, converge_count=2, converge_margin=0.05)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 30.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 2.0, 0.1)
+    det.tick(1.6)
+    det.on_external_pose_reset(2.0)
+
+    # ρ 가 converge_match(0.7) 미만이면 유예가 있어도 수렴하지 않는다
+    det.on_amcl(5.0, (0.8, 5.0, 0.0), 0.02, 0.01)
+    for k in range(4):
+        assert det.on_match(5.1 + 0.5 * k, 0.60, 150, alias_margin=0.034) == []
+    assert det.lost
+    # 공분산이 크면(여기서는 trace 2.0) 역시 수렴하지 않는다
+    det.on_amcl(7.5, (0.8, 5.0, 0.0), 2.0, 0.01)
+    for k in range(4):
+        assert det.on_match(7.6 + 0.5 * k, 0.93, 150, alias_margin=0.034) == []
+    assert det.lost
+
+
+def test_external_trust_expires_and_closes_on_a_new_kidnap():
+    """유예는 창이 지나면 닫히고, 새 LOST 선언에서도 닫힌다 (잡아 준 자세가 더는 유효하지 않다)."""
+    p = KidnapParams(suspect_time=0.5, converge_count=2, converge_margin=0.05,
+                     external_trust_window=5.0)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 60.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 2.0, 0.1)
+    det.tick(1.6)
+    det.on_external_pose_reset(2.0)          # 창 = 2.0 ~ 7.0 s
+
+    # 창 밖(t ≥ 7.0)에서는 여백 게이트가 그대로 산다
+    det.on_amcl(20.0, (0.8, 5.0, 0.0), 0.02, 0.01)
+    before = det.alias_rejections
+    for k in range(4):
+        assert det.on_match(20.1 + 0.5 * k, 0.93, 150, alias_margin=0.034) == []
+    assert det.lost and det.alias_rejections > before
+    assert det.external_trust_uses == 0
+
+    # 새 LOST 선언이 유예를 닫는다
+    det.on_external_pose_reset(25.0)
+    det._declare_lost(25.5, '새 납치')
+    det.on_amcl(26.0, (0.8, 5.0, 0.0), 0.02, 0.01)
+    rejections = det.alias_rejections
+    for k in range(4):
+        det.on_match(26.1 + 0.5 * k, 0.93, 150, alias_margin=0.034)
+    assert det.lost and det.alias_rejections > rejections
+
+
+def test_alias_gate_still_blocks_self_recovery_without_external_help():
+    """회귀 방어: 바깥 도움이 없으면 여백 게이트는 예전 그대로 막는다 (이 수정의 안전 속성)."""
+    p = KidnapParams(suspect_time=0.5, converge_count=2, converge_margin=0.05)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 30.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 2.0, 0.1)
+    det.tick(1.6)
+    det.on_amcl(5.0, (3.0, 4.0, 0.5), 0.02, 0.01)
+    for k in range(10):
+        assert det.on_match(5.1 + 0.5 * k, 0.93, 150, alias_margin=0.02) == []
+    assert det.state == State.RECOVERING and det.lost
+    assert det.alias_rejections >= 10 and det.external_trust_uses == 0

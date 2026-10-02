@@ -84,6 +84,13 @@ class KidnapParams:
     converge_match: float = 0.7        # 수렴 판정 인라이어 비율 하한
     converge_margin: float = 0.05      # 수렴 판정: ρ(현재) − max ρ(별칭 가설) 하한 (국소 정밀화 후)
     converge_count: int = 5            # 연속 만족 횟수
+    # [s] 바깥(운영자·상위 시스템)이 initialpose 로 자세를 잡아 준 뒤 이 시간 동안은 별칭 여백을
+    # 요구하지 않는다. 여백 게이트는 **스스로** 고른 가설이 틀릴 수 있어서 두는 것인데, 외부 자세는
+    # 스캔 정합 바깥에서 온 독립 증거라 그 애매함의 대상이 아니다 (마커 보정을 믿는 것과 같은 이유).
+    # 이게 없으면 주기 별칭 자리에서는 참 자세를 알려 줘도 영원히 lost 다 — 지도에 ρ 차가
+    # converge_margin 미만인 자리가 실제로 있다 (docs/research/state-estimation/checks/alias_margin.py:
+    # test_12 피해 로봇 자리 0.034 < 0.05). 창은 LOST 재선언과 수렴 성공에서 닫힌다.
+    external_trust_window: float = 30.0
     spin_angle: float = 2.0 * math.pi  # [rad] 복구 회전량
     spin_retry: int = 1                # 재초기화(시도) 한 번당 회전 횟수
     reinit_retry: int = 4              # 재초기화 시도 횟수 (노드: 앞 시도는 가설 시드, 마지막은 AMCL 전역)
@@ -234,6 +241,8 @@ class KidnapDetector:
         self._last_match: Optional[float] = None
         self._last_margin: Optional[float] = None    # ρ(현재) − max ρ(별칭)
         self.alias_rejections = 0                     # 여백 부족으로 수렴을 보류한 판정 수
+        self.external_trust_uses = 0                  # 외부 자세를 믿고 여백 요구를 건너뛴 판정 수
+        self._external_trust_until = -math.inf        # 바깥이 자세를 잡아 준 뒤 여백 유예 끝 시각
         self._amcl_alarm = False      # 지속 경보: 공분산
         self._amcl_reason = ''
         self._match_alarm = False     # 지속 경보: 스캔-맵 불일치
@@ -315,6 +324,9 @@ class KidnapDetector:
         """
         self._cooldown_until = max(self._cooldown_until, t + self.params.cooldown)
         self._marker_mismatch_since = None
+        # 별칭 여백 유예를 연다. 쿨다운만으로는 **재선언**만 막을 뿐, 이미 lost 인 상태에서
+        # 수렴을 가로막는 여백 게이트는 그대로라 주기 별칭 자리에서는 영원히 복구하지 못한다.
+        self._external_trust_until = t + self.params.external_trust_window
 
     def on_marker_fix(self, t: float, pose: Pose) -> List[Action]:
         """
@@ -470,7 +482,7 @@ class KidnapDetector:
         if self.state == State.SUSPECT:
             return self.tick(t)
         # RECOVERING / FAILED: 수렴 확인
-        if self._converged():
+        if self._converged(t):
             self._converged_count += 1
         else:
             self._converged_count = 0
@@ -478,13 +490,18 @@ class KidnapDetector:
             return self._recover(t)
         return []
 
-    def _converged(self) -> bool:
+    def _converged(self, t: float) -> bool:
         cov_ok = (self._last_amcl is not None and self._last_amcl.t >= self._lost_since
                   and self._amcl_cov[0] < self.params.converge_cov
                   and self._amcl_cov[1] < self.params.yaw_cov_thresh)
         match_ok = self._last_match is not None and self._last_match >= self.params.converge_match
         if cov_ok and match_ok and self._last_margin is not None and (
                 self._last_margin < self.params.converge_margin):
+            if t < self._external_trust_until:
+                # 바깥이 자세를 잡아 줬다 — 여백은 "내가 고른 가설이 맞는가" 를 묻는 것이라
+                # 이 경우에는 묻지 않는다. ρ·공분산 조건은 그대로 요구한다.
+                self.external_trust_uses += 1
+                return True
             self.alias_rejections += 1        # 별칭과 가를 수 없다 → 수렴 보류
             return False
         return cov_ok and match_ok
@@ -494,6 +511,8 @@ class KidnapDetector:
         self.events.append(Event(t, state.value, reason))
 
     def _declare_lost(self, t: float, reason: str) -> List[Action]:
+        # 새로 LOST 를 선언했다는 것은 바깥이 잡아 준 자세가 더는 유효하지 않다는 뜻이다 — 유예를 닫는다.
+        self._external_trust_until = -math.inf
         self.lost = True
         self.detect_time = t
         self._lost_since = t
@@ -537,6 +556,7 @@ class KidnapDetector:
             self._spin_active = False
         self.recovery_times.append(t - self._lost_since)
         self.lost = False
+        self._external_trust_until = -math.inf      # 수렴했으니 유예는 끝난다
         self._cooldown_until = t + self.params.cooldown
         self._low_match = 0
         self._reset_reg()

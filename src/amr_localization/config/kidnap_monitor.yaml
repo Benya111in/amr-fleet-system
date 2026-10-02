@@ -50,6 +50,14 @@
                                   #       인라이어 비율보다 0.05 이상 높은 것이 (점대칭·주기 별칭 ρ 0.70~0.93,
                                   #       정답 대비 차 0.07 이상 — slam.md §5.2; 못 가르면 lost 유지)
     converge_count: 5             #       5 회 연속 (≈ 2.5 s)
+    # [s] 바깥(운영자·상위 시스템)이 initialpose 로 자세를 잡아 준 뒤 이 동안은 **여백만** 묻지 않는다
+    # (converge_cov·converge_match 는 그대로). 여백 게이트는 "내가 고른 가설이 맞는가" 를 묻는 것인데
+    # 외부 자세는 스캔 정합 바깥에서 온 독립 증거라 그 물음의 대상이 아니다 — 마커 보정을 믿는 것과 같다.
+    # 이게 없으면 주기 별칭 자리에서는 참 자세를 알려 줘도 영원히 lost 다. 위 "차 0.07 이상" 가정이
+    # 지도 전체에서 성립하지 않기 때문이다: docs/research/state-estimation/checks/alias_margin.py 가
+    # test_12 피해 로봇 자리에서 0.034 를 낸다 (converge_margin 0.05 미만).
+    # 창은 수렴 성공과 LOST 재선언에서 닫힌다 — 잡아 준 자세가 더는 유효하지 않다는 뜻이므로.
+    external_trust_window: 30.0
     recovery_timeout: 120.0       # [s] 이 안에 수렴 못 하면 FAILED (lost 유지, 수렴하면 언제든 복귀)
     cooldown: 3.0                 # [s] 복구 직후 재감지 유예
 
