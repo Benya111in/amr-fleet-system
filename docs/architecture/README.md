@@ -15,9 +15,29 @@
   - [x] 교착 탐지 → 해소 전략 적용 (우선순위 양보 / 대체 경로)
 - [x] 다중 로봇 네임스페이스 설계 — [multi_robot.md](multi_robot.md)
 - [x] 센서 캘리브레이션 절차 (명세 4.1) — [sensor_calibration.md](sensor_calibration.md)
-- [ ] 구현 후 갱신: 실제 `ros2 node list` / `view_frames` 결과로 다이어그램 검증
+- [x] 구현 후 갱신: 실제 `view_frames` 결과로 다이어그램 검증 — [figures/tf_tree.svg](figures/tf_tree.svg) (아래 §TF 트리)
 
 ## TF 트리 (구현 기준)
+
+### 시각화 — 실측 트리 (명세 4장 2절 "TF 트리 구조를 문서화하고 **시각화 자료를 포함**한다")
+
+![TF 트리](figures/tf_tree.svg)
+
+*출처*: 통합 시나리오 02 가 실행 중 `/tf`·`/tf_static` 을 구독해 남긴
+`logs/regG/02_tf_tree/frames.dot` 를 graphviz 로 렌더한 것이다 (`figures/tf_tree.dot` 이 원본,
+`.svg`·`.png` 가 렌더 결과). **손으로 그린 그림이 아니라 측정된 간선과 실측 발행 주기**다 —
+간선 라벨의 `50.0 Hz`·`20.0 Hz`·`static` 이 같은 실행의 `tf_edges.csv` 와 일치한다.
+
+재생성:
+
+```bash
+./scripts/run_integration.sh 2 --log-dir logs/<태그>
+dot -Tsvg logs/<태그>/02_tf_tree/frames.dot -o docs/architecture/figures/tf_tree.svg
+```
+
+시나리오 02 는 같은 자료로 누락 간선·이중 부모·순환·뿌리를 판정한다 (regG: 전부 통과,
+뿌리 `map` 하나, 누락 0, 순환 없음).
+
 
 `config/sensors.yaml` 의 extrinsic 값과 반드시 일치해야 한다 (xacro 가 그 파일을 직접 읽는다 — `src/amr_description/urdf/`).
 `base_link` 는 차체 박스 중심(지면 +0.18 m)이라 괄호 안 값에 0.18 을 더한 것이 지면 높이다.

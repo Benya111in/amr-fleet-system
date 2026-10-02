@@ -96,7 +96,6 @@ int main(int argc, char ** argv)
   OwnedGrid grid{300, 300, 0.05, 0, -7.5, -7.5};
   if (aisle > 0.0) {
     // 좁은 통로: 경로 양옆에 벽을 세운다 (순폭 aisle). 소크가 도는 랙 사이 통로 모사.
-    auto v = grid.view();
     for (int gx = 0; gx < 300; ++gx) {
       for (int gy = 0; gy < 300; ++gy) {
         const double wx = -7.5 + (gx + 0.5) * 0.05, wy = -7.5 + (gy + 0.5) * 0.05;
