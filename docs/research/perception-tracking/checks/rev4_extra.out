@@ -1,0 +1,32 @@
+(a) person legs (2 x rho 0.06 m, stride 0-0.3 m) at LiDAR plane 0.38 m: points per cluster
+   r= 4 m: mean n=5.5; P(n>=3)=100%  P(n>=2)=100%  P(n>=1)=100%
+       min_points=3: P(confirm within 5 scans) ~ 100%
+       min_points=2: P(confirm within 5 scans) ~ 100%
+   r= 6 m: mean n=3.7; P(n>=3)=88%  P(n>=2)=100%  P(n>=1)=100%
+       min_points=3: P(confirm within 5 scans) ~ 98%
+       min_points=2: P(confirm within 5 scans) ~ 100%
+   r= 8 m: mean n=2.8; P(n>=3)=59%  P(n>=2)=97%  P(n>=1)=100%
+       min_points=3: P(confirm within 5 scans) ~ 66%
+       min_points=2: P(confirm within 5 scans) ~ 100%
+   r=10 m: mean n=2.2; P(n>=3)=31%  P(n>=2)=86%  P(n>=1)=100%
+       min_points=3: P(confirm within 5 scans) ~ 18%
+       min_points=2: P(confirm within 5 scans) ~ 98%
+   r=12 m: mean n=1.8; P(n>=3)=11%  P(n>=2)=73%  P(n>=1)=100%
+       min_points=3: P(confirm within 5 scans) ~ 1%
+       min_points=2: P(confirm within 5 scans) ~ 88%
+(b) unknown class, slope-test noise = frame-to-frame jitter 0.031/0.031 m (persistent bias sd 0.10 m NOT white):
+   los    : v=0.3: med 0.6s p90 0.7s (100%) | v=0.5: med 0.5s p90 0.5s (100%) | v=1.0: med 0.4s p90 0.4s (100%) | v=1.5: med 0.4s p90 0.4s (100%)
+   lateral: v=0.3: med 0.6s p90 0.7s (100%) | v=0.5: med 0.4s p90 0.5s (100%) | v=1.0: med 0.4s p90 0.4s (100%) | v=1.5: med 0.4s p90 0.4s (100%)
+   static (stationary robot): 0.45 false rising edges / track-h
+(c) robot passing static unknown object: residual bias sd 0.10 m rotating at omega_LOS; v_min_eff = 0.15 + 2*0.10*|omega_LOS|
+   omega_LOS=0.5: FA(3 s) fixed v_min 6.4% -> adaptive v_min_eff=0.25: 0.2% ; detection(3 s) of 0.5 m/s 100%, 0.3 m/s 100%
+   omega_LOS=1.0: FA(3 s) fixed v_min 29.9% -> adaptive v_min_eff=0.35: 0.9% ; detection(3 s) of 0.5 m/s 100%, 0.3 m/s 74%
+   omega_LOS=2.0: FA(3 s) fixed v_min 56.6% -> adaptive v_min_eff=0.55: 1.5% ; detection(3 s) of 0.5 m/s 92%, 0.3 m/s 21%
+   LOS rate bound from robot_params: v_max(D)=-a t+sqrt((a t)^2+2a(D-0.3)), t=0.15:
+      clearance D=1.0 m: v<= 0.50 m/s -> |omega_LOS| <= v/D = 0.50 rad/s
+      clearance D=2.0 m: v<= 1.70 m/s -> |omega_LOS| <= v/D = 0.85 rad/s
+      clearance D=3.0 m: v<= 2.00 m/s -> |omega_LOS| <= v/D = 0.67 rad/s
+      clearance D=5.0 m: v<= 2.00 m/s -> |omega_LOS| <= v/D = 0.40 rad/s
+(d) tempered beta=0.5, once per LiDAR cycle, high-score 'person' hits: p(person) k=1..5: ['0.74', '0.95', '0.95', '0.95', '0.95']
+(d) tempered beta=0.5, once per LiDAR cycle, low-score 'person' hits: p(person) k=1..5: ['0.57', '0.80', '0.92', '0.95', '0.95']
+    then 5 contradicting high-score 'box' hits: ['box 0.16/person 0.81', 'box 0.57/person 0.41', 'box 0.90/person 0.10', 'box 0.95/person 0.04', 'box 0.95/person 0.04']

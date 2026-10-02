@@ -1,0 +1,303 @@
+{
+ "slug": "perception-tracking",
+ "doc_path": "docs/research/perception-tracking/perception-tracking.md",
+ "web_tools_available": true,
+ "papers": [
+  {
+   "title": "Poly-MOT: A Polyhedral Framework For 3D Multi-Object Tracking",
+   "authors": "Li, Xie, Liu, Gao, Dai, Jiang, Zhao, Wang",
+   "venue_year": "IROS 2023 (arXiv 2023-07)",
+   "url": "https://arxiv.org/abs/2307.16675",
+   "status": "VERIFIED",
+   "relevance": "Category-specific motion models and similarity metrics; closest prior to our class-conditioned IMM (hard class from 3D detector, one model per class)."
+  },
+  {
+   "title": "Fast-Poly: A Fast Polyhedral Framework For 3D Multi-Object Tracking",
+   "authors": "Li, Liu, Wu, Wu, Zhao, Gao",
+   "venue_year": "RA-L 2024",
+   "url": "https://arxiv.org/abs/2403.13443",
+   "status": "VERIFIED",
+   "relevance": "Filter-based 3D MOT reaching SOTA at 34 FPS on CPU; justifies a classical-filter tracker design."
+  },
+  {
+   "title": "IMM-MOT: A Novel 3D Multi-object Tracking Framework with Interacting Multiple Model Filter",
+   "authors": "Liu, Zhao, Liu, Wu, Wang, Meng, Wang",
+   "venue_year": "arXiv 2025-02",
+   "url": "https://arxiv.org/abs/2502.09672",
+   "status": "VERIFIED",
+   "relevance": "IMM inside tracking-by-detection plus damping-window lifecycle; class-agnostic, our P1 conditions the IMM on a camera-derived class posterior."
+  },
+  {
+   "title": "MCTrack: A Unified 3D Multi-Object Tracking Framework for Autonomous Driving",
+   "authors": "Wang et al.",
+   "venue_year": "IROS 2025 (arXiv 2024-09)",
+   "url": "https://arxiv.org/abs/2409.16149",
+   "status": "VERIFIED",
+   "relevance": "BEV-plane matching and new metrics for velocity/acceleration output quality, adopted in our evaluation plan."
+  },
+  {
+   "title": "UCMCTrack: Multi-Object Tracking with Uniform Camera Motion Compensation",
+   "authors": "Yi, Luo, Luo, Huang, Wu, Hu, Hao",
+   "venue_year": "AAAI 2024",
+   "url": "https://arxiv.org/abs/2312.08952",
+   "status": "VERIFIED",
+   "relevance": "Ground-plane KF with Mapped Mahalanobis Distance handling projection uncertainty; direct prior for our uncertainty-propagated association of camera detections."
+  },
+  {
+   "title": "UncertaintyTrack: Exploiting Detection and Localization Uncertainty in Multi-Object Tracking",
+   "authors": "Lee, Waslander",
+   "venue_year": "ICRA 2024",
+   "url": "https://arxiv.org/abs/2402.12303",
+   "status": "VERIFIED",
+   "relevance": "Using localization uncertainty from probabilistic detectors in TBD trackers cuts ID switches ~19%."
+  },
+  {
+   "title": "UTrack: Multi-Object Tracking with Uncertain Detections",
+   "authors": "Solano-Carrillo et al.",
+   "venue_year": "ECCV 2024 Workshop",
+   "url": "https://arxiv.org/abs/2408.17098",
+   "status": "VERIFIED",
+   "relevance": "Empirical predictive distribution of detections used in association."
+  },
+  {
+   "title": "Stable at Any Speed: Speed-Driven Multi-Object Tracking with Learnable Kalman Filtering",
+   "authors": "Gong et al.",
+   "venue_year": "arXiv 2025-08",
+   "url": "https://arxiv.org/abs/2508.00358",
+   "status": "VERIFIED",
+   "relevance": "Ego-speed-adaptive KF uncertainty; motivates our ego-velocity term in measurement covariance."
+  },
+  {
+   "title": "OptiPMB: Enhancing 3D Multi-Object Tracking with Optimized Poisson Multi-Bernoulli Filtering",
+   "authors": "Ding, Xia, Guan, Wu, Huang, Ding, Sun, Mao",
+   "venue_year": "IEEE T-ITS 2025 (arXiv 2025-03)",
+   "url": "https://arxiv.org/abs/2503.12968",
+   "status": "VERIFIED",
+   "relevance": "RFS/PMB with measurement-driven birth and adaptive detection probability; informs lifecycle parameters (RFS itself out of scope)."
+  },
+  {
+   "title": "Bayesian Multiobject Tracking With Neural-Enhanced Motion and Measurement Models",
+   "authors": "Wei, Liang, Meyer",
+   "venue_year": "arXiv 2025-06 (v3 2026-01)",
+   "url": "https://arxiv.org/abs/2506.18124",
+   "status": "VERIFIED",
+   "relevance": "Hybrid model-based/learned Bayesian MOT; context for where learned components could enter later."
+  },
+  {
+   "title": "LiDAR SLAMMOT based on Confidence-guided Data Association",
+   "authors": "Fang, Li",
+   "venue_year": "arXiv 2024-12",
+   "url": "https://arxiv.org/abs/2412.01041",
+   "status": "VERIFIED",
+   "relevance": "Prediction/detection confidence used inside data association; basis for our confidence-weighted cost term."
+  },
+  {
+   "title": "LV-DOT: LiDAR-visual dynamic obstacle detection and tracking for autonomous robot navigation",
+   "authors": "Xu, Shen, Han, Jin, Ye, Shimada",
+   "venue_year": "arXiv 2025-02",
+   "url": "https://arxiv.org/abs/2502.20607",
+   "status": "VERIFIED",
+   "relevance": "Lightweight indoor-robot LiDAR+camera dynamic obstacle detection, KF tracking and dynamic classification; closest system-level prior to our pipeline."
+  },
+  {
+   "title": "An Efficient LiDAR-Camera Fusion Network for Multi-Class 3D Dynamic Object Detection and Trajectory Prediction (UniMT/RTMCT)",
+   "authors": "He, Zhao, Deng, Fang, Chen",
+   "venue_year": "arXiv 2025-04 (v2 2026-02)",
+   "url": "https://arxiv.org/abs/2504.13647",
+   "status": "VERIFIED",
+   "relevance": "Multi-class LiDAR-camera detection with class-specific trajectory prediction; supports class-aware motion modeling."
+  },
+  {
+   "title": "Autonomous Navigation in Dynamic Human Environments with an Embedded 2D LiDAR-based Person Tracker",
+   "authors": "Plozza, Marty, Scherrer, Schwartz, Zihlmann, Magno",
+   "venue_year": "IEEE SAS 2024 (arXiv 2024-12)",
+   "url": "https://arxiv.org/abs/2412.15000",
+   "status": "VERIFIED",
+   "relevance": "2D-LiDAR person tracker (DR-SPAAM + MOT), MOTA 85.45% at 20 Hz on Jetson; benchmark target for our person tracks."
+  },
+  {
+   "title": "Semantic2D: Enabling Semantic Scene Understanding with 2D Lidar Alone",
+   "authors": "Xie, Pan, Zhang, Pan, Dames",
+   "venue_year": "arXiv 2024-09 (v2 2026-01)",
+   "url": "https://arxiv.org/abs/2409.09899",
+   "status": "VERIFIED",
+   "relevance": "2D-LiDAR-only semantic segmentation and dataset; alternative class source, not adopted due to labeling cost."
+  },
+  {
+   "title": "Robust Dynamic Object Detection in Cluttered Indoor Scenes via Learned Spatiotemporal Cues",
+   "authors": "Rached, Jia, Kondo, How",
+   "venue_year": "arXiv 2026-03",
+   "url": "https://arxiv.org/abs/2603.15826",
+   "status": "VERIFIED",
+   "relevance": "Shows cluster+heuristic pipelines miss dynamic objects near static structure; motivates our map-prior + free-space + velocity-test fusion."
+  },
+  {
+   "title": "Dynablox: Real-time Detection of Diverse Dynamic Objects in Complex Environments",
+   "authors": "Schmid, Andersson, Sulser, Pfreundschuh, Siegwart",
+   "venue_year": "RA-L 2023 (arXiv 2023-04)",
+   "url": "https://arxiv.org/abs/2304.10049",
+   "status": "VERIFIED",
+   "relevance": "Conservative free-space estimation for appearance-agnostic moving-object detection; our 2D free-space-violation evidence is a simplification of it."
+  },
+  {
+   "title": "Real-Time Truly-Coupled Lidar-Inertial Motion Correction and Spatiotemporal Dynamic Object Detection",
+   "authors": "Le Gentil, Falque, Vidal-Calleja",
+   "venue_year": "IROS 2024",
+   "url": "https://arxiv.org/abs/2410.05152",
+   "status": "VERIFIED",
+   "relevance": "Motion-distortion correction and spatiotemporal dynamic classification; justifies ego-motion compensation of 2D scans."
+  },
+  {
+   "title": "MF-MOS: A Motion-Focused Model for Moving Object Segmentation",
+   "authors": "Cheng et al.",
+   "venue_year": "ICRA 2024",
+   "url": "https://arxiv.org/abs/2401.17023",
+   "status": "VERIFIED",
+   "relevance": "Residual range images carry the motion signal; motivates 2D scan-differencing evidence."
+  },
+  {
+   "title": "MambaMOS: LiDAR-based 3D Moving Object Segmentation with Motion-aware State Space Model",
+   "authors": "Zeng et al.",
+   "venue_year": "ACM MM 2024",
+   "url": "https://arxiv.org/abs/2404.12794",
+   "status": "VERIFIED",
+   "relevance": "Learned MOS state of the art (3D, labels required); not adopted."
+  },
+  {
+   "title": "Domain Randomization for Object Detection in Manufacturing Applications using Synthetic Data: A Comprehensive Study",
+   "authors": "Zhu et al.",
+   "venue_year": "ICRA 2025",
+   "url": "https://arxiv.org/abs/2506.07539",
+   "status": "VERIFIED",
+   "relevance": "YOLOv8 trained on synthetic data only reaches mAP50 96.4%; identifies material, rendering, post-processing, distractors as key factors for our fine-tuning plan."
+  },
+  {
+   "title": "Pallet Detection And Localisation From Synthetic Data",
+   "authors": "Mueller, Kim, Gee, Nejati",
+   "venue_year": "ACRA 2024 (arXiv 2025-03)",
+   "url": "https://arxiv.org/abs/2503.22965",
+   "status": "VERIFIED",
+   "relevance": "Unity domain-randomized synthetic data gives 0.995 mAP50 and <4.2 cm pallet position error; warehouse-specific precedent."
+  },
+  {
+   "title": "Empirical Comparison of Four Stereoscopic Depth Sensing Cameras for Robotics Applications",
+   "authors": "Rustler, Volprecht, Hoffmann",
+   "venue_year": "IEEE Access 2025",
+   "url": "https://arxiv.org/abs/2501.07421",
+   "status": "VERIFIED",
+   "relevance": "Depth error grows with distance for stereo RGB-D cameras; supports distance-dependent sigma_Z model."
+  },
+  {
+   "title": "Noise Analysis and Modeling of the PMD Flexx2 Depth Camera for Robotic Applications",
+   "authors": "Cai, Plozza, Marty, Joseph, Magno",
+   "venue_year": "COINS 2024 (arXiv 2024-12)",
+   "url": "https://arxiv.org/abs/2412.15040",
+   "status": "VERIFIED",
+   "relevance": "Axial depth noise modeled as Gaussian function of distance and incidence angle for simulation; basis for our injected depth-noise model and covariance."
+  },
+  {
+   "title": "FutrTrack: A Camera-LiDAR Fusion Transformer for 3D Multiple Object Tracking",
+   "authors": "Teye, Maoz, Rottmann",
+   "venue_year": "VISAPP 2026 (arXiv 2025-10)",
+   "url": "https://arxiv.org/abs/2510.19981",
+   "status": "VERIFIED",
+   "relevance": "Transformer camera-LiDAR tracker without explicit motion model; too heavy/opaque for our explainability and compute constraints."
+  },
+  {
+   "title": "Ultralytics Export documentation (TensorRT/ONNX, batch, half)",
+   "authors": "Ultralytics",
+   "venue_year": "Docs 2026",
+   "url": "https://docs.ultralytics.com/modes/export/",
+   "status": "VERIFIED",
+   "relevance": "Confirms format='engine', half/FP16 and batch arguments used for the shared 5-robot GPU inference server."
+  },
+  {
+   "title": "Simple Online and Realtime Tracking (SORT)",
+   "authors": "Bewley, Ge, Ott, Ramos, Upcroft",
+   "venue_year": "ICIP 2016",
+   "url": "https://arxiv.org/abs/1602.00763",
+   "status": "RECALLED",
+   "relevance": "Classic CV-KF + Hungarian tracking-by-detection; our B0/B1 baselines."
+  },
+  {
+   "title": "The interacting multiple model algorithm for systems with Markovian switching coefficients",
+   "authors": "Blom, Bar-Shalom",
+   "venue_year": "IEEE TAC 1988",
+   "url": "https://doi.org/10.1109/9.1299",
+   "status": "RECALLED",
+   "relevance": "IMM mixing/update equations used in P1."
+  },
+  {
+   "title": "Line extraction in 2D range images for mobile robotics (adaptive breakpoint detector)",
+   "authors": "Borges, Aldon",
+   "venue_year": "J. Intell. Robot. Syst. 2004",
+   "url": "https://doi.org/10.1023/B:JINT.0000038945.55712.65",
+   "status": "RECALLED",
+   "relevance": "Adaptive breakpoint detector formula for scan segmentation."
+  },
+  {
+   "title": "Modeling Kinect Sensor Noise for Improved 3D Reconstruction and Tracking",
+   "authors": "Nguyen, Izadi, Lovell",
+   "venue_year": "3DIMPVT 2012",
+   "url": "https://doi.org/10.1109/3DIMPVT.2012.84",
+   "status": "RECALLED",
+   "relevance": "Classic quadratic-in-depth axial noise model."
+  },
+  {
+   "title": "DR-SPAAM: A Spatial-Attention and Auto-regressive Model for Person Detection in 2D Range Data",
+   "authors": "Jia, Hermans, Leibe",
+   "venue_year": "IROS 2020",
+   "url": "https://arxiv.org/abs/2004.14079",
+   "status": "RECALLED",
+   "relevance": "Learned 2D-LiDAR person detector; optional upgrade to the geometric segmenter."
+  },
+  {
+   "title": "The Hungarian method for the assignment problem",
+   "authors": "Kuhn (1955); Munkres (1957)",
+   "venue_year": "Naval Res. Logist. Q. 1955",
+   "url": "https://doi.org/10.1002/nav.3800020109",
+   "status": "RECALLED",
+   "relevance": "O(n^3) assignment used for data association (implemented in C++ since scipy is broken in the container)."
+  }
+ ],
+ "baseline_summary": "Required baseline (spec 4.6/4.7): (1) YOLOv8 detection with fine-tuned classes {box, person, sign, forklift, amr} (COCO lacks box/sign/forklift/AMR; synthetic Gazebo data auto-labeled by projecting GT 3D boxes, domain randomization per Zhu ICRA 2025), single GPU server node batching 5 robot streams (TensorRT FP16, batch=5, budget <=6.7 ms/batch for 5x30 FPS). (2) Pinhole back-projection X=(u-cx)Z/fx, Y=(v-cy)Z/fy with bbox-central median depth; first-order covariance Sigma=J diag(su^2,sv^2,sZ^2) J^T with sZ(Z)=a+bZ^2 (a=0.01 m, b=0.002 1/m), transformed to map via TF at image stamp with AMCL pose covariance and yaw lever-arm term added. (3) 2D LiDAR: range/angle/median filtering, ego-motion compensation via laser_geometry, adaptive breakpoint detector D_th=r sin(dphi)/sin(lambda-dphi)+3 sigma_r (dphi=0.5deg, lambda=10deg, sigma_r=0.03 m), cluster merge, PCA features, occlusion-aware cluster covariance (line-of-sight axis inflated by L_par^2/12). (4) Static/dynamic: static-map overlap ratio plus chi-square velocity test T=v^T P_vv^-1 v > 9.21 for 3 consecutive updates. (5) Tracking: CV Kalman filter (x=[px,py,vx,vy], continuous white-noise-acceleration Q with q in m^2/s^3) and CTRV EKF (x=[px,py,v,theta,omega], explicit Jacobian given), Joseph-form update, chi-square gate 9.21 on normalized innovation squared, Hungarian assignment O(n^3) on d^2 cost, lifecycle tentative(3/5)->confirmed->coasting(<=5 misses)->deleted, explainable confidence c=0.5 h/(h+m)+0.3 exp(-tr P_pp/0.3^2)+0.2 max p(c), camera late fusion assigning class posteriors via confusion-matrix Bayes update. Complexity per robot per scan <1 ms in C++ (N=720 beams, <=40 clusters, <=30 tracks). Stack facts verified in container: vision_msgs 4.1.1, image_geometry, laser_geometry, message_filters, tf2 python, cv_bridge, Eigen/PCL, gtest/pytest present; ultralytics 8.4.155 + torch 2.11+cu128; numpy 2.2.6 vs scipy 1.8.0 breaks linear_sum_assignment; no filterpy/sklearn/lap/tensorrt-python; Nav2 1.1.20 obstacle-layer parameter names confirmed from library strings; no nav2_dynamic_msgs; ros_gz_bridge supports CameraInfo/Image/PointCloud2/LaserScan/Imu; Gazebo Fortress depth shader has only particle-scatter noise (no Gaussian depth noise path) so a depth_noise_node is required.",
+ "proposals": [
+  {
+   "name": "P1: CC-IMM — Class-Conditioned Interacting Multiple Model tracker with camera late fusion",
+   "idea": "Each LiDAR-cluster track runs an IMM over {Stationary (velocity decay + position random walk), CV (CTRV with omega=0), CTRV} on a common 5-state [px,py,v,theta,omega]. A per-track class posterior p(c) (Bayes update from YOLO hits through a confusion matrix, eps-smoothed, decaying to uniform when unobserved) continuously mixes the Markov transition matrix Pi(p)=sum_c p(c) Pi_c, the process noise Q_j(p) and the class-conditioned speed bound v_max(p) used in gating. With no camera class it degenerates to a standard IMM.",
+   "closest_prior_work": "Poly-MOT (IROS 2023) / Fast-Poly (RA-L 2024): per-category motion models selected by the 3D detector's hard class; IMM-MOT (2025): class-agnostic IMM in TBD; UniMT/RTMCT (2025): class-specific trajectory prediction.",
+   "novelty_claim": "new_combination",
+   "expected_gain": "Hypothesis to test: >=20% lower velocity RMSE and 1.5 s position-prediction error vs CV-KF for 0.3–1.5 m/s actors, fewer ID switches at direction changes, suppression of ghost velocities on static boxes; negligible compute (3 KF/EKF per track).",
+   "risks": "Wrong class posterior drives wrong dynamics (mitigated by eps-smoothing, p(c)<=0.95 cap, generic CV mode always present); IMM tuning burden (mitigated by NEES/NIS consistency tests on synthetic GT trajectories); 30 Hz camera vs 10 Hz LiDAR timing (stamp-based TF, drop detections older than 100 ms).",
+   "realtime_budget": "<1 ms per scan per robot in C++/Eigen (N=720, <=40 clusters, <=30 tracks, 3 models); ~1 CPU core total for 5 robots."
+  },
+  {
+   "name": "P2: UPA — Uncertainty-Propagated Association",
+   "idea": "Use analytically derived measurement covariances directly in Mahalanobis gating and Hungarian cost: camera detections get Sigma_map from the pinhole Jacobian with sZ(Z)=a+bZ^2 plus robot pose covariance and yaw lever-arm; LiDAR clusters get an occlusion-aware covariance inflated along the line of sight (visible-face centroid bias) plus an ego-speed term beta |v_ego|^2 dt^2. Cost C_ij = d^2_ij - lambda log c_i - lambda log s_j (dimensionless).",
+   "closest_prior_work": "UCMCTrack (AAAI 2024) Mapped Mahalanobis Distance with homography uncertainty; UncertaintyTrack (ICRA 2024) and UTrack (ECCVW 2024) localization-uncertainty-aware association; SG-LKF (2025) ego-speed-adaptive noise; Conf-SLAMMOT (2024) confidence-guided association.",
+   "novelty_claim": "variant_of_prior",
+   "expected_gain": "Better-calibrated gates at long range/large depth (NEES ~2 for 2-DoF), fewer mis-associations between camera detections and LiDAR tracks; testable via NEES calibration and ID-switch counts.",
+   "risks": "Over-inflated covariances widen gates and increase ambiguity in crowds (mitigate with class-conditioned v_max gate and optional local JPDA); depth-noise coefficients are simulation-defined (externalized in YAML for real calibration).",
+   "realtime_budget": "O(nk) gate evaluations with 2x2 solves; negligible."
+  },
+  {
+   "name": "P3: MPFS — Map-prior + Free-space + velocity-test log-odds dynamic score",
+   "idea": "Dynamic probability per track P(dyn)=sigmoid(w1 (0.5-rho_map) + w2 rho_free + w3 1[T>9.21] + logit p_dyn(c)) combining overlap with the static occupancy grid, violation of 2D free space observed in the last K ego-motion-compensated scans (2D simplification of Dynablox), the chi-square velocity test, and the class prior. Tracks with P(dyn)>0.7 are handed to the planner/TTC as dynamic; others remain static costmap obstacles.",
+   "closest_prior_work": "Dynablox (RA-L 2023) free-space-based detection; Rached et al. (2026) occupancy-grid temporal segmentation fused with a learned BEV prior; LV-DOT (2025) dynamic obstacle classification; MF-MOS (ICRA 2024) residual-image motion cue.",
+   "novelty_claim": "engineering_adaptation",
+   "expected_gain": "Higher recall for moving people close to shelves and fewer false dynamics from map-mismatched static clutter compared to map-overlap-only or velocity-only classification; confirmation latency <=0.5 s for 1.0 m/s obstacles.",
+   "risks": "Free-space grid depends on localization accuracy (AMCL 3–8 cm is within one 5 cm cell plus 1-cell inflation); weights w need tuning on scenario sweeps.",
+   "realtime_budget": "Raycast of 720 beams into a local 2D grid per scan (~10^4 cell ops), <0.5 ms."
+  }
+ ],
+ "evaluation_plan": "Ground truth from Gazebo actor/model poses at 100 Hz via ros_gz bridge, logged as [t,id,gt_x,gt_y,gt_vx,gt_vy,class]. Detection (spec 4.6): mAP50/mAP50-95 and per-class P/R on a held-out synthetic validation set with different lighting/texture seeds; per-stream FPS with 5 robots and batch=5 (>=30 FPS requirement) and end-to-end latency (image stamp to marker) median/95th percentile; CPU share. 3D projection: position RMSE/max by range band (1–3, 3–6, 6–10 m), target <=0.10 m at <=5 m; NEES of Sigma_map ~2 for calibration; RViz marker check. Dynamic classification (4.7): P/R on scenarios with pedestrians near shelves, static boxes, parked forklifts and moving AMRs; time from appearance to confirmed track <=0.5 s (supports the 1.0 m/s obstacle requirement). Tracking (4.7): MOTA, ID switches, fragmentation, position RMSE, velocity and heading RMSE (MCTrack-style downstream metrics), 1.0/1.5 s prediction error, confidence calibration (accuracy per confidence bin), processing time per scan. Baselines: B0 CV-KF + nearest-neighbour (SORT-lite), B1 CV-KF + chi-square gate + Hungarian (required baseline), Ours CC-IMM-UA, ablations -P1/-P2/-P3. 30 scenarios x 5 seeds, mean +- std, paired t-tests. Hard spec checks: 30 avoidance runs with 0 collisions (joint with planner team; our contribution measured as track latency/accuracy), >=3 classes visualized as markers, GPU >=30 FPS, 5-robot CPU <=80%.",
+ "implementation_plan": "Packages under src/: amr_perception_msgs (rosidl: DetectedObject{header,class_id,score,class_probs[],PoseWithCovariance,size,source}, DetectedObjectArray, TrackedObject{id,class_id,class_probs[],PoseWithCovariance,TwistWithCovariance,heading,confidence,dyn_prob,mode_probs[3],age,hits,misses,status}, TrackedObjectArray); amr_vision (Python 3.10/ament_python, ultralytics): yolo_server_node.py (single GPU process subscribing to 5 namespaces, batch-5 TensorRT FP16 inference, publishes vision_msgs/Detection2DArray), depth_noise_node.py (injects sZ(Z)=a+bZ^2 at 15 Hz), projector_node.py (image_geometry.PinholeCameraModel, message_filters ApproximateTimeSynchronizer(dets, depth, camera_info, slop 0.03), covariance propagation, TF to map, MarkerArray CUBE+TEXT_VIEW_FACING), tools/synth_labeler.py, tools/train.py, tools/export_trt.py; pytest for projection round-trip, Jacobian vs numeric, noise statistics, occlusion labeling. amr_tracking (C++17/Eigen/ament_cmake): scan_preprocess, abd_segmenter, cluster_features, models/{stationary,cv,ctrv}.hpp, imm, hungarian, association, dynamic_scorer, class_fusion, track_manager, tracker_node.cpp, marker_publisher; gtest for Hungarian vs brute force (n<=7), KF/EKF NEES/NIS consistency on 1000 synthetic trajectories, CTRV Jacobian numeric check, IMM mode switching on stop/straight/turn GT, ABD on synthetic scans, log-odds monotonicity; coverage >=70% via colcon test --coverage. ROS interfaces per namespace: inputs scan (SensorData QoS), camera/image_raw, camera/depth/image_raw (32FC1), camera/camera_info, global /map (transient_local), TF; outputs perception/detections_2d, perception/detections_3d, perception/tracks (10 Hz), perception/markers, optional perception/dynamic_cloud as an extra obstacle-layer observation_source with observation_persistence tuning. All parameters externalized in config/perception.yaml (sigma_r, ABD lambda, q, sigma_a, Pi_c, MPFS weights, gate chi2, depth-noise a/b, kappa). Compute budget for 5 robots: GPU YOLOv8n FP16 batch 5 at 30 Hz (<=6.7 ms/batch, ~1–2 GB VRAM of 32 GB); CPU tracker 5 x <1 ms/scan, projector 5 x ~2 ms at 30 Hz, depth noise 5 x 2 ms at 15 Hz, YOLO pre/post ~1 core: ~3 of 32 cores. Schedule: W1 messages/projection/markers/GPU server; W2 ABD + CV-KF + Hungarian + lifecycle (baseline); W3 IMM + class fusion + MPFS; W4 evaluation harness, GT logging, ablations; W5 tuning, documentation, peer-review rehearsal. Prerequisites: docker compose must pass --gpus all (container tested without GPU showed cuda unavailable); fix or bypass the numpy/scipy mismatch (Hungarian is in C++ anyway); decide TensorRT python runtime installation policy.",
+ "open_questions": [
+  "Do Gazebo actor (human) models carry collision geometry visible to the GPU LiDAR? If not, the sim team must attach collision shapes or dynamic pedestrians will be invisible to the tracker.",
+  "Should the 5 AMRs' own fleet poses (ground truth via namespaced TF) be fused into the tracker as an 'amr' class with known IDs, or treated purely as detected obstacles? Needs agreement with the fleet team.",
+  "TensorRT python runtime is absent in the container; is on-demand pip install by ultralytics acceptable under the offline/reproducible-build policy, or should we ship the engine and a pinned tensorrt wheel?",
+  "If the sim team prefers Gazebo SDF <noise> for the depth camera instead of our depth_noise_node, it must be empirically verified (flat-wall depth std) because the installed Ogre2 depth shader only implements particle-scatter noise.",
+  "Is a local JPDA for overlapping gates worth the extra explanation burden? Only if crowd scenarios (multiple people within one gate) are part of the 30 avoidance tests.",
+  "arXiv API (export.arxiv.org) was rate-limited (HTTP 429) for the whole session; discovery relied on WebSearch and per-paper arxiv.org/abs verification, so a follow-up API sweep of cs.RO/cs.MA/eess.SY for 2026-06..09 is recommended."
+ ]
+}

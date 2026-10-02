@@ -1,0 +1,554 @@
+{
+ "summary": "Design TTC-triggered predictive replanning for the AMR (spec 4.7) without breaking pinned contracts",
+ "agentCount": 13,
+ "logs": [
+  "구조 파악 5/5 영역 완료",
+  "설계 3/3 완료: 계획 충돌 트랙 한정 전역 재진입 (TTC-gated re-admission), 예측 점유 밴드 필터 — dynamic_forecast_filter (TTC 무장 · 시간 제한 · 진폭 유도), BRR — 구속 우회 재계획 (Bounded Rejoin Replanning)",
+  "심사 합계: 설계 1: 계획 충돌 트랙 한정 전역 재진입 (TTC-gated re-admission) 100.1 | 설계 2: 예측 점유 밴드 필터 — dynamic_forecast_filter 85.1 | 설계 3: BRR — 구속 우회 재계획 (Bounded Rejoin Replanning) 69.4 -> 승자 설계 1: 계획 충돌 트랙 한정 전역 재진입 (TTC-gated re-admission)"
+ ],
+ "result": {
+  "winner": "계획 충돌 트랙 한정 전역 재진입 (TTC-gated re-admission)",
+  "tally": {
+   "설계 1: 계획 충돌 트랙 한정 전역 재진입 (TTC-gated re-admission)": 100.1,
+   "설계 3: BRR — 구속 우회 재계획 (Bounded Rejoin Replanning)": 69.4,
+   "설계 2: 예측 점유 밴드 필터 — dynamic_forecast_filter": 85.1
+  },
+  "design": {
+   "name": "계획 충돌 트랙 한정 전역 재진입 (TTC-gated re-admission)",
+   "summary": "핵심 착상: 추적기가 이미 발행하는 `TrackedObstacle.time_to_collision` 은 **로봇의 현재 전역 plan 을 따라가는 예측**으로 계산된 값이다 (obstacle_tracker_node.cpp:286-306 이 `/amr_01/plan` 을 받아 `RobotMotionModel::select` 에 넣고, ttc.cpp:109-168 이 등속 CV + 공분산 전파로 g(τ) 첫 영점을 찾는다). 따라서 TTC = ∞ 는 \"이 트랙은 내 경로와 만나지 않는다\", TTC 유한·작음은 \"이 트랙은 내 경로 위에서 실제로 만난다\" 를 뜻한다. 이 값은 지금 safety_gate 와 **꺼져 있는** BT 조건만 소비하고, 전역 계획에는 한 번도 연결된 적이 없다.\n\n설계는 `costmap_scan_filter_node::dynamicCenters()` 의 제외 규칙에 조건 하나를 더한다 — 빠른 동적 트랙이라도 **TTC 가 유한하고 `admit_ttc`(3.5 s) 이하이면 제외하지 않는다**. 즉 전역 코스트맵에서 눈감는 대상이 \"모든 빠른 동적 트랙\" 에서 \"내 경로와 만나지 않을 빠른 동적 트랙\" 으로 좁아진다. 지나가는 사람은 TTC = ∞ 라 종전대로 계속 빠지고(요동 방지 그대로), 경로 위에서 만날 사람만 전역에 들어온다. 그 뒤 이미 존재하는 `IsTTCBelowThreshold`(임계 2.65 s) → `ComputePathToPose` 가지를 되살리면, 08 실측 h8a 가 기록한 결함 — \"A* 는 자기를 부른 사람을 보지 못한 채 다시 계획한다\" — 이 구조적으로 사라진다. 임계 사다리 3.5 → 2.65 → 2.15 의 0.85 s 간격이 마킹이 트리거보다 먼저 코스트맵에 들어가게 보장한다 (최악 파이프라인 0.4 s 의 2 배).\n\n새 C++ 컴파일 단위 0, 새 메시지 타입 0, 새 pluginlib 플러그인 0, 새 노드 0. 기존 cpp/hpp 한 쌍 + YAML + BT XML + 런치 기본값 + 시험.\n\n기록된 로그로 이미 검증한 사실 두 가지: (1) `logs/*/08_dynamic_obstacles/avoidance.csv` 9 런에서 min TTC ≤ 3.5 s 는 30 시행 중 3–8 회만 발생하고 임계를 2.5↔4.0 으로 흔들어도 ±3 시행뿐이다 → 재진입은 폭주하지 않고 임계 민감도도 낮다. (2) `pose_trial*.csv` 30 개에서 재계획이 일어난 시행(n_plans 2–4)은 dev_first 1.160 m 인데 dev_current 0.059 m (Y8c t06), dev_first 1.100 / dev_current 0.136 (N8a t17) — 지금도 하네스의 '첫 계획' 기준선이 추적 품질과 무관한 실패를 만들어 내고 있고, 재계획이 없는 시행에서는 두 열의 중앙값 차가 0.000 이다.",
+   "how_spec_is_met": [
+    {
+     "spec_line": "4.7 \"1.0m/s 속도로 움직이는 동적 장애물을 인식하고 경로를 재계획(Replanning)하여 회피해야 한다.\"",
+     "mechanism": "costmap_scan_filter_node 가 TTC 유한·≤3.5 s 인 트랙을 scan_costmap_static / camera/depth/points_static 에서 빼지 않는다 → 전역 obstacle_layer·depth_layer 가 그 트랙을 마킹 → sensor_inflation_layer(r 0.6, s 5.0)가 팽창 → 0.85 s 뒤 IsTTCBelowThreshold(2.65 s)가 ComputePathToPose 를 즉시 실행하고 A* 가 그 장애물을 보고 우회 경로를 낸다. 경로가 실제로 막힌 경우는 종전 1 Hz IsPathValid 가지가 그대로 담당한다.",
+     "observable": "한 시행 안에서 세 시각의 순서와 간격: t_a = /amr_01/costmap_filter/admitted_tracks 에 그 track_id 가 처음 실린 시각, t_m = 전역 코스트맵에 해당 셀이 LETHAL 로 나타난 시각, t_p = /amr_01/plan 이 바뀐 시각. 요구: t_a < t_m < t_p 이고 t_p − t_a ≤ 0.85 s. 그리고 새 plan 이 t_p 시점 트랙 위치에서 최소 0.25 m(내접 0.2 + 여유 0.05) 밖으로 지나가는지. 세 값 모두 test_08 이 이미 남기는 plans_trialNN.csv·tracks_trialNN.csv 와 새 admitted_tracks 토픽만으로 계산된다."
+    },
+    {
+     "spec_line": "4.7 \"추적된 장애물의 미래 위치를 예측하고, 로봇 경로와의 충돌 가능성을 계산한다.\"",
+     "mechanism": "변경 없음 — obstacle_tracker_node.cpp:315-342 가 트랙마다 computeTimeToCollision 을 부르고, 장애물은 등속 CV + 해석적 공분산 전파 Σ(τ)=P_pp+τ(P_pv+P_pvᵀ)+τ²P_vv+qτ³/3·I, 로봇은 /plan 추종(RobotMotionModel)으로 예측한다. 이 설계가 새로 하는 일은 그 결과를 **처음으로 전역 계획 계층에 연결**하는 것이다. 지금 이 값의 소비자는 safety_node 와 배포에서 꺼져 있는 BT 조건뿐이다.",
+     "observable": "집합 동일성 검사: 매 스캔에서 admitted_tracks 의 track_id 집합 == {tracked_obstacles 중 speed ≥ 0.2 이고 (is_dynamic 또는 speed ≥ 0.5) 이고 0 ≤ ttc ≤ 3.5} (유지 창 admit_release_s 제외). 그리고 발행된 time_to_collision 대 하네스 독립 계산(test_08 _min_ttc 의 ttc_circle, 지면 진실 기준)의 차이 — 명세 TTC 정확도 ±0.3 s 안인지. 두 값은 avoidance.csv min_ttc_s 열로 이미 30 시행 기록되고 있다."
+    },
+    {
+     "spec_line": "4.7 \"Time-To-Collision(TTC) 지표를 계산하고, 임계값 이하 시 회피 기동을 수행한다.\"",
+     "mechanism": "같은 TTC 값에 3단 임계 사다리를 건다. 3.5 s → 전역 코스트맵 재진입(admit_ttc, 계획기가 볼 수 있게 함). 2.65 s → BT IsTTCBelowThreshold → ComputePathToPose 즉시 재계획 (= τ_crit 2.15 + 재계획 예산 0.5, sequences.md:213 의 τ_warn 유도와 동일). 2.15 s → safety_gate ttc_critical, 선속도 상한 v ≤ 1.0·(TTC − 0.15). 그 아래는 DWA 의 별개 TTC₀ 연속 비용과 VO. 각 단계가 서로 다른 관측 가능한 출력을 낸다.",
+     "observable": "한 조우의 시간축에 네 사건을 찍어 순서를 확인: admitted_tracks 등재(3.5 s) → /plan 교체(2.65 s) → cmd_vel 선속도가 gate 상한에 붙음(2.15 s, stats_trialNN.csv 의 gate_out_v_mean < cmd_v_mean) → vo_rejected > 0. 임계를 넘지 않은 조우에서는 앞 두 사건이 없어야 한다. stats_trialNN.csv 가 ttc_s·vo_rejected·cmd_v·gate 출력을 이미 기록하므로 plan 교체 시각 열만 추가하면 된다."
+    },
+    {
+     "spec_line": "4.7 \"Velocity Obstacle 또는 ORCA 개념을 적용한 반응형 회피를 구현한다.\"",
+     "mechanism": "변경 없음이 요구사항이다. 지역 출력 scan_costmap 은 제외 로직이 실행되기 **전에** 발행된다 (costmap_scan_filter_node.cpp: pub_->publish(std::move(out)) 가 excludeDiscsFromScan 호출보다 앞에 있고, static 은 복사본 stat 에만 적용). 지역 depth 입력 points_filtered 는 pointcloud_filter_node 가 직접 내므로 이 노드를 거치지도 않는다. 따라서 지역 코스트맵·DWA·VO(velocity_obstacle.cpp, τ 2.0 s, R = 0.361+0.30+0.30 = 0.961 m)·TTC₀·횡단 양보의 입력은 바이트 단위로 동일하다.",
+     "observable": "회귀 확인: 변경 전후 stats_trialNN.csv 의 vo_rejected 분포와 yield_state 분포가 통계적으로 구분되지 않아야 한다 (같은 시드·같은 30 시행에서 평균·p95 비교). 구분된다면 지역 계층이 의도치 않게 바뀐 것이므로 즉시 되돌린다."
+    },
+    {
+     "spec_line": "4.4 \"경로 재계획이 500ms 이내에 완료되어야 한다.\"",
+     "mechanism": "계획기 경로에 손대지 않는다. A* 의 max_planning_time 0.4 s, expected_planner_frequency 1.0, 전역 update_frequency 5.0 / publish_frequency 1.0 전부 불변. 전역 코스트맵에 셀이 늘어나면 자유 공간이 줄어 A* 확장 노드 수는 오히려 감소한다. 센서 소스의 발행 주기·지연이 바뀌지 않으므로 planner_server 의 waitForCostmap() 대기도 늘지 않는다 (+inf 빔이 줄어 ObstacleLayer 가 투영하는 점이 몇십 개 늘지만 이는 5 Hz 코스트맵 스레드 안이고 planning_time 밖이다).",
+     "observable": "test_06 plans.csv 의 plan_ms **최댓값** ≤ 500 ms (현재 Gazebo 통합 실측 최대 13.0 ms, 서버 planning_time 최대 26.5 ms). 06 은 use_perception=False 로 뜨므로 이 설계의 영향을 받지 않는 대조군이고, 08 에서는 ComputePathToPose 액션 결과의 planning_time 최댓값을 따로 기록해 같은 500 ms 에 건다. 종단 지연(인식→새 경로 실행)은 별도 목표 ≤ 700 ms 로 t_a→FollowPath 새 goal 수락 시각으로 잰다."
+    },
+    {
+     "spec_line": "9장 동료평가 \"동적 장애물을 추적하고 예측 기반 회피가 수행되는가?(30회 테스트 충돌 0건 확인)\"",
+     "mechanism": "접촉 0 의 1차 책임은 그대로 지역 계층(VO·TTC₀·횡단 양보·safety_gate)에 있고 이 설계는 그 계층을 건드리지 않는다. 기여는 간접적이다 — 경로 위에서 만날 장애물을 전역이 미리 비껴가면 지역 계층이 처리해야 할 근접 조우 자체가 줄어든다. 현재 9 런 실측 접촉은 0–2/30 이고 0 인 런은 2/9 뿐이다.",
+     "observable": "test_08 contacts 합계 == 30 시행에서 0, 3 실행 반복. 추가로 admitted 가 발생한 시행과 발생하지 않은 시행으로 나눈 접촉률·최근접 거리 분포 비교 — 재진입이 접촉을 줄이는지 늘리는지를 같은 런 안에서 대조할 수 있다 (재진입은 조우마다 자연 발생하므로 별도 절제 실험 없이 층화 비교가 된다)."
+    }
+   ],
+   "changes": [
+    {
+     "file": "/tmp/claude-0/-home-CAPYI/c8bfdadc-8698-4d09-aac1-e3c1224c9abc/scratchpad/wt-integ/src/amr_navigation/include/amr_navigation/costmap_scan_filter_node.hpp",
+     "what": "멤버 4개와 include 1개 추가: `double admit_ttc_{0.0};`(0 = 끔, 종전 동작 보존), `double admit_release_s_{1.0};`, `bool publish_admitted_{true};`, `std::unordered_map<uint32_t,double> admitted_;`(track_id → 마지막 충돌 시각), `rclcpp::Publisher<amr_msgs::msg::TrackedObstacleArray>::SharedPtr admitted_pub_;`. `#include <unordered_map>`. dynamicCenters 시그니처에 출력 인자 추가: `std::vector<core::Point2D> dynamicCenters(const rclcpp::Time & stamp, std::string & frame, amr_msgs::msg::TrackedObstacleArray * admitted = nullptr);`. 파일 머리 주석(7-13행)에 재진입 규칙을 적는다.",
+     "new_file": false
+    },
+    {
+     "file": "/tmp/claude-0/-home-CAPYI/c8bfdadc-8698-4d09-aac1-e3c1224c9abc/scratchpad/wt-integ/src/amr_navigation/src/nodes/costmap_scan_filter_node.cpp",
+     "what": "① 생성자에 파라미터 3개 + 발행자 1개 선언: `admit_ttc_ = declare_parameter(\"admit_ttc\", 0.0);`, `admit_release_s_ = declare_parameter(\"admit_release_s\", 1.0);`, `publish_admitted_ = declare_parameter(\"publish_admitted\", true);`, `admitted_pub_ = create_publisher<amr_msgs::msg::TrackedObstacleArray>(declare_parameter(\"admitted_topic\", std::string(\"costmap_filter/admitted_tracks\")), rclcpp::QoS(5));`.\n② dynamicCenters 의 트랙 루프에서 기존 속도 게이트(`sp < dynamic_min_speed_ || (!o.is_dynamic && sp < dynamic_fast_speed_)` → continue) **뒤에** 재진입 판정을 넣는다:\n```\nif (admit_ttc_ > 0.0) {\n  const double t_now = stamp.seconds();\n  const auto it = admitted_.find(o.track_id);\n  const bool hold = it != admitted_.end() && (t_now - it->second) <= admit_release_s_;\n  const double ttc = o.time_to_collision;\n  const bool conflict = std::isfinite(ttc) && ttc >= 0.0 && ttc <= admit_ttc_;\n  if (conflict) { admitted_[o.track_id] = t_now; }\n  else if (!hold && it != admitted_.end()) { admitted_.erase(it); }\n  if (conflict || hold) {\n    if (admitted) { admitted->obstacles.push_back(o); }\n    continue;                     // 제외하지 않는다 = 전역 코스트맵이 이 트랙을 본다\n  }\n}\n```\n(`it` 을 insert 전에 읽는 순서가 중요 — 반복자 무효화 방지.) 루프 뒤에 `admitted_` 에서 `t_now - v > admit_release_s_ + track_timeout_` 인 항목을 지우는 정리 루프.\n③ onScan 에서만 `amr_msgs::msg::TrackedObstacleArray adm; adm.header = msg->header;` 를 만들어 dynamicCenters 에 넘기고, `publish_admitted_` 이면 발행 (onCloud 는 nullptr 를 넘겨 중복 발행 방지).\n④ 기존 주석(전역 제외 근거)을 '경로와 만나지 않는 트랙만 제외한다' 로 갱신.",
+     "new_file": false
+    },
+    {
+     "file": "/tmp/claude-0/-home-CAPYI/c8bfdadc-8698-4d09-aac1-e3c1224c9abc/scratchpad/wt-integ/src/amr_navigation/config/nav2_params.yaml",
+     "what": "costmap_scan_filter_node 블록(424-440행)에 4줄 추가. `admit_ttc: 3.5` — 근거 주석: 추적기 TTC(로봇 전역 plan 기준 예측)가 이 값 이하인 동적 트랙은 전역에 되살린다; BT IsTTCBelowThreshold 2.65 보다 0.85 s 앞서 마킹을 앞세운다(최악 파이프라인 추적 0.1 + 스캔 0.1 + 전역 코스트맵 0.2 = 0.4 s 의 2 배); 추적기 ttc.horizon 5.0 s 안; 08 기록 9 런에서 30 시행 중 3–8 회만 발화하고 2.5↔4.0 으로 흔들어도 ±3 시행. `admit_release_s: 1.0` — 충돌 해소 뒤 유지 창; 이 동안 빔이 살아 있어 되살린 마킹을 레이트레이스로 지운다(1.0 m/s 트랙은 1.0 m 이동 > dynamic_radius 0.55 m). `publish_admitted: True`, `admitted_topic: costmap_filter/admitted_tracks`. exclude_dynamic·dynamic_radius·dynamic_min_speed·dynamic_fast_speed·track_timeout 은 그대로 둔다.",
+     "new_file": false
+    },
+    {
+     "file": "/tmp/claude-0/-home-CAPYI/c8bfdadc-8698-4d09-aac1-e3c1224c9abc/scratchpad/wt-integ/src/amr_navigation/behavior_trees/navigate_to_pose.xml",
+     "what": "30행 `<IsTTCBelowThreshold threshold=\"2.0\" cooldown=\"1.0\" only_dynamic=\"true\"/>` → `threshold=\"2.65\"` (= safety_gate ttc_critical 2.15 + 명세 4.4 재계획 예산 0.5, sequences.md:213 의 τ_warn 유도와 같은 항), `min_ttc=\"{min_ttc}\"` 출력 포트 배선 추가(블랙보드 관측용). cooldown 1.0 / only_dynamic true 유지. 머리 주석 3-11행을 갱신: 이제 전역 코스트맵이 계획 충돌 트랙을 보므로 이 가지가 부른 재계획은 자기를 부른 장애물을 본다는 근거와 admit_ttc 3.5 → 2.65 의 0.85 s 선행 관계를 적는다.",
+     "new_file": false
+    },
+    {
+     "file": "/tmp/claude-0/-home-CAPYI/c8bfdadc-8698-4d09-aac1-e3c1224c9abc/scratchpad/wt-integ/src/amr_navigation/behavior_trees/navigate_through_poses.xml",
+     "what": "같은 IsTTCBelowThreshold 임계 2.0 → 2.65 및 min_ttc 배선. 구조(ForceSuccess/Sequence, RemovePassedGoals 순서)는 test_behavior_trees.py:89-97 이 고정하므로 손대지 않는다.",
+     "new_file": false
+    },
+    {
+     "file": "/tmp/claude-0/-home-CAPYI/c8bfdadc-8698-4d09-aac1-e3c1224c9abc/scratchpad/wt-integ/src/amr_bringup/amr_bringup/launch_utils.py",
+     "what": "108행 `DeclareLaunchArgument('nav_ttc_bt', default_value='false')` → `'auto'` ('true' 가 아니라 'auto' — amr_behavior 플러그인이 없는 환경에서 자동으로 _no_ttc 판으로 떨어지게). Options.nav_ttc_bt 기본값(144행)과 read_options 의 fallback(168행)도 'auto'. 94-107행 주석을 다시 쓴다: 옛 근거(h8a 시행 0, TTC 재계획이 자기를 부른 장애물을 못 봄, 1.913 m 이탈)를 **역사로 보존**하고, 그 전제(전역 코스트맵이 그 동적 트랙을 뺀다)가 admit_ttc 로 더 이상 성립하지 않게 된 이유와 새 임계 사다리 3.5 → 2.65 → 2.15 를 적는다. 이 한 줄이 multi_robot.launch.py:22 의 현재 거짓 문서('기본 auto')를 참으로 만든다.",
+     "new_file": false
+    },
+    {
+     "file": "/tmp/claude-0/-home-CAPYI/c8bfdadc-8698-4d09-aac1-e3c1224c9abc/scratchpad/wt-integ/src/amr_bringup/test/test_launch.py",
+     "what": "253행 `assert lu.stack_extra_arguments('navigation', opts) == {'use_ttc_bt': 'false'}` → `{'use_ttc_bt': 'auto'}`. 251-252행 주석을 갱신 — 옛 근거('전역이 일부러 빼는 트랙에만 반응해서 자기를 부른 장애물을 못 본다')는 admit_ttc 재진입으로 무효가 되었고, 지금은 admit_ttc(3.5) > BT 임계(2.65) 순서가 그 결함을 막는다는 사실을 인용한다. 이 시험이 깨지는 유일한 기존 계약이다.",
+     "new_file": false
+    },
+    {
+     "file": "/tmp/claude-0/-home-CAPYI/c8bfdadc-8698-4d09-aac1-e3c1224c9abc/scratchpad/wt-integ/src/amr_navigation/test/test_costmap_config.py",
+     "what": "기존 test_scan_filter_node_feeds_costmaps(118-128행)은 손대지 않는다 (exclude_dynamic True / dynamic_radius ≥ 0.30 그대로 통과). 새 시험 `test_dynamic_readmission_ladder(params)` 추가: ① `f['admit_ttc'] > 0.0` (재진입이 켜져 있다), ② navigate_to_pose.xml 의 IsTTCBelowThreshold threshold 를 정규식으로 뽑아 `f['admit_ttc'] > thr` (마킹이 트리거보다 앞선다), ③ `thr > 2.15` (safety_gate ttc_critical 위 = 재계획이 속도 상한보다 먼저 끝난다), ④ `f['admit_ttc'] <= 5.0` (추적기 ttc.horizon 안), ⑤ `f['admit_release_s'] * 1.0 >= f['dynamic_radius']` (명세 1.0 m/s 트랙이 유지 창 동안 제외 원판을 벗어나 유령 셀이 남지 않는다). 기존 test_global_sensor_marks_get_narrow_inflation(141-155행)의 plugins 순서·2단 팽창 계약은 그대로 — 새 레이어를 넣지 않으므로 깨지지 않는다.",
+     "new_file": false
+    },
+    {
+     "file": "/tmp/claude-0/-home-CAPYI/c8bfdadc-8698-4d09-aac1-e3c1224c9abc/scratchpad/wt-integ/tests/integration/test_08_dynamic_obstacles.py",
+     "what": "3단계 중 마지막에만 적용한다 (아래 thrash_argument 의 측정 순서 참조). ① 414-429행: 첫 계획 기준 devs 와 **나란히** 최신 계획 기준 devs_current 를 본 루프에서 계산한다 (_dump_pose_plan:304-315 의 dev_current_m 계산을 함수로 빼서 재사용 — 로직 신규 작성 아님). ② 479-481행 판정의 `max path deviation` 과 `return to path` 기준을 devs_current 로 바꾼다 (임계 1.0 m / 5.0 s 불변). ③ 신설 판정 3개: `max detour from first plan` = 종전 dev_first 최댓값 ≤ DETOUR_MAX(초기값 1.5 m, 1–2 단계 측정으로 확정), `plan rate` = 시행별 /plan 발행수 ÷ 시행 시간 ≤ PLAN_RATE_MAX 0.5 Hz (기준선 0.14 Hz, 절제 실험 2.67 Hz 사이), `dynamic replans` = admitted_tracks 등재 뒤 1 s 안에 /plan 이 바뀐 시행 수 ≥ MIN_REPLAN_TRIALS 2 (명세 4.7 재계획이 실제로 일어났음을 양성으로 증명 — 이게 없으면 판정 완화가 백지수표가 된다). ④ COLUMNS 에 max_deviation_current_m, detour_first_m, n_plans, plan_rate_hz, admitted_s 열 추가. ⑤ admitted_tracks 구독 추가 (probe 한 줄).",
+     "new_file": false
+    },
+    {
+     "file": "/tmp/claude-0/-home-CAPYI/c8bfdadc-8698-4d09-aac1-e3c1224c9abc/scratchpad/wt-integ/docs/algorithms/costmap.md",
+     "what": "§5.2(동적 제외) 와 §6.3(절제 실험 288-292행) 에 재진입 규칙을 추가 서술. 절제 실험 수치(이탈 중앙값 0.12→0.61, 최대 1.21, 복귀 13/14→2/10, /plan 0.14→2.67 Hz)는 '무조건 제외 해제 + 무조건 1 Hz 재계획' 의 결과였고, 이 설계는 두 축을 모두 조건부로 유지한다는 대조를 명시. 근거 사슬(launch_utils.py 주석 ↔ 이 문서 ↔ test_launch.py 주석)이 끊기지 않게 세 곳을 같은 커밋에서 갱신한다.",
+     "new_file": false
+    }
+   ],
+   "invariant_a_argument": "불변식 A(안전 게이트 거부권은 한 방향)는 네 겹으로 유지된다. 각각 검증 가능하다.\n\n**1. 안전 경로의 코드·설정을 한 줄도 건드리지 않는다.** 변경 파일 목록에 amr_perception 이 없다. safety_node.cpp / safety_gate.cpp / safety_gate.hpp / config/robot_params.yaml 불변. E-stop 래치, sensor_stop, command_stale, 거리 존 상한, STOP 래치, 저상 물체 상한 v_fwd, ttc_critical 2.15, reaction_latency 0.15 전부 그대로다. 상위(계획기·BT)가 이들을 완화할 수 있게 만드는 새 토픽·서비스·파라미터가 생기지 않는다.\n\n**2. 이 설계가 만드는 정보 흐름은 단방향이고, 게이트를 우회하지 않는다.** 새 사슬은 tracked_obstacles → costmap_scan_filter_node → scan_costmap_static → 전역 코스트맵 → A* → /plan → FollowPath → controller → `cmd_vel_nav` 이다. `cmd_vel_nav` 는 종전과 똑같이 safety_gate 의 **입력**이고 출력 `cmd_vel` 은 게이트만 낸다. 즉 이 설계가 하는 일은 게이트에 들어가는 명령을 바꾸는 것뿐이며, 게이트가 그 명령을 거부·감속할 권한은 그대로다. 새 발행자가 `cmd_vel`·E-stop·zone·sensor_stop 어느 토픽에도 붙지 않는다. 유일한 신규 발행 토픽 `costmap_filter/admitted_tracks` 는 진단용이고 구독자는 시험 하네스뿐이다.\n\n**3. 변경 방향이 단조롭게 보수적이다.** 바뀌는 것은 '전역 코스트맵에서 무엇을 **지우는가**' 뿐이고, 지우는 양은 줄어든다. 재진입 후의 전역 코스트맵은 집합적으로 종전 전역 코스트맵의 **상위 집합**이다 — 셀 비용은 오르거나 같고, 절대 내려가지 않는다. 비용이 오르는 변경은 계획기에게 더 많은 금지 영역을 주므로 어떤 안전 판정도 완화할 수 없다. (반대 방향의 위험 — 재진입이 끝난 뒤 남는 유령 셀 — 은 비용이 필요 이상 높은 쪽이므로 역시 안전 쪽 오류다. 성능 위험이지 안전 위험이 아니다. risks 3 참조.)\n\n**4. 지역 계층과 안전 게이트의 입력이 바이트 단위로 불변임을 코드로 보장한다.** costmap_scan_filter_node::onScan 은 `out->ranges = core::denoiseRanges(...)` 로 지역 출력을 만든 뒤 `auto stat = make_unique<LaserScan>(*out); pub_->publish(std::move(out));` 로 **먼저 지역을 발행하고**, 제외는 복사본 `stat` 에만 적용한다. 재진입 판정은 `dynamicCenters()` 안에만 있고 이 함수는 `stat` 경로에서만 결과가 쓰인다. 따라서 `scan_costmap`(지역 코스트맵), `scan_filtered`(safety_node·추적기 입력), `camera/depth/points_filtered`(지역 depth, 애초에 이 노드를 거치지 않음)는 정의상 영향을 받을 수 없다. DWA 의 VO·TTC₀·횡단 양보·J_clear 와 safety_gate 의 전 판정이 같은 입력을 본다.\n\n**측정으로 확인할 것 (주장만으로 끝내지 않는다):** (a) `ros2 node info /amr_01/costmap_scan_filter_node` 의 발행 목록에 cmd_vel 계열이 없을 것. (b) 변경 전후 같은 시드 30 시행에서 stats_trialNN.csv 의 `gate_out_v_mean`·`yield_state`·`vo_rejected` 분포가 구분되지 않을 것 — 구분되면 지역/안전 계층이 의도치 않게 움직인 것이므로 즉시 되돌린다. (c) amr_perception 의 safety 단위시험 전체가 손대지 않은 채 통과할 것.",
+   "budget_argument": "**명세 4.4 의 계약 지표는 planner_server 의 `planning_time` 이다** (test_06_path_planning.py:58-62, :106, :151 이 성공한 쌍들의 **최댓값**을 500 ms 와 비교하고, 값이 없을 때만 왕복 벽시계로 대체한다). 이 설계가 그 값을 늘릴 기전이 없다.\n\n**계획 자체:** A* 코드·파라미터 불변 (max_planning_time 0.4 s, cost_weight 2.0). 전역 코스트맵에 셀이 늘면 자유 공간이 줄어 A* 가 확장하는 노드는 **감소**한다. 실측 여유: Gazebo 통합 최대 13.0 ms (performance.md:41), 서버 planning_time 최대 26.5 ms, 코어 A*+평활화 최대 41.52 ms — 500 ms 예산의 2.6 % 다. 5 배 늘어도 남는다.\n\n**코스트맵 신선도(`waitForCostmap()`):** planning_time 에 포함되는 유일한 비계산 항이다. 전역 obstacle_layer 의 expected_update_rate 0.3 s, global update_frequency 5.0 Hz, publish_frequency 1.0 Hz, 센서 발행 주기 10 Hz 전부 불변. 이 노드가 하는 일은 스캔 배열의 몇 개 원소를 +inf 로 바꿀지 말지뿐이므로 발행 시각·주기·지연이 변하지 않는다. 오히려 +inf 빔이 줄어 ObstacleLayer 가 투영하는 점이 270 빔 중 수십 개 늘지만, 그 비용은 5 Hz 코스트맵 스레드(200 ms 주기) 안이고 planning_time 밖이다.\n\n**필터 노드 자체의 추가 비용:** 트랙당 부동소수 비교 2회 + 해시맵 조회 1회, 스캔당 트랙 수는 한 자릿수. 10 Hz 콜백에서 마이크로초 단위. 발행 메시지는 트랙 몇 개짜리 배열 10 Hz.\n\n**종단 지연(별도 목표 ≤ 700 ms, global-planning.md:472 / sequences.md:214):** 재계획 트리거가 울린 뒤 새 경로가 실행되기까지 = BT tick 10 ms + ComputePathToPose 13 ms(실측 최대; 마감 400 ms) + FollowPath 가 새 {path} 를 받는 다음 tick 10 ms = **전형 33 ms, 최악 420 ms**. 둘 다 500 ms 안이다.\n\n**마킹이 트리거보다 먼저 도착하는가 (이게 진짜 예산이다):** 정찰이 지적한 경합 — 'BT 가 코스트맵에 비용이 반영되기 전 격자에 대고 계획하면 옛 격자 기준 경로가 나오고 cooldown 1.0 s 가 교정을 막는다' — 은 임계 사다리의 간격으로 푼다. 재진입 임계 3.5 s 와 BT 트리거 임계 2.65 s 의 차 = **0.85 s**. 그 사이에 완료해야 하는 파이프라인은 추적기 발행 주기 100 ms + 다음 스캔까지 100 ms + 전역 코스트맵 갱신 200 ms = **최악 400 ms**(전형 200 ms). 여유율 2.1 배. TTC 는 접근 기하에서 대략 1 s/s 로 줄어들므로 0.85 s 의 TTC 감소는 0.85 s 의 벽시계이고, 비스듬한 접근에서는 더 느리게 줄어 여유가 커진다.\n\n**제동 여유와의 정합:** sequences.md:213 의 유도 τ_warn 3.0 = τ_crit 2.15 + 재계획 0.5 + 추적 3주기 0.35 를 그대로 따른다. BT 임계 2.65 = 2.15 + 0.5 이므로 재계획이 예산을 다 써도(500 ms) safety_gate 의 τ_crit 2.15 s 도달 전에 새 경로가 실행된다. 재진입 임계 3.5 = 2.65 + 0.85 은 그 유도의 '추적 3주기 0.35' 를 코스트맵 신선도 200 ms 까지 포함해 0.85 로 넓힌 것이다. 그리고 3.5 s < 추적기 ttc.horizon 5.0 s 이므로 TTC 가 그 값을 실제로 낼 수 있다.\n\n**측정 항목:** (1) test_06 plans.csv 의 plan_ms 최댓값 ≤ 500 ms — 06 은 use_perception=False 라 이 설계의 영향을 받지 않는 대조군이므로 변화가 있으면 그것 자체가 이상 신호다. (2) 08 에서 ComputePathToPose 결과의 planning_time 최댓값 ≤ 500 ms. (3) t_a(admitted_tracks 등재) → t_m(전역 코스트맵 셀 LETHAL) 지연의 p95 ≤ 400 ms, 그리고 t_p(/plan 교체) − t_a ≤ 850 ms 인 비율. (3)이 깨지면 admit_ttc 를 올리는 것이 정답이고 BT 임계를 내리는 것은 오답이다 (τ_crit 여유를 먹으므로).",
+   "thrash_argument": "**exclude_dynamic 이 막으려던 문제의 정확한 기전** (costmap.md:190-195, costmap_scan_filter_node.hpp:9-13): 전역 코스트맵이 지나가는 사람을 찍으면 재계획마다 그 순간 위치를 돌아가는 경로가 나오고, 사람이 움직여 다음 재계획에서 경로가 반대쪽으로 뒤집힌다. 절제 실험 수치: /plan 0.14 → 2.67 Hz, 실행당 계획 26–52개, 이탈 중앙값 0.12 → 0.61 m·최대 1.21 m, 복귀 5 s 이내 13/14 → 2/10(최대 11.1 s).\n\n이 기전에는 **두 개의 축**이 필요하다 — (i) 모든 동적 트랙이 전역에 들어갈 것, (ii) 재계획이 무조건 주기적으로 일어날 것. 절제 실험은 두 축을 동시에 뒤집었다(exclude_dynamic:false + 1 Hz 무조건 재계획). 이 설계는 **두 축 모두 조건부로 유지**한다.\n\n**축 (i) — 재진입 대상이 '지나가는 사람' 을 구조적으로 배제한다.** 이것이 설계의 중심이다. 추적기 TTC 는 장애물을 등속 CV + 공분산 전파로, 로봇을 **현재 전역 plan 추종**으로 예측해 g(τ) 의 첫 영점을 찾는다. 따라서 '내가 도착하기 전에 지나가 버릴 사람' 은 TTC = ∞ 이고 **종전대로 계속 제외된다**. 전역 경로를 뒤집을 이유가 없는 트랙은 애초에 전역에 들어오지 못한다. 재진입되는 것은 '양쪽 미래를 다 고려해도 내 경로 위에서 만나는' 트랙뿐이고, 그런 트랙에 대해 경로를 바꾸는 것은 요동이 아니라 명세가 요구하는 회피다. — 기록된 로그로 이미 정량화했다: `logs/{N8z,N8y,N8x,Q8d,Q8c,P2c,Y8f,Y8e,S8d}/08_dynamic_obstacles/avoidance.csv` 9 런 270 시행에서 min TTC ≤ 3.5 s 는 **시행당 3–8/30 (10–27 %)** 이고, 임계를 2.5 ↔ 4.0 으로 흔들어도 개수 변화가 ±3 시행뿐이다. 분포가 이봉형(조우가 있거나 없거나)이라 admit_ttc 는 '잘못 돌리면 전부 들어오는' 종류의 손잡이가 아니다.\n\n**축 (ii) — 재계획은 여전히 조건부이고, 이 설계가 그 조건을 하나도 완화하지 않는다.** 1 Hz 가지는 그대로 `Fallback(ReactiveSequence(Inverter(GlobalUpdatedGoal), IsPathValid) → RecoveryNode(ComputePathToPose))` 이다. RateController hz 도 1.0 그대로 둔다 (test_bt_replan.cpp:181-183 이 3.25 s 안 IsPathValid 3–4 회로 주기를 고정하고 있어 hz 를 올리면 깨진다 — 올리지 않는다). test_behavior_trees.py:55-67 의 '1 Hz 가지가 무조건 재계획이면 실패' 계약, :75-97 의 PipelineSequence 형제·비반응형 조상 계약, test_bt_replan.cpp:169-209 의 실제 tick 계수 전부 손대지 않는다. 되살리는 TTC 가지는 이미 그 시험들이 검사하는 구조 그대로이고(ForceSuccess/Sequence, PipelineSequence 형제, RateController 앞), cooldown 1.0 s 가 초당 1회로 상한을 건다.\n\n**추가로, 재진입은 자기 종료적이다.** 재계획으로 새 경로가 그 트랙을 비껴가면 추적기가 **새 plan** 기준으로 TTC 를 다시 계산해 ∞ 가 되고, admit_release_s 1.0 s 뒤 그 트랙은 다시 전역에서 빠진다. 즉 '한 번 들어온 장애물이 이후 모든 경로를 차례로 무효화하는' 절제 실험의 되먹임 고리가 없다. 절제 실험에는 이 되먹임 차단이 없었다.\n\n**상한 계산:** 조우 하나당 재진입 창은 TTC 3.5 s 진입부터 회피 후 해제까지 대략 1–3 s. 그 안에서 TTC 가지 ≤ 1회/s(cooldown), 1 Hz 가지 ≤ 1회/s → **조우당 재계획 ≤ 2–3회**, 조우는 30 시행 중 3–8회 → 실행당 추가 계획 ≤ 약 10–24회가 이론 최악이고, 기전상 대부분의 조우는 첫 재계획으로 해소되므로 실효값은 조우당 1회에 가깝다. 절제 실험의 실행당 26–52개(/plan 2.67 Hz)와 자릿수가 다르다.\n\n**이것을 주장이 아니라 계약으로 못 박는다.** test_08 에 `plan rate ≤ 0.5 Hz`(시행별 /plan 발행수 ÷ 시행 시간) 판정을 신설한다. 기준선 0.14 Hz, 절제 실험 2.67 Hz 사이에 자른 값이며, 요동이 재발하면 이탈·복귀가 아니라 **이 항목이 먼저 잡는다**. 지금 저장소에는 전역 경로 요동을 직접 재는 시험이 하나도 없다 — 이 설계는 요동 위험을 도입하는 대신 요동을 처음으로 측정 가능한 계약으로 만든다.\n\n**불변식 B — test_costmap_config.py:128 이 인코딩한 트레이드오프와 하네스 기준선 문제.** 128행(`exclude_dynamic == True and dynamic_radius >= 0.30`)은 **깨지지 않는다**. 이 설계는 exclude_dynamic 을 True 로, dynamic_radius 를 0.55 로 유지한 채 제외 **대상 집합만** 좁힌다. test_ros_plugins.cpp:428 도 깨지지 않는다 — 그 시험은 파라미터 없이 노드를 만들고 admit_ttc 기본값이 0.0(=끔)이라 종전 동작이 그대로 나온다. 실제로 깨지는 기존 계약은 **test_launch.py:253 한 줄뿐**이고, 그 주석이 인용한 근거('전역이 일부러 빼는 트랙에만 반응해서 자기를 부른 장애물을 못 본다')는 admit_ttc 로 전제가 사라지므로 주석과 함께 갱신한다.\n\n깨야 하는 나머지 하나는 test_08 의 이탈 기준선이다. 그 트레이드오프를 먼저 밝힌다: **test_08:414 는 시행의 첫 계획을 영구 기준선으로 삼아 모든 이후 표본의 수직거리를 잰다.** 이 정의 아래에서는 '재계획해서 회피했다' 와 '이탈 1 m 이내' 가 논리적으로 양립할 수 없다 — 재계획은 정의상 새 경로를 채택하는 것이고, 하네스는 그것을 이탈로 집계한다. 명세 4.7 이 같은 절에서 둘 다 요구하므로, 자기모순이 아닌 유일한 독해는 '이탈' 이 **실행 중인 경로 기준 추종 오차**라는 것이다(DWA 의 max_path_offset 0.9 / hard 0.95 가 이미 그 의미로 예산을 잡고 있다).\n\n이 기준선 정정이 기존 측정을 느슨하게 만들지 않는다는 것을 **기록된 자료로 확인했다**: `logs/*/08_dynamic_obstacles/pose_trial*.csv` 30개에서 dev_first 와 dev_current 차의 **중앙값은 0.000** 이고(재계획이 없으면 두 열이 같다), 차가 큰 것은 전부 n_plans ≥ 2 인 시행이다 — Y8c/t06 dev_first 1.160 vs dev_current 0.059, N8a/t17 1.100 vs 0.136, Q8c/t28 1.184 vs 0.539. 즉 **지금도** 하네스는 계획 교체를 회피 품질과 무관하게 실패로 집계하고 있고(Q8c 의 런 최대 이탈 1.184 m 는 이 기준선 artifact 다), 기준선을 고쳐도 진짜 이탈(Q8a/t06 dev_first = dev_current = 1.889 m, n_plans=1)은 그대로 잡힌다.\n\n백지수표가 되지 않도록 판정을 **빼는 대신 셋을 더한다**: 첫 계획 대비 최대 우회 ≤ DETOUR_MAX(1.5 m, 1–2 단계 측정 후 확정), plan rate ≤ 0.5 Hz, 그리고 동적 유발 재계획이 실제로 일어난 시행 ≥ 2/30(명세 4.7 을 양성으로 증명). 정정 후의 판정 집합은 정정 전보다 **항목이 많고 요동에 대해 더 엄격**하다.\n\n**불변식 C — 한 번에 하나씩, 각각 측정.** 0단계(빌드 없음, 지금 가능): 기록된 tracks/pose/avoidance CSV 로 admit_ttc 후보값별 발화 시행 수와 dev_first/dev_current 격차를 확정한다(위 수치가 그 첫 결과다). 1단계: admit_ttc 3.5 만 켜고 nav_ttc_bt 는 false 유지 — 재진입 빈도, 전역 코스트맵의 유령 셀 지속시간, /plan 발행률, 08 접촉·이탈을 잰다. 이 단계는 BT 를 건드리지 않으므로 재계획 요동 위험이 원리적으로 없고 '재진입 자체가 무엇을 바꾸는가' 만 분리해서 본다. 2단계: nav_ttc_bt='auto' + BT 임계 2.65 — 재계획 횟수, planning_time, t_a→t_m→t_p 지연, dev_current/dev_first 를 잰다. 3단계: 1–2단계 수치로 DETOUR_MAX 를 확정한 뒤 test_08 판정을 정정한다. 각 단계는 측정 동결이 풀린 뒤 별도 커밋·별도 30×3 실행이다.",
+   "new_contracts": [
+    "test_costmap_config.py 신설 test_dynamic_readmission_ladder: admit_ttc > 0 (재진입 활성), admit_ttc > navigate_to_pose.xml 의 IsTTCBelowThreshold threshold (마킹이 트리거보다 앞선다), threshold > 2.15 (safety_gate ttc_critical 위 — 재계획이 속도 상한보다 먼저 끝난다), admit_ttc <= 5.0 (추적기 ttc.horizon 안), admit_release_s * 1.0 >= dynamic_radius (명세 1.0 m/s 트랙이 유지 창 동안 제외 원판을 벗어나 유령 셀이 남지 않는다)",
+    "test_08 신설 판정 'plan rate': 시행별 /plan 발행수 ÷ 시행 시간 <= 0.5 Hz. 전역 경로 요동을 직접 재는 저장소 최초의 계약 (기준선 실측 0.14 Hz, 절제 실험 2.67 Hz 사이에 자름)",
+    "test_08 신설 판정 'max detour from first plan': 종전 dev_first_m 최댓값 <= DETOUR_MAX (초기 1.5 m, 1–2 단계 측정으로 확정). 기준선을 dev_current 로 옮기면서 전역 우회 크기를 대신 묶는 보상 계약",
+    "test_08 신설 판정 'dynamic replans': admitted_tracks 등재 뒤 1 s 안에 /plan 이 바뀐 시행 >= 2/30. 명세 4.7 '재계획하여 회피' 가 실제로 일어났음을 양성으로 증명 — 이것이 없으면 이탈 기준선 정정이 백지수표가 된다",
+    "새 진단 토픽 계약 /amr_01/costmap_filter/admitted_tracks (amr_msgs/TrackedObstacleArray, 10 Hz, reliable depth 5): 전역 코스트맵이 지금 보고 있는 동적 트랙의 집합. 정찰이 지적한 '시험 중에 전역이 무엇을 못 보고 있는지 관측할 수단이 없다' 를 메운다. 새 메시지 타입이 아니라 기존 타입 재사용"
+   ],
+   "risks": [
+    "유령 셀 (가장 큰 기술 위험): 재진입 해제 시 그 방위의 빔이 다시 +inf 가 되는데 전역 obstacle_layer 는 inf_is_valid False 라 마킹도 소거도 안 된다 → 직전에 찍힌 셀이 남는다. 지속시간 상한 = dynamic_radius / v (제거 원판이 그 셀을 벗어나는 시간). admit_release_s 1.0 s 동안은 빔이 살아 있어 능동 소거되므로 v >= 0.55 m/s 트랙은 유령 0 이고, 명세가 명시한 1.0 m/s 는 여유 2 배다. 위험 구간은 v 0.2–0.55 m/s 로, 최악 (0.55 − v)/v = 최대 1.75 s. 측정: admitted_tracks 해제 시각 이후 그 위치의 전역 코스트맵 셀이 FREE 로 돌아오기까지의 시간 p95. 초과하면 admit_release_s 를 올린다(0.55/0.2 = 2.75 s 면 원리적으로 0). 주의 — 이 실패 모드는 이 설계가 만드는 것이 아니라 **지금도 존재한다**(느리게 서 있다 가속하는 사람). 재진입은 발생 빈도를 늘릴 뿐이고, 처음으로 관측 수단을 준다.",
+    "추적기 plan 구독이 끊기면 TTC 의 의미가 바뀐다: plan_received 가 plan_timeout 5.0 s 를 넘으면 RobotMotionModel 이 경로 추종 대신 현재 방향 직선으로 떨어지고(로봇이 경로에서 1.0 m 넘게 벗어나도 마찬가지), 그러면 '경로와 만나는가' 가 아니라 '현재 방향과 만나는가' 가 된다 → 지나가는 사람도 재진입될 수 있고 그것이 바로 요동 경로다. 측정: admitted_tracks 발행 시점의 plan 신선도를 같이 기록하고, plan 이 stale 인 동안의 재진입 비율을 본다. 완화: 필요하면 plan stale 시 재진입을 끄는 조건을 추적기가 아니라 필터 노드에 둔다(필터 노드는 plan 을 구독하지 않으므로 현재로선 이 상태를 모른다 — 알려면 plan 구독 1개 추가가 필요하고, 그것이 이 설계에서 유일하게 검토했다 기각한 확장이다).",
+    "DETOUR_MAX 1.5 m 는 아직 측정되지 않은 숫자다. costmap.md:157-158 이 재계획 경로가 횡단 actor 를 0.83–1.30 m 돌아갔다고 기록하고, 기록된 pose CSV 의 재계획 시행 dev_first 최댓값은 1.184 m 다. 1–2 단계 측정 전에 이 값을 계약으로 고정하면 안 된다. 3단계에서 실측 분포의 p100 + 여유로 확정한다.",
+    "좁은 통로에서 A* 가 우회 경로를 못 찾으면 ForceSuccess 가 실패를 삼키고 경로가 그대로 유지된다 — 오작동은 아니고 오늘의 지역 회피로 되돌아가는 것이지만, 그 통로에서는 4.7 의 '재계획' 이 증명되지 않는다. 측정: ComputePathToPose 실패 횟수와 그때의 통로 폭. 신설 판정 'dynamic replans >= 2/30' 이 이 상황을 드러낸다(통과 못 하면 통로 기하 문제라는 뜻).",
+    "깊이 경로의 재진입 면적: TrackedObstacle 에 반경 필드가 없어 제거는 z 를 보지 않는 반경 0.55 m 무한 높이 원기둥이다. 재진입하면 LiDAR 평면 위·아래의 몸통 점까지 전역에 들어와 마킹 면적이 스캔만일 때보다 넓어진다 → 우회량이 예상보다 커질 수 있다. 측정: 재진입 시행에서 전역 코스트맵의 새 LETHAL 셀 수를 스캔 기여/깊이 기여로 나눠 센다. 완화: 필요하면 깊이 경로는 재진입에서 빼고 스캔만 재진입시킨다(dynamicCenters 에 경로 구분 인자 하나 추가).",
+    "nav_ttc_bt 를 'auto' 로 되돌리면 bt_navigator 가 amr_is_ttc_below_threshold_condition_bt_node 를 추가로 로드한다. 08 실측 h8a 가 기록한 과거 실패(재계획 1회 → 1.913 m 이탈)는 전역이 그 장애물을 못 보던 조건에서 난 것이고 그 조건이 사라졌다는 것이 이 설계의 전제다. 전제가 틀릴 경우(예: t_a→t_m 지연이 0.85 s 를 넘어 계획이 여전히 옛 격자를 봄) 같은 실패가 재현된다. 그래서 2단계는 1단계와 분리해 측정하고, t_p − t_a 분포를 판정 전에 먼저 본다.",
+    "admit_ttc 3.5 s 는 avoidance.csv 의 하네스 TTC(ttc_circle, 지면 진실·상대속도 기반, 경로 비고려)로 빈도를 추정했다. 실제 발화는 추적기 TTC(경로 추종·공분산 포함)로 결정되므로 값이 다르다 — 추적기 TTC 는 경로를 보므로 일반적으로 더 보수적(발화가 적다)일 것으로 예상하지만 확인된 바 없다. 1단계 측정의 첫 확인 항목이 두 TTC 의 대응이다."
+   ],
+   "contracts_touched": [
+    "src/amr_navigation/test/test_costmap_config.py:128 (exclude_dynamic True, dynamic_radius >= 0.30) — 유지. exclude_dynamic 은 True 로, dynamic_radius 는 0.55 로 그대로 두고 제외 대상 집합만 좁히므로 깨지지 않는다",
+    "src/amr_navigation/test/test_costmap_config.py:92-93, :103-105, :124-127 (전역/지역 토픽 이름 분기) — 유지. 토픽 구조 불변",
+    "src/amr_navigation/test/test_ros_plugins.cpp:334, :428-433 (노드 기본 파라미터로 동적 트랙 빔 +inf) — 유지. admit_ttc 기본값 0.0 = 끔이라 파라미터 없이 생성된 노드는 종전과 동일하게 동작한다",
+    "src/amr_navigation/test/test_scan_denoise.cpp:160 (core::excludeDiscsFromScan 계약) — 유지. core 함수 미변경",
+    "src/amr_navigation/test/test_costmap_marking.cpp:309 — 유지. 두 코스트맵에 같은 내용을 먹이는 시험이라 제외 여부에 중립",
+    "src/amr_navigation/test/test_costmap_config.py:141-155 (전역 plugins 순서·2단 팽창, plugins[-1] == 마지막 팽창) — 유지. 새 Layer/Filter 를 넣지 않는다",
+    "src/amr_navigation/test/test_behavior_trees.py:55-67 (1 Hz 가지가 무조건 재계획이면 실패), :75-97 (RateController 는 PipelineSequence 형제, 비반응형 조상), :100-108 (NODE_LIBS, _no_ttc 판에 TTC 없음) — 유지. BT 구조·hz·_no_ttc 판 모두 불변, 속성값만 바뀐다",
+    "src/amr_navigation/test/test_bt_replan.cpp:169-209 (실제 tick 재계획 계수, IsPathValid 3–4회/3.25 s, FollowPath 선점 0) — 유지. RateController hz 를 1.0 으로 유지하기 때문. Stub 이 TTC 조건 결과를 직접 정하므로 XML 의 threshold 값 변경과 무관",
+    "src/amr_navigation/test/test_navigation_launch.py:71-89 (use_ttc_bt false/true/auto 선택) — 유지. 명시 인자로 시험하므로 bringup 기본값 변경의 영향을 받지 않는다",
+    "src/amr_bringup/test/test_launch.py:253 (stack_extra_arguments('navigation') == {'use_ttc_bt': 'false'}) — **깨짐, 수정 필요**. 이 설계가 깨는 유일한 기존 단위 계약이다. 251-252행 주석이 인용한 근거('전역이 일부러 빼는 동적 트랙에만 반응해 자기를 부른 장애물을 못 본다')가 admit_ttc 재진입으로 전제를 잃으므로 주석과 함께 갱신한다",
+    "tests/integration/test_08_dynamic_obstacles.py:414 (시행 첫 계획을 영구 이탈 기준선으로 고정), :479 (max path deviation <= 1.0 m), :480-481 (복귀 <= 5 s) — **정정 필요**. 기준선을 dev_current(실행 중인 계획)로 옮긴다. 인코딩된 트레이드오프와 정정 근거, 보상 계약 셋은 thrash_argument 에 적었다",
+    "tests/integration/test_06_path_planning.py:151-152 (plan_ms 최댓값 <= 500 ms) — 유지. 06 은 use_perception=False 로 떠 추적기가 없고 static 출력이 원본과 같으므로 이 설계의 영향을 받지 않는 대조군",
+    "src/amr_navigation/config/nav2_params.yaml:163 DWA dynamic_speed_threshold 0.2 ↔ :437 dynamic_min_speed 0.2 결합 — 유지. 두 값 다 건드리지 않는다 (정찰이 지적한 대로 이 결합을 지키는 시험은 없다)"
+   ]
+  },
+  "refuted_by_majority": true,
+  "attacks_that_landed": [
+   {
+    "claim_attacked": "(참고 — 심사관들이 '세 설계 모두 놓친 P0' 로 든 nav2_params.yaml:587 pedestrian_lane_filter 가 :531 filters 에 없다는 지적)",
+    "attack": "이것은 결함이 아니다. 커밋 2f28931 이 그 배제를 명시적 결정으로 기록해 두었다: '파라미터 고정 대조에서 안전 기여가 측정되지 않아(N8 vs i8: 어느 문턱에서도 차이 없음, 이탈·복귀·소요는 오히려 나쁨) nav2_params.yaml 의 filters 는 keepout_filter 만 둔다.' 따라서 이 설계를 P0 누락으로 공격할 수는 없다. 다만 nav2_params.yaml 의 pedestrian_lane_filter 주석은 여전히 '노출 94 % → 51 %' 같은 기대 효과를 현재형으로 적고 비활성 사유를 '마스크 파일이 없으면' 으로만 설명해, 의도적 배제라는 사실과 어긋난다 — 별도의 문서 결함이다.",
+    "evidence": "git show 2f28931 커밋 메시지 본문; src/amr_navigation/config/nav2_params.yaml:531 `filters: [\"keepout_filter\"]` 와 :587 pedestrian_lane_filter 정의 블록의 주석.",
+    "survives": false
+   },
+   {
+    "claim_attacked": "심사관 지적 중 \"[저장소 자체 — 세 설계 모두 놓침] nav2_params.yaml:587 pedestrian_lane_filter 가 :531 filters 목록에 없다 … 이 누락의 증상이 정확히 지금의 P0 이다\"",
+    "attack": "이 지적은 성립하지 않는다 — 누락은 버그가 아니라 측정 결과에 따른 의도적 비활성이고, 커밋 메시지에 그렇게 적혀 있다. 따라서 '한 줄 추가' 는 P0 의 답이 아니다. (다만 :587-598 의 주석이 기대 효과 94 %→51 % 등을 여전히 현재형으로 적어 두어 오독을 유발하고, 어떤 시험도 filters 목록을 읽지 않아 되살아나거나 사라져도 잡히지 않는다 — 이건 별건의 문서·계약 결함이다.)",
+    "evidence": "커밋 2f28931 메시지: \"파라미터 고정 대조에서 안전 기여가 측정되지 않아(N8 vs i8: 어느 문턱에서도 차이 없음, 이탈·복귀·소요는 오히려 나쁨) nav2_params.yaml 의 filters 는 keepout_filter 만 둔다.\" / src/amr_navigation/config/nav2_params.yaml:531 `filters: [\"keepout_filter\"]`, :587 pedestrian_lane_filter 정의. src/amr_navigation/test/test_costmap_config.py:59-68 `_sources()` 는 `plugins` 만 훑는다(= filters 는 무계약).",
+    "survives": false
+   },
+   {
+    "claim_attacked": "불변식 A 논증 4: \"지역 계층과 안전 게이트의 입력이 바이트 단위로 불변임을 코드로 보장한다\" / 불변식 B: \"test_costmap_config.py:128 은 깨지지 않는다\", \"test_ros_plugins.cpp:428 도 깨지지 않는다\"",
+    "attack": "이 세 주장은 반증에 실패했다 — 코드에서 그대로 확인된다. onScan 은 denoise 결과로 지역 출력을 먼저 발행하고 복사본 stat 에만 제외를 적용하며, camera/depth/points_filtered 는 이 노드를 거치지 않는다. exclude_dynamic/dynamic_radius 는 그대로이고, admit_ttc 기본값 0.0 이면 test_ros_plugins 의 무파라미터 노드는 종전 동작을 낸다. (다만 nav2_params.yaml 에 admit_ttc: 3.5 가 들어가므로 배포에서는 켜져 있고, 위 공격 1·3·5 는 배포 경로에 대한 것이다.)",
+    "evidence": "src/amr_navigation/src/nodes/costmap_scan_filter_node.cpp:130-133 (`out->ranges = core::denoiseRanges(...); auto stat = make_unique<LaserScan>(*out); pub_->publish(std::move(out));`) → :147 excludeDiscsFromScan 은 stat 에만. :153-201 onCloud 는 points_static 만 발행. src/amr_navigation/test/test_costmap_config.py:118-128 `assert f['exclude_dynamic'] and f['dynamic_radius'] >= 0.30`. src/amr_navigation/config/nav2_params.yaml:436-438 exclude_dynamic True / dynamic_radius 0.55.",
+    "survives": false
+   }
+  ],
+  "required_fixes": [
+   "게이트가 읽는 TTC 를 실제로 plan 기준으로 만들고 그것을 측정으로 증명하라. 지금은 obstacle_tracker_node.cpp:288 + perception.yaml:121(plan_timeout 5.0 s) 때문에 시행의 약 70 % 구간에서 직선/정지 모델이다. 최소한 (a) 모든 재진입 판정 시점의 plan 나이를 로그로 남기고, (b) plan 이 만료된 동안에는 재진입을 금지해야 한다. (b) 를 하려면 '이 TTC 가 경로 모델로 계산됐는가' 를 트랙마다 알아야 하므로 TrackedObstacle 에 필드가 하나 늘고, 설계가 내세운 '새 메시지 타입 0 / 기존 cpp·hpp 한 쌍' 범위가 깨진다.",
+   "정지 모델(ttc.cpp:83-85) 하의 재진입을 명시적으로 배제하라. 양보로 멈춘 로봇 옆을 지나가는 보행자가 유한 TTC 를 받아 전역에 찍히면, 1 Hz IsPathValid 가지가 h8a 병리를 그대로 재생한다. 이 경로는 nav_ttc_bt=false 인 1 단계에서도 살아 있으므로 '1 단계는 원리적으로 요동 위험이 없다' 는 서술을 철회해야 한다.",
+   "임계 사다리를 기하로 다시 유도하라. 08 기하에서 마킹이 경로에 닿는 것은 τ ≲ 1.25 s 이고 admit_ttc 3.5 · BT 2.65 는 장애물이 경로에서 1.9–2.5 m 떨어져 있을 때 발화한다. 현재 발자국 대신 예측 스윕을 찍든지, 아니면 '이 설계의 실효 임계는 1.25 s 이며 그 구간의 거동은 절제 실험과 동일하다' 를 인정하고 절제 실험 수치(이탈 중앙값 0.61 m, 복귀 2/10, /plan 2.67 Hz)를 예상 결과로 놓고 다시 논증하라.",
+   "min_ttc=\"{min_ttc}\" 배선을 빼거나 test_bt_replan.cpp:139 의 대역 매니페스트를 함께 고쳐라. 지금대로면 BT.CPP v3 가 navigate_to_pose.xml·navigate_through_poses.xml 의 트리 생성을 거부해 그 시험의 4 인스턴스 중 2 개가 실패한다. '깨지는 기존 계약은 test_launch.py:253 하나' 라는 회계를 정정하라.",
+   "불변식 A 논증 3(단조 상위 집합)을 폐기하거나 다시 쓰라. scan_denoise.cpp:81 의 +inf 와 전역 obstacle_layer 의 inf_is_valid: False 때문에 재진입은 레이트레이스 소거까지 되살려 비용을 내릴 수 있다 — 설계 자신이 admit_release_s 근거로 그 소거를 들고 있어 두 문장이 동시에 참일 수 없다.",
+   "이탈 기준선을 첫 계획에서 dev_current 로 옮기는 변경을 철회하거나, 먼저 현재 실패 중인 '복귀 ≤ 5 s'(N8z 8.74, Y8e 7.92, N8x 6.78, Q8d·S8d 5.30 — 9 런 중 5 런 미달)의 원인을 귀속하라. dev_current 기준에서는 재계획이 이탈을 정의상 0 으로 리셋해 열린 구간이 즉시 닫히므로, 이 판정이 반증 불가능해진다. DETOUR_MAX 1.5 m 는 명세 190 행 '경로 이탈 1m 이내' 를 직접 완화하므로 제안 자체를 거둬라.",
+   "admit_ttc 를 avoidance.csv 의 min_ttc_s 로 교정하지 마라. 그 열은 하네스가 지면 진실로 계산한 등속 원-원 TTC(metrics.ttc_circle)이고, 게이트가 읽는 추적기 값(공분산 팽창 g(τ) + plan/직선/정지 로봇 모델)과는 다른 양이다. 0 단계는 추적기가 실제로 발행한 time_to_collision 을 기록한 뒤에 다시 하라.",
+   "'dynamic replans ≥ 2/30' 를 경로 **기하** 변화로 정의하라. /plan 메시지 발행은 A* 가 같은 경로를 내도 일어나므로 지금 정의로는 무변경도 양성으로 집계된다 — 이탈 기준선 정정을 지탱하는 유일한 양성 증거가 공허하다.",
+   "dynamicCenters 의 재진입 상태 변경을 onScan 경로로 한정하라. 설계의 nullptr 는 발행만 막고 admitted_ 변경은 onCloud 에서도 일어나 유지 창 기준 시각이 깊이 콜백 stamp 로 덮인다. admitted_ 에 mutex_ 보호도 없다.",
+   "admitted_tracks 집합과 IsTTCBelowThreshold 의 트랙 집합이 다르다는 것을 설계에 반영하라(필터: 속도 ≥ 0.2 이고 (is_dynamic 또는 속도 ≥ 0.5) / BT: only_dynamic, 속도 하한 없음). '같은 TTC 값에 3 단 임계를 건다' 는 서술과 신설 시험의 사다리 검사가 이 불일치를 덮지 못한다.",
+   "재진입 빈도·임계 민감도를 추적기가 실제로 발행하는 TrackedObstacle.time_to_collision 으로 다시 재라. avoidance.csv 의 min_ttc_s 는 tests/integration/amr_itest/metrics.py:203 ttc_circle(직선 등속, 경로 없음, σ 팽창 없음, 지평 없음)이고 재진입 게이트 값이 아니다. 실측 대조에서 두 값은 게이트 TTC 가 유한·비영인 43 시행 중 44.2 % 에서 3.5 s 문턱 판정이 엇갈리고, 엇갈림이 '게이트는 재진입, 열은 미발화' 쪽으로 15:4 로 치우쳐 있다. 0 단계에서 먼저 /amr_01/perception/tracked_obstacles 의 time_to_collision 을 전 시행 기록하는 probe 를 넣고, admit_ttc 후보값별 실제 발화 시행 수·트랙 수를 다시 산출하라. 그 전에는 '재진입은 폭주하지 않는다' 는 주장이 근거 없다.",
+   "불변식 A 를 실제로 지키려면 재진입 판정에 쓰는 TTC 와 safety_gate 가 소비하는 TTC 의 되먹임을 끊어라. 현재 설계는 /plan → obstacle_tracker_node.cpp:162,:286-306 → time_to_collision → safety_node.cpp:399 → safety_gate.cpp:853-856 v_ttc → speed_limit 의 고리를 닫고, 설계 자신의 종료 조건('재계획하면 TTC 가 ∞ 가 된다')이 곧 그 v_ttc 항을 min() 에서 빼는 조건이다. 최소한 (a) 게이트 입력용 TTC 를 계획 무관 모델(현재 자세·속도 기준)로 별도 계산하거나, (b) safety_gate 가 새 plan 채택 뒤 로봇이 실제로 그 경로 위로 들어올 때까지 이전 min_ttc 를 유지(래치)하도록 하고, 그 변경이 안전 단위시험으로 고정돼야 한다.",
+   "깨지는 기존 계약 목록을 정정하라. min_ttc=\"{min_ttc}\" 배선은 test_bt_replan.cpp:139 의 스텁 매니페스트({threshold,cooldown,only_dynamic})에 없는 포트라 BT.CPP v3 가 :169 createTreeFromFile 에서 던지고, INSTANTIATE(:207-211)의 navigate_to_pose.xml·navigate_through_poses.xml 두 파라미터가 실패한다. 배선을 빼거나(권장), 넣으려면 그 스텁 매니페스트도 같은 커밋에서 갱신하고 '깨지는 계약 = test_launch.py:253 하나' 주장을 고쳐라.",
+   "1 Hz IsPathValid 가지가 재진입으로 동적 장애물 재계획기로 바뀐다는 사실을 설계에 명시하고 측정 대상에 넣어라. 재진입된 마킹 + sensor_inflation_layer(nav2_params.yaml:585-586, r_ins 0.2 → 253)는 Humble IsPathValid(LETHAL∨INSCRIBED)를 실패시키므로 재계획이 BT 임계 2.65 s 가 아니라 재진입 임계 3.5 s 에서 먼저 터진다. 1 단계(admit_ttc 만 켜고 nav_ttc_bt=false)가 '재계획 요동 위험이 원리적으로 없다' 는 주장은 이 경로 때문에 성립하지 않는다 — 1 단계에서 /plan 발행률과 IsPathValid 실패 횟수를 반드시 기록하라.",
+   "조우 중 전역 ClearEntireCostmap 경로를 위험 목록에 넣고 막아라. 0.60 m 통로에 재진입된 사람이 있으면 내접 팽창이 통로를 막아 A* 가 실패하고 navigate_to_pose.xml:42-45 의 RecoveryNode 가 전역 코스트맵 전체를 지운다(실제 정적·센서 마킹 포함). 이것이 설계가 명명하지 않은 접촉 증가 경로다. 최소한 재진입 셀을 A* 실패 시 소거 대상에서 제외하거나, 재진입이 활성인 동안 전역 Clear 를 억제하는 가드와 그 계약을 추가하라.",
+   "불변식 A 논증 3(상위 집합·비용 단조 증가)을 철회하거나 다시 쓰라. scan_denoise.cpp:81 이 제외를 +inf 로 하고 전역 obstacle_layer 는 nav2_params.yaml:553 inf_is_valid: False 이므로 재진입은 마킹과 레이트레이스 소거를 함께 되살린다 — 비용은 내려갈 수 있다. 설계가 admit_release_s 의 근거로 든 소거와 같은 문장이 서로 모순이다.",
+   "RobotMotionModel 의 max_path_deviation 1.0 m 절벽을 1 단계 위험 목록에 올려라. ttc.cpp:60-62 / ttc.hpp:32 / perception.yaml:214. 현재 dev_current 실측 최댓값이 0.81–1.33 m 로 이 값을 걸치고, 86 개 pose_trial 중 18 개가 넘는다(표본 9.2 %). 이 구간에서 추적기는 경로를 무시하고 직선 모델로 떨어지므로 'TTC 유한 = 내 경로 위에서 만난다' 가 성립하지 않고, 지나가는 사람도 재진입 대상이 된다 — 설계의 중심 착상이 무효가 되는 구간이다.",
+   "DETOUR_MAX 를 1.0 m 로 두고 착수하라(1.5 m 가 아니라). 명세 190 행 '회피 기동 시 경로 이탈이 1m 이내' 에 대해 결정 시점에 남는 유일한 상한이 1.5 m 이면 그 자체가 명세 완화다. 1.0 m 로 시작해서 측정으로 넘을 근거가 나오면 그때 명세 해석 변경을 별건으로 제기하라.",
+   "단계 계획에 test_08 'return to path'(RETURN_MAX_S 5.0) 원인 귀속을 먼저 넣어라. 인용한 9 런 중 5 런이 이 항목에서 미달이고(N8z 8.74, Y8e 7.92, N8x 6.78, Q8d 5.30, S8d 5.30), 저장소 자신의 절제 실험은 '조우 중 전역 경로 교체' 가 복귀를 13/14 → 2/10 으로 악화시킨다고 측정해 두었다. 이 설계는 정확히 그 개입이다.",
+   "사용자 질문('지금 P0 부터 해야하는 거 아니야?')에 대한 사실 정정: pedestrian_lane_filter 가 nav2_params.yaml:531 filters 목록에 없는 것은 버그가 아니다. 커밋 2f28931 이 '파라미터 고정 대조에서 안전 기여가 측정되지 않아(N8 vs i8) filters 는 keepout_filter 만 둔다' 고 의도적으로 뺐다고 적어 두었다. 따라서 '한 줄 추가' 는 P0 의 답이 아니다. 다만 :587-598 주석이 기대 효과(노출 94 %→51 % 등)를 현재형으로 남겨 두어 세 설계 모두를 오도했고, test_costmap_config.py:59-68 _sources() 가 plugins 만 훑어 filters 목록에는 아무 계약도 없다 — 이 둘은 별건으로 고쳐야 한다."
+  ],
+  "grafts_from_losers": [
+   "**먼저 할 일 (세 설계 중 무엇도 아니다) — nav2_params.yaml:531 의 한 줄 누락을 고쳐라.** `pedestrian_lane_filter` 블록이 :587-599 에 상세 근거와 함께 정의돼 있는데 :531 `filters: [\"keepout_filter\"]` 에 **들어 있지 않다**. Nav2 Costmap2DROS 는 `filters` 목록에 적힌 필터만 인스턴스화하므로 이 기능은 배포에서 죽어 있다. 근거 주석이 스스로 적은 기대 효과가 정확히 지금의 P0 이다 — '실측 A→B 계획 9.00 m 중 8.49 m (94 %) 가 보행 차선 안, 차선 밖 연속 구간 0.25 m → 띠를 넣으면 노출 94 % → 51 %, 차선 밖 연속 구간 0.25 → 4.64 m' 이고 '07 CTE 0.1696 · **08 접촉 9/60**' 을 이 누락의 증상으로 지목한다. localization.launch.py:194-212 는 pedestrian_lane_mask_server 와 filter_info_server 를 이미 띄우고 maps/pedestrian_lanes.{pgm,yaml} 도 존재한다 — **소비자 쪽 한 줄만 빠졌다**. git log -S 로 보면 :531 은 d298086 에서 왔고 필터 블록은 그 뒤 2f28931 에서 추가됐다. 즉 추가할 때 목록 갱신을 잊은 전형적 누락이다. 그리고 이것을 잡는 시험이 없다 — test_costmap_config.py:59-68 `_sources()` 가 `plugins` 만 훑고 `filters` 를 보지 않기 때문이다(설계 2 가 자기 설계를 통과시키려고 발견한 바로 그 사각지대). 세 설계 중 설계 2 는 이 줄을 직접 편집하면서도 못 봤다. 비용: 한 줄 + 시험 한 개. 기대 효과: 측정된 값. 세 설계 중 무엇을 하든 그 전에, 단독 커밋으로, 별도 30×3 으로 재라(불변식 C).",
+   "**설계 3 에서 → 승자로: `max_age` 하드 마감과 'outcome==4 == 0' 판정.** 설계 1 은 재계획 지연을 분포로만 보고한다. 설계 3 의 규약이 더 낫다 — 예산 초과가 '늦은 경로'로 나타나지 못하게 구조로 막고, 초과는 '재계획 안 함' 사건 수로만 관측되게 한다. 승자의 BT 가지에 적용하면 명세 4.4 에 대해 '500 ms 안에 끝냈고 초과해서 버린 것도 0 건'을 한 쌍의 수로 답할 수 있다.",
+   "**설계 3 에서 → 승자로: replan_event 식 고정 레이아웃 진단 기록.** 승자의 `costmap_filter/admitted_tracks` 는 '지금 전역이 무엇을 보는가'만 낸다. 여기에 조우당 한 줄짜리 고정 필드 기록(t_a, t_m, t_p, track_id, min_ttc_at_admit, plan_ms, 새 경로↔트랙 최소거리, outcome)을 더하면 9장 동료평가 답변이 표 한 장이 된다. 레이아웃 자체를 시험으로 고정하라는 설계 3 의 규율도 함께 가져와라.",
+   "**설계 2 에서 → 승자로: `core_hit` 형 예측 정확도 판정.** 승자는 TTC 를 계획 계층에 연결하지만 '등속 CV 예측이 실제로 맞는가'를 직접 반증하지 않는다. 설계 2 의 방식 — 지면 진실(obstacle_truth_node)의 t+τ 위치가 예측 원판 안에 있었는가, 30 시행 집계 ≥ 80 % — 을 admitted_tracks 등재 시각 기준으로 그대로 옮겨라. 빗나가면 admit_ttc 를 줄이는 것이 답이고, 이 수치 없이는 알 수 없다.",
+   "**설계 2 에서 → 승자로: freeze-on-arm 을 좁게 적용.** 승자는 매 스캔마다 재진입 여부를 다시 판정하므로, 마킹이 코스트맵에 들어가는 중에 판정이 뒤집히면 A* 가 반쯤 지워진 격자를 본다. 재진입된 트랙 집합을 **한 번의 재계획이 끝날 때까지 얼린다**(현재 admit_release_s 1.0 s 가 대략 그 역할을 하지만 우연히 그런 것이다). 이러면 '방아쇠를 당긴 그 마킹을 A* 가 본다'가 시각 논증이 아니라 상태기계 성질이 된다.",
+   "**설계 2 에서 → 승자로: 조우 판정(≥ 시행/6)을 과회피 감시로 읽어라.** 전역 회피가 과해지면 로봇이 아예 사람을 만나지 않게 되고, 그러면 '접촉 0' 이 '회피를 잘해서'가 아니라 '도망쳐서' 달성된다. test_08 은 이미 `encounters >= MIN_ENCOUNTERS`(:59 MIN_ENCOUNTERS = TRIALS//6) 를 판정하고 있다 — 승자의 판정 집합에서 이 항을 **완화 대상이 아니라 과회피 경보**로 명시하고, 재진입 시행/비재진입 시행으로 층화해 최근접 거리 분포를 비교하라.",
+   "**설계 3 에서 → 승자로: `plan` 토픽 단일 발행자 규약을 시험으로 고정.** 설계 3 이 뚫으려다 스스로 위험으로 적은 구멍이다. 승자는 /plan 에 아무것도 쓰지 않지만, obstacle_tracker 가 그 토픽으로 TTC 의 로봇 모델을 만들고(obstacle_tracker_node.cpp:162-166) 승자의 재진입 판정이 그 TTC 에 걸려 있으므로, **누군가 나중에 /plan 에 두 번째 발행자를 붙이면 승자의 게이트 의미가 조용히 바뀐다**. `ros2 node info` 수준의 한 줄 시험으로 planner_server 외 발행자 0 을 못 박아라.",
+   "**승자 자체의 정정 두 가지.** (1) 불변식 A 논증 3번('비용은 오르기만 한다')을 버리고 다시 써라 — scan_denoise.cpp:81 이 +inf 로 빼고 전역 obstacle_layer 가 `inf_is_valid: False`(nav2_params.yaml:527) 이므로 재진입은 마킹과 **레이트레이스 소거를 동시에** 되살린다. 올바른 문장은 '단조 증가'가 아니라 '그 방위의 코스트맵 갱신을 정상 규약으로 되돌린다'이고, 유령 셀 완화 근거와 그때 비로소 앞뒤가 맞는다. (2) 3단계로 미룬 test_08 기준선 정정을 **1단계 안으로 당겨라** — costmap.md:155-158 이 이미 '빼지 않으면 재계획 경로가 횡단 actor 를 0.83–1.30 m 돌아갔다'를 실측으로 적었고 최신 실행 최대 이탈은 0.869–0.903 m(N8x/N8y/N8z/Q8d) 라, 재진입을 켜는 순간 첫 계획 기준 이탈이 1.0 m 를 넘는 것이 기전상 거의 확정이다. 기준선 정정은 '있으면 좋은 보정'이 아니라 설계 성립의 전제이므로 dev_first/dev_current 병기 기록과 판정 이전을 같은 단계에서 하라. (3) ttc.hpp:33 `max_path_deviation: 1.0` 과 현재 최대 이탈 0.90 m 의 근접을 위험 목록에 추가하라 — 조우 중 로봇이 경로에서 1.0 m 를 넘으면 TTC 의 로봇 모델이 직선으로 떨어져 '경로와 만나는가'가 '현재 방향과 만나는가'로 바뀌고, 그것이 곧 지나가는 사람까지 재진입시키는 요동 경로다.",
+   "설계 2 → 설계 1 (필수): 재진입 대상을 '현재 원판' 이 아니라 '예측 스윕' 으로 바꿔라. 지금의 설계 1 은 excludeDiscsFromScan 의 제외를 건너뛸 뿐이라 전역이 보는 것은 트랙의 **지금 위치**다. 그래서 A* 가 1.0 m/s 횡단자의 앞으로 로봇을 보낼 수 있다(08 접촉을 늘리는 유일한 실질 경로). 최소 변경으로 가능하다 — dynamicCenters 가 재진입 트랙에 대해 중심 하나가 아니라 τ∈[0, core_tau] 등속 예측 중심 열을 만들고, 제외는 그 열 전체에 대해 건너뛴다. 새 노드·새 메시지·새 플러그인 0 이라는 설계 1 의 최대 장점이 유지되고, '셀 비용은 오르기만 한다' 가 궤적 수준에서도 참이 된다. (설계 2 의 core_radius = r_circ 0.361 + 0.30 = 0.661 정정은 설계 1 에 **이식하면 안 된다** — 설계 1 의 마킹은 sensor_inflation_layer 를 정상적으로 거치므로 로봇 몸이 이미 팽창에 들어 있다. 이중 계상이 된다.)",
+   "설계 2 → 설계 1 (필수): freeze_on_arm + max_on_s / rearm_cooldown_s 상태기계를 admitted_ 맵에 넣어라. 지금 설계 1 의 빈도 상한은 BT cooldown 1.0 s 하나뿐이고 그것은 BT 쪽 상한이지 전역 마킹 쪽 상한이 아니다. 트랙별 무장/해제 수명(무장 시 기하 동결, 하드 수명, 재무장 금지)을 넣으면 최악 재계획률이 파라미터에서 직접 계산되고, Gazebo 없이 순수 단위시험으로 고정된다 — 설계 2 의 test_forecast_mask.cpp 계약 (1)(5) 가 그대로 costmap_scan_filter 단위시험으로 옮겨진다.",
+   "설계 3 → 설계 1 (필수): '최악은 무동작' 규율과 max_age 하드 마감. 설계 1 이 되살리는 BT 가지는 <ComputePathToPose goal=\"{goal}\" path=\"{path}\"/> 를 무조건 채택한다 — 마감도 없고 수용 검사도 없다. 트리거 시각 대비 나이가 재계획 예산(0.5 s)을 넘으면 {path} 를 바꾸지 않는 수용 게이트를 붙여라. 예산 초과가 '늦은 경로' 가 아니라 '재계획 안 함' 으로만 나타나게 하는 것이 설계 3 의 유일한 최고 부분이고, 그것은 BRR 의 무동작 결함과 무관하게 이식 가능하다.",
+   "설계 3 → 설계 1 (필수, 명세 문언 방어): test_08 의 dev_first ≤ 1.0 m 판정을 **빼지 말고 유지**하고 dev_current ≤ 1.0 m 를 **추가**하라. 설계 1 의 DETOUR_MAX 1.5 m 는 31_지능형_물류_AMR_시스템_구축.md:190 '회피 기동 시 경로 이탈이 1m 이내' 를 배포 시스템에서 1.5 m 로 푸는 것이다. 설계 2·3 은 둘 다 1.0 m 를 지키는 쪽을 골랐다. 두 열을 병기하면 설계 1 의 진단(재계획 artifact 와 진짜 이탈의 분리)은 그대로 얻으면서 명세 숫자를 팔지 않는다. 1.0 m 안에 안 들어가면 그것은 하네스가 아니라 기전의 결론이고, 그때 이식 1(예측 스윕)이 우회량을 줄이는지가 다음 측정 항목이다.",
+   "설계 1 자체 정정 (필수): (a) 깨지는 계약 목록에 .../src/amr_navigation/test/test_bt_replan.cpp 를 추가하라 — :139 의 addStub 매니페스트가 {threshold, cooldown, only_dynamic} 뿐이라 min_ttc=\"{min_ttc}\" 배선은 navigate_to_pose.xml·navigate_through_poses.xml 두 파라미터화의 트리 생성을 BT.CPP v3 에서 실패시킨다. 고치는 것은 스텁 포트 한 개 추가지만 목록에 없는 것이 문제다. (b) 불변식 A 논증 3번의 '비용 단조 증가 ⇒ 어떤 안전 판정도 완화 불가' 문장을 철회하라. 옳은 문장은 '게이트의 입력 명령만 바뀌고 게이트의 판정 함수·입력 토픽은 불변이다' 이며, 그것은 코드로 이미 확인된다.",
+   "설계 3 → 설계 1·2 공통 (값싸고 즉효): 새 소스에 set_parameter / AsyncParametersClient / create_client / cmd_vel 문자열이 0 건임을 grep 으로 고정하는 한 줄짜리 시험. 지금 배포 코드에는 불변식 A 를 직접 지키는 시험이 하나도 없다. 여기에 설계 2 의 forecast_diag 와 설계 3 의 replan_event 고정 레이아웃을 설계 1 의 costmap_filter/admitted_tracks 프로브에 합쳐, 9장 동료평가 답변이 주장이 아니라 표 한 장이 되게 하라 — '전역이 지금 무엇을 못 보고 있는가' 를 관측 가능하게 만드는 것은 세 설계를 통틀어 설계 1 의 admitted_tracks 가 유일하다.",
+   "설계 2 의 Layer-vs-Filter 판단을 규칙으로 승계하라: 전역 코스트맵에 **새 Layer 를 추가하지 마라.** test_costmap_config.py:154 의 `plugins[-1] == last` 가 끝에 붙이는 것을 금지하고, `_sources()`(:63-72)는 `rp['plugins']` 만 훑고 `filters` 를 보지 않으므로 훗날 재진입을 별도 표현으로 옮겨야 할 때의 정답은 Filter 다. 설계 1 은 지금 둘 다 안 하지만, 이 사실을 costmap.md 갱신에 함께 적어 다음 사람이 Layer 로 가지 않게 하라.",
+   "설계 2·3 이 둘 다 지적한 **미고정 삼자 결합**을 설계 1 의 같은 커밋에 넣어라: nav2_params.yaml:437 `costmap_scan_filter_node.dynamic_min_speed` 0.2 == :163 `DWA.dynamic_speed_threshold` 0.2, 그리고 dynamic_fast_speed 0.5 쌍. 저장소 전체 grep 결과 이 세 이름을 참조하는 시험이 **하나도 없다**(확인). 설계 1 의 재진입 판정이 바로 이 속도 게이트 **뒤에** 붙으므로, 이제 이 결합이 깨지면 '전역에서 빼는 집합' 과 '재진입 후보 집합' 의 정의가 조용히 어긋난다. test_dynamic_readmission_ladder 에 두 줄로 추가.",
+   "설계 2 의 **예측 스윕 마킹**을 설계 1 의 가장 큰 구멍(현재 위치를 마킹한다)에 대한 최소 이식으로 가져와라. 새 노드·새 필터 없이 같은 파일 안에서 할 수 있는 형태: 재진입 시 제외를 전부 푸는 대신, 제외 원판을 트랙 속도 방향으로 τ∈[0, core_tau] 만큼 **앞으로 밀어** 현재 발자국은 전역에 남기고 '이미 지나간 뒤' 만 제외한다. dynamicCenters 가 이미 `o.position + o.velocity*dt` 로 등속 예측 중심을 만들고 있으므로 dt 에 상수 하나를 더하는 수준이다. 이것 없이는 A* 가 사람이 떠난 자리를 돌아가고, 9장 '예측 기반 회피' 의 계획 계층 증거가 생기지 않는다.",
+   "설계 3 의 **'보상 상한을 하네스 문턱에서 유도한다'** 방식을 DETOUR_MAX 에 적용하라. 설계 3 이 0.28 < DEV_OUT_M 0.30(test_08:60)을 고른 논리가 설계 1 의 '초기값 1.5 m, 나중에 확정' 보다 낫다. costmap.md:157-158 이 유사 구성에서 횡단 actor 우회 0.83–1.30 m 를 이미 실측했으므로 1.5 m 는 그 실측 위에 얹은 임의값이다. 3단계 확정 시 p100 + 여유가 아니라 이탈 구간 개시 문턱 0.30 m 와의 관계로 근거를 세워라.",
+   "설계 3 의 **고정 레이아웃 사건 기록**(한 사건 = 한 행, outcome 열거형)을 admitted_tracks 옆에 추가하라. 설계 1 의 admitted_tracks 는 상태 토픽이라 t_a < t_m < t_p 순서 판정을 하려면 CSV 세 개를 사후 조인해야 한다. [t_a, t_m, t_p, track_id, ttc_at_admit, plan_ms, plan_stale_s, outcome] 한 행이면 판정이 한 열 비교가 된다. 특히 `plan_stale_s` 는 설계 1 이 스스로 유일하게 기각한 확장(필터 노드의 plan 구독) 없이도 위험 2(추적기 plan 노후 시 TTC 의미 변질)를 관측 가능하게 만든다 — 추적기 쪽에서 내면 된다.",
+   "설계 3 의 **하드 마감 = 무변경** 구조를 예비로 확보하라. 설계 1 은 planning_time 에 손대지 않아 지금은 필요 없지만, 2단계에서 t_p − t_a 가 0.85 s 를 넘는 것이 관측되면 정답은 설계 1 이 적은 대로 admit_ttc 를 올리는 것이고, 그래도 안 되면 '늦은 경로를 쓰지 않는다' 가 다음 방어선이다. BT 임계 2.65 를 내리는 선택지는 τ_crit 2.15 여유를 먹으므로 배제 대상임을 test_dynamic_readmission_ladder 의 `thr > 2.15` 조건으로 이미 못박은 것은 잘한 부분이다.",
+   "설계 2 의 **반증 가능한 예측 정확도 판정**(core_hit: t_arm + τ 시점 지면 진실이 예측 원판 안인가)을 1단계 게이트에 넣어라. 설계 1 은 TTC 가 **발화하는지**만 재고 TTC 가 **맞는지**는 재지 않는다 — ±0.3 s 대응 검사를 observable 에 적어 놓고 위험 목록 맨 끝으로 미뤘는데, 이것이 1단계의 첫 확인 항목이어야 한다. 하네스 TTC(ttc_circle, 경로 비고려)와 추적기 TTC(경로 추종·공분산)가 다르다는 것을 스스로 인정했으므로, 두 값의 대응이 깨지면 admit_ttc 3.5 의 빈도 추정 전체가 무효다."
+  ],
+  "fatal_flaws_raised": [
+   "**[저장소 자체 — 세 설계 모두 놓침]** nav2_params.yaml:587 의 `pedestrian_lane_filter` 가 :531 `filters: [\"keepout_filter\"]` 에 없다. Nav2 는 `filters` 목록의 필터만 인스턴스화하므로 이 기능은 배포에서 죽어 있다. 주석이 인용한 기대 효과(보행 차선 노출 94 %→51 %, 차선 밖 연속 구간 0.25→4.64 m)와 이 누락의 증상으로 지목한 '07 CTE 0.1696 · 08 접촉 9/60' 이 정확히 지금의 P0 이다. 마스크·서버 쪽은 localization.launch.py:194-212 가 이미 띄우고 maps/pedestrian_lanes.yaml 도 있다 — 소비자 한 줄만 빠졌다. 어떤 시험도 `filters` 목록을 읽지 않는다(test_costmap_config.py:59-68 `_sources()` 는 `plugins` 만 훑는다). 설계 2 는 이 줄을 직접 편집하면서도 못 봤다.",
+   "**[설계 3]** SpliceDetourPath 의 `maxDeviation(후보, 원 path) > 0.28 → 거부` 가 **로봇 자신의 현재 경로 이탈을 포함한다**. 후보의 첫 점은 ComputePathThroughPoses 가 계획을 시작한 로봇의 실제 자세이고, 조우 중 그 값은 실측 0.62–0.90 m 다(dwa.md:659-661, 최신 avoidance.csv 0.869–0.903). 따라서 이 설계가 필요한 바로 그 순간에 채택이 거의 항상 거부된다 — '최악은 무변경'이 '항상 무변경'이 되고 신설 지표 replans_accepted ≈ 0 이 된다. 설계 문서 어디에도 이 항이 없다.",
+   "**[설계 3]** 이탈 예산 산술이 저장소 자신의 최신 로그로 반증된다. '0.69 + 0.28 = 0.97 < 1.00' 의 0.69 는 dwa.md:659-661(0.692/0.623/**1.121** — 세 실행 중 하나는 이미 초과)에서 왔다. 최신 실행은 0.811–1.326 m 이고(P2c 0.811 … Q8c 1.184, Y8e 1.326), docs/reports/performance.md:43 은 y8a~y8e 를 0.840/1.039/0.907/0.751/1.191 로 적고 '**미달**'로 판정해 두었다. 같은 비관 가법 가정을 최신값으로 다시 하면 0.88 + 0.28 = **1.16 > 1.00**. 이 설계의 유일한 안전 여유(0.03 m)는 낡은 인용에서만 존재한다.",
+   "**[설계 2]** 표제 유도 `d = √(path_lookahead_m·Δℓ + (Δℓ/2)²) = 0.9997 m ≤ 1.0` 이 강제되지 않는다. `path_lookahead_m` 은 **밴드가 경로 어디에 있어야 무장하는가**를 묶는 게이트이지, A* 우회 구간의 반길이 a 를 묶지 않는다. A* 는 밴드보다 훨씬 앞에서 벌어져 훨씬 뒤에서 합류할 수 있고 그러면 같은 Δℓ 로 d 가 1.0 m 를 넘는다. 또 Δℓ_max = L·κc/252 는 '관통 vs 우회' 비교인데 치명 핵심(254)이 있으면 관통이 불가능해 전제가 무너진다 — 소프트 외피의 산술과 하드 코어의 기하를 한 식에 섞었다. '이탈 상한이 튜닝이 아니라 파라미터에서 계산된다'가 이 설계의 유일한 진폭 방어인데, 그것이 성립하지 않는다. (덧: A* 뒤 평활화 shortcut, nav2_params.yaml:37-39 가 기하를 또 바꾼다.)",
+   "**[설계 2]** 필터 순서가 자기 가설 아래에서 자멸한다. 'KeepoutFilter 가 max 가 아니라 덮어쓸 수 있다'를 위험으로 들고 `filters: [dynamic_forecast_filter, keepout_filter]` 로 keepout 이 나중에 이기게 했는데, 그 가설이 참이면 keepout 마스크가 자기 영역 밖을 free 로 덮어써 **앞선 forecast 밴드를 통째로 지운다**. max 가설이면 순서는 무관하다. 어느 쪽이든 이 결정은 근거가 없다.",
+   "**[설계 2]** 요약의 '건드리는 계약: 없다고 주장' 이 자기 변경 목록과 모순된다. 같은 문서가 test_navigation_launch.py:71-74 `assert set(nodes) == {...}`(정확 집합 등식, 확인함)를 '깨지는 유일한 기존 시험'으로 명시한다.",
+   "**[설계 1]** 불변식 A 논증 3번('재진입 후 전역 코스트맵은 상위 집합, 비용은 절대 내려가지 않는다')이 거짓이다. 제외는 scan_denoise.cpp:81 이 `ranges[i] = inf` 로 하고 전역 obstacle_layer 는 `inf_is_valid: False`(nav2_params.yaml:527) 라, 재진입은 마킹뿐 아니라 **그 방위의 레이트레이스 소거까지** 되살려 기존 셀을 지울 수 있다. 설계 자신이 유령 셀 완화 근거로 바로 그 소거를 든다('빔이 살아 있어 되살린 마킹을 레이트레이스로 지운다') — 두 문장이 동시에 참일 수 없다. 실무 안전 영향은 작지만(소거는 정상 동작) 안전 논증 한 겹이 논리적으로 무효다.",
+   "**[설계 1 — 치명은 아니나 전제]** 이탈 예산. costmap.md:155-158 이 '빼지 않으면 0.6 m 팽창으로도 재계획 경로가 횡단 actor 를 0.83–1.30 m 돌아갔다'를 실측으로 적어 두었고 최신 max_deviation 은 0.869–0.903 m(판정 1.0). 즉 재진입은 첫 계획 기준 이탈을 기전상 1 m 위로 올린다 — dev_current 기준선 이전과 DETOUR_MAX 는 3단계로 미룰 보정이 아니라 1단계에 함께 있어야 하는 전제다.",
+   "**[설계 1 — 위험 목록 누락]** ttc.hpp:33 `max_path_deviation: 1.0` 이고 최신 최대 이탈이 0.87–0.90 m 다. 조우 중 양보로 로봇이 경로에서 1.0 m 를 넘으면 RobotMotionModel 이 직선 모드로 떨어져 TTC 의 의미가 '경로와 만나는가'에서 '현재 방향과 만나는가'로 바뀌고, 그 순간 지나가는 사람도 재진입 대상이 된다 — 정확히 요동 경로다. 설계는 plan_timeout 5.0 s 만 위험으로 적었고 이 0.90 vs 1.00 근접은 짚지 않았다.",
+   "**[셋 모두]** 현재 실패하고 있는 판정 중 '복귀 ≤ 5 s' 를 아무도 다루지 않는다. 최신 실행 max_return 은 N8z 8.74 s, N8x 6.78 s, Y8e 7.92 s 로 판정 미달이다. 세 설계 모두 접촉·이탈만 논하고 복귀 항목은 '무영향' 또는 '구조적으로 안 건드림'으로 지나간다. P0 종료 조건이 test_08 의 판정 6 개 전부라면, 재계획 설계를 넣기 전에 이 항목의 원인 귀속이 먼저 필요하다.",
+   "**[셋 모두]** 접촉 현황 인용 불일치. 설계 2·3 은 'dwa.md §8.4 기준 1–7/30' 을 쓰는데 그 표(dwa.md:659-661)는 낡았다. 최신 N/Q/Y/S/P 계열 실측은 0–2/30 (Y8e 0, Y8f 0, Q8d 1, N8y 1, S8d 1, N8x 2, N8z 2, P2c 2). 설계 1 만 현재 값을 썼다. 문제 크기를 3 배 이상 과대 진술한 위에 정당화를 세우면 '이 설계가 얼마나 기여했는가'를 사후에 잴 수 없다.",
+   "설계 3 — 구조적 무동작: ttc.cpp 의 collisionClearance = dist − (robot_radius + obstacle.radius + inflate) 때문에 TTC 유한 ⇔ 예측 충돌점이 경로에서 ≈0.661 m 안. 그런데 planDetour 는 needed_clearance = 0.911 − |d_c| > max_lateral 0.25, 즉 |d_c| < 0.661 이면 UNRESOLVABLE 로 거부한다. 두 조건이 여집합이라 발화 가능한 모든 기하가 거부된다. 동작 창은 0.661 ≤ |d_c| ≤ 0.811 의 0.15 m 틈뿐이다.",
+   "설계 3 — 불변식 A 실제 위반: SpliceDetourPath 와 planner_server 가 같은 /amr_01/plan 에 발행하고, obstacle_tracker_node 가 그 경로로 RobotMotionModel 을 만들며, 그 TTC 가 safety_gate 의 v_ttc = max_deceleration·(min_ttc − reaction_latency) 로 들어가 st.speed_limit = std::min({u_cap, v_ttc, v_fwd, max_linear_velocity}) 를 구성한다. via→rejoin 스텁이 실린 동안 추적기는 로봇이 rejoin 에서 멈춘다고 보아 TTC 가 +inf 쪽으로 튀고 v_ttc 항이 min 에서 빠진다 = 계획 계층이 안전 게이트 상한을 푼다. 설계 3 은 이를 '계측 영향만' 으로 오분류했다.",
+   "설계 2 — 미지 셀 구멍이 자기 가드로 안 막힌다: 전역 코스트맵 track_unknown_space: True, A* allow_unknown{true} / unknown_cost 252 (astar.hpp:38-40). 외피(비용 19)가 NO_INFORMATION 셀에 덮어써지면 252 → 19 로 비용이 내려간다 — 설계 2 가 지목한 바로 그 '한 방향' 위반. static_clear_radius 는 정적 **점유** 셀만 보므로 미지 셀을 덮지 않는다.",
+   "설계 2 — 치명 핵심의 우회 크기는 d = √(a·Δℓ + (Δℓ/2)²) = 0.9997 m 유도가 묶지 못한다. 그 유도는 외피(비용 19)의 Δℓ 거래에만 적용되고, 마스크값 100 → 254 인 핵심은 하드 장애라 A* 가 자유공간 위상으로 돈다. 0.60 m 통로에서는 반경 0.661 m 원판이 통로를 막아 우회가 수 m 이거나 계획 실패이며, 실패 시 1 Hz 가지의 RecoveryNode 가 **전역** ClearEntireCostmap 을 호출해 조우 한복판에서 실제 센서 마킹을 전부 지운다 (설계 2 가 명명하지 않은 접촉 증가 경로).",
+   "설계 1 — 재진입 마킹이 예측 스윕이 아니라 트랙의 **현재 위치**라, A* 가 1.0 m/s 횡단자의 지금 자리를 돌면서 그 사람의 미래 위치(앞쪽)로 로봇을 보낼 수 있다. '코스트맵 비용 단조 증가 ⇒ 안전 판정 완화 불가' 는 궤적 수준에서 성립하지 않는다. costmap.md §4.2 가 동적 트랙 미제외 시 재계획 경로가 횡단 actor 를 0.83–1.30 m 돌아갔다고 이미 기록한다.",
+   "설계 1 — 계약 목록 오류: min_ttc=\"{min_ttc}\" 배선이 test_bt_replan.cpp:139 의 스텁 매니페스트({threshold, cooldown, only_dynamic})에 없는 포트가 되어 BT.CPP v3 가 navigate_to_pose.xml·navigate_through_poses.xml 트리 생성을 거부한다. 설계 1 은 이 시험을 '유지' 로 분류했다. 깨지는 기존 계약은 test_launch.py:253 하나가 아니라 최소 셋이다.",
+   "설계 1 — 명세 문언 완화: 31_...md:190 '회피 기동 시 경로 이탈이 1m 이내' (= test_08 DEVIATION_MAX 1.0) 를 dev_current 로 옮기면서 보상 계약을 1.5 m 로 잡았다. 배포 시스템에 1.5 m 우회를 허용한다는 뜻이고, 설계 2·3 은 둘 다 1.0 m 를 지켰다.",
+   "설계 2·3 공통 — 근거 수치가 낡았다. 둘 다 '접촉 1–7/30, 이탈 0.62–0.69 m' (dwa.md §8.4) 를 현재 상태로 인용하지만, 9 런 avoidance.csv 실집계는 접촉 0–2/30 (0 인 런 2/9) 이고 dev_first 최댓값은 0.811–1.326 m 다. 특히 설계 3 의 '0.69 + 0.28 = 0.97 < 1.00' 여유 논증은 존재하지 않는 여유를 가리킨다 — Y8e(1.326)·Q8c(1.184)는 이미 1.0 m 를 넘겨 실패 중이다.",
+   "설계 3 — **기본 파라미터에서 증명 가능한 무동작.** planDetour 은 needed_clearance = 0.361 + 0.30 + 0.25 − |d_c| 이고 needed > max_lateral(0.25) 이면 UNRESOLVABLE 이므로 |d_c| < 0.661 m 인 모든 조우를 거부한다. 그런데 TTC 가 유한하다는 것은 src/amr_perception/src/ttc.cpp:115-126 의 g(τ) = |p_r(τ) − p_o(τ)| − (0.361 + r_o + min(k·σ, 0.5)) ≤ 0 을 뜻하고, 잘 추적된 트랙(σ 작음, r_o ≈ 0.30)이면 예측 충돌점은 경로에서 약 0.661 m 안에 놓인다. 트리거 조건과 해소 가능 조건이 거의 배타적이다 — BRR 은 σ 팽창항이 0.25 m 넘게 커질 때, 즉 예측을 가장 믿을 수 없을 때만 발화한다. 적극 모드 0.60 도 |d_c| ∈ [0.311, 0.811] 로 넓힐 뿐 정면 정중앙은 HEAD_ON_CENTERED 로 설계상 배제. 명세 4.7 '경로를 재계획하여 회피' 가 정작 경로 위 조우에서 증명되지 않는다.",
+   "설계 2·3 공통 — **이탈 여유가 이미 음수인데 둘 다 양수로 계산했다.** logs/Y8e/08_dynamic_obstacles/pose_trial13.csv 가 dev_first 1.326 m · dev_current 1.326 m · n_plans 1 (재계획 artifact 가 아닌 진짜 추종 실패), logs/Q8c 의 t28 이 1.184 m, 9 런 avoidance.csv 의 max_deviation 실측 범위는 0.811–1.326 m. 설계 3 의 '0.69 + 0.28 = 0.97 < 1.00' 은 dwa.md §8.4 의 0.623/0.692 만 쓰고 같은 표의 세 번째 실행 1.12 를 누락했고, 설계 2 의 가설 H1(dev_first ≤ 1.0 m 유지)은 착수 전에 이미 반증돼 있다. 설계 2 의 1단계는 로그에 답이 있는 것을 다시 재는 셈이다.",
+   "설계 2 — **같은 부류의 개입에 대한 저장소 자체의 음성 결과를 인용하지 않았다.** 커밋 2f28931 이 보행 차선 연성 keepout 마스크(점유 90 → 비용 231)를 넣고 측정한 뒤 '파라미터 고정 대조에서 안전 기여가 측정되지 않아(N8 vs i8: 어느 문턱에서도 차이 없음, 이탈·복귀·소요는 오히려 나쁨) nav2_params.yaml 의 filters 는 keepout_filter 만 둔다' 고 적고 일부러 비활성화했다 (nav2_params.yaml:587 에 정의는 살아 있으나 :531 `filters: [\"keepout_filter\"]` 에 없다 — 버그가 아니라 의도). 설계 2 의 외피는 비용 19·한시적이라 동일하지는 않지만 '보행자 공간을 전역에서 연성 기피' 라는 같은 계열이며, 입증 책임이 크게 올라간 상태에서 이 선행 결과를 한 번도 다루지 않는다.",
+   "설계 2 — **0.9997 m 진폭 상한은 연성 외피에만 적용되는 한계 선호 논증이다.** 치명 핵심(반경 0.661 m 의 τ∈[0,0.6] 스윕 캡슐)은 통행 불가라 Δℓ < L·κc/252 비교의 대상이 아니고, 그 우회량은 이 식으로 묶이지 않는다. costmap.md:157-158 이 유사 구성(전역에 동적 트랙 남기고 0.6 m 팽창)에서 재계획 경로가 횡단 actor 를 0.83–1.30 m 돌아갔다고 실측했다 — 유도값 1.0 m 와 실측 1.30 m 의 불일치가 해소되지 않았다. 덧붙여 3 s 수명의 굳은 치명 캡슐이 0.60 m 통로를 막는 가용성 실패 모드는 robot_clear_radius 1.0 m 로 상한이 잡히지 않는다.",
+   "설계 1 — **재진입된 마킹이 트랙의 현재 발자국이라 '예측 기반' 이 계획 계층에 도달하지 못한다.** BT 임계 2.65 s 에서 1.0 m/s 액터는 조우점에서 약 2.65 m 떨어져 있으므로 A* 는 사람이 이미 떠난 자리를 우회한다. 결과적으로 (a) 4.7 '추적된 장애물의 미래 위치를 예측' 에 대한 설계의 답이 '변경 없음' 인 것이 정당화되지 않고, (b) '재진입은 자기 종료적' 이라는 되먹임 논증이 성립하지 않는다 — 새 경로가 현재 위치를 비껴가도 사람이 그 경로로 걸어 들어오면 TTC 는 유한하게 남아 반대쪽으로 다시 계획하며, 이것이 exclude_dynamic 이 막으려던 뒤집힘 기전 그 자체다. 조우 빈도(3–8/30)와 cooldown 1 s 로 감쇠될 뿐 구조적으로 제거되지 않는다. 신설 plan rate ≤ 0.5 Hz 가 이를 처음으로 계측 가능하게 만든다는 점이 유일한 방어선이다.",
+   "설계 3 — **스스로 권한 시험 확장이 곧바로 깨진다.** test_bt_replan.cpp:174 가 `const bool ttc = GetParam().find(\"_no_ttc\") == std::string::npos;` 로 TTC 트리를 판별하므로, INSTANTIATE_TEST_SUITE_P(:207-211)에 추가하기를 권한 navigate_to_pose_predictive.xml 이 TTC 트리로 분류되어 :204 `EXPECT_GE(s.starts[\"IsTTCBelowThreshold\"], 200)` 에 걸려 실패한다. 그 XML 에는 IsTTCBelowThreshold 가 없다."
+  ],
+  "all_designs": [
+   {
+    "name": "계획 충돌 트랙 한정 전역 재진입 (TTC-gated re-admission)",
+    "summary": "핵심 착상: 추적기가 이미 발행하는 `TrackedObstacle.time_to_collision` 은 **로봇의 현재 전역 plan 을 따라가는 예측**으로 계산된 값이다 (obstacle_tracker_node.cpp:286-306 이 `/amr_01/plan` 을 받아 `RobotMotionModel::select` 에 넣고, ttc.cpp:109-168 이 등속 CV + 공분산 전파로 g(τ) 첫 영점을 찾는다). 따라서 TTC = ∞ 는 \"이 트랙은 내 경로와 만나지 않는다\", TTC 유한·작음은 \"이 트랙은 내 경로 위에서 실제로 만난다\" 를 뜻한다. 이 값은 지금 safety_gate 와 **꺼져 있는** BT 조건만 소비하고, 전역 계획에는 한 번도 연결된 적이 없다.\n\n설계는 `costmap_scan_filter_node::dynamicCenters()` 의 제외 규칙에 조건 하나를 더한다 — 빠른 동적 트랙이라도 **TTC 가 유한하고 `admit_ttc`(3.5 s) 이하이면 제외하지 않는다**. 즉 전역 코스트맵에서 눈감는 대상이 \"모든 빠른 동적 트랙\" 에서 \"내 경로와 만나지 않을 빠른 동적 트랙\" 으로 좁아진다. 지나가는 사람은 TTC = ∞ 라 종전대로 계속 빠지고(요동 방지 그대로), 경로 위에서 만날 사람만 전역에 들어온다. 그 뒤 이미 존재하는 `IsTTCBelowThreshold`(임계 2.65 s) → `ComputePathToPose` 가지를 되살리면, 08 실측 h8a 가 기록한 결함 — \"A* 는 자기를 부른 사람을 보지 못한 채 다시 계획한다\" — 이 구조적으로 사라진다. 임계 사다리 3.5 → 2.65 → 2.15 의 0.85 s 간격이 마킹이 트리거보다 먼저 코스트맵에 들어가게 보장한다 (최악 파이프라인 0.4 s 의 2 배).\n\n새 C++ 컴파일 단위 0, 새 메시지 타입 0, 새 pluginlib 플러그인 0, 새 노드 0. 기존 cpp/hpp 한 쌍 + YAML + BT XML + 런치 기본값 + 시험.\n\n기록된 로그로 이미 검증한 사실 두 가지: (1) `logs/*/08_dynamic_obstacles/avoidance.csv` 9 런에서 min TTC ≤ 3.5 s 는 30 시행 중 3–8 회만 발생하고 임계를 2.5↔4.0 으로 흔들어도 ±3 시행뿐이다 → 재진입은 폭주하지 않고 임계 민감도도 낮다. (2) `pose_trial*.csv` 30 개에서 재계획이 일어난 시행(n_plans 2–4)은 dev_first 1.160 m 인데 dev_current 0.059 m (Y8c t06), dev_first 1.100 / dev_current 0.136 (N8a t17) — 지금도 하네스의 '첫 계획' 기준선이 추적 품질과 무관한 실패를 만들어 내고 있고, 재계획이 없는 시행에서는 두 열의 중앙값 차가 0.000 이다."
+   },
+   {
+    "name": "예측 점유 밴드 필터 — dynamic_forecast_filter (TTC 무장 · 시간 제한 · 진폭 유도)",
+    "summary": "동적 트랙이 앞으로 쓸고 지나갈 영역을 전역 코스트맵에 **한시적 CostmapFilter 마스크**로 넣는다. 새 노드 `forecast_mask_node` 가 `perception/tracked_obstacles` + `plan` 을 보고, 최소 TTC < 3.0 s 이고 그 예측 밴드가 현재 경로와 4.0 m 안에서 실제로 교차할 때만 무장해 `forecast_mask`(OccupancyGrid) + `forecast_filter_info`(CostmapFilterInfo) 를 latched 로 발행한다. 전역 코스트맵 `filters:` 에 KeepoutFilter 인스턴스 하나를 더 얹어 소비한다.\n\n마스크는 두 겹이다. **치명 핵심**(τ∈[0,0.6 s] 스윕, 반경 0.661 m, 마스크값 100 → 비용 254)이 `IsPathValid` 를 실패시켜 **이미 계약에 고정된 1 Hz 재계획 가지**를 그대로 방아쇠로 쓴다 — BT 파일도 amr_behavior 도 nav_ttc_bt 도 건드리지 않는다. **외피**(τ∈[0,2.0 s] 스윕, 반경 0.811 m, 마스크값 8 → 비용 19)는 차단이 아니라 A* 의 우회 진폭을 유도한다. `exclude_dynamic`·`dynamic_radius`·`scan_costmap_static` 은 한 글자도 바꾸지 않는다.\n\n핵심 수치 세 개가 전부 유도값이다. (1) 필터는 팽창 뒤에 적용되므로 핵심 반경에 로봇 몸(r_circ 0.361)을 미리 넣었다(0.361+0.30=0.661). (2) 외피 비용 19 는 A* 간선 가중 m(c)=1+κc/252, κ=2.0 에서 우회 예산 Δℓ=0.1517·L 을 만들고, L=2·0.811=1.622 m 이므로 Δℓ_max=0.246 m. (3) 그 Δℓ 이 만드는 최대 횡방향 우회는 d=√(a·Δℓ+(Δℓ/2)²) 이고, `path_lookahead_m: 4.0` 에서 d=0.9997 m — 명세 4.7 이탈 1.0 m 에 정확히 걸린다. 즉 이탈 상한이 튜닝이 아니라 파라미터에서 계산된다.\n\n요동 억제는 세 장치다: **무장 시점에 밴드를 굳히고**(freeze_on_arm) 구간 내내 바꾸지 않아 좌우 뒤집힘 기전 자체를 없앤다, `max_on_s` 3.0 s + `rearm_cooldown_s` 2.0 s 로 최악 재계획률을 0.2 Hz 로 묶는다(절제 실험 2.67 Hz 의 1/13), 외피 비용 19 로 진폭을 0.997 m 로 묶는다.\n\n기존 시험은 `test_navigation_launch.py:71` 의 노드 집합 등식 한 줄만 깨진다. `test_costmap_config.py` 는 `_sources()` 가 `plugins` 만 훑고 `filters` 를 보지 않아 128 줄 포함 전부 통과한다."
+   },
+   {
+    "name": "BRR — 구속 우회 재계획 (Bounded Rejoin Replanning)",
+    "summary": "BT 수준에서 \"충돌 예측 → 재계획 요청\"을 표현하되, 재계획을 **목표까지 다시 뿌리내리는 것**이 아니라 **현재 경로 위의 합류점까지만** 하도록 구속한다. 새 Condition `IsCollisionPredictedOnPath` 가 추적기가 이미 발행하는 TTC(공분산 전파 포함, 로봇 모델 = /plan 추종)를 현재 {path} 기하와 결합해 (a) 충돌 예측점, (b) 그 장애물 뒤로 지나가는 경유점(via), (c) 경로 위 합류점(rejoin)을 만들고, 스톡 `ComputePathThroughPoses` 가 goals=[via, rejoin] 로 **짧은** 경로만 계획한다. 새 Action `SpliceDetourPath` 가 그 구간을 기존 경로에 이어 붙이되, 이전 경로와의 최대 수직거리가 0.28 m(= 하네스 이탈 구간 개시 문턱 0.30 m 미만)를 넘거나 합류 오차·마감(0.5 s)을 넘으면 **거부하고 {path} 를 그대로 둔다**. 즉 이 설계가 할 수 있는 최악은 \"아무 것도 안 함\"(= 오늘의 거동)이고, 성공했을 때의 경로 변경량은 사전에 수치로 묶여 있다. 전역 코스트맵·exclude_dynamic·safety_gate·DWA 는 한 줄도 건드리지 않는다.\n\n핵심 착상 셋:\n1. **구속은 코스트맵이 아니라 경유점으로 planner 에 넘긴다.** A* 는 동적 장애물을 여전히 못 보지만, BT 가 \"여기를 지나라\"는 via 를 주므로 결과 경로는 회피 기하를 갖는다. A* 는 정적 장애물 회피와 경로 유효성만 책임진다(via 가 치명 셀이면 계획 실패 → 거부 → 무변경).\n2. **재계획은 경로를 갈아치우지 않고 한 구간만 교체한다.** rejoin 이후는 이전 경로와 **비트 동일**이다. launch_utils.py:99-107 이 기록한 \"원경로와 목표에서만 만나는 다른 길\"(1.913 m) 은 구조적으로 발생 불가능하다.\n3. **0.28 m 라는 숫자는 임의가 아니다.** test_08_dynamic_obstacles.py:59 의 `DEV_OUT_M = 0.3` 미만이므로, 채택된 우회는 **이탈 구간(episode)을 열지 않는다** → '복귀 5 s' 판정이 구조적으로 무영향이다."
+   }
+  ]
+ },
+ "workflowProgress": [
+  {
+   "type": "workflow_phase",
+   "index": 1,
+   "title": "Understand"
+  },
+  {
+   "type": "workflow_phase",
+   "index": 2,
+   "title": "Design"
+  },
+  {
+   "type": "workflow_phase",
+   "index": 3,
+   "title": "Judge"
+  },
+  {
+   "type": "workflow_phase",
+   "index": 4,
+   "title": "Refute"
+  },
+  {
+   "type": "workflow_agent",
+   "index": 1,
+   "label": "read:costmap",
+   "phaseIndex": 1,
+   "phaseTitle": "Understand",
+   "agentId": "a589489eff897c9fb",
+   "model": "claude-opus-5",
+   "state": "done",
+   "startedAt": 1790683602257,
+   "queuedAt": 1790683602235,
+   "attempt": 1,
+   "lastToolName": "StructuredOutput",
+   "lastToolSummary": "전역/지역 코스트맵 + costmap_scan_filter_node 경로 지도 (저…",
+   "promptPreview": "저장소: /tmp/claude-0/-home-CAPYI/c8bfdadc-8698-4d09-aac1-e3c1224c9abc/scratchpad/wt-integ (ROS 2 Humble + Gazebo Fortress 물류 AMR, 한국어 주석)\n\n**절대 규칙 — 어기면 진행 중인 측정이 깨진다:**\n- 읽기 전용이다. src/ 아래 어떤 파일도 수정하지 마라.\n- colcon build / colcon test 를 절대 실행하지 마라. 지금 이 트리가 Gazebo 통합시험 컨테이너에\n  --symlink-install 로 마운트돼 돌고 있어서, 빌드하면 실행 중인 측정의 설정·라이브러리가 바뀐다.\n- docker 명령을 실행하지 마라.\n- 메모가 필요하면 /tmp/claude-0/-home-CAPYI/c8b…",
+   "promptFramed": true,
+   "lastProgressAt": 1790683982999,
+   "tokens": 118270,
+   "toolCalls": 30,
+   "durationMs": 380737,
+   "resultPreview": "{\"area\":\"전역/지역 코스트맵 + costmap_scan_filter_node 경로 지도 (저장소 루트: /tmp/claude-0/-home-CAPYI/c8bfdadc-8698-4d09-aac1-e3c1224c9abc/scratchpad/wt-integ, 아래 file:line 은 이 루트 기준 상대경로. 읽기 전용으로만 조사했고 build/test/docker 는 실행하지 않았다)\",\"findings\":[{\"question\":\"1a. 지역 코스트맵의 plugins 목록과 각 레이어가 구독하는 토픽 (정확한 이름)\",\"answer\":\"plugins: [\\\"obstacle_layer\\\", \\\"depth_layer\\\", \\\"inflation_layer\\\"] (filters 없음).\\n- obstacle_l…"
+  },
+  {
+   "type": "workflow_agent",
+   "index": 2,
+   "label": "read:bt",
+   "phaseIndex": 1,
+   "phaseTitle": "Understand",
+   "agentId": "a4dbfcb41790697d1",
+   "model": "claude-opus-5",
+   "state": "done",
+   "startedAt": 1790683602259,
+   "queuedAt": 1790683602235,
+   "attempt": 1,
+   "lastToolName": "StructuredOutput",
+   "lastToolSummary": "BehaviorTree / bt_navigator 재계획 트리거 지도",
+   "promptPreview": "저장소: /tmp/claude-0/-home-CAPYI/c8bfdadc-8698-4d09-aac1-e3c1224c9abc/scratchpad/wt-integ (ROS 2 Humble + Gazebo Fortress 물류 AMR, 한국어 주석)\n\n**절대 규칙 — 어기면 진행 중인 측정이 깨진다:**\n- 읽기 전용이다. src/ 아래 어떤 파일도 수정하지 마라.\n- colcon build / colcon test 를 절대 실행하지 마라. 지금 이 트리가 Gazebo 통합시험 컨테이너에\n  --symlink-install 로 마운트돼 돌고 있어서, 빌드하면 실행 중인 측정의 설정·라이브러리가 바뀐다.\n- docker 명령을 실행하지 마라.\n- 메모가 필요하면 /tmp/claude-0/-home-CAPYI/c8b…",
+   "promptFramed": true,
+   "lastProgressAt": 1790683948326,
+   "tokens": 137726,
+   "toolCalls": 39,
+   "durationMs": 345087,
+   "resultPreview": "{\"area\":\"BehaviorTree / bt_navigator 재계획 트리거 지도\",\"findings\":[{\"question\":\"1a. 배포에서 실제로 쓰이는 BT XML 이 무엇인가\",\"answer\":\"navigate_to_pose_no_ttc.xml / navigate_through_poses_no_ttc.xml 이다 — TTC 재계획 가지가 아예 없는 판이다.\\n\\n선택 사슬: amr_bringup 이 DeclareLaunchArgument('nav_ttc_bt', default_value='false') 로 기본값을 박고(launch_utils.py:108), Options 기본값도 'false'(:144, :168), stack_extra_arguments 가 navigation 스택에만 {'u…"
+  },
+  {
+   "type": "workflow_agent",
+   "index": 3,
+   "label": "read:ttc",
+   "phaseIndex": 1,
+   "phaseTitle": "Understand",
+   "agentId": "a6ff75cb3a1f96cc5",
+   "model": "claude-opus-5",
+   "state": "done",
+   "startedAt": 1790683602260,
+   "queuedAt": 1790683602236,
+   "attempt": 1,
+   "lastToolName": "StructuredOutput",
+   "lastToolSummary": "TTC 계산과 동적 장애물 예측 경로 (amr_perception 추적기 → s…",
+   "promptPreview": "저장소: /tmp/claude-0/-home-CAPYI/c8bfdadc-8698-4d09-aac1-e3c1224c9abc/scratchpad/wt-integ (ROS 2 Humble + Gazebo Fortress 물류 AMR, 한국어 주석)\n\n**절대 규칙 — 어기면 진행 중인 측정이 깨진다:**\n- 읽기 전용이다. src/ 아래 어떤 파일도 수정하지 마라.\n- colcon build / colcon test 를 절대 실행하지 마라. 지금 이 트리가 Gazebo 통합시험 컨테이너에\n  --symlink-install 로 마운트돼 돌고 있어서, 빌드하면 실행 중인 측정의 설정·라이브러리가 바뀐다.\n- docker 명령을 실행하지 마라.\n- 메모가 필요하면 /tmp/claude-0/-home-CAPYI/c8b…",
+   "promptFramed": true,
+   "lastProgressAt": 1790683966551,
+   "tokens": 153131,
+   "toolCalls": 45,
+   "durationMs": 363311,
+   "resultPreview": "{\"area\":\"TTC 계산과 동적 장애물 예측 경로 (amr_perception 추적기 → safety_gate / BT 조건 / amr_navigation DWA VO·TTC₀)\",\"findings\":[{\"question\":\"1-A. TTC 가 계산되는 지점 ① — 추적기(발행용 TTC)\",\"answer\":\"amr_perception 의 computeTimeToCollision 이 유일한 '명세형' TTC 계산이다. obstacle_tracker_node 가 스캔마다 트랙별로 호출해 TrackedObstacle.time_to_collision 에 싣는다. 여기에는 임계값이 없다 — 계산·발행만 하고 판단은 소비자 셋(safety_gate / BT / 없음)이 한다. g(τ)=|p_r(τ)−p_o(τ)|−…"
+  },
+  {
+   "type": "workflow_agent",
+   "index": 4,
+   "label": "read:contracts",
+   "phaseIndex": 1,
+   "phaseTitle": "Understand",
+   "agentId": "a90ba3e3d60daf3d4",
+   "model": "claude-opus-5",
+   "state": "done",
+   "startedAt": 1790683602261,
+   "queuedAt": 1790683602236,
+   "attempt": 1,
+   "lastToolName": "StructuredOutput",
+   "lastToolSummary": "동적 장애물을 전역 계획에 반영할 때 깨질 수 있는 기존 시험·…",
+   "promptPreview": "저장소: /tmp/claude-0/-home-CAPYI/c8bfdadc-8698-4d09-aac1-e3c1224c9abc/scratchpad/wt-integ (ROS 2 Humble + Gazebo Fortress 물류 AMR, 한국어 주석)\n\n**절대 규칙 — 어기면 진행 중인 측정이 깨진다:**\n- 읽기 전용이다. src/ 아래 어떤 파일도 수정하지 마라.\n- colcon build / colcon test 를 절대 실행하지 마라. 지금 이 트리가 Gazebo 통합시험 컨테이너에\n  --symlink-install 로 마운트돼 돌고 있어서, 빌드하면 실행 중인 측정의 설정·라이브러리가 바뀐다.\n- docker 명령을 실행하지 마라.\n- 메모가 필요하면 /tmp/claude-0/-home-CAPYI/c8b…",
+   "promptFramed": true,
+   "lastProgressAt": 1790684139411,
+   "tokens": 177761,
+   "toolCalls": 56,
+   "durationMs": 536171,
+   "resultPreview": "{\"area\":\"동적 장애물을 전역 계획에 반영할 때 깨질 수 있는 기존 시험·계약 전수 조사 (저장소 루트 /tmp/claude-0/-home-CAPYI/c8bfdadc-8698-4d09-aac1-e3c1224c9abc/scratchpad/wt-integ, 읽기 전용 — 빌드·docker 미실행)\",\"findings\":[{\"question\":\"Q1-a. exclude_dynamic / dynamic_radius / scan_costmap_static 를 직접 언급하는 시험은 무엇을 고정하는가\",\"answer\":\"총 4개 파일뿐이다. (1) test_costmap_config.py:128 — 배포 nav2_params 가 exclude_dynamic=True 이고 dynamic_radius ≥ 0.30(사람…"
+  },
+  {
+   "type": "workflow_agent",
+   "index": 5,
+   "label": "read:layerapi",
+   "phaseIndex": 1,
+   "phaseTitle": "Understand",
+   "agentId": "a83a8964ba3a67868",
+   "model": "claude-opus-5",
+   "state": "done",
+   "startedAt": 1790683602262,
+   "queuedAt": 1790683602236,
+   "attempt": 1,
+   "lastToolName": "StructuredOutput",
+   "lastToolSummary": "Nav2 코스트맵 레이어/필터 추가 절차 역설계 — /tmp/claude-0/…",
+   "promptPreview": "저장소: /tmp/claude-0/-home-CAPYI/c8bfdadc-8698-4d09-aac1-e3c1224c9abc/scratchpad/wt-integ (ROS 2 Humble + Gazebo Fortress 물류 AMR, 한국어 주석)\n\n**절대 규칙 — 어기면 진행 중인 측정이 깨진다:**\n- 읽기 전용이다. src/ 아래 어떤 파일도 수정하지 마라.\n- colcon build / colcon test 를 절대 실행하지 마라. 지금 이 트리가 Gazebo 통합시험 컨테이너에\n  --symlink-install 로 마운트돼 돌고 있어서, 빌드하면 실행 중인 측정의 설정·라이브러리가 바뀐다.\n- docker 명령을 실행하지 마라.\n- 메모가 필요하면 /tmp/claude-0/-home-CAPYI/c8b…",
+   "promptFramed": true,
+   "lastProgressAt": 1790684023910,
+   "tokens": 146088,
+   "toolCalls": 43,
+   "durationMs": 420670,
+   "resultPreview": "{\"area\":\"Nav2 코스트맵 레이어/필터 추가 절차 역설계 — /tmp/claude-0/-home-CAPYI/c8bfdadc-8698-4d09-aac1-e3c1224c9abc/scratchpad/wt-integ (경로는 이 저장소 루트 기준 상대)\",\"findings\":[{\"question\":\"1. pluginlib 플러그인을 하나 추가하려면 정확히 어떤 파일을 어떻게 고쳐야 하는가 (기존 예 끝까지 추적)\",\"answer\":\"AStarPlanner 를 끝까지 따라가면 손대는 곳은 정확히 6군데 + 검증 2군데다.\\n\\n(a) 헤더 — include/amr_navigation/astar_planner.hpp:33 `class AStarPlanner : public nav2_core::GlobalPlan…"
+  },
+  {
+   "type": "workflow_agent",
+   "index": 6,
+   "label": "design:minimal",
+   "phaseIndex": 2,
+   "phaseTitle": "Design",
+   "agentId": "a03f3a86e8b4db458",
+   "model": "claude-opus-5",
+   "state": "done",
+   "startedAt": 1790684141336,
+   "queuedAt": 1790684141323,
+   "attempt": 1,
+   "lastToolName": "StructuredOutput",
+   "lastToolSummary": "계획 충돌 트랙 한정 전역 재진입 (TTC-gated re-admission)",
+   "promptPreview": "저장소: /tmp/claude-0/-home-CAPYI/c8bfdadc-8698-4d09-aac1-e3c1224c9abc/scratchpad/wt-integ (ROS 2 Humble + Gazebo Fortress 물류 AMR, 한국어 주석)\n\n**절대 규칙 — 어기면 진행 중인 측정이 깨진다:**\n- 읽기 전용이다. src/ 아래 어떤 파일도 수정하지 마라.\n- colcon build / colcon test 를 절대 실행하지 마라. 지금 이 트리가 Gazebo 통합시험 컨테이너에\n  --symlink-install 로 마운트돼 돌고 있어서, 빌드하면 실행 중인 측정의 설정·라이브러리가 바뀐다.\n- docker 명령을 실행하지 마라.\n- 메모가 필요하면 /tmp/claude-0/-home-CAPYI/c8b…",
+   "promptFramed": true,
+   "lastProgressAt": 1790685115969,
+   "tokens": 175847,
+   "toolCalls": 21,
+   "durationMs": 974631,
+   "resultPreview": "{\"name\":\"계획 충돌 트랙 한정 전역 재진입 (TTC-gated re-admission)\",\"summary\":\"핵심 착상: 추적기가 이미 발행하는 `TrackedObstacle.time_to_collision` 은 **로봇의 현재 전역 plan 을 따라가는 예측**으로 계산된 값이다 (obstacle_tracker_node.cpp:286-306 이 `/amr_01/plan` 을 받아 `RobotMotionModel::select` 에 넣고, ttc.cpp:109-168 이 등속 CV + 공분산 전파로 g(τ) 첫 영점을 찾는다). 따라서 TTC = ∞ 는 \\\"이 트랙은 내 경로와 만나지 않는다\\\", TTC 유한·작음은 \\\"이 트랙은 내 경로 위에서 실제로 만난다\\\" 를 뜻한다. 이 값은 지금 safet…"
+  },
+  {
+   "type": "workflow_agent",
+   "index": 7,
+   "label": "design:layer",
+   "phaseIndex": 2,
+   "phaseTitle": "Design",
+   "agentId": "aa8202ab86e30433d",
+   "model": "claude-opus-5",
+   "state": "done",
+   "startedAt": 1790684141337,
+   "queuedAt": 1790684141323,
+   "attempt": 1,
+   "lastToolName": "StructuredOutput",
+   "lastToolSummary": "예측 점유 밴드 필터 — dynamic_forecast_filter (TTC 무장 · …",
+   "promptPreview": "저장소: /tmp/claude-0/-home-CAPYI/c8bfdadc-8698-4d09-aac1-e3c1224c9abc/scratchpad/wt-integ (ROS 2 Humble + Gazebo Fortress 물류 AMR, 한국어 주석)\n\n**절대 규칙 — 어기면 진행 중인 측정이 깨진다:**\n- 읽기 전용이다. src/ 아래 어떤 파일도 수정하지 마라.\n- colcon build / colcon test 를 절대 실행하지 마라. 지금 이 트리가 Gazebo 통합시험 컨테이너에\n  --symlink-install 로 마운트돼 돌고 있어서, 빌드하면 실행 중인 측정의 설정·라이브러리가 바뀐다.\n- docker 명령을 실행하지 마라.\n- 메모가 필요하면 /tmp/claude-0/-home-CAPYI/c8b…",
+   "promptFramed": true,
+   "lastProgressAt": 1790684925374,
+   "tokens": 156838,
+   "toolCalls": 16,
+   "durationMs": 782661,
+   "resultPreview": "{\"name\":\"예측 점유 밴드 필터 — dynamic_forecast_filter (TTC 무장 · 시간 제한 · 진폭 유도)\",\"summary\":\"동적 트랙이 앞으로 쓸고 지나갈 영역을 전역 코스트맵에 **한시적 CostmapFilter 마스크**로 넣는다. 새 노드 `forecast_mask_node` 가 `perception/tracked_obstacles` + `plan` 을 보고, 최소 TTC < 3.0 s 이고 그 예측 밴드가 현재 경로와 4.0 m 안에서 실제로 교차할 때만 무장해 `forecast_mask`(OccupancyGrid) + `forecast_filter_info`(CostmapFilterInfo) 를 latched 로 발행한다. 전역 코스트맵 `filters:` 에 Keepou…"
+  },
+  {
+   "type": "workflow_agent",
+   "index": 8,
+   "label": "design:bt",
+   "phaseIndex": 2,
+   "phaseTitle": "Design",
+   "agentId": "a3b62e855485b28c3",
+   "model": "claude-opus-5",
+   "state": "done",
+   "startedAt": 1790684141338,
+   "queuedAt": 1790684141323,
+   "attempt": 1,
+   "lastToolName": "StructuredOutput",
+   "lastToolSummary": "BRR — 구속 우회 재계획 (Bounded Rejoin Replanning)",
+   "promptPreview": "저장소: /tmp/claude-0/-home-CAPYI/c8bfdadc-8698-4d09-aac1-e3c1224c9abc/scratchpad/wt-integ (ROS 2 Humble + Gazebo Fortress 물류 AMR, 한국어 주석)\n\n**절대 규칙 — 어기면 진행 중인 측정이 깨진다:**\n- 읽기 전용이다. src/ 아래 어떤 파일도 수정하지 마라.\n- colcon build / colcon test 를 절대 실행하지 마라. 지금 이 트리가 Gazebo 통합시험 컨테이너에\n  --symlink-install 로 마운트돼 돌고 있어서, 빌드하면 실행 중인 측정의 설정·라이브러리가 바뀐다.\n- docker 명령을 실행하지 마라.\n- 메모가 필요하면 /tmp/claude-0/-home-CAPYI/c8b…",
+   "promptFramed": true,
+   "lastProgressAt": 1790685103924,
+   "tokens": 159781,
+   "toolCalls": 17,
+   "durationMs": 961211,
+   "resultPreview": "{\"name\":\"BRR — 구속 우회 재계획 (Bounded Rejoin Replanning)\",\"summary\":\"BT 수준에서 \\\"충돌 예측 → 재계획 요청\\\"을 표현하되, 재계획을 **목표까지 다시 뿌리내리는 것**이 아니라 **현재 경로 위의 합류점까지만** 하도록 구속한다. 새 Condition `IsCollisionPredictedOnPath` 가 추적기가 이미 발행하는 TTC(공분산 전파 포함, 로봇 모델 = /plan 추종)를 현재 {path} 기하와 결합해 (a) 충돌 예측점, (b) 그 장애물 뒤로 지나가는 경유점(via), (c) 경로 위 합류점(rejoin)을 만들고, 스톡 `ComputePathThroughPoses` 가 goals=[via, rejoin] 로 **짧은** 경로만 계획…"
+  },
+  {
+   "type": "workflow_agent",
+   "index": 9,
+   "label": "judge:spec",
+   "phaseIndex": 3,
+   "phaseTitle": "Judge",
+   "agentId": "a5d3141a65dca4fa4",
+   "model": "claude-opus-5",
+   "state": "done",
+   "startedAt": 1790685118727,
+   "queuedAt": 1790685118712,
+   "attempt": 1,
+   "lastToolName": "StructuredOutput",
+   "lastToolSummary": "설계 1: 계획 충돌 트랙 한정 전역 재진입 (TTC-gated re-admis…",
+   "promptPreview": "저장소: /tmp/claude-0/-home-CAPYI/c8bfdadc-8698-4d09-aac1-e3c1224c9abc/scratchpad/wt-integ (ROS 2 Humble + Gazebo Fortress 물류 AMR, 한국어 주석)\n\n**절대 규칙 — 어기면 진행 중인 측정이 깨진다:**\n- 읽기 전용이다. src/ 아래 어떤 파일도 수정하지 마라.\n- colcon build / colcon test 를 절대 실행하지 마라. 지금 이 트리가 Gazebo 통합시험 컨테이너에\n  --symlink-install 로 마운트돼 돌고 있어서, 빌드하면 실행 중인 측정의 설정·라이브러리가 바뀐다.\n- docker 명령을 실행하지 마라.\n- 메모가 필요하면 /tmp/claude-0/-home-CAPYI/c8b…",
+   "promptFramed": true,
+   "lastProgressAt": 1790685830804,
+   "tokens": 196830,
+   "toolCalls": 39,
+   "durationMs": 712075,
+   "resultPreview": "{\"ranking\":[{\"design\":\"설계 1: 계획 충돌 트랙 한정 전역 재진입 (TTC-gated re-admission)\",\"score\":8.3,\"spec_literal\":9,\"invariants\":8,\"budget\":9,\"measurability\":9,\"risk\":6,\"why\":\"명세 문언을 가장 직접적으로 만족한다. 동료평가가 '재계획하여 회피가 구현되었는가'를 물으면 '전역 코스트맵이 그 동적 장애물을 LETHAL 로 들고 있었고(t_m), 그 뒤 A* 가 그것을 보고 새 경로를 냈다(t_p)'를 한 시행의 타임스탬프 세 개로 보여줄 수 있다. 설계 2·3 은 전역 격자가 그 장애물을 보게 만들거나(2) 아예 안 보게 두거나(3) 우회를 BT 가 손으로 만든다 — 2 는 '진짜 장애물'이 아니…"
+  },
+  {
+   "type": "workflow_agent",
+   "index": 10,
+   "label": "judge:safety",
+   "phaseIndex": 3,
+   "phaseTitle": "Judge",
+   "agentId": "a2745d41fe4f39b0c",
+   "model": "claude-opus-5",
+   "state": "done",
+   "startedAt": 1790685118728,
+   "queuedAt": 1790685118712,
+   "attempt": 1,
+   "lastToolName": "StructuredOutput",
+   "lastToolSummary": "설계 1: 계획 충돌 트랙 한정 전역 재진입 (TTC-gated re-admis…",
+   "promptPreview": "저장소: /tmp/claude-0/-home-CAPYI/c8bfdadc-8698-4d09-aac1-e3c1224c9abc/scratchpad/wt-integ (ROS 2 Humble + Gazebo Fortress 물류 AMR, 한국어 주석)\n\n**절대 규칙 — 어기면 진행 중인 측정이 깨진다:**\n- 읽기 전용이다. src/ 아래 어떤 파일도 수정하지 마라.\n- colcon build / colcon test 를 절대 실행하지 마라. 지금 이 트리가 Gazebo 통합시험 컨테이너에\n  --symlink-install 로 마운트돼 돌고 있어서, 빌드하면 실행 중인 측정의 설정·라이브러리가 바뀐다.\n- docker 명령을 실행하지 마라.\n- 메모가 필요하면 /tmp/claude-0/-home-CAPYI/c8b…",
+   "promptFramed": true,
+   "lastProgressAt": 1790685711523,
+   "tokens": 188366,
+   "toolCalls": 35,
+   "durationMs": 591074,
+   "resultPreview": "{\"ranking\":[{\"design\":\"설계 1: 계획 충돌 트랙 한정 전역 재진입 (TTC-gated re-admission)\",\"score\":7.8,\"spec_literal\":6,\"invariants\":8,\"measurability\":9,\"budget\":9,\"risk\":7,\"why\":\"불변식 A 는 세 설계 중 유일하게 '주장'이 아니라 '코드'로 확인된다. /tmp/claude-0/-home-CAPYI/c8bfdadc-8698-4d09-aac1-e3c1224c9abc/scratchpad/wt-integ/src/amr_navigation/src/nodes/costmap_scan_filter_node.cpp 의 onScan 은 out->ranges = core::denoiseRanges(...) 뒤 st…"
+  },
+  {
+   "type": "workflow_agent",
+   "index": 11,
+   "label": "judge:engineer",
+   "phaseIndex": 3,
+   "phaseTitle": "Judge",
+   "agentId": "aaeb7d9d2b7928995",
+   "model": "claude-opus-5",
+   "state": "done",
+   "startedAt": 1790685118728,
+   "queuedAt": 1790685118712,
+   "attempt": 1,
+   "lastToolName": "StructuredOutput",
+   "lastToolSummary": "설계 1: 계획 충돌 트랙 한정 전역 재진입 (TTC-gated re-admis…",
+   "promptPreview": "저장소: /tmp/claude-0/-home-CAPYI/c8bfdadc-8698-4d09-aac1-e3c1224c9abc/scratchpad/wt-integ (ROS 2 Humble + Gazebo Fortress 물류 AMR, 한국어 주석)\n\n**절대 규칙 — 어기면 진행 중인 측정이 깨진다:**\n- 읽기 전용이다. src/ 아래 어떤 파일도 수정하지 마라.\n- colcon build / colcon test 를 절대 실행하지 마라. 지금 이 트리가 Gazebo 통합시험 컨테이너에\n  --symlink-install 로 마운트돼 돌고 있어서, 빌드하면 실행 중인 측정의 설정·라이브러리가 바뀐다.\n- docker 명령을 실행하지 마라.\n- 메모가 필요하면 /tmp/claude-0/-home-CAPYI/c8b…",
+   "promptFramed": true,
+   "lastProgressAt": 1790685887592,
+   "tokens": 214347,
+   "toolCalls": 46,
+   "durationMs": 767143,
+   "resultPreview": "{\"ranking\":[{\"design\":\"설계 1: 계획 충돌 트랙 한정 전역 재진입 (TTC-gated re-admission)\",\"score\":84,\"spec_literal\":7,\"budget\":9,\"invariants\":9,\"measurability\":10,\"risk\":7,\"why\":\"구현 규모가 압도적으로 작고(새 컴파일 단위·노드·메시지·플러그인 0, hpp/cpp 한 쌍 ~30줄 + YAML 4줄 + XML 속성값), 근거가 전부 실물로 확인된다. 코드 검증: costmap_scan_filter_node.cpp onScan 이 `out->ranges = core::denoiseRanges(...)` → `auto stat = ...(*out); pub_->publish(std::move(out))…"
+  },
+  {
+   "type": "workflow_agent",
+   "index": 12,
+   "label": "refute:spec",
+   "phaseIndex": 4,
+   "phaseTitle": "Refute",
+   "agentId": "ad73daa30105876db",
+   "model": "claude-opus-5",
+   "state": "done",
+   "startedAt": 1790685889479,
+   "queuedAt": 1790685889465,
+   "attempt": 1,
+   "lastToolName": "StructuredOutput",
+   "promptPreview": "저장소: /tmp/claude-0/-home-CAPYI/c8bfdadc-8698-4d09-aac1-e3c1224c9abc/scratchpad/wt-integ (ROS 2 Humble + Gazebo Fortress 물류 AMR, 한국어 주석)\n\n**절대 규칙 — 어기면 진행 중인 측정이 깨진다:**\n- 읽기 전용이다. src/ 아래 어떤 파일도 수정하지 마라.\n- colcon build / colcon test 를 절대 실행하지 마라. 지금 이 트리가 Gazebo 통합시험 컨테이너에\n  --symlink-install 로 마운트돼 돌고 있어서, 빌드하면 실행 중인 측정의 설정·라이브러리가 바뀐다.\n- docker 명령을 실행하지 마라.\n- 메모가 필요하면 /tmp/claude-0/-home-CAPYI/c8b…",
+   "promptFramed": true,
+   "lastProgressAt": 1790686652814,
+   "tokens": 185194,
+   "toolCalls": 39,
+   "durationMs": 763334,
+   "resultPreview": "{\"refuted\":true,\"attacks\":[{\"claim_attacked\":\"핵심 착상: 'TrackedObstacle.time_to_collision 은 로봇의 현재 전역 plan 을 따라가는 예측으로 계산된 값이다. 따라서 TTC = ∞ 는 이 트랙은 내 경로와 만나지 않는다를 뜻한다.' (축 (i) 전체가 여기에 얹혀 있다)\",\"attack\":\"배포에서 이 값은 시행의 대부분 동안 plan 기준이 아니다. obstacle_tracker_node.cpp:288 은 `(now() - plan_received_).seconds() <= plan_timeout_` 일 때만 plan 을 path 로 쓴다. plan_timeout 은 perception.yaml:121 = 5.0 s 이고, /plan 은 C…"
+  },
+  {
+   "type": "workflow_agent",
+   "index": 13,
+   "label": "refute:safety",
+   "phaseIndex": 4,
+   "phaseTitle": "Refute",
+   "agentId": "a98bb7fe5dba58731",
+   "model": "claude-opus-5",
+   "state": "done",
+   "startedAt": 1790685889480,
+   "queuedAt": 1790685889466,
+   "attempt": 1,
+   "lastToolName": "StructuredOutput",
+   "promptPreview": "저장소: /tmp/claude-0/-home-CAPYI/c8bfdadc-8698-4d09-aac1-e3c1224c9abc/scratchpad/wt-integ (ROS 2 Humble + Gazebo Fortress 물류 AMR, 한국어 주석)\n\n**절대 규칙 — 어기면 진행 중인 측정이 깨진다:**\n- 읽기 전용이다. src/ 아래 어떤 파일도 수정하지 마라.\n- colcon build / colcon test 를 절대 실행하지 마라. 지금 이 트리가 Gazebo 통합시험 컨테이너에\n  --symlink-install 로 마운트돼 돌고 있어서, 빌드하면 실행 중인 측정의 설정·라이브러리가 바뀐다.\n- docker 명령을 실행하지 마라.\n- 메모가 필요하면 /tmp/claude-0/-home-CAPYI/c8b…",
+   "promptFramed": true,
+   "lastProgressAt": 1790686605966,
+   "tokens": 168689,
+   "toolCalls": 47,
+   "durationMs": 715313,
+   "resultPreview": "{\"refuted\":true,\"attacks\":[{\"claim_attacked\":\"불변식 A 논증 2: \\\"이 설계가 하는 일은 게이트에 들어가는 명령을 바꾸는 것뿐이며, 게이트가 그 명령을 거부·감속할 권한은 그대로다. 새 발행자가 cmd_vel·E-stop·zone·sensor_stop 어느 토픽에도 붙지 않는다.\\\" / 요동 논증: \\\"재진입은 자기 종료적이다 — 재계획으로 새 경로가 그 트랙을 비껴가면 추적기가 새 plan 기준으로 TTC 를 다시 계산해 ∞ 가 된다.\\\"\",\"attack\":\"새 사슬의 종점 /plan 은 cmd_vel_nav 로만 가지 않는다. /plan 은 **추적기의 입력**이고, 추적기가 그 경로로 계산한 time_to_collision 이 곧 safety_gate 의 속도 상…"
+  }
+ ],
+ "totalTokens": 2178868,
+ "totalToolCalls": 473
+}

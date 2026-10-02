@@ -1,0 +1,35 @@
+# amr_dashboard dashboard_node 파라미터 (components.md §5.7)
+# 토픽 이름은 전역(/fleet/*, /map). robot_estop / reset_estop_service 는 로봇 네임스페이스 아래 상대 이름이며
+# 노드가 /<robot_id>/ 를 앞에 붙인다.
+# host / port / log_dir / api_token 은 launch 인자로 준 것만 덮어쓴다 (dashboard.launch.py).
+dashboard_node:
+  ros__parameters:
+    host: "127.0.0.1"           # 기본은 이 컴퓨터만. LAN 공개는 "0.0.0.0" (+ allowed_hosts, api_token)
+    port: 8080
+    allowed_hosts: [""]          # Host 헤더 허용 추가분 (루프백·host 값은 자동). "*" 는 검사 끔 (DNS rebinding 무방비)
+    api_token: ""                # 조작 API(POST /api/estop, /api/tasks) 토큰. "" → $AMR_DASHBOARD_TOKEN → 없음 (파라미터는 ros2 param get 으로 보이므로 환경 변수 권장)
+    require_reset_ack: true      # E-stop 해제: reset_estop 성공을 확인한 로봇만 해제로 표시 (서버 없음 = 실패)
+    reset_timeout: 2.0           # [s] reset_estop 응답 대기
+    reset_ack_timeout: 0.2       # [s] false 발행 뒤 구독자 ack 대기 (그 다음 reset_estop 호출)
+    web_dir: ""                  # 빈 문자열 → share/amr_dashboard/web
+    log_dir: ""                  # 빈 문자열 → $ROS_WS/logs (dashboard_actions_YYYYmmdd.jsonl)
+    heartbeat_period: 5.0        # [s] SSE heartbeat 주기 (프록시 keep-alive)
+    executor_threads: 1          # 1 = SingleThreadedExecutor (기본, 지연 최소), 2 이상 = MultiThreadedExecutor
+    robot_ids: ["amr_01", "amr_02", "amr_03", "amr_04", "amr_05"]   # E-stop 대상 (배열 또는 "amr_01,amr_02"). FleetStatus 에서 본 로봇도 추가 (토픽 이름으로 쓸 수 있는 id 만)
+    task_events_transient_local: false   # fleet_manager 가 /fleet/task_events 를 latched 로 내면 true (늦게 켜도 이력 수신)
+    max_alerts: 100              # 알림 이력 보관 수
+    max_task_events: 50          # 작업 타임라인 보관 수
+    topics:
+      fleet_status: "/fleet/status"
+      fleet_alerts: "/fleet/alerts"
+      task_events: "/fleet/task_events"
+      map: "/map"
+      task_request: "/fleet/task_request"
+      fleet_estop: "/fleet/estop"
+      robot_estop: "estop"                      # → /<robot_id>/estop
+      reset_estop_service: "safety/reset_estop" # → /<robot_id>/safety/reset_estop (해제 시 호출, "" 이면 생략)
+    world:                       # 지도(/map)를 받기 전 캔버스 범위 [m] (명세 4.1: 60 x 40 m)
+      origin_x: 0.0
+      origin_y: 0.0
+      width: 60.0
+      height: 40.0

@@ -1,0 +1,70 @@
+=== c04_jerk_filter.py
+BRIEF dt=0.01: t(v>=1.999)=2.390s  max|a|=1.000  max|j|=5.78  overshoot=1.42e-02  final a=0.00e+00  jerk sign changes t>3s: 0
+BRIEF dt=0.01: 2.0->1.1 undershoot=1.42e-02 max|j|=5.78 final v=1.1000
+BRIEF dt=0.01: reversal (ref 2.0 then 0.5 at t=0.8): max|j|=5.48 min v=0.0002 final v=0.5000 final a=0.00e+00
+FIXED dt=0.01: t(v>=1.999)=2.470s  max|a|=1.000  max|j|=2.00  overshoot=0.00e+00  final a=0.00e+00  jerk sign changes t>3s: 0
+FIXED dt=0.01: 2.0->1.1 undershoot=0.00e+00 max|j|=2.00 final v=1.1000
+FIXED dt=0.01: reversal (ref 2.0 then 0.5 at t=0.8): max|j|=2.00 min v=0.0001 final v=0.5000 final a=0.00e+00
+BRIEF dt=0.02: t(v>=1.999)=2.360s  max|a|=1.000  max|j|=8.89  overshoot=2.76e-02  final a=0.00e+00  jerk sign changes t>3s: 0
+BRIEF dt=0.02: 2.0->1.1 undershoot=2.76e-02 max|j|=8.89 final v=1.1000
+BRIEF dt=0.02: reversal (ref 2.0 then 0.5 at t=0.8): max|j|=4.52 min v=0.0008 final v=0.5000 final a=0.00e+00
+FIXED dt=0.02: t(v>=1.999)=2.480s  max|a|=1.000  max|j|=2.00  overshoot=0.00e+00  final a=0.00e+00  jerk sign changes t>3s: 0
+FIXED dt=0.02: 2.0->1.1 undershoot=0.00e+00 max|j|=2.00 final v=1.1000
+FIXED dt=0.02: reversal (ref 2.0 then 0.5 at t=0.8): max|j|=2.00 min v=0.0004 final v=0.5000 final a=0.00e+00
+=== c05_jerk_filter_closed.py
+CLOSED dt=0.01: t(|v-2|<1e-6)=2.500s max|a|=1.0000 max|j|=2.0000 overshoot=0.0e+00 final a=0.0e+00 jerk sign changes after 3 s=0
+CLOSED dt=0.01 2.0->1.1: max|j|=2.0000 max|a|=1.0000 final v=1.10000 final a=0.0e+00
+CLOSED dt=0.01 reversal: max|j|=2.0000 max|a|=1.0000 final v=0.50000 final a=0.0e+00
+CLOSED dt=0.01 ramp+stop: max|j|=2.0000 max|a|=1.0000 final v=0.00000 final a=0.0e+00
+CLOSED dt=0.01: 200 random step sequences: max|j|=2.0000, max|a|=1.0000
+CLOSED dt=0.02: t(|v-2|<1e-6)=2.500s max|a|=1.0000 max|j|=2.0000 overshoot=0.0e+00 final a=0.0e+00 jerk sign changes after 3 s=0
+CLOSED dt=0.02 2.0->1.1: max|j|=2.0000 max|a|=1.0000 final v=1.10000 final a=0.0e+00
+CLOSED dt=0.02 reversal: max|j|=2.0000 max|a|=1.0000 final v=0.50000 final a=0.0e+00
+CLOSED dt=0.02 ramp+stop: max|j|=2.0000 max|a|=1.0000 final v=0.00000 final a=0.0e+00
+CLOSED dt=0.02: 200 random step sequences: max|j|=2.0000, max|a|=1.0000
+BRIEF: max|j| 5.78 at t=2.74s, a before 0.0578 -> after 0.0000, v 2.0000
+=== c06_envelope.py
+brake_dist(2.0,0.0->1.1): closed 2.1700 m, filter-simulated 2.1711 m
+brake_dist(1.5,0.8->1.1): closed 2.1055 m, filter-simulated 2.1066 m
+brake_dist(1.8,-0.5->1.0): closed 1.4897 m, filter-simulated 1.4902 m
+brake_dist(1.2,1.0->0.3): closed 2.1271 m, filter-simulated 2.1274 m
+A rest->3 m straight->R1.5 arc: |A_localmin|=4; doc-anchor env max(v_prof-v_cap)=+0.000
+   local-min anchors + filter : max(v - v_cap) = +0.455 m/s at s=3.01
+   exact envelope + filter    : max(v - v_cap) = +0.455 m/s at s=3.01
+   exact env + brake trigger  : max(v - v_cap) = +0.001 m/s at s=3.01;  T_filt=11.00 s vs T_pred=9.89 s (+11.2 %)
+B cruise 20 m->R1.5 arc: |A_localmin|=4; doc-anchor env max(v_prof-v_cap)=+0.000
+   local-min anchors + filter : max(v - v_cap) = +0.296 m/s at s=30.00
+   exact envelope + filter    : max(v - v_cap) = +0.296 m/s at s=30.00
+   exact env + brake trigger  : max(v - v_cap) = +0.000 m/s at s=2.50;  T_filt=20.06 s vs T_pred=18.89 s (+6.2 %)
+C step down to slowly decreasing cap: |A_localmin|=3; doc-anchor env max(v_prof-v_cap)=+0.000
+   local-min anchors + filter : max(v - v_cap) = +1.000 m/s at s=10.02
+   exact envelope + filter    : max(v - v_cap) = +0.311 m/s at s=30.00
+   exact env + brake trigger  : max(v - v_cap) = +0.000 m/s at s=10.01;  T_filt=24.42 s vs T_pred=23.45 s (+4.1 %)
+=== c07_two_rate.py
+brake_dist(2.0,0.0->1.1): closed 2.1700 m, filter-simulated 2.1711 m
+brake_dist(1.5,0.8->1.1): closed 2.1055 m, filter-simulated 2.1066 m
+brake_dist(1.8,-0.5->1.0): closed 1.4897 m, filter-simulated 1.4902 m
+brake_dist(1.2,1.0->0.3): closed 2.1271 m, filter-simulated 2.1274 m
+brake_dist(2.0,0.0->0.0): closed 2.5000 m, filter-simulated 2.5000 m
+brake_dist(0.4,0.0->0.0): closed 0.1789 m, filter-simulated 0.1789 m
+2-rate A rest->3 m straight->R1.5 arc delay 0: max(v - v_cap) +0.039 m/s at s=12.00; excluding last 0.1 m +0.0006; stop at s=12.005 (goal 12.00), T=10.80 s
+2-rate A rest->3 m straight->R1.5 arc delay 1: max(v - v_cap) +0.039 m/s at s=12.00; excluding last 0.1 m +0.0006; stop at s=12.005 (goal 12.00), T=10.82 s
+2-rate A rest->3 m straight->R1.5 arc delay 3: max(v - v_cap) +0.410 m/s at s=12.01; excluding last 0.1 m +0.0505; stop at s=12.102 (goal 12.00), T=10.40 s
+2-rate B cruise 20 m->R1.5 arc delay 0: max(v - v_cap) +0.002 m/s at s=30.00; excluding last 0.1 m +0.0000; stop at s=30.000 (goal 30.00), T=19.76 s
+2-rate B cruise 20 m->R1.5 arc delay 1: max(v - v_cap) +0.046 m/s at s=30.00; excluding last 0.1 m +0.0000; stop at s=30.005 (goal 30.00), T=20.06 s
+2-rate B cruise 20 m->R1.5 arc delay 3: max(v - v_cap) +0.390 m/s at s=30.00; excluding last 0.1 m +0.0042; stop at s=30.091 (goal 30.00), T=19.44 s
+2-rate C step down to slowly decreasing cap delay 0: max(v - v_cap) +0.047 m/s at s=30.00; excluding last 0.1 m +0.0079; stop at s=30.006 (goal 30.00), T=24.56 s
+2-rate C step down to slowly decreasing cap delay 1: max(v - v_cap) +0.097 m/s at s=30.01; excluding last 0.1 m +0.0008; stop at s=30.028 (goal 30.00), T=24.84 s
+2-rate C step down to slowly decreasing cap delay 3: max(v - v_cap) +0.390 m/s at s=30.00; excluding last 0.1 m +0.0028; stop at s=30.089 (goal 30.00), T=23.94 s
+DWA output = window-clamped output v_f + a*dT (ramp semantics): t(v>=1.999) = 5.52 s (jerk-limited optimum 2.47 s)
+DWA output = target semantics (step to v*): t(v>=1.999) = 2.46 s (jerk-limited optimum 2.47 s)
+2-rate A rest->3 m straight->R1.5 arc delay 3, margin 0.11 s: max(v - v_cap) +0.080 m/s at s=12.00; excluding last 0.1 m +0.0505; stop at s=12.011, T=10.96 s
+2-rate B cruise 20 m->R1.5 arc delay 3, margin 0.11 s: max(v - v_cap) +0.162 m/s at s=30.02; excluding last 0.1 m +0.0000; stop at s=30.067, T=20.66 s
+2-rate C step down to slowly decreasing cap delay 3, margin 0.11 s: max(v - v_cap) +0.135 m/s at s=30.00; excluding last 0.1 m +0.0002; stop at s=30.034, T=25.00 s
+=== c12_pp_vs_ccpp.py
+M13 R=1.5 pp   : curve mean|e|=2.22 cm max=5.02 cm | straight mean=0.18 cm max=2.04 cm
+M13 R=1.5 rpp  : curve mean|e|=2.81 cm max=5.19 cm | straight mean=0.41 cm max=4.80 cm
+M13 R=1.5 ccpp : curve mean|e|=0.79 cm max=1.51 cm | straight mean=0.09 cm max=0.54 cm
+M13 R=1.0 pp   : curve mean|e|=3.19 cm max=5.79 cm | straight mean=0.42 cm max=4.33 cm
+M13 R=1.0 rpp  : curve mean|e|=4.73 cm max=8.22 cm | straight mean=0.74 cm max=7.69 cm
+M13 R=1.0 ccpp : curve mean|e|=0.76 cm max=1.65 cm | straight mean=0.19 cm max=1.24 cm

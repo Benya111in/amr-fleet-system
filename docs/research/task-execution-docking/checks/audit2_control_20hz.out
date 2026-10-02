@@ -1,0 +1,13 @@
+staging y0=-0.15 psi0=-10 -> pre-dock: r=0.0036 y=-0.0000 psi=+0.41 deg t=5.9 s sat=0
+staging y0=-0.15 psi0= +0 -> pre-dock: r=0.0031 y=-0.0000 psi=+0.28 deg t=5.0 s sat=0
+staging y0=-0.15 psi0=+10 -> pre-dock: r=0.0042 y=-0.0000 psi=+0.27 deg t=4.5 s sat=0
+staging y0=+0.00 psi0=-10 -> pre-dock: r=0.0037 y=-0.0000 psi=+0.09 deg t=4.5 s sat=0
+staging y0=+0.00 psi0= +0 -> pre-dock: r=0.0034 y=+0.0000 psi=+0.00 deg t=4.3 s sat=0
+staging y0=+0.00 psi0=+10 -> pre-dock: r=0.0037 y=+0.0000 psi=-0.09 deg t=4.5 s sat=0
+staging y0=+0.15 psi0=-10 -> pre-dock: r=0.0042 y=+0.0000 psi=-0.27 deg t=4.5 s sat=0
+staging y0=+0.15 psi0= +0 -> pre-dock: r=0.0031 y=+0.0000 psi=-0.28 deg t=5.0 s sat=0
+staging y0=+0.15 psi0=+10 -> pre-dock: r=0.0036 y=+0.0000 psi=-0.41 deg t=5.9 s sat=0
+20 Hz worst: r=0.0042 m |y|=0.0000 m |psi|=0.41 deg, omega-saturated periods=0
+terminal y0=+0.005 psi0=+0.6 -> docked: r=0.0026 y=+0.0000 psi=-0.055 deg t=4.7 s
+terminal y0=-0.005 psi0=-0.6 -> docked: r=0.0026 y=-0.0000 psi=+0.055 deg t=4.7 s
+terminal y0=+0.000 psi0=+0.6 -> docked: r=0.0009 y=+0.0000 psi=-0.003 deg t=4.7 s

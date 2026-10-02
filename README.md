@@ -31,22 +31,110 @@ sudo ./scripts/setup_host.sh
 ## 2. 빠른 시작
 
 ```bash
-# 1) 이미지 빌드 (최초 1회, 수십 분 소요)
-docker compose build dev
+# 0) 저장소 클론 (SSH 키가 있으면 git@github.com:Benya111in/amr-fleet-system.git)
+git clone https://github.com/Benya111in/amr-fleet-system.git
+cd amr-fleet-system
 
-# 2) 개발 컨테이너 기동 및 접속
-docker compose up -d dev
-docker compose exec dev bash
+# 1) (선택) COCO 사전학습 가중치 내려받기 — 미세조정 가중치
+#    src/amr_perception/models/yolov8n_warehouse.pt 는 저장소에 들어 있어 이 단계 없이도 인식이 돈다.
+#    이 스크립트는 그 파일이 없을 때 쓰는 대체(COCO) 가중치를 받는다 (창고 상자·표지판은 거의 못 찾는다)
+./scripts/download_models.sh
 
-# 3) 컨테이너 안에서 워크스페이스 빌드
-./scripts/build.sh          # == colcon build --symlink-install
+# 2) 사람별 환경변수 — 서버를 여러 명이 같이 쓰므로 프로젝트 이름/ROS 도메인/Gazebo 파티션을
+#    사람마다 다르게 준다 (.env 는 git 에 올라가지 않는다). 예시값(amr_hong / 42)은 그대로도
+#    동작하지만 두 사람이 같은 값을 쓰면 서로의 컨테이너·볼륨을 재생성하고 토픽이 섞인다 — 꼭 바꾼다
+cp .env.example .env && vi .env      # docker compose config 로 값 검증 가능
 
-# 4) 테스트 + 커버리지
+# 3) 이미지 빌드 (최초 1회, 수십 분 소요) — build: 는 dev 서비스에만 있어 한 번만 빌드되고
+#    나머지 서비스는 그 이미지(amr-fleet-system:latest)를 그대로 쓴다
+docker compose build
+
+# 4) 기동: builder 가 colcon build 를 수행하고 dev 컨테이너가 뜬다
+docker compose up -d && docker compose wait builder   # builder 종료(exit 0)까지 대기. 진행 상황: docker compose logs -f builder
+docker compose exec dev bash          # 셸 접속 — 대화형 bash 만 ROS 와 install/ 오버레이를 자동 소싱한다
+                                      # (/etc/bash.bashrc 경유. builder 종료 전에 연 셸은 다시 연다)
+./scripts/verify_env.sh               # 환경 검증 (37개 항목, 전부 통과해야 한다)
+                                      # 실측 산출물: docs/reports/artifacts/verify_env.txt
+                                      #   (37 통과 / 0 실패, RTX 5090 sm_120 · torch 2.11.0+cu128)
+
+#    셸을 열지 않고 명령 하나만 돌릴 때: exec 는 엔트리포인트를 거치지 않으므로
+#    `exec dev bash -c '...'` / `exec dev ros2 ...` 에는 ROS 환경이 없다. 아래 둘 중 하나를 쓴다
+docker compose exec dev bash -ic 'ros2 topic list'   # -i: 대화형 bash 로 강제 → bashrc 가 소싱
+docker compose run --rm dev ros2 topic list          # 새 컨테이너 — 엔트리포인트가 소싱
+
+# 5) 소스 수정 후 재빌드 (컨테이너 안) — 또는 호스트에서 docker compose up builder
+./scripts/build.sh              # colcon build --symlink-install + 경고 플래그(-Wall -Wextra -Wpedantic)
+WERROR=1 ./scripts/build.sh     # -Werror 추가: 경고를 에러로 승격 (명세 7장 "경고 0" 검증용)
+
+# 6) 테스트 + 커버리지 (컨테이너 안)
 ./scripts/test.sh
+
+# 7) 전체 시스템 기동 — compose 프로필 (builder 성공 후 simulation → localization →
+#    navigation → fleet → dashboard 순, perception 은 simulation 뒤)
+docker compose --profile run up -d
+
+# 또는 런치 하나로 (컨테이너 안). 1대:
+ros2 launch amr_bringup system.launch.py
+#    5대 + 플릿 + 대시보드 (http://localhost:8080):
+ros2 launch amr_bringup multi_robot.launch.py num_robots:=5
+#    지도 새로 만들기 (SLAM):
+ros2 launch amr_bringup system.launch.py localization_mode:=slam x:=0.0 y:=0.0 yaw:=0.0 \
+    with_navigation:=false with_perception:=false with_behavior:=false
+
+# 8) 통합 시나리오 (컨테이너 안, 14 개)
+./scripts/run_integration.sh --list
+./scripts/run_integration.sh 4 9 13
 ```
 
 `src/` 는 호스트와 컨테이너가 공유(bind mount)하므로, 호스트 에디터로 수정한 코드가
-컨테이너에 즉시 반영된다. 재빌드는 `colcon build` 만 다시 돌리면 된다.
+컨테이너에 즉시 반영된다. colcon 산출물(build/ install/ log/)은 이름 있는 볼륨
+(`<프로젝트>_ros2_ws_build` 등)에 있어 dev 와 run 프로필 서비스가 한 워크스페이스를 공유하고,
+컨테이너를 재생성해도 빌드가 사라지지 않는다. 빌드까지 지우려면 `docker compose down -v`.
+
+`docker/Dockerfile` 이 바뀐 커밋을 pull 했다면 이미지를 다시 만들고 컨테이너를 재생성한다
+(기존 컨테이너는 옛 이미지로 계속 돈다). 볼륨의 빌드는 유지되므로 builder 가 증분 빌드만 한다.
+
+```bash
+docker compose build && docker compose up -d
+```
+
+**마이그레이션 — 컨테이너 이름이 `amr_dev` 로 고정되어 있던 시절부터 쓰던 프로젝트라면** 이 변경
+(`container_name` 제거 + `ros2_ws_*` 볼륨) 뒤의 최초 `docker compose up -d` 가 서비스 설정 변경을 감지해
+옛 컨테이너 `amr_dev` 를 멈추고 지운 뒤 `<프로젝트>-dev-1` 을 새로 만들고, 비어 있는 새 볼륨을
+`build/ install/ log/` 에 마운트한다. 옛 컨테이너 안에만 있던 것(컨테이너 레이어의 빌드 산출물,
+홈 디렉토리 설정, 임시 파일 등)은 사라지므로 **먼저 꺼내 둔다**:
+`docker cp amr_dev:<컨테이너 안 경로> <호스트 경로>`. bind mount 인 `src/ config/ maps/ logs/` 는
+호스트에 그대로 있다. 이후 builder 가 새 볼륨에 한 번 전체 빌드를 한다. `.env` 로 `COMPOSE_PROJECT_NAME`
+을 새로 줬다면 옛 프로젝트의 컨테이너는 건드리지 않고 남으므로 따로 지운다:
+`docker compose -p <옛 프로젝트 이름> down`.
+
+`network_mode: host` 라서 같은 `ROS_DOMAIN_ID` 를 쓰는 LAN 의 다른 호스트와 DDS 트래픽이 오간다.
+격리가 필요하면 `.env` 에 `ROS_LOCALHOST_ONLY=1` 을 준다 (컨테이너끼리는 계속 통신된다).
+
+### 테스트와 커버리지
+
+`./scripts/test.sh` 는 `colcon test` → `colcon test-result --verbose` → `colcon coveragepy-result`
+순으로 돌고, 테스트가 하나라도 실패하면 0 이 아닌 코드로 끝난다.
+린터(flake8 / pep257 / xmllint / lint_cmake / cpplint / cppcheck / uncrustify)도 `colcon test` 의
+일부라서 스타일 위반은 테스트 실패로 잡힌다. 파일별 저작권 헤더 검사(ament_copyright)만 생략한다
+(라이선스는 각 `package.xml` 에 선언).
+
+- 요약 줄(예: `Summary: 72 tests, 0 errors, 0 failures, 0 skipped`)에서 failures/errors 가 0 이어야 한다.
+  실패한 테스트는 그 위에 `- <패키지>.<린터/테스트> ...` 와 실패 메시지로 나열된다.
+- 커버리지는 패키지마다 따로 측정된다 (`package.xml` 에 `<test_depend>python3-pytest-cov</test_depend>`
+  가 있는 패키지). 터미널에 `Starting >>> <패키지>` 아래 그 패키지의 `coverage report` 가 모듈(파일)
+  단위로 나오고, 마지막에 전체 합산 표가 나온다. `test/` 아래 테스트 파일은 집계에서 빼므로
+  `Cover` 열이 곧 모듈 커버리지다. 명세 4.10 목표: 주요 모듈 70% 이상.
+  `No .coverage files found for package '...'` 경고는 그 패키지에 측정된 파이썬 테스트가 아직
+  없다는 뜻이다 (리소스 전용 패키지 `amr_msgs`/`amr_description`/`amr_simulation`/`amr_bringup` 은 정상).
+- HTML: `logs/coverage/htmlcov/index.html` (전체 합산).
+  패키지별 HTML 은 `build/<패키지>/pytest_cov/<패키지>_pytest/coverage.html/`.
+- `xmllint` 는 `package.xml` 스키마를 download.ros.org 에서 받아 검증하므로 네트워크가 없으면
+  xmllint 만 실패한다.
+- 특정 패키지만: `./scripts/test.sh --packages-select amr_fleet` (인자는 `colcon test` 로 전달).
+  이전 실행의 결과 파일은 실행 시작 시 지우므로(`colcon test-result --delete-yes`) 요약과 종료 코드는
+  이번에 돌린 패키지만 반영한다. 커버리지 합산은 `build/` 에 남은 `.coverage` 를 모두 읽으므로
+  다른 패키지의 지난 측정값이 함께 나올 수 있다.
 
 ### 헤드리스 환경 주의
 
@@ -54,9 +142,12 @@ docker compose exec dev bash
 시뮬레이션 **연산과 센서 렌더링은 GPU EGL 로 headless 동작**하므로 개발에는 지장이 없다.
 화면 확인이 필요하면 다음 중 하나를 쓴다.
 
-- rosbag2 로 기록 후 Foxglove Studio 로 재생 (명세 9장 모니터링 요구사항과 겹침)
+- Foxglove Studio 를 실시간으로 연결: 컨테이너에서 `ros2 launch foxglove_bridge foxglove_bridge_launch.xml`
+  (기본 포트 8765, 이미지에 `ros-humble-foxglove-bridge` 포함) → 노트북의 Foxglove 에서
+  `ws://<서버>:8765` 접속. 토픽/TF/마커/카메라를 RViz2 없이 본다 (명세 4.9 모니터링 요구사항과 겹침)
+- rosbag2 로 기록 후 Foxglove Studio 로 재생
 - 웹 대시보드(`amr_dashboard`)로 상태 확인
-- 호스트에 `x11vnc` / `Xvfb` 를 올려 가상 디스플레이 연결
+- 호스트에 `x11vnc` / `Xvfb` 를 올려 가상 디스플레이 연결 (RViz2/Groot 화면이 꼭 필요할 때)
 
 ---
 
@@ -100,47 +191,71 @@ docker compose exec dev bash
 ## 4. 브랜치 전략
 
 명세 4장에 따라 Git Flow(Main/Develop/Feature)와 Conventional Commits 를 사용한다.
+원격은 GitHub [`Benya111in/amr-fleet-system`](https://github.com/Benya111in/amr-fleet-system) 이고,
+`main`/`develop` 에는 ruleset 이 걸려 있어 직접 push·force-push·삭제가 막혀 있다.
+
+| 브랜치 | 역할 | 들어오는 길 |
+| --- | --- | --- |
+| `main` | 릴리스 | `develop` → `main` PR, 승인 2명 |
+| `develop` | 통합 | `feature/*` → `develop` PR, 승인 1명 |
+| `feature/*` | 기능 단위 작업 | 직접 커밋 |
 
 ```bash
-./scripts/setup_gitflow.sh      # develop 브랜치 + 커밋 템플릿 등록
+./scripts/setup_gitflow.sh              # 로컬 develop 브랜치 + 커밋 템플릿(.gitmessage) + commit-msg 훅 설치
+git switch develop && git pull --ff-only
+git switch -c feature/<이름>            # 작업 → push → develop 대상 PR
 ```
 
-- `main` — 릴리스만 병합, 직접 커밋 금지
-- `develop` — 통합 브랜치
-- `feature/*` — 기능 단위 작업
+커밋 형식: `feat(navigation): A* 글로벌 플래너 직접 구현` (규칙은 `.gitmessage`, 검사는 `scripts/check_commit_msg.sh`)
 
-커밋 형식: `feat(navigation): A* 글로벌 플래너 직접 구현`
+- `setup_gitflow.sh` 는 `scripts/check_commit_msg.sh` 를 부르는 commit-msg 훅을 이 저장소의 훅 디렉토리
+  (`.git/hooks`, 또는 저장소 안을 가리키는 `core.hooksPath`)에 설치한다. 이미 있던 commit-msg 훅은
+  `commit-msg.local` 로 옮겨 형식 검사 뒤에 이어서 실행하고(실행 권한이 없어 무시되던 파일은 백업만),
+  `core.hooksPath` 가 저장소 밖(전역 설정)을 가리키면 설치하지 않고 정리 방법을 안내한 뒤 끝난다.
+  스크립트가 없는 체크아웃(`main`, 옛 브랜치)에서는 훅이 검사 없이 통과한다.
+- PR 은 CI(`.github/workflows/ci.yml`)를 통과해야 병합된다 — 룰셋의 필수 상태 검사 두 개:
+  `commit-lint`(PR 범위 커밋의 메시지 원문 + PR 제목을 위 스크립트로 검사, 훅과 같은 판정)와
+  `build-test`(공식 `ros:humble` 이미지에서 `colcon build -Werror` + `colcon test`, 린터 포함).
+- 병합 방식은 "Create a merge commit" 또는 "Rebase and merge". "Squash and merge" 는 PR 제목이 커밋 첫 줄이 되므로
+  저장소 설정(Settings → General → Pull Requests)에서 끄거나, 켜 둔다면 PR 제목도 커밋 형식을 지켜야 한다
+  (`commit-lint` 가 제목도 검사하므로 어느 쪽이든 형식이 어긋난 첫 줄은 develop 에 들어가지 않는다).
+- 병합 순서: `feature/dev-env-fixes`(PR1) → `feature/dev-process-docs`(PR2). `build-test` 는 `ament_*` 린터까지
+  통과해야 하는데 그 수정(저작권 검사 생략, pep257, `amr_msgs/package.xml` 순서)은 PR1 에 있다 — PR2 는 PR1 위에
+  rebase 되어 있고, PR1 없이 PR2 만 올리면 `build-test` 가 실패한다.
 
 ---
 
 ## 5. 구현 현황
 
-환경 세팅만 완료된 상태이며, 아래는 전부 미착수다.
+명세 4장의 기능은 모두 구현했다. 측정값과 조건은 각 알고리즘 문서(`docs/algorithms/`)와 성능 보고서
+(`docs/reports/`)에 있고, 아래 표는 요약이다. **미충족 항목은 그대로 적는다** (예: 정지 위치 추정 최대
+오차 4.2 cm > 3 cm — 서측 도크 앞 지도 국소 어긋남). 명세 4.10 캠페인 측정(동적 회피 30회·5대 CPU·
+4시간 연속 운용)은 `docs/reports/` 의 성능 보고서에 조건과 함께 적는다.
 
 ### 인프라
-- [x] Docker + compose 환경
-- [x] GPU 패스스루 (nvidia-container-toolkit)
-- [x] ROS2 Humble + Gazebo Fortress 이미지
-- [x] 패키지 스켈레톤, Git Flow
+- [x] Docker + compose 환경, GPU 패스스루, ROS2 Humble + Gazebo Fortress 이미지
+- [x] GitHub 원격 + Git Flow 브랜치 보호(ruleset), 빌드/테스트/커버리지 스크립트, CI
+- [x] 11개 패키지 (`src/`), 단위·통합 시험 2 395개 (0 실패), 통합 시나리오 14개
 
 ### 기능 (명세 4장)
-- [ ] 1. 시뮬레이션 환경 및 로봇 모델링 (60x40m 월드, URDF, 센서 노이즈)
-- [ ] 2. 로봇 기초 (키네마틱스, 오도메트리, TF 트리)
-- [ ] 3. 위치 추정 (SLAM, AMCL, EKF 퓨전)
-- [ ] 4. 경로 계획 (A*/DWA 직접 구현, Costmap)
-- [ ] 5. 모션 제어 (Pure Pursuit, PID, 속도 프로파일)
-- [ ] 6. AI 인지 (YOLOv8, Pinhole 2D→3D)
-- [ ] 7. 동적 환경 대응 (추적, TTC, 회피, 안전)
-- [ ] 8. 작업 수행 (BehaviorTree, 도킹)
-- [ ] 9. Fleet Management (5대, 할당, 교착 해소, 대시보드)
-- [ ] 10. 통합·테스트·문서화 (커버리지 70%)
-
-권장 구현 순서는 명세 4장 하단 "구현 순서 권장" 참고.
+- [x] 1. 시뮬레이션 환경 및 로봇 모델링 (60×40 m 월드, URDF, 센서 노이즈, 적재 질량 변화)
+- [x] 2. 로봇 기초 (차동 구동 기구학·오도메트리 직접 구현, 센서 전처리, TF 트리)
+- [x] 3. 위치 추정 (slam_toolbox 매핑, AMCL 튜닝, 이중 EKF, 스캔-지도 정합, 납치 복구 8/8)
+- [x] 4. 경로 계획 (A*·DWA 직접 구현, Costmap 3층, TEB·DWB 비교, 0.60 m 통로 10/10)
+- [x] 5. 모션 제어 (Pure Pursuit, PID, S-curve·저크 제한)
+- [x] 6. AI 인지 (YOLOv8 미세조정 3클래스, Pinhole 2D→3D, ArUco)
+- [x] 7. 동적 환경 대응 (칼만 추적, TTC, VO 회피, 접근 기반 안전 정지)
+- [x] 8. 작업 수행 (BehaviorTree 43종 노드, 정밀 도킹 GT 5.2 mm / 0.20°)
+- [x] 9. Fleet Management (5대 동시 기동, 할당, 교통·교착 해소, 대시보드)
+- [x] 10. 통합·테스트·문서화 (커버리지 패키지별 70 % 이상)
 
 ---
 
 ## 6. 문서
 
-- [시스템 아키텍처](docs/architecture/) — 컴포넌트/시퀀스 다이어그램
+- [시스템 아키텍처](docs/architecture/) — [컴포넌트·노드 그래프·인터페이스 표](docs/architecture/components.md),
+  [시퀀스 다이어그램](docs/architecture/sequences.md), [다중 로봇 네임스페이스/TF](docs/architecture/multi_robot.md),
+  [센서 캘리브레이션 절차](docs/architecture/sensor_calibration.md)
 - [핵심 알고리즘](docs/algorithms/) — DWA, EKF, SLAM 파라미터 튜닝 근거
+- [알고리즘 설계 브리프](docs/research/) — 영역별 문헌 조사(2023~2026), 기준 알고리즘 유도, 독자 제안과 선행 연구 대비 위치, 적대적 리뷰 반영 이력
 - [성능 리포트](docs/reports/) — 위치 추정 RMSE, CTE, 응답 시간, 커버리지

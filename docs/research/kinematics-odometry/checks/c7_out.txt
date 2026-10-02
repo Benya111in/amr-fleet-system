@@ -1,0 +1,7 @@
+true/nom=[0.952 0.952]: 60 s max err 0.077 %, t(<=1 %) median 10.1 s max 10.1 s, frozen 0/20
+true/nom=[1.04 0.97]: 60 s max err 0.502 %, t(<=1 %) median 10.1 s max 37.3 s, frozen 0/20
+true/nom=[1.05 0.95]: 60 s max err 0.845 %, t(<=1 %) median 31.7 s max 55.2 s, frozen 0/20
+true/nom=[0.96 1.03]: 60 s max err 0.349 %, t(<=1 %) median 9.9 s max 23.0 s, frozen 0/20
+persistent left slip 0.5 % 120 s: max |psi change| 0.222 % of nominal, frozen 9/10, alarm latency median 2.7 s
+persistent left slip 2.0 % 120 s: max |psi change| 0.012 % of nominal, frozen 10/10, alarm latency median 0.4 s
+4 h no-slip: false freezes 0/5, max psi drift 0.093 % of nominal

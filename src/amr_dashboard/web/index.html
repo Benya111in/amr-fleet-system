@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AMR 플릿 대시보드</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>지능형 물류 AMR 플릿 대시보드</h1>
+    <div class="conn">
+      <span id="conn-dot" class="dot"></span>
+      <span id="conn-text">연결 중…</span>
+      <span id="server-time" class="muted"></span>
+    </div>
+  </header>
+
+  <div id="alert-banner" class="banner hidden" role="alert" title="클릭하면 닫힌다"></div>
+
+  <main class="grid">
+    <section class="card map-card">
+      <h2>지도 · 로봇 위치 <span id="map-meta" class="muted">지도 없음 (기본 60 × 40 m)</span></h2>
+      <canvas id="map-canvas" width="900" height="600"></canvas>
+      <div class="legend">
+        <span><i class="chip s-idle"></i>대기</span>
+        <span><i class="chip s-moving"></i>이동</span>
+        <span><i class="chip s-docking"></i>도킹</span>
+        <span><i class="chip s-loading"></i>적재</span>
+        <span><i class="chip s-charging"></i>충전</span>
+        <span><i class="chip s-error"></i>오류</span>
+        <span><i class="chip s-estop"></i>긴급정지</span>
+        <span class="muted">P 픽업 · D 하역 (현재 작업 목표)</span>
+      </div>
+    </section>
+
+    <section class="card kpi-card">
+      <h2>KPI</h2>
+      <div class="kpi-grid">
+        <div class="kpi"><div class="kpi-label">대기 작업</div><div class="kpi-value" id="kpi-pending">–</div></div>
+        <div class="kpi"><div class="kpi-label">진행 중</div><div class="kpi-value" id="kpi-in-progress">–</div></div>
+        <div class="kpi"><div class="kpi-label">완료</div><div class="kpi-value" id="kpi-completed">–</div></div>
+        <div class="kpi"><div class="kpi-label">실패</div><div class="kpi-value" id="kpi-failed">–</div></div>
+        <div class="kpi"><div class="kpi-label">처리량 (작업/h)</div><div class="kpi-value" id="kpi-throughput">–</div></div>
+        <div class="kpi"><div class="kpi-label">평균 작업 시간 (s)</div><div class="kpi-value" id="kpi-avg-duration">–</div></div>
+        <div class="kpi"><div class="kpi-label">로봇 가동률 (%)</div><div class="kpi-value" id="kpi-utilization">–</div></div>
+        <div class="kpi"><div class="kpi-label">교착 횟수</div><div class="kpi-value" id="kpi-deadlock">–</div></div>
+      </div>
+      <div class="muted small" id="kpi-stamp">플릿 상태 수신 대기 중…</div>
+    </section>
+
+    <section class="card robots-card">
+      <h2>로봇 상태</h2>
+      <table id="robot-table">
+        <thead>
+          <tr><th>로봇</th><th>상태</th><th>배터리</th><th>현재 작업</th><th>위치 (x, y, θ)</th></tr>
+        </thead>
+        <tbody id="robot-body">
+          <tr><td colspan="5" class="muted">플릿 상태 수신 대기 중…</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card estop-card">
+      <h2>긴급 정지 (E-stop)</h2>
+      <div id="estop-buttons" class="estop-buttons"></div>
+      <div id="estop-result" class="result muted small"></div>
+    </section>
+
+    <section class="card alerts-card">
+      <h2>알림 <span id="alert-count" class="muted"></span></h2>
+      <ul id="alert-list" class="list"><li class="muted">알림 없음</li></ul>
+    </section>
+
+    <section class="card timeline-card">
+      <h2>작업 타임라인 <span class="muted">(최근 50건)</span></h2>
+      <ul id="timeline-list" class="list"><li class="muted">작업 이벤트 없음</li></ul>
+    </section>
+
+    <section class="card form-card">
+      <h2>작업 투입</h2>
+      <form id="task-form" autocomplete="off">
+        <div class="form-row">
+          <label>작업 ID <input type="text" name="task_id" placeholder="자동 생성" maxlength="64"></label>
+          <label>담당 로봇
+            <select name="robot_id" id="task-robot"><option value="">자동 할당</option></select>
+          </label>
+        </div>
+        <div class="form-row">
+          <label>우선순위 (0~255) <input type="number" name="priority" min="0" max="255" step="1" value="128" required></label>
+          <label>마감 (지금부터 초, 비우면 없음) <input type="number" name="deadline_sec" min="1" step="1" value="600" placeholder="없음"></label>
+          <label>물품 유형
+            <select name="item_type" required>
+              <option value="small">소형 (2 kg)</option>
+              <option value="medium" selected>중형 (10 kg)</option>
+              <option value="large">대형 (25 kg)</option>
+            </select>
+          </label>
+        </div>
+        <fieldset>
+          <legend>픽업 위치 (map, m / rad)</legend>
+          <div class="form-row">
+            <label>x <input type="number" name="pickup_x" step="0.01" value="5.0" required></label>
+            <label>y <input type="number" name="pickup_y" step="0.01" value="5.0" required></label>
+            <label>yaw <input type="number" name="pickup_yaw" step="0.01" value="0.0" required></label>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>하역 위치 (map, m / rad)</legend>
+          <div class="form-row">
+            <label>x <input type="number" name="dropoff_x" step="0.01" value="55.0" required></label>
+            <label>y <input type="number" name="dropoff_y" step="0.01" value="35.0" required></label>
+            <label>yaw <input type="number" name="dropoff_yaw" step="0.01" value="0.0" required></label>
+          </div>
+        </fieldset>
+        <div class="form-row">
+          <button type="submit" class="btn primary">작업 투입</button>
+          <span class="muted small">JSON Task Description 으로 /fleet/task_request 에 발행된다</span>
+        </div>
+      </form>
+      <pre id="task-result" class="result"></pre>
+    </section>
+  </main>
+
+  <footer class="muted small">amr_dashboard · SSE /events · REST /api/state /api/map /api/health /api/tasks /api/estop</footer>
+  <script src="/static/app.js"></script>
+</body>
+</html>

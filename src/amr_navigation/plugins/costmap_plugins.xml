@@ -1,0 +1,5 @@
+<library path="amr_navigation_plugins">
+  <class type="amr_navigation::PredictedObstacleLayer" base_class_type="nav2_costmap_2d::Layer">
+    <description>계획 충돌 동적 트랙의 예측 점유를 **중간 비용**으로 찍는다. ObstacleLayer 는 항상 LETHAL 이라 A* 가 벽으로 보고 통째로 돌아간다 — 그 자리는 벽이 아니라 곧 비워질 자리이므로 막지 않고 기피한다 (명세 4장 7절 재계획 회피 / 9장 예측 기반 회피).</description>
+  </class>
+</library>

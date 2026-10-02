@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Fast DDS 프로파일: 640×480 RGB(921 KB)·깊이(1.2 MB) 영상용 공유 메모리 세그먼트 확대.
+
+  문제 (측정, docs/algorithms/perception.md §8): Fast DDS 기본 SHM 세그먼트(0.5 MB)에 영상 한 장이 들어가지 않아
+  UDP 조각 전송으로 떨어지고, best-effort 구독에서 조각 하나만 잃어도 표본 전체가 버려진다. 과부하 호스트에서
+  30 Hz 발행 영상의 순수 구독 수신율이 9.4 Hz 로 떨어졌다 (YOLO 와 무관한 전송 병목).
+  해결: 세그먼트를 16 MB 로 키워 같은 호스트 안 전송을 공유 메모리로 유지한다 (UDP 는 원격 호스트용으로 남긴다).
+
+  사용: 발행자(ros_gz_bridge / image_bridge)와 구독자(yolo_node, object_localizer_node, aruco_detector_node) 모두
+        FASTRTPS_DEFAULT_PROFILES_FILE=<설치 경로>/share/amr_perception/config/fastdds_large_messages.xml 로 기동한다
+        (docker-compose 공통 환경변수로 두는 것을 권장). SHM 세그먼트 크기는 **쓰는 쪽** 참가자가 정하므로
+        브리지 쪽 설정이 필수다. 측정: 순수 구독 수신율 9.4 → 27.1 Hz, yolo_node 종단 6.3 → 25.2 FPS (GPU).
+-->
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <transport_descriptors>
+    <transport_descriptor>
+      <transport_id>shm_large</transport_id>
+      <type>SHM</type>
+      <segment_size>16777216</segment_size>
+    </transport_descriptor>
+    <transport_descriptor>
+      <transport_id>udp_default</transport_id>
+      <type>UDPv4</type>
+    </transport_descriptor>
+  </transport_descriptors>
+  <participant profile_name="amr_large_messages" is_default_profile="true">
+    <rtps>
+      <useBuiltinTransports>false</useBuiltinTransports>
+      <userTransports>
+        <transport_id>shm_large</transport_id>
+        <transport_id>udp_default</transport_id>
+      </userTransports>
+    </rtps>
+  </participant>
+</profiles>

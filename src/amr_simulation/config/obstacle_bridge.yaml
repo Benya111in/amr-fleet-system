@@ -1,0 +1,12 @@
+# 물리 모델 동적 장애물의 지면 진실 브리지 (warehouse.launch.py 의 obstacle_bridge, ros_gz_bridge parameter_bridge)
+# gz OdometryPublisher(월드 절대 자세 + 속도, 50 Hz) → ROS /sim/<이름>/odom (nav_msgs/Odometry, frame_id world)
+- ros_topic_name: /sim/forklift_main/odom
+  gz_topic_name: /model/forklift_main/odometry
+  ros_type_name: nav_msgs/msg/Odometry
+  gz_type_name: ignition.msgs.Odometry
+  direction: GZ_TO_ROS
+- ros_topic_name: /sim/shuttle_amr/odom
+  gz_topic_name: /model/shuttle_amr/odometry
+  ros_type_name: nav_msgs/msg/Odometry
+  gz_type_name: ignition.msgs.Odometry
+  direction: GZ_TO_ROS

@@ -1,0 +1,27 @@
+<?xml version="1.0" ?>
+<!--
+  대형 화물 상자: 0.60 x 0.50 x 0.40 m, 25.0 kg. 모델 원점 = 바닥 중심.
+  관성: ixx = 25/12*(0.50^2+0.40^2) = 0.854167, iyy = 25/12*(0.60^2+0.40^2) = 1.083333, izz = 25/12*(0.60^2+0.50^2) = 1.270833
+-->
+<sdf version="1.8">
+  <model name="box_large">
+    <link name="link">
+      <pose>0 0 0.20 0 0 0</pose>
+      <inertial>
+        <mass>25.0</mass>
+        <inertia><ixx>0.854167</ixx><iyy>1.083333</iyy><izz>1.270833</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+      </inertial>
+      <collision name="collision">
+        <geometry><box><size>0.60 0.50 0.40</size></box></geometry>
+        <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+      </collision>
+      <visual name="visual">
+        <geometry><box><size>0.60 0.50 0.40</size></box></geometry>
+        <material>
+          <ambient>0.62 0.42 0.22 1</ambient>
+          <diffuse>0.62 0.42 0.22 1</diffuse>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>

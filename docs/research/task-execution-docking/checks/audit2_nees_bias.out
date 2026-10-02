@@ -1,0 +1,12 @@
+fused P (3-state, 30 cam + 10 LiDAR at pre-dock, no inflation):
+  sigma along eigvecs [mm or mrad-equivalent]: [0.0261 0.1904 3.2593]
+  thinnest direction v = [-0.    -0.777 -0.629] (x_r, y_r, psi)
+  bias 0.02 px -> dX = 0.037 mm -> dy_r = 0.037 mm, dpsi = 0.0000 deg; NEES increment = 1.2 (3-DoF mean should be ~3)
+  bias 0.05 px -> dX = 0.092 mm -> dy_r = 0.092 mm, dpsi = 0.0000 deg; NEES increment = 7.5 (3-DoF mean should be ~3)
+  bias 0.10 px -> dX = 0.184 mm -> dy_r = 0.184 mm, dpsi = 0.0000 deg; NEES increment = 30.0 (3-DoF mean should be ~3)
+E2 95% band for N=90: [2.52, 3.53]
+with 4th consider-bias state (sigma_beta = 0.05 px):
+  sig_x=0.190 mm sig_y=2.052 mm sig_psi=0.1452 deg ; thinnest sigma 0.0761 mm
+  without: sig_x=0.190 mm sig_y=2.050 mm sig_psi=0.1452 deg
+  NEES increment of a 0.05 px bias with the 4-state model: 0.88
+sigma(y_r + 0.80 psi) = 0.0407 mm (3-state), 0.1005 mm (with beta state)

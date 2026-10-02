@@ -1,0 +1,9 @@
+#!/usr/bin/env python3
+"""ros2 run amr_evaluation analyze --input logs/eval/<run>/ 진입점 (종료 코드 = 판정)."""
+
+import sys
+
+from amr_evaluation.analyze import main
+
+if __name__ == '__main__':
+    sys.exit(main())

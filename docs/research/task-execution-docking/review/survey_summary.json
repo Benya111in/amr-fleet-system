@@ -1,0 +1,305 @@
+{
+ "slug": "task-execution-docking",
+ "doc_path": "docs/research/task-execution-docking/task-execution-docking.md",
+ "web_tools_available": true,
+ "papers": [
+  {
+   "title": "Analytical Models for Pose Estimate Variance of Planar Fiducial Markers for Mobile Robot Localisation",
+   "authors": "Adámek, Brablc, Vávra, Dobossy, Formánek, Radil",
+   "venue_year": "Sensors 23(12):5746, 2023-06",
+   "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10300747/",
+   "status": "VERIFIED",
+   "relevance": "Fitted variance model vs marker area/angle for adaptive-R EKF; our closed-form covariance is the analytic counterpart (just before the window, key prior)"
+  },
+  {
+   "title": "Investigation of ArUco Marker Placement for Planar Indoor Localization",
+   "authors": "Hinderer, Scheffler, Yang",
+   "venue_year": "arXiv 2509.17345, 2025-09",
+   "url": "https://arxiv.org/abs/2509.17345",
+   "status": "VERIFIED",
+   "relevance": "ArUco accuracy vs distance/angle/number, Kalman filter with adaptive measurement noise (closest prior to our adaptive R)"
+  },
+  {
+   "title": "Regression-Based Docking System for Autonomous Mobile Robots Using a Monocular Camera and ArUco Markers",
+   "authors": "Oh, Kim",
+   "venue_year": "Sensors 25(12):3742, 2025",
+   "url": "https://doi.org/10.3390/s25123742",
+   "status": "VERIFIED",
+   "relevance": "Reports SolvePnP orientation error 6.64 deg vs regression 3.11 deg; final docking 2 cm / 3.07 deg — shows single-camera yaw is the bottleneck for the 1 deg target"
+  },
+  {
+   "title": "Multi-Sensor Fusion for Autonomous Mobile Robot Docking: Integrating LiDAR, YOLO-Based AprilTag Detection, and Depth-Aided Localization",
+   "authors": "Dai, Lee",
+   "venue_year": "Electronics 14(14):2769, 2025",
+   "url": "https://doi.org/10.3390/electronics14142769",
+   "status": "VERIFIED",
+   "relevance": "LiDAR-based heading correction fused with tag detection via PID; our LiDAR line-fit yaw measurement is a variant"
+  },
+  {
+   "title": "FMAC: a Fair Fiducial Marker Accuracy Comparison Software",
+   "authors": "Laurent, Sandoz",
+   "venue_year": "arXiv 2601.07723, 2026-01",
+   "url": "https://arxiv.org/abs/2601.07723",
+   "status": "VERIFIED",
+   "relevance": "Synthetic ray-traced 6-DoF accuracy benchmark methodology; template for our covariance-consistency evaluation"
+  },
+  {
+   "title": "Autonomous Docking Method via Non-linear Model Predictive Control",
+   "authors": "Saputra, Mirdanies, Pristianto, Kurniawan",
+   "venue_year": "ICRAMET 2023, arXiv 2312.16629, 2023-12",
+   "url": "https://arxiv.org/abs/2312.16629",
+   "status": "VERIFIED",
+   "relevance": "Visual-servo NMPC docking baseline family (heavier than our Park-Kuipers law)"
+  },
+  {
+   "title": "DVDP: An End-to-End Policy for Mobile Robot Visual Docking with RGB-D Perception",
+   "authors": "Min, Li, Yang, Chen, Yuan",
+   "venue_year": "arXiv 2509.13024, 2025-09",
+   "url": "https://arxiv.org/abs/2509.13024",
+   "status": "VERIFIED",
+   "relevance": "Learning-based docking alternative; rejected for explainability requirement"
+  },
+  {
+   "title": "Docking and Persistent Operations for a Resident Underwater Vehicle",
+   "authors": "Günzel et al.",
+   "venue_year": "arXiv 2602.16360, 2026-02",
+   "url": "https://arxiv.org/abs/2602.16360",
+   "status": "VERIFIED",
+   "relevance": "ArUco + EKF fusion docking, 90% success — supports EKF-on-relative-pose design"
+  },
+  {
+   "title": "Spacecraft Fiducial Marker for Autonomous Rendezvous, Proximity Operations, and Docking (AstraTag)",
+   "authors": "Thakur, Vrba, Saska",
+   "venue_year": "arXiv 2606.27566, 2026-06",
+   "url": "https://arxiv.org/abs/2606.27566",
+   "status": "VERIFIED",
+   "relevance": "Multi-scale marker for close-range detection continuity"
+  },
+  {
+   "title": "Task-Aware Environment Augmentation for Reliable Navigation via Shielded Conditional Diffusion",
+   "authors": "Phoompho et al.",
+   "venue_year": "arXiv 2606.15154, 2026-06",
+   "url": "https://arxiv.org/abs/2606.15154",
+   "status": "VERIFIED",
+   "relevance": "Fiducial layout optimization for localization under uncertainty"
+  },
+  {
+   "title": "Experimental Evaluation of Position-Based Visual Servoing Using AprilTag for Mobile Robot Docking",
+   "authors": "(Springer chapter)",
+   "venue_year": "Springer LNNS 2025/26",
+   "url": "https://link.springer.com/chapter/10.1007/978-3-032-22270-1_30",
+   "status": "VERIFIED",
+   "relevance": "Nav2 coarse approach -> PBVS PI -> odometry finish; identical two-stage structure, no accuracy numbers in abstract"
+  },
+  {
+   "title": "opennav_docking / Nav2 Docking Server (humble branch) + nav2_graceful_controller SmoothControlLaw source",
+   "authors": "Open Navigation (Macenski, Tudela)",
+   "venue_year": "GitHub 2024-2026",
+   "url": "https://github.com/open-navigation/opennav_docking",
+   "status": "VERIFIED",
+   "relevance": "DockRobot action, staging pose, k_phi/k_delta/beta/lambda control law verified from source; used as baseline B0"
+  },
+  {
+   "title": "A smooth control law for graceful motion of differential wheeled mobile robots in 2D environment",
+   "authors": "Park, Kuipers",
+   "venue_year": "ICRA 2011",
+   "url": "https://www.semanticscholar.org/paper/f12d4a91b64c801a71e62be6dd037835b5c2e9b3",
+   "status": "RECALLED",
+   "relevance": "Fine-stage docking control law (existence verified via search; formulas verified from Nav2 source)"
+  },
+  {
+   "title": "Behavior Tree Capabilities for Dynamic Multi-Robot Task Allocation with Heterogeneous Robot Teams",
+   "authors": "Heppner, Oberacker, Roennau, Dillmann",
+   "venue_year": "ICRA 2024, arXiv 2402.02833",
+   "url": "https://arxiv.org/abs/2402.02833",
+   "status": "VERIFIED",
+   "relevance": "BT mission specification with runtime auction allocation"
+  },
+  {
+   "title": "Adaptable Recovery Behaviors in Robotics: A Behavior Trees and Motion Generators (BTMG) Approach for Failure Management",
+   "authors": "Ahmad, Mayr, Suresh-Fazeela, Krueger",
+   "venue_year": "arXiv 2404.06129, 2024-04",
+   "url": "https://arxiv.org/abs/2404.06129",
+   "status": "VERIFIED",
+   "relevance": "Recovery behaviors as parameterized BT skills"
+  },
+  {
+   "title": "A formal implementation of Behavior Trees to act in robotics",
+   "authors": "Ingrand et al.",
+   "venue_year": "arXiv 2502.11904, 2025-02",
+   "url": "https://arxiv.org/abs/2502.11904",
+   "status": "VERIFIED",
+   "relevance": "Formal verification of BTs; motivates static XML validation tests"
+  },
+  {
+   "title": "MRBTP: Efficient Multi-Robot Behavior Tree Planning and Collaboration",
+   "authors": "Cai et al.",
+   "venue_year": "arXiv 2502.18072, 2025-02",
+   "url": "https://arxiv.org/abs/2502.18072",
+   "status": "VERIFIED",
+   "relevance": "Multi-robot BT coordination in warehouse scenarios"
+  },
+  {
+   "title": "BTGenBot-2: Efficient Behavior Tree Generation with Small Language Models",
+   "authors": "Izzo, Bardaro, Matteucci",
+   "venue_year": "arXiv 2602.01870, 2026-02",
+   "url": "https://arxiv.org/abs/2602.01870",
+   "status": "VERIFIED",
+   "relevance": "BT XML generation (bonus-task reference only)"
+  },
+  {
+   "title": "Bridging Probabilistic Inference and Behavior Trees: An Interactive Framework for Adaptive Multi-Robot Cooperation",
+   "authors": "Wang, Sun, Zhang, Wu",
+   "venue_year": "arXiv 2512.04404, 2025-12",
+   "url": "https://arxiv.org/abs/2512.04404",
+   "status": "VERIFIED",
+   "relevance": "Probabilistic decision nodes in BTs (related to our covariance-gated condition node)"
+  },
+  {
+   "title": "Obstacle-Aware Autonomous Coverage and Navigation for Outdoor Robots",
+   "authors": "Gargani, Frosi, Matteucci",
+   "venue_year": "arXiv 2609.01384, 2026-09",
+   "url": "https://arxiv.org/abs/2609.01384",
+   "status": "VERIFIED",
+   "relevance": "Recent ROS 2 system using a Nav2-based BT mission executive"
+  },
+  {
+   "title": "A Survey of Behavior Trees in Robotics and AI",
+   "authors": "Iovino, Scukins, Styrud, Ögren, Smith",
+   "venue_year": "RAS 154, 2022 (arXiv 2005.05842)",
+   "url": "https://arxiv.org/abs/2005.05842",
+   "status": "VERIFIED",
+   "relevance": "BT vs FSM modularity argument for peer review"
+  },
+  {
+   "title": "The Marathon 2: A Navigation System",
+   "authors": "Macenski, Martín, White, Ginés Clavero",
+   "venue_year": "IROS 2020, arXiv 2003.00368",
+   "url": "https://arxiv.org/abs/2003.00368",
+   "status": "VERIFIED",
+   "relevance": "Nav2 BT navigator architecture"
+  },
+  {
+   "title": "BehaviorTree.CPP migration guide 3.x -> 4.x",
+   "authors": "Faconti",
+   "venue_year": "behaviortree.dev, 2023-2026",
+   "url": "https://www.behaviortree.dev/docs/migration/",
+   "status": "VERIFIED",
+   "relevance": "Breaking changes underpinning the v4 decision"
+  },
+  {
+   "title": "SMT-Based Dynamic Multi-Robot Task Allocation",
+   "authors": "Tuck, Chen, Fainekos, Hoxha, Okamoto, Sastry, Seshia",
+   "venue_year": "NFM 2024, arXiv 2403.11737",
+   "url": "https://arxiv.org/abs/2403.11737",
+   "status": "VERIFIED",
+   "relevance": "Online task streams with deadlines (exact method; ours is heuristic)"
+  },
+  {
+   "title": "Together We Rise: Optimizing Real-Time Multi-Robot Task Allocation using Coordinated Heterogeneous Plays",
+   "authors": "Pal, Chauhan, Baranwal",
+   "venue_year": "AAMAS 2025, arXiv 2502.16079",
+   "url": "https://arxiv.org/abs/2502.16079",
+   "status": "VERIFIED",
+   "relevance": "Warehouse MRTA minimizing distance + completion delay (RL)"
+  },
+  {
+   "title": "Uncertainty-Aware Multi-Robot Task Allocation With Strongly Coupled Inter-Robot Rewards",
+   "authors": "Rossano, Lim, How",
+   "venue_year": "IROS 2026, arXiv 2509.22469",
+   "url": "https://arxiv.org/abs/2509.22469",
+   "status": "VERIFIED",
+   "relevance": "Uncertainty-aware auction allocation with deadlines; our expected-tardiness cost is in the same spirit"
+  },
+  {
+   "title": "Dynamic Multi-Robot Task Allocation under Uncertainty and Communication Constraints: A Game-Theoretic Approach",
+   "authors": "Mendoza, Su, Ferguson, Sastry",
+   "venue_year": "arXiv 2604.11954, 2026-04",
+   "url": "https://arxiv.org/abs/2604.11954",
+   "status": "VERIFIED",
+   "relevance": "Online arrivals with deadlines; benchmarks against EDD and Hungarian — same baselines we use"
+  },
+  {
+   "title": "Auction-Based Task Allocation with Energy-Conscientious Trajectory Optimization for AMR Fleets",
+   "authors": "Li, Bakshi, Chu, Li, Chen",
+   "venue_year": "arXiv 2603.21545, 2026-03",
+   "url": "https://arxiv.org/abs/2603.21545",
+   "status": "VERIFIED",
+   "relevance": "Event-triggered warm-start rescheduling for AMR fleets"
+  },
+  {
+   "title": "CAMETA: Conflict-Aware Multi-Agent Estimated Time of Arrival Prediction for Mobile Robots",
+   "authors": "Sejersen, Kayacan",
+   "venue_year": "IROS 2023, arXiv 2503.00074",
+   "url": "https://arxiv.org/abs/2503.00074",
+   "status": "VERIFIED",
+   "relevance": "Learned multi-agent ETA; our zone-speed EWMA is the explainable simplification"
+  },
+  {
+   "title": "Task Allocation in Mobile Robot Fleets: A review",
+   "authors": "Meseguer Valenzuela, Blanes Noguera",
+   "venue_year": "arXiv 2501.08726, 2025-01",
+   "url": "https://arxiv.org/abs/2501.08726",
+   "status": "VERIFIED",
+   "relevance": "Survey of MRTA methods for warehouse fleets"
+  },
+  {
+   "title": "Scheduling Algorithms for Multiprogramming in a Hard-Real-Time Environment",
+   "authors": "Liu, Layland",
+   "venue_year": "JACM 1973",
+   "url": "https://doi.org/10.1145/321738.321743",
+   "status": "RECALLED",
+   "relevance": "EDF optimality (classic)"
+  },
+  {
+   "title": "The Hungarian method for the assignment problem",
+   "authors": "Kuhn",
+   "venue_year": "NRLQ 1955",
+   "url": "https://doi.org/10.1002/nav.3800020109",
+   "status": "RECALLED",
+   "relevance": "Assignment solver used by allocator (classic)"
+  },
+  {
+   "title": "Automatic generation and detection of highly reliable fiducial markers under occlusion (ArUco) / Infinitesimal Plane-Based Pose Estimation (IPPE)",
+   "authors": "Garrido-Jurado et al. 2014 / Collins, Bartoli 2014",
+   "venue_year": "Pattern Recognition 2014 / IJCV 2014",
+   "url": "https://doi.org/10.1016/j.patcog.2014.01.005",
+   "status": "RECALLED",
+   "relevance": "Marker system and the two-solution planar PnP used by OpenCV SOLVEPNP_IPPE_SQUARE (cite present in installed header)"
+  }
+ ],
+ "baseline_summary": "Baselines derived in the brief: (1) BT executive on BehaviorTree.CPP 4.10 (container has v3 3.8.7 and v4 4.10.0; Nav2 1.1.20's nav2_behavior_tree links v3, so amr_behavior must not link nav2_behavior_tree — current package.xml has that conflicting dependency), with our own NavigateToPose/Spin/BackUp/Dock action-client nodes, re-implemented RecoveryNode/RoundRobin/RateController, 27 node types, 8 subtrees, 5 recovery paths, Groot2 publisher plus XML-to-Mermaid static export; JSON task schema mapped 1:1 to existing amr_msgs/Task with Pending/InProgress/Completed/Failed emitted as events on /fleet/task_events plus JSONL log. (2) Two-stage docking: Nav2 NavigateToPose to a staging pose 1.5 m from the dock, then a fine stage driven by a 3-state relative-pose EKF in the dock frame (odometry prediction; ArUco pose and LiDAR line-fit updates) and the Park-Kuipers smooth control law (curvature kappa = -(1/r)[k_delta(delta - atan(-k_phi phi)) + (1 + k_phi/(1+(k_phi phi)^2)) sin delta], v = v_max/(1+beta|kappa|^lambda) with slowdown/decel caps, omega = kappa v — formulas verified from Nav2 source; Humble has no nav2_graceful_controller so we implement it). Accuracy analysis with f = 337.2 px (87 deg HFOV, 640 px): sigma_Z = Z sigma_c/l, sigma_X = Z sigma_c/(2f), sigma_theta = 2 Z sigma_c/(s l); for a 0.15 m marker and sigma_c = 0.2 px, single-frame yaw is 3.0 deg at 1 m, 1.16 deg at pre-dock (0.62 m), 0.31 deg at docked (0.32 m), while position is mm-level; LiDAR line fit of a 0.8 m dock face gives 0.5-0.8 deg per scan. Hence 1 deg is only reachable by multi-frame fusion. (3) Scheduling baseline: priority-weighted least-slack-first with predicted completion C_ij = t + rho_i + tau(x_i->P_j) + s_L + 2 t_dock + tau(P_j->Q_j) + s_U; reduces to EDF when uncertainty and priorities vanish; Hungarian on a cost matrix (O(n^3), microseconds at 5x7). Payload mass change via Gazebo Fortress DetachableJoint attach/detach (verified present in 6.18) with a_max scaled by m_base/(m_base+m_load).",
+ "proposals": [
+  {
+   "name": "CCD: Chance-Constrained Docking (pose-covariance-aware docking controller)",
+   "idea": "Per-frame ArUco measurement covariance computed in closed form from pixel geometry (sigma_Z = Z sigma_c/l, sigma_theta = 2 Z sigma_c/(s l), scaled by a NEES-calibrated kappa) is fused with a LiDAR dock-face line fit (sigma_alpha = (sigma_r/L) sqrt(12/N)) and odometry in a 3-state EKF in the dock frame; IPPE's two planar-pose solutions are disambiguated by Mahalanobis gating against the prior. Before committing to the terminal 0.30 m straight-in segment, a chance constraint P(|e_y|<=1.5 cm) * P(|e_psi|<=0.6 deg) >= 0.95 is evaluated from the posterior (plus terminal odometry drift). On gate failure the retry action is chosen by diagnosis: information-poor (hold and accumulate 15 frames + 5 scans, no retry count), heading bias (rotate in place), lateral bias (back off 0.5 m and re-approach, counts as retry), observation loss (return to staging, counts). Max 3 counted retries then Dock.action fails with measured errors and the BT triggers the alternative-task path.",
+   "closest_prior_work": "Adámek et al. 2023 (analytic-fit variance model for adaptive-R EKF localisation); Hinderer et al. 2025 (adaptive measurement noise KF for ArUco); Dai & Lee 2025 (LiDAR heading correction fused with tag detection, PID); Nav2/opennav_docking (staging + graceful controller + blind retry); Oh & Kim 2025 (2 cm / 3.07 deg vision-only docking).",
+   "novelty_claim": "new_combination",
+   "expected_gain": "Vision-only single-frame yaw at pre-dock is 1.16 deg (1-sigma) which cannot meet 1 deg; fused posterior after approach is about 0.20 deg and about 1 mm lateral, giving 3-sigma 0.6 deg / 3 mm plus <5 mm / 0.3 deg terminal tracking error, i.e. margin under the 2 cm / 1 deg spec. Retry-by-diagnosis should cut wasted re-approaches versus blind retry (ablation B1) and the gate prevents committing on flipped-ambiguity yaw estimates (target: 0 yaw flips in 50 near-frontal approaches).",
+   "risks": "Corner-noise sigma_c in Gazebo may differ from 0.2 px (mitigated by kappa calibration and NEES test); dock face must be >=0.4 m tall and 0.8 m wide for the LiDAR line fit; the 0.3 m emergency-stop zone conflicts with the docking approach and needs a docking-mode exemption; pip cv2 4.11/5.0 double install must be pinned; marker may leave FOV in the last 0.15 m (handled by odometry-only prediction, ~1.5 mm drift).",
+   "realtime_budget": "ArUco detection 3-8 ms per 640x480 frame at 30 Hz only while docking (about 1 CPU core worst case with 5 robots docking simultaneously, rate-limited to 15 Hz beyond 0.8 m); LiDAR RANSAC line fit <1 ms at 10 Hz; 3-state EKF microseconds; controller at 30 Hz; total well under 1 of 32 threads."
+  },
+  {
+   "name": "WLSF-ETA: priority-weighted least-slack scheduling with online travel-time feedback",
+   "idea": "Completion time C_ij is predicted from A*-path lengths over zones divided by zone speeds learned online by EWMA from all robots (v_e <- (1-eta) v_e + eta l_e/tau_obs, with residual variance tracked the same way), and updated mid-leg from NavigateToPose feedback (distance_remaining, estimated_time_remaining). Assignment cost c_ij = tau(x_i->P_j) + w_late (1 + p_j/255) E[(C_ij - d_j)^+] with the Gaussian loss E[(C-d)^+] = sigma (z Phi(z) + phi(z)); urgency u_j = max_i (1+p_j/255) P(C_ij > d_j) selects the top m+L candidates (L = 2 look-ahead, robots finishing within 30 s counted as available with offset) for the Hungarian allocator; slack is re-evaluated every 2 s and tasks are swapped between robots with hysteresis (P(late) > 0.5 -> < 0.2).",
+   "closest_prior_work": "Liu & Layland 1973 EDF; Kuhn 1955 Hungarian; Rossano et al. IROS 2026 and Mendoza et al. 2026 (uncertainty-aware / deadline MRTA benchmarked against EDD and Hungarian); Sejersen & Kayacan CAMETA (learned conflict-aware ETA); Li et al. 2026 event-triggered rescheduling.",
+   "novelty_claim": "engineering_adaptation",
+   "expected_gain": "Lower deadline-miss rate and mean tardiness than FIFO, pure EDF and min-distance Hungarian at equal throughput (to be measured in E6 with 300 Poisson-arrival tasks); ETA MAPE brought under the spec's 15% via zone-speed calibration (E7). Reduces to EDF exactly when sigma -> 0 and priorities are equal, which is a unit-test property.",
+   "risks": "Zone speed EWMA can lag sudden congestion; task swapping can oscillate without hysteresis; interface boundary with the amr_fleet Hungarian allocator must be agreed; deadlines in the JSON must be absolute ROS time (sim time) to avoid clock mismatch.",
+   "realtime_budget": "Cost matrix at most 5x7, Hungarian O(n^3) in microseconds; station-to-station distance table (about 30 stations, 900 A* paths) precomputed offline; one online ComputePathToPose per idle robot; scheduler cycle 2 s; negligible CPU."
+  }
+ ],
+ "evaluation_plan": "E1 docking precision: 3 docks x random staging offsets (+-0.15 m, +-10 deg) x 10 = 90 docks, ground truth from ros_gz_bridge /world/*/pose/info (Pose_V->PoseArray verified), pass = 100% within 2 cm / 1 deg with 3-sigma reported; baselines B0 = opennav_docking humble branch (source build) fed by the same detector, B1 = ours with fixed R and blind retries, B2 = full CCD. E2 covariance consistency: NEES over E1 logs within the 3-DoF 95% interval [2.4, 3.7], before/after kappa calibration. E3 ambiguity robustness: 50 near-frontal (+-2 deg) approaches, zero yaw flips in the adopted solution vs reprojection-only selection. E4 single-task success: 100 random tasks over 3 payload types, >=97%. E5 BT recovery via fault injection (spawned corridor obstacle, marker visual toggled off, forced 0.3 m staging offset, battery forced to 15%, E-stop), >=9/10 automatic recoveries each with recovery time logged. E6 scheduling: Poisson arrivals (1 per 40 s), 300 tasks, deadlines r_j + U(120, 400) s, 3 priority levels; metrics deadline-miss rate, mean tardiness, throughput, total distance; compared against FIFO, pure EDF, min-distance Hungarian (spec-mandated), WLSF-ETA. E7 ETA error: MAPE <= 15% after calibration vs nominal-speed model. E8 resources: 5 robots docking simultaneously, this area < 1 core, BT tick jitter < 10 ms; response-time path (BT tick 50 ms + action accept) < 100 ms. Log formats follow the spec's table: docking [stamp, dock_id, attempt, gt_x, gt_y, gt_yaw, est_x, est_y, est_yaw, pos_err, ang_err, gate_p, retry_reason]; task [start, end, task_id, robot_id, distance_m, duration_s, result, deadline_slack_s].",
+ "implementation_plan": "Package amr_behavior converted from Python-only CMake to mixed ament_cmake + ament_cmake_python; package.xml drops nav2_behavior_tree (v3 ABI clash with behaviortree_cpp v4) and adds rclcpp_action, tf2_ros, cv_bridge, OpenCV, nav2_msgs, amr_msgs. C++17 files: include/amr_behavior/bt/{recovery_node,round_robin,rate_controller}.hpp (v4 re-implementations), include/amr_behavior/docking/{covariance_model,dock_ekf,smooth_control_law,line_fit}.hpp (ROS-free pure logic for unit testing), src/bt/bt_executive_node.cpp (XML load, BT_REGISTER_NODES, Groot2Publisher port 1667, 20 Hz tick), src/bt/nodes/*.cpp (one node per file so adding a node touches <=3 files), src/docking/aruco_detector_node.cpp (system OpenCV 4.5.4: cv::aruco::detectMarkers with CORNER_REFINE_SUBPIX + cv::solvePnPGeneric SOLVEPNP_IPPE_SQUARE returning both solutions), src/docking/dock_line_fit_node.cpp (LaserScan -> (d, alpha, N)), src/docking/dock_server_node.cpp (amr_msgs/action/Dock server: EKF, control law, gate, diagnosed retries, phases STAGING/APPROACH/GATE/TERMINAL/RETRY in feedback), src/cmd_vel_mux_node.cpp (estop > dock > nav priority; Humble has no twist_mux; Nav2 remapped to cmd_vel_nav). Python 3.10: amr_behavior/task_manager.py (JSON on /fleet/task_json std_msgs/String, state machine, events on /fleet/task_events amr_msgs/Task transient_local, JSONL log) and amr_fleet/scheduler/{eta_model.py,wlsf.py}. XML: behavior_trees/{mission_loop,fetch_and_deliver,navigate_with_recovery,dock_with_recovery,go_charge,load_payload,unload_payload,return_home}.xml with BTCPP_format=4. Config: behavior.yaml, docking.yaml, docks.yaml (dock poses, marker ids, 0.15 m size, staging 1.5 m, pre-dock 0.8 m, docked 0.5 m from face). ROS interfaces: nav2_msgs/action/NavigateToPose, Spin, BackUp; nav2_msgs/srv/ClearEntireCostmap; nav2_msgs/msg/SpeedLimit; amr_msgs/action/Dock (existing); amr_msgs/srv/AssignTask; sensor_msgs Image/CameraInfo/LaserScan; Gazebo /world/<w>/set_pose and DetachableJoint attach/detach topics for payload mass. Gazebo: marker as PBR albedo_map plane, camera gaussian noise stddev 0.007. Unit tests (gtest/pytest, target 70% coverage): Monte-Carlo vs closed-form covariance (+-30% at Z in {0.3, 0.6, 1.0}), EKF NEES and ambiguity selection, control-law convergence on a unicycle integrator (100 random starts, r < 1 cm, |psi| < 0.5 deg, |omega| <= omega_max), BT node tick sequences with mock blackboard and static XML/port validation, task-manager schema and transition table, scheduler EDF-equivalence and Gaussian-loss vs numeric integration. Compute budget: ArUco 3-8 ms/frame at 30 Hz only while docking (about 1 core worst case for 5 robots), everything else negligible; response path < 100 ms. Schedule: W1 executive/nodes/XML/Groot2/mux, W2 ArUco node + covariance model + Gazebo marker/dock, W3 EKF + LiDAR fit + control law + Dock server + E1/E2, W4 CCD gate + retries + fault-injection E3/E5, W5 task manager + scheduler + E6/E7 + docs.",
+ "open_questions": [
+  "Safety-zone conflict: the spec's 0.3 m emergency stop physically contradicts the docking approach (bumper-to-face 0.2 m); a docking-mode exemption masking the dock-face sector while RobotState.STATUS_DOCKING must be agreed with the safety/nav2_collision_monitor owner.",
+  "Python cv2 double install in the image: opencv-python 4.11 and opencv-contrib-python-headless 5.0 coexist (cv2 5.0 currently wins); pin one in the Dockerfile and document the API difference from the C++ OpenCV 4.5.4 (old aruco API, no ArucoDetector class).",
+  "Marker configuration decision with the world/dock model owner: single 0.15 m marker vs a two-marker 0.12 m board with 0.5 m baseline (3.7x better single-frame yaw at 1 m); dock face must be >= 0.8 m wide and >= 0.4 m tall so the LiDAR plane (z = 0.20 m) hits it.",
+  "Message changes owned by amr_msgs: add gate probability and retry reason to Dock.action feedback, and whether to add a TaskEvent.msg or keep reusing Task.msg for events.",
+  "Groot2 licensing: only the free tier (editing, live monitoring) is planned; documentation figures are generated by our own XML-to-Mermaid script to stay clear of the 'no commercial solutions' constraint — confirm this reading with the team.",
+  "Payload physics: DetachableJoint requires the payload to be a separate Gazebo model and the attach system plugin in the robot SDF (amr_description / amr_simulation owners).",
+  "cmd_vel arbitration: Nav2 output remapped to cmd_vel_nav with a priority mux (estop > dock > nav) needs the navigation owner's agreement.",
+  "Scheduler/allocator boundary: this brief assumes the scheduler supplies the cost matrix and candidate set while amr_fleet's allocator runs the Hungarian step; confirm ownership and the AssignTask.srv contract.",
+  "amr_behavior package.xml currently depends on both behaviortree_cpp (v4) and nav2_behavior_tree (v3) — this must be resolved before any C++ target is added or the executable will crash on BT symbol interposition."
+ ]
+}

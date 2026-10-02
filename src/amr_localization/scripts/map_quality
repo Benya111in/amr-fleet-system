@@ -1,0 +1,9 @@
+#!/usr/bin/env python3
+"""ros2 run amr_localization map_quality 진입점."""
+
+import sys
+
+from amr_localization.map_quality import main
+
+if __name__ == '__main__':
+    sys.exit(main())

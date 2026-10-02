@@ -1,0 +1,29 @@
+quantisation width ln((c+1)/c)/s at s=2:
+  c=1: 0.3466 m
+  c=34: 0.0145 m
+  c=186: 0.0027 m
+  c=228: 0.0022 m
+
+table (s=2, r_ins=0.20):  c | d_free (lo,hi] | v_lim | m=vmax/v | Smac k=1
+   34 | (0.987, 1.002] | 1.41 | 1.42 | 1.13
+   50 | (0.799, 0.809] | 1.26 | 1.58 | 1.20
+  100 | (0.457, 0.462] | 0.96 | 2.09 | 1.40
+  186 | (0.149, 0.152] | 0.55 | 3.66 | 1.74
+  206 | (0.098, 0.101] | 0.44 | 4.51 | 1.82
+  228 | (0.048, 0.050] | 0.31 | 6.46 | 1.90
+  240 | (0.022, 0.024] | 0.21 | 9.47 | 1.95
+  245 | (0.012, 0.014] | 0.20 | 10.00 | 1.97
+  248 | (0.006, 0.008] | 0.20 | 10.00 | 1.98
+
+cost at d=1.2 (R_infl boundary): 34
+corridor centre d=0.30: 206  d=0.25: 228
+achievable c in (228,252] (grid distances hypot(i,j)*0.05): [(240, 0.2236), (245, 0.2121), (248, 0.2062)]
+achievable c where v_lim is clamped to v_floor: [245, 248]
+
+config A: s/m inside c=34 = 0.7117, outside = 0.5000, drop = 29.7 %
+  dT excursion to r_circ=0.361: 0.856 s  -> equivalent length 1.71 m
+
+config B: R_infl=2.20, boundary c=4, v_lim=1.980 (jump 1.0 %)
+
+footprint_padding=0.01 -> r_ins=0.21: corridor centre c=210, d_free_lo=0.089, v_lim=0.42
+  r_circ padded = 0.3744

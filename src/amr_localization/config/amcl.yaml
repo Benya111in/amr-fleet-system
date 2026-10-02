@@ -1,0 +1,71 @@
+# nav2_amcl 파라미터 (명세 4.3 "AMCL 적용, 파티클 수·리샘플링 파라미터 튜닝")
+# 수식·튜닝 근거·측정: docs/algorithms/slam.md §4. 프레임/토픽은 localization.launch.py 가 접두어를 주입한다.
+/**/amcl:
+  ros__parameters:
+    # --- 프레임·토픽 (다중 로봇: <prefix>odom, <prefix>base_footprint; map 은 공용) ---
+    global_frame_id: map
+    odom_frame_id: odom
+    base_frame_id: base_footprint
+    tf_broadcast: false           # map→odom 은 ekf_filter_node_map 이 발행 (둘 다 내면 odom 이 두 부모를 가짐)
+    transform_tolerance: 1.0      # [s]
+    scan_topic: scan_filtered     # 상대 이름 → /<robot>/scan_filtered (거리·아웃라이어 필터 후)
+    map_topic: /map               # 루트 map_server 1 개를 모든 로봇이 공유 (multi_robot.md §4).
+                                  # localization.launch.py 는 기본으로 map_amcl (amcl_map_adapter 가 원점을
+                                  # 반 셀 보정한 사본)로 덮어쓴다: nav2_amcl 은 월드→셀을 반올림
+                                  # (floor(x/s + ½))해 지도를 (−s/2, −s/2) 옮겨 보므로 자세가 그만큼 치우친다
+    first_map_only: false
+    save_pose_rate: 0.5           # [Hz] 마지막 자세를 파라미터로 저장 (재기동 시 초기 자세)
+
+    # --- 초기 자세 (launch 가 스폰 좌표로 덮어씀) ---
+    set_initial_pose: true
+    always_reset_initial_pose: false
+    initial_pose: {x: 0.0, y: 0.0, z: 0.0, yaw: 0.0}
+
+    # --- 운동 모델 (DifferentialMotionModel, α 는 "분산" 계수: σ_trans = sqrt(α3 δt² + α4 δr²)) ---
+    # 입력 odom 은 EKF(휠+자이로) 출력이라 raw odom 전제의 Nav2 기본 0.2(σ 45 %)는 과대 → 갱신마다 구름이
+    # σ_hit 보다 넓게 퍼져 가중치가 붕괴한다. 물리값(인코더 σ ≈ 0.7 %·δ → α3 5e-5)에 파티클 다양성용
+    # 팽창 κ ≈ 6 을 곱한 α = κ²α_phys ≈ 2e-3 (σ ≈ 4.5 %·δ) 에서 시작, 실측으로 조정 (slam.md §4)
+    robot_model_type: nav2_amcl::DifferentialMotionModel
+    alpha1: 0.005                 # 회전 → 회전 [무차원]
+    alpha2: 0.002                 # 병진 → 회전 [rad²/m²]
+    alpha3: 0.002                 # 병진 → 병진 [무차원]
+    alpha4: 0.005                 # 회전 → 병진 [m²/rad²]
+    alpha5: 0.002                 # (전방향 모델 전용, 미사용)
+
+    # --- 관측 모델 (likelihood field) ---
+    laser_model_type: likelihood_field
+    # σ_hit ≈ sqrt(σ_lidar² + res²/12 + σ_map²) = sqrt(0.03² + 0.0144² + 0.038²) ≈ 0.05 m 에 여유를 두어 0.08.
+    # (0.2 기본값은 벽 위치를 4 배 흐리게 보아 정지 3 cm 를 못 맞추고, 0.05 는 맵 오차에 파티클 고갈 위험)
+    sigma_hit: 0.08               # [m]
+    z_hit: 0.8                    # 맞는 빔 가중. 동적 장애물(작업자·지게차)은 z_rand 가 흡수
+    z_rand: 0.2
+    z_max: 0.05                   # (beam 모델 전용)
+    z_short: 0.05                 # (beam 모델 전용)
+    lambda_short: 0.1             # (beam 모델 전용)
+    laser_likelihood_max_dist: 2.0  # [m] 거리장 최대 거리. 재초기화 직후 넓은 분지를 유지
+    laser_max_range: 25.0         # [m] 센서 사양
+    laser_min_range: 0.1          # [m]
+    max_beams: 180                # 720 빔 중 2° 간격. 60(기본)은 좁은 통로 벽이 몇 빔에 불과해 횡 방향 정보가 부족
+    do_beamskip: false
+    beam_skip_distance: 0.5
+    beam_skip_error_threshold: 0.9
+    beam_skip_threshold: 0.3
+
+    # --- 파티클 필터 (KLD 적응 샘플링) ---
+    # 추적 중 KLD 가 k ≈ 20~50 bin 에서 360~750 개로 줄이고, 재초기화·발산 시 max 까지 늘린다.
+    # nav2 humble 리샘플러는 O(N²) 선형 탐색 → 8000 개면 3.2e7 비교(≈ 30~60 ms/갱신)가 상한.
+    min_particles: 500
+    max_particles: 8000
+    pf_err: 0.05                  # KLD ε
+    pf_z: 0.99                    # KLD 분위 z (0.99 ≈ 2.33σ)
+    resample_interval: 1          # 갱신마다 리샘플 (2 로 올리면 CPU 절반, 수렴 느림)
+    # Augmented MCL (w_fast/w_slow 비가 떨어지면 무작위 파티클 주입) 은 끈다 (0.0). 켰을 때(0.001/0.1) Gazebo
+    # 정확도 경로 15 회 중 5 회 주행 도중(원호·동적 장애물 가림)에 주입이 일어나 AMCL 공분산이 수 초간
+    # 5~40 m² 로 부풀고 kidnap_monitor 가 거짓 LOST 를 냈다 (slam.md §6.4). 납치 복구는 kidnap_monitor 의
+    # 결정적 전역 가설 탐색 + 회전 + (최후) reinitialize_global_localization 이 맡으므로 주입이 필요 없다.
+    recovery_alpha_slow: 0.0
+    recovery_alpha_fast: 0.0
+
+    # --- 갱신 조건 (엄격 부등호) ---
+    update_min_d: 0.10            # [m] 0.25(기본)는 5 cm 목표에 비해 갱신 간 odom 누적이 크다
+    update_min_a: 0.08            # [rad] 1 rad/s × 10 Hz 회전에서 스캔마다 0.1 rad → 0.1 로 두면 갱신이 누락될 수 있음

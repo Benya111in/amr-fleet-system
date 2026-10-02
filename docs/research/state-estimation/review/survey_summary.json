@@ -1,0 +1,272 @@
+{
+ "slug": "state-estimation",
+ "doc_path": "docs/research/state-estimation/state-estimation.md",
+ "web_tools_available": true,
+ "papers": [
+  {
+   "title": "Tackling the Kidnapped Robot Problem via Sparse Feasible Hypothesis Sampling and Reliable Batched Multi-Stage Inference",
+   "authors": "Muhua Zhang, Lei Ma, Ying Wu, Kai Shen, Deqing Huang, Henry Leung",
+   "venue_year": "IEEE Trans. Instrumentation and Measurement (accepted), arXiv 2511.01219, 2025/2026",
+   "url": "https://arxiv.org/abs/2511.01219",
+   "status": "VERIFIED",
+   "relevance": "Single-scan 2D passive relocalization; SMAD beam-error metric and TAM alignment metric are the direct prior of our scan-to-map consistency statistic and hypothesis seeding."
+  },
+  {
+   "title": "Lifelong Localization in Dynamic Indoor Environments Combining Odometry with Sparse Distance Sampling",
+   "authors": "Michael M. Bilevich, Tomer Buber, Dan Halperin",
+   "venue_year": "ICRA 2026, arXiv 2607.17852",
+   "url": "https://arxiv.org/abs/2607.17852",
+   "status": "VERIFIED",
+   "relevance": "Real-time kidnapped-robot resolution with odometry plus sparse distance samples; convergence guarantees in static/dynamic planar environments."
+  },
+  {
+   "title": "CBGL: Fast Monte Carlo Passive Global Localisation of 2D LIDAR Sensor",
+   "authors": "Alexandros Filotheou",
+   "venue_year": "IROS 2024, arXiv 2307.14247",
+   "url": "https://arxiv.org/abs/2307.14247",
+   "status": "VERIFIED",
+   "relevance": "CAER (cumulative absolute error per ray) hypothesis scoring plus scan-to-map matching; our free-space hypothesis seed is an engineering adaptation of this."
+  },
+  {
+   "title": "Selective Kalman Filter: When and How to Fuse Multi-Sensor Information to Overcome Degeneracy in SLAM",
+   "authors": "Jie Xu, Guanyu Huang, Wenlu Yu, Xuanxuan Zhang, Lijun Zhao, Ruifeng Li, Shenghai Yuan, Lihua Xie",
+   "venue_year": "arXiv 2412.17235, Dec 2024",
+   "url": "https://arxiv.org/abs/2412.17235",
+   "status": "VERIFIED",
+   "relevance": "Degeneracy detection then updating only degenerate dimensions; same philosophy as gating only the encoder velocity during slip."
+  },
+  {
+   "title": "SuperLoc: The Key to Robust LiDAR-Inertial Localization Lies in Predicting Alignment Risks",
+   "authors": "Shibo Zhao, Honghao Zhu, Yuanjun Gao, Beomsoo Kim, Yuheng Qiu, Aaron M. Johnson, Sebastian Scherer",
+   "venue_year": "ICRA 2025, arXiv 2412.02901",
+   "url": "https://arxiv.org/abs/2412.02901",
+   "status": "VERIFIED",
+   "relevance": "Pre-optimization localizability assessment of raw measurements to detect failure proactively; motivates evaluating scan-map consistency before trusting AMCL."
+  },
+  {
+   "title": "Neural Error Covariance Estimation for Precise LiDAR Localization",
+   "authors": "Minoo Dolatabadi, Fardin Ayar, Ehsan Javanmardi, Manabu Tsukada, Mahdi Javanmardi",
+   "venue_year": "ICICEA 2024, arXiv 2501.02558",
+   "url": "https://arxiv.org/abs/2501.02558",
+   "status": "VERIFIED",
+   "relevance": "Learned map-matching covariance improves KF fusion by 2 cm; we instead use covariance floors and NIS gating for explainability."
+  },
+  {
+   "title": "Towards Robust LiDAR Localization: Deep Learning-based Uncertainty Estimation",
+   "authors": "Minoo Dolatabadi, Fardin Ayar, Ehsan Javanmardi, Manabu Tsukada, Mahdi Javanmardi",
+   "venue_year": "arXiv 2509.18954, Sep 2025",
+   "url": "https://arxiv.org/abs/2509.18954",
+   "status": "VERIFIED",
+   "relevance": "Per-scan ICP 6-DoF covariance prediction for Kalman integration; alternative to our closed-form covariance handling."
+  },
+  {
+   "title": "Neural Aided Adaptive Innovation-Based Invariant Kalman Filter",
+   "authors": "Barak Diker, Itzik Klein",
+   "venue_year": "arXiv 2603.26709, Mar 2026",
+   "url": "https://arxiv.org/abs/2603.26709",
+   "status": "VERIFIED",
+   "relevance": "Innovation-based process-noise adaptation formulated on Lie groups; most recent form of the IAE idea our IAG-EKF is a variant of."
+  },
+  {
+   "title": "Lightweight 3D LiDAR-Based UAV Tracking: An Adaptive Extended Kalman Filtering Approach",
+   "authors": "Nivand Khosravi, Meysam Basiri, Rodrigo Ventura",
+   "venue_year": "IAS-19 2025, arXiv 2603.09783",
+   "url": "https://arxiv.org/abs/2603.09783",
+   "status": "VERIFIED",
+   "relevance": "Adaptive EKF adjusting Q/R from innovation and residual statistics with a recovery mechanism; reference for our windowed IAE with clipping."
+  },
+  {
+   "title": "Kalman Filter Auto-tuning through Enforcing Chi-Squared Normalized Error Distributions with Bayesian Optimization",
+   "authors": "Zhaozhong Chen, Harel Biggie, Nisar Ahmed, Simon Julier, Christoffer Heckman",
+   "venue_year": "arXiv 2306.07225, Jun 2023 (submitted to IEEE TAES)",
+   "url": "https://arxiv.org/abs/2306.07225",
+   "status": "VERIFIED",
+   "relevance": "NIS/NEES chi-squared consistency as a tuning objective; adopted as the offline Q/R tuning procedure in the evaluation plan."
+  },
+  {
+   "title": "Mobile Robot Localization: a Modular, Odometry-Improving Approach",
+   "authors": "Luca Mozzarelli, Luca Cattaneo, Matteo Corno, Sergio Matteo Savaresi",
+   "venue_year": "ECC 2024, arXiv 2403.13452",
+   "url": "https://arxiv.org/abs/2403.13452",
+   "status": "VERIFIED",
+   "relevance": "Fusing off-the-shelf localizer outputs while estimating model uncertainty; >90% odometry error reduction without absolute fixes; supports the dual-filter design."
+  },
+  {
+   "title": "Fully Proprioceptive Slip-Velocity-Aware State Estimation for Mobile Robots via Invariant Kalman Filtering and Disturbance Observer",
+   "authors": "Xihang Yu, Sangli Teng, Theodor Chakhachiro, Wenzhe Tong, Tingjun Li, Tzu-Yuan Lin, Sarah Koehler, Manuel Ahumada, Jeffrey M. Walls, Maani Ghaffari",
+   "venue_year": "IROS 2023, arXiv 2209.15140",
+   "url": "https://arxiv.org/abs/2209.15140",
+   "status": "VERIFIED",
+   "relevance": "Slip velocity estimated from IMU plus body velocity in a RIEKF; theoretical prior of our encoder-IMU slip residual test."
+  },
+  {
+   "title": "Invariant Filtering for Wheeled Vehicle Localization with Unknown Wheel Radius and Unknown GNSS Lever Arm",
+   "authors": "Paul Chauchat, Silvere Bonnabel, Axel Barrau",
+   "venue_year": "arXiv 2409.07050, Sep 2024",
+   "url": "https://arxiv.org/abs/2409.07050",
+   "status": "VERIFIED",
+   "relevance": "Wheel-radius-as-state extension; candidate for handling payload-dependent effective wheel radius."
+  },
+  {
+   "title": "Intelligent Control of Differential Drive Robots Subject to Unmodeled Dynamics with EKF-based State Estimation",
+   "authors": "Amos Alwala, Yuchen Hu, Gabriel da Silva Lima, Wallace Moreira Bessa",
+   "venue_year": "arXiv 2603.14940, Mar 2026",
+   "url": "https://arxiv.org/abs/2603.14940",
+   "status": "VERIFIED",
+   "relevance": "Differential-drive EKF fusing IMU/odometry/LiDAR robust to slip and sensor failure; comparable baseline."
+  },
+  {
+   "title": "Improving Indoor Localization Accuracy by Using an Efficient Implicit Neural Map Representation",
+   "authors": "Haofei Kuang, Yue Pan, Xingguang Zhong, Louis Wiesmann, Jens Behley, Cyrill Stachniss",
+   "venue_year": "ICRA 2025, arXiv 2503.23480",
+   "url": "https://arxiv.org/abs/2503.23480",
+   "status": "VERIFIED",
+   "relevance": "2D LiDAR MCL with neural map observation model outperforming occupancy grids; we keep grids per spec but note the accuracy ceiling."
+  },
+  {
+   "title": "ERPoT: Effective and Reliable Pose Tracking for Mobile Robots Using Lightweight Polygon Maps",
+   "authors": "Haiming Gao, Qibo Qiu, Hongyan Liu, Dingkun Liang, Chaoqun Wang, Xuebo Zhang",
+   "venue_year": "arXiv 2409.14723, 2024/2025",
+   "url": "https://arxiv.org/abs/2409.14723",
+   "status": "VERIFIED",
+   "relevance": "Polygon-map point-to-edge pose tracking; alternative map representation for warehouses."
+  },
+  {
+   "title": "2DLIW-SLAM: 2D LiDAR-Inertial-Wheel Odometry with Real-Time Loop Closure",
+   "authors": "Bin Zhang, Zexin Peng, Bi Zeng, Junjie Lu",
+   "venue_year": "Measurement Science and Technology 2024, arXiv 2404.07644",
+   "url": "https://arxiv.org/abs/2404.07644",
+   "status": "VERIFIED",
+   "relevance": "2D LiDAR + IMU + wheel fusion SLAM robust to degeneracy versus Cartographer; comparison point for slam_toolbox parameterisation."
+  },
+  {
+   "title": "Transformation & Translation Occupancy Grid Mapping: 2-Dimensional Deep Learning Refined SLAM",
+   "authors": "Leon Davies, Baihua Li, Mohamad Saada, Simon Solvsten, Qinggang Meng",
+   "venue_year": "arXiv 2504.19654, Apr 2025",
+   "url": "https://arxiv.org/abs/2504.19654",
+   "status": "VERIFIED",
+   "relevance": "GAN-refined occupancy grids; underlines the need for map-quality metrics."
+  },
+  {
+   "title": "A new resampling algorithm for particle filters and its application in global localization within symmetric environments",
+   "authors": "Seif Eddine Seghiri, Noura Mansouri, Ahmed Chemori",
+   "venue_year": "Transactions of the Institute of Measurement and Control, 2025",
+   "url": "https://journals.sagepub.com/doi/abs/10.1177/01423312241267042",
+   "status": "VERIFIED",
+   "relevance": "Deterministic Effective Samples Resampling inside AMCL for symmetric environments; alternative to nav2's multinomial resampler."
+  },
+  {
+   "title": "From Simulation to Reality: Comparative Performance Analysis of SLAM Toolbox and Cartographer in ROS 2",
+   "authors": "(Electronics 2025 authors)",
+   "venue_year": "Electronics 14(24):4822, Dec 2025",
+   "url": "https://doi.org/10.3390/electronics14244822",
+   "status": "VERIFIED",
+   "relevance": "Humble/Gazebo/real comparison: slam_toolbox ATE 0.13 m vs Cartographer 0.21 m at ~70% CPU; justifies slam_toolbox choice."
+  },
+  {
+   "title": "Beyond Odometry Accuracy: How Encoder Resolution and IMU Fusion Affect Particle Filter Localization in Differential-Drive Robots",
+   "authors": "(Robotics 2026 authors)",
+   "venue_year": "Robotics 15(9):164, 2026",
+   "url": "https://www.mdpi.com/2218-6581/15/9/164",
+   "status": "VERIFIED",
+   "relevance": "4096 PPR and EKF-IMU fusion improve odometry but not uniformly AMCL stability; motivates re-tuning AMCL alphas when feeding fused odometry."
+  },
+  {
+   "title": "From Single Scan to Sequential Consistency: A New Paradigm for LIDAR Relocalization (TempLoc)",
+   "authors": "Minghang Zhu, Zhijing Wang, Yuxin Guo, Wen Li, Sheng Ao, Cheng Wang",
+   "venue_year": "arXiv 2602.03198, Feb 2026",
+   "url": "https://arxiv.org/abs/2602.03198",
+   "status": "VERIFIED",
+   "relevance": "Temporal consistency for relocalization (3D); supports using a sequential test rather than single-scan thresholds."
+  },
+  {
+   "title": "adaptive-ekf-slip-detector (GitHub README)",
+   "authors": "rouf-rimon",
+   "venue_year": "GitHub, undated",
+   "url": "https://github.com/rouf-rimon/adaptive-ekf-slip-detector",
+   "status": "VERIFIED",
+   "relevance": "Closest public implementation to IAG-EKF: encoder-IMU residuals, random-forest slip probability, odometry covariance inflation up to 501x; ours replaces the learned classifier with a closed-form chi-square test."
+  },
+  {
+   "title": "Probabilistic Robotics",
+   "authors": "Sebastian Thrun, Wolfram Burgard, Dieter Fox",
+   "venue_year": "MIT Press 2005",
+   "url": "https://mitpress.mit.edu/9780262201629/probabilistic-robotics/",
+   "status": "RECALLED",
+   "relevance": "Odometry motion model, likelihood-field sensor model, augmented MCL and KLD sampling used by nav2_amcl."
+  },
+  {
+   "title": "Estimation with Applications to Tracking and Navigation",
+   "authors": "Yaakov Bar-Shalom, X. Rong Li, Thiagalingam Kirubarajan",
+   "venue_year": "Wiley 2001",
+   "url": "https://doi.org/10.1002/0471221279",
+   "status": "RECALLED",
+   "relevance": "NIS/NEES consistency tests, chi-square gating and white-noise-acceleration process model used in the EKF derivation."
+  },
+  {
+   "title": "Adaptive Kalman filtering for INS/GPS",
+   "authors": "A. H. Mohamed, K. P. Schwarz",
+   "venue_year": "Journal of Geodesy 1999",
+   "url": "https://doi.org/10.1007/s001900050236",
+   "status": "RECALLED",
+   "relevance": "Innovation-based adaptive estimation (IAE) of R; IAG-EKF is a clipped variant."
+  },
+  {
+   "title": "A generalized extended Kalman filter implementation for the robot operating system",
+   "authors": "Thomas Moore, Daniel Stouch",
+   "venue_year": "IAS-13, 2014",
+   "url": "https://doi.org/10.1007/978-3-319-08338-4_25",
+   "status": "RECALLED",
+   "relevance": "robot_localization design (15-state omega/Euler model, dual odom/map filters) used as baseline."
+  },
+  {
+   "title": "An evaluation of 2D SLAM techniques available in Robot Operating System",
+   "authors": "Joao Machado Santos, David Portugal, Rui P. Rocha",
+   "venue_year": "IEEE SSRR 2013",
+   "url": "https://doi.org/10.1109/SSRR.2013.6719348",
+   "status": "RECALLED",
+   "relevance": "ADNN map-quality metric definition adopted for occupancy-grid evaluation."
+  }
+ ],
+ "baseline_summary": "Baseline stack (all versions verified in the amr-fleet-system:latest container): wheel odometry from 4096-tick encoders (r=0.0825 m, b=0.36 m; tick = 1.27e-4 m; multiplicative slip k_s=0.01 gives sigma_v = k_s v/sqrt2 and sigma_omega_enc = sqrt2 k_s v/b = 0.079 rad/s at 2 m/s versus gyro 2e-4 rad/s, so heading must come from the gyro) -> 5-state EKF x=[x,y,theta,v,omega] with midpoint constant-velocity prediction, analytic Jacobian F, white-noise-acceleration process noise Q_k = Gamma diag(sigma_a^2, sigma_alpha^2) Gamma^T (sigma_a=0.5 m/s^2, sigma_alpha=1.0 rad/s^2; robot_localization equivalents Q_vv=0.005 m^2/s^3, Q_ww=0.02 rad^2/s^3), linear measurement models for wheel [v,omega], gyro omega and AMCL [x,y,theta] with R derived from sensors.yaml, Joseph-form update, chi-square NIS gating (13.8 for m=2, 16.3 for m=3; robot_localization thresholds are n_sigma with n^2 compared, i.e. 3.7/4.0), ZUPT at rest, O(n^3) per step. Dual filters per REP-105: ekf_odom (world=odom, publishes odom->base_link) and ekf_map (world=map, pose0=/amcl_pose, publishes map->odom as T_map_base * T_odom_base^-1, verified in ros_filter.cpp; AMCL tf_broadcast=false; smooth_lagged_data/history_length 1.0 to remove the 20 cm lag error at 2 m/s). robot_localization 3.5.4 is the comparison baseline; the team's C++ EKF is the primary deliverable. nav2_amcl 1.1.20: differential motion model with alpha1-4 (derived from fused-odometry noise, proposed 0.1/0.05/0.05/0.05), likelihood-field model w = 1 + sum p_k^3 with sigma_hit derived as sqrt(0.03^2 + 0.05^2/12 + 0.02^2) = 0.04 m, max_beams 180, KLD sampling n = (k-1)/(2 eps) (1 - 2/(9(k-1)) + sqrt(2/(9(k-1))) z)^3 with pf_z being a z-value (proposed eps 0.05, z 2.33, min 500 / max 5000), augmented MCL w_slow/w_fast (alpha_slow 0.001, alpha_fast 0.1), multinomial resampling every 2 updates, update_min_d/a 0.10, request_nomotion_update after stopping; per-update cost O(N B + N log N) ~ 0.9 M lookups. slam_toolbox 2.6.10 online_async: correlation-grid scan matcher (search space 0.5 m @ 0.01 m, coarse/fine angle search, smear 0.05), odometry deviation penalties, loop closure gated by chain size (15), coarse/fine response thresholds (0.35/0.55), variance threshold, loop search distance 5 m, Ceres SPA with Huber loss. Map quality: GT grid rasterised from the world SDF at LiDAR height, SE(2) ICP alignment, IoU with 1-cell tolerance, ADNN (target <= 3 cm), consistency (pose-graph residual, wall thickness, corner orthogonality, run-to-run IoU) and SLAM trajectory ATE/RPE.",
+ "proposals": [
+  {
+   "name": "IAG-EKF (Innovation-Adaptive Gated EKF with physical slip test)",
+   "idea": "Compute filter-independent slip residuals r_omega = omega_enc - omega_gyro and r_a = dv_enc/dt - a_x_imu with variances from the sensor noise model; s_k = r_omega^2/sigma^2 + r_a^2/sigma^2 ~ chi2_2. If s_k > 13.8 reject the encoder update for that step (propagate v with IMU accel, omega with gyro); otherwise adapt R_odom by a windowed innovation covariance estimate clipped to [R_0, 100 R_0]. The adaptive covariance is written into nav_msgs/Odometry.twist.covariance by the wheel-odometry node so robot_localization and the team EKF receive identical inputs, enabling clean constant-vs-adaptive A/B tests.",
+   "closest_prior_work": "Mehra 1970 / Mohamed & Schwarz 1999 (IAE); Yu et al. IROS 2023 (slip-velocity-aware RIEKF, arXiv 2209.15140); Diker & Klein 2026 (innovation-adaptive IKF, arXiv 2603.26709); Khosravi et al. 2025 adaptive EKF (arXiv 2603.09783); GitHub adaptive-ekf-slip-detector (RF slip classifier inflating odometry covariance).",
+   "novelty_claim": "variant_of_prior",
+   "expected_gain": "Odom-frame drift during slip events (low-mu patch, 25 kg payload) reduced by >50%; map-frame RMSE change small (<= 1 cm, AMCL-dominated) but fewer AMCL divergences during slip; fully explainable thresholds (chi-square quantiles).",
+   "risks": "sigma_v(v) -> 0 at low speed makes the test over-sensitive (needs floors 0.01 m/s, 0.01 rad/s); IAE window contaminated by genuine manoeuvre changes inflates R (mitigated by making the hard gate depend only on physical residuals); slip_noise_stddev unit in sensors.yaml is unspecified.",
+   "realtime_budget": "O(1) per 50 Hz step; EKF O(5^3) per step; << 1% CPU for 2 instances x 5 robots."
+  },
+  {
+   "name": "SMC-CUSUM kidnapped-robot detector",
+   "idea": "Precompute the map Euclidean distance field (same as AMCL likelihood field). For every scan, project beams from the map-EKF pose and compute the inlier ratio rho_t = fraction of beams with distance < 3 sigma_hit (and mean capped distance m_t). Run a one-sided CUSUM g_t = max(0, g_{t-1} + (rho_0 - rho_t - delta)) with delta 0.15, h 1.0 (alarm within ~0.3-0.7 s), rho_0 calibrated online. Combine with an EKF-side criterion (3 consecutive AMCL-pose NIS rejections > 16.3 and tr(P_xy) > 0.5^2). Catches silent kidnappings where AMCL re-converges confidently in a symmetric aisle, which covariance-only detectors miss.",
+   "closest_prior_work": "CAER metric in CBGL (Filotheou, IROS 2024); SMAD/TAM metrics in Zhang et al. 2025 (arXiv 2511.01219); SuperLoc pre-optimisation localizability (ICRA 2025); Page 1954 CUSUM; augmented MCL w_fast/w_slow (Thrun et al.).",
+   "novelty_claim": "new_combination",
+   "expected_gain": "Detection delay <= 1 s with false alarms <= 1/h under 5 dynamic obstacles; detects teleports that leave AMCL covariance small.",
+   "risks": "Dynamic obstacles or map staleness lower rho_0 (handled by online median and delta margin); wrong-but-consistent poses in perfectly symmetric aisles are undetectable by any scan-only metric (needs fleet/marker cues).",
+   "realtime_budget": "EDT once: ~10 ms, 3.8 MB per robot; per scan 720 lookups ~10 us; CUSUM O(1)."
+  },
+  {
+   "name": "Active recovery FSM with free-space hypothesis seeding",
+   "idea": "On alarm: stop forwarding /amcl_pose to the map EKF (dead-reckon, keep map->odom), score M=200 uniform free-space positions x 36 headings with rho (1.3 M lookups, ~10 ms); if unimodal (rho_best > rho_0 - delta and margin > 0.15) call nav2_amcl set_initial_pose with a wide covariance, else reinitialize_global_localization (5000 particles); execute Nav2 Spin (2 pi at 0.5 rad/s) with update_min_a 0.1 so ~60 filter updates occur; accept when rho >= rho_0 - delta for 5 scans and tr(P_xy) < 0.3^2; then reset the map EKF via set_pose and resume. Up to 3 cycles with short collision-checked exploratory moves; else report LOST to the fleet.",
+   "closest_prior_work": "CBGL (IROS 2024) and SFHS (Zhang et al. 2025) hypothesis sampling; Lenser & Veloso 2000 sensor resetting; Nav2 AMCL services reinitialize_global_localization / set_initial_pose / request_nomotion_update (verified in amcl_node.cpp).",
+   "novelty_claim": "engineering_adaptation",
+   "expected_gain": "Recovery time from ~10-20 s (uniform re-init only) to ~2-5 s; higher success in repetitive rack aisles; satisfies the spec's 'rotate in place to self-recover' requirement.",
+   "risks": "Multi-modal hypothesis scores in symmetric aisles (margin test may reject seeding); Spin collision safety delegated to Nav2 behavior server; dynamic max_particles reconfiguration in nav2_amcl 1.1.20 unverified.",
+   "realtime_budget": "Sporadic 10 ms scoring; otherwise idle; AMCL global re-init cost 5000 x 180 lookups per update ~ 3-4 ms."
+  }
+ ],
+ "evaluation_plan": "Ground truth: Gazebo OdometryPublisher system (pose from worldPose(), verified in gz-sim6 source; gaussian_noise 0, xyz_offset to base_link) bridged as nav_msgs/Odometry at 50 Hz to /ground_truth/odom; sim-time interpolation to estimate stamps; SLAM started at world origin and residual T_world<-map estimated once by SE(2) least squares (report raw and aligned). Errors e_i = ||p_gt - p_est||, RMSE and Max per segment (stationary |v|<0.02 m/s for >1 s; straight |omega|<0.1 rad/s and v>0.2; turning |omega|>=0.3 rad/s), heading error, >= 100 samples per segment, spec log format [timestamp, gt_x, gt_y, est_x, est_y, error]. Scenarios: S1 stationary 5 spots x 60 s (<= 3 cm); S2 straight 40 m at 0.5/1.0/2.0 m/s (<= 5 cm, with/without lag smoothing); S3 in-place 1.5 rad/s and aisle corners (<= 8 cm); S4 kidnapping 10 teleports 5-30 m incl. symmetric aisles (detection <= 1 s, recovery <= 30 s to < 0.2 m, success >= 90%, false alarms <= 1/h); S5 slip: mu=0.1 patch + 25 kg payload + WheelSlip plugin (odom drift m/m, AMCL divergences, constant vs adaptive R); S6 five dynamic obstacles 0.3-1.5 m/s (rho distribution, zero false alarms); S7 five robots concurrently (CPU <= 80%). Map quality M1: three mapping runs, IoU_1 >= 0.85, ADNN <= 3 cm, run-to-run IoU >= 0.9, pose-graph chi2/dof, wall thickness <= 2 cells. Baselines: B0 Nav2 default AMCL + robot_localization constant covariance (augmented MCL only), B1 tuned AMCL + constant covariance, Ours = B1 + IAG-EKF + SMC-CUSUM + active recovery, plus ablations (gate only / IAE only / covariance-only detector / uniform re-init only). 10 runs each, fixed seeds, mean +/- std; filter consistency reported via NEES (5-state 95% band [0.83, 12.8]) and NIS histograms, with offline Q/R tuning following Chen et al. 2023.",
+ "implementation_plan": "Package src/amr_localization (C++17 nodes, Python evaluation), messages added to amr_msgs (SlipStatus, FilterDiagnostics, LocalizationHealth). Nodes: (1) wheel_odometry_node.cpp: /joint_states (Gazebo JointStatePublisher via ros_gz_bridge ignition.msgs.Model <-> sensor_msgs/JointState, verified) -> 4096-tick quantisation -> forward kinematics -> adaptive twist covariance (IAE + chi-square slip test) -> /wheel_odom. (2) amr_ekf_node.cpp + include/amr_localization/ekf.hpp: 5-state EKF with analytic F/Gamma/Q, Joseph update, NIS gating, ZUPT, 1 s state-history rewind/replay for lagged AMCL poses, two instances selected by world_frame (odom/map), publishes /odometry/amr_ekf[_map] and tf, service set_pose (reusing robot_localization/srv/SetPose), /amr_ekf/diagnostics. (3) kidnap_monitor_node.cpp: EDT of /map (transient local), rho/m/CUSUM, AMCL NIS auxiliary alarm, recovery FSM, hypothesis seeding, /amcl_pose -> /amcl_pose_gated with covariance floor; clients to nav2_amcl reinitialize_global_localization, request_nomotion_update, set_initial_pose (nav2_msgs/srv/SetInitialPose) and ekf_map set_pose; action client nav2_msgs/action/Spin. Configs: amcl.yaml, ekf_odom.yaml, ekf_map.yaml, slam_toolbox_online_async.yaml, kidnap_monitor.yaml with per-robot namespaces and frame prefixes; launch/slam.launch.py and launch/localization.launch.py (map_server + amcl + 2 EKFs + monitor). robot_localization baseline changes vs current config/ekf.yaml: imu0 yaw=false/vyaw=true, odom0_twist_rejection_threshold 3.7, pose0_rejection_threshold 4.0, smooth_lagged_data true, history_length 1.0, predict_to_current_time true, Q x,y 0.001 / yaw 1e-4 / vx 0.005 / vyaw 0.02, initial_estimate_covariance 1e-2, map instance world_frame map with pose0 /amcl_pose_gated. Evaluation scripts: eval/gt_recorder.py, eval/localization_errors.py (SE(2) alignment, segmentation, RMSE/Max/NEES), eval/map_quality.py (SDF -> GT grid, ICP, IoU/ADNN/consistency). Tests: gtest for Jacobian vs finite differences (<1e-6), synthetic-trajectory NEES consistency, gating behaviour, closed-form odometry on straight/circular paths, CUSUM detection delay <= 1 s and zero false alarms over 10 min with 20% dynamic beams; pytest for IoU/ADNN toy grids; coverage >= 70%. Compute budget for 5 robots: EKFs << 1%, AMCL ~0.3 core, monitor negligible, EDT 3.8 MB per robot. Schedule (weeks): 1 odometry node + GT pipeline + eval scripts; 2 EKF(odom) + unit tests; 3 AMCL tuning + EKF(map) + first 3/5/8 cm measurement; 4 SMC-CUSUM + recovery FSM; 5 slip adaptation + ablations; 6 map quality + report.",
+ "open_questions": [
+  "Unit of slip_noise_stddev (0.01) in config/sensors.yaml: dimensionless fraction (assumed) or m/s; must be pinned by the simulation owner.",
+  "Gazebo IMU orientation is effectively ground-truth heading plus noise; decide whether to fuse absolute yaw (design fuses gyro rate only) or inject a yaw random-walk model for sim-to-real honesty.",
+  "Whether nav2_amcl 1.1.20 allows runtime reconfiguration of max_particles/min_particles (otherwise keep 5000 fixed).",
+  "Exact Gazebo Fortress teleport service name/behaviour (/world/<w>/set_pose, ignition.msgs.Pose) for the kidnapping tests is recalled, not verified.",
+  "map<->world frame alignment convention and which link is the model's canonical link for OdometryPublisher (xyz_offset) must be agreed with the simulation team.",
+  "Policy when free-space hypothesis scoring is multi-modal in symmetric rack aisles (margin threshold 0.15) needs validation in scenario S4.",
+  "Feeding gyro-fused EKF odometry into AMCL may cause particle depletion unless alpha1-4 are re-tuned (alpha sweep required), per the Robotics 2026 encoder/IMU study."
+ ]
+}

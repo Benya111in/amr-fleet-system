@@ -1,0 +1,295 @@
+r"""
+위치 추정 스택 (명세 4.2/4.3, docs/architecture/components.md §3.2).
+
+    ros2 launch amr_localization localization.launch.py mode:=slam                 # 매핑
+    ros2 launch amr_localization localization.launch.py mode:=localization \
+        map:=/ros2_ws/maps/warehouse.yaml initial_x:=0.0 initial_y:=0.0   # 주행
+    ros2 launch amr_localization localization.launch.py robot_name:=amr_02 start_map_server:=false
+
+인자
+    mode              slam | localization | odom (기본 localization)
+                        odom         : 전처리 3 노드 + ekf_filter_node_odom 만 (드리프트 실험·단위 확인)
+                        slam         : + slam_toolbox (map→odom 발행, /map 발행)
+                        localization : + map_server(루트, 선택) + amcl + ekf_filter_node_map
+                                       + kidnap_monitor_node + scan_matcher_node (map EKF pose1)
+    robot_name        네임스페이스 (기본 amr_01, '' 이면 네임스페이스 없음)
+    frame_prefix      프레임 접두어 (기본 'auto' = robot_name + '/', robot_name 이 '' 면 '')
+    use_sim_time      (기본 true)
+    config_dir        최상위 config (robot_params.yaml, sensors.yaml, ekf.yaml). 기본 $ROS_WS/config
+    map               map_server YAML (기본 $ROS_WS/maps/warehouse.yaml)
+    start_map_server  루트 map_server + lifecycle_manager_map 기동 (기본 true; 다중 로봇은 한 번만)
+    initial_x/y/yaw   AMCL 초기 자세 = 스폰 자세 [m, rad]
+    use_kidnap_monitor (기본 true), kidnap_fallback_cmd_vel ('' 기본, 단독 시험만 cmd_vel)
+    use_scan_matcher  (기본 true) 스캔-지도 점-대-면 정합을 map EKF 에 자세 측정으로 넣는다
+                        (docs/algorithms/slam.md §4.3; false 면 AMCL 만)
+    amcl_half_cell_fix  (기본 true) amcl_map_adapter 가 /map 을 원점 반 셀 보정해 map_amcl 로 재발행하고
+                        AMCL 은 그것을 구독한다 (nav2_amcl 반올림 규약 편향 보정, docs/algorithms/slam.md §4)
+    bias_estimation_time  IMU 기동 바이어스 추정 시간 [s] ('' = imu_filter.yaml 값)
+    noise_seed        인코더 잡음 seed (0 = 무작위)
+    log_level         (기본 info)
+
+단일 출처 (docs/architecture/components.md §6): 바퀴 r·b 는 robot_params.yaml, 인코더 틱·슬립·주기와
+IMU 잡음, LiDAR 거리·extrinsic 은 sensors.yaml 에서 읽어 노드 파라미터로 넘긴다 (패키지 YAML 뒤에 붙여 덮어씀).
+EKF 는 config/ekf.yaml 한 파일에 프레임 접두어만 뒤에서 덮어쓴다 (multi_robot.md §2).
+두 EKF 의 서비스(set_pose, toggle, enable)는 같은 네임스페이스에서 이름이 겹치므로 노드 이름 아래로 리맵한다.
+"""
+
+import os
+
+from ament_index_python.packages import get_package_share_directory
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument, LogInfo, OpaqueFunction
+from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
+import yaml
+
+MODES = ('slam', 'localization', 'odom')
+# lifecycle_manager bond 시간 상한 [s] (기동 대기 + 운용 중 heartbeat). 통합 실측: 5대 + 공유 호스트 과부하
+# (load 60~230)에서 4 s(map 기본)·10 s(amcl) 가 넘어 "unable to be reached by bond → Aborting bringup" 이
+# 났다. 운용 중 bond 가 끊기면 관리 노드 전체를 내리므로 넉넉히 둔다 (navigation.launch.py 와 같은 값)
+BOND_TIMEOUT_S = 30.0
+
+
+def _ws_path(*parts: str) -> str:
+    ros_ws = os.environ.get('ROS_WS', '/ros2_ws')
+    return os.path.join(ros_ws, *parts)
+
+
+def _read_params(path: str) -> dict:
+    """최상위 config YAML 의 /** ros__parameters 블록 (없으면 {})."""
+    if not os.path.isfile(path):
+        return {}
+    with open(path, encoding='utf-8') as f:
+        data = yaml.safe_load(f) or {}
+    return data.get('/**', {}).get('ros__parameters', {})
+
+
+def shared_parameters(config_dir: str) -> dict:
+    """robot_params.yaml / sensors.yaml → 노드별 덮어쓸 파라미터 (키가 없으면 패키지 YAML 기본값 유지)."""
+    robot = _read_params(os.path.join(config_dir, 'robot_params.yaml')).get('robot', {})
+    sensors = _read_params(os.path.join(config_dir, 'sensors.yaml'))
+    enc = sensors.get('wheel_encoder', {})
+    imu = sensors.get('imu', {})
+    lidar = sensors.get('lidar', {})
+    out = {'wheel': {}, 'imu': {}, 'scan': {}, 'lidar_offset': None, 'range_noise': None}
+    for src, dst in (('wheel_radius', 'wheel_radius'), ('wheel_separation', 'wheel_separation')):
+        if src in robot:
+            out['wheel'][dst] = float(robot[src])
+    if 'ticks_per_revolution' in enc:
+        out['wheel']['ticks_per_revolution'] = int(enc['ticks_per_revolution'])
+    if 'slip_noise_stddev' in enc:
+        out['wheel']['slip_noise_stddev'] = float(enc['slip_noise_stddev'])
+    if 'update_rate' in enc:
+        out['wheel']['publish_rate'] = float(enc['update_rate'])
+    for key in ('gyro_noise_stddev', 'accel_noise_stddev'):
+        if key in imu:
+            out['imu'][key] = float(imu[key])
+    for key in ('range_min', 'range_max'):
+        if key in lidar:
+            out['scan'][key] = float(lidar[key])
+    if 'noise_stddev' in lidar:
+        out['scan']['shadow_range_noise_stddev'] = float(lidar['noise_stddev'])
+        out['range_noise'] = float(lidar['noise_stddev'])
+    ext = lidar.get('extrinsic')
+    if isinstance(ext, dict):
+        out['lidar_offset'] = [float(ext.get('x', 0.0)), float(ext.get('y', 0.0)),
+                               float(ext.get('yaw', 0.0))]
+    return out
+
+
+def _flag(context, name: str) -> bool:
+    return LaunchConfiguration(name).perform(context).lower() in ('true', '1', 'yes')
+
+
+def _setup(context, *args, **kwargs):
+    mode = LaunchConfiguration('mode').perform(context)
+    if mode not in MODES:
+        raise RuntimeError(f'mode:={mode} (허용: {", ".join(MODES)})')
+    robot_name = LaunchConfiguration('robot_name').perform(context).strip('/')
+    prefix = LaunchConfiguration('frame_prefix').perform(context)
+    if prefix == 'auto':
+        prefix = f'{robot_name}/' if robot_name else ''
+    use_sim_time = _flag(context, 'use_sim_time')
+    config_dir = LaunchConfiguration('config_dir').perform(context)
+    log_level = LaunchConfiguration('log_level').perform(context)
+    pkg_config = os.path.join(get_package_share_directory('amr_localization'), 'config')
+    shared = shared_parameters(config_dir)
+    ekf_yaml = os.path.join(config_dir, 'ekf.yaml')
+    if not os.path.isfile(ekf_yaml):
+        raise RuntimeError(f'ekf.yaml 이 없다: {ekf_yaml} (config_dir:= 로 지정)')
+
+    odom_frame = f'{prefix}odom'
+    base_frame = f'{prefix}base_footprint'
+    common = {'use_sim_time': use_sim_time}
+    ros_args = ['--ros-args', '--log-level', log_level]
+    ns = robot_name or ''
+
+    def node(package, executable, name, params, remappings=None, namespace=ns):
+        return Node(package=package, executable=executable, name=name, namespace=namespace,
+                    output='screen', parameters=params, remappings=remappings or [],
+                    arguments=ros_args)
+
+    wheel = dict(shared['wheel'], frame_prefix=prefix,
+                 noise_seed=int(LaunchConfiguration('noise_seed').perform(context)), **common)
+    imu = dict(shared['imu'], **common)
+    bias_time = LaunchConfiguration('bias_estimation_time').perform(context)
+    if bias_time:
+        imu['bias_estimation_time'] = float(bias_time)
+    actions = [
+        LogInfo(msg=f'[localization] mode={mode} ns=/{ns} prefix="{prefix}" config={config_dir}'),
+        node('amr_localization', 'wheel_odometry_node', 'wheel_odometry_node',
+             [os.path.join(pkg_config, 'wheel_odometry.yaml'), wheel]),
+        node('amr_localization', 'imu_filter_node', 'imu_filter_node',
+             [os.path.join(pkg_config, 'imu_filter.yaml'), imu]),
+        node('amr_localization', 'scan_filter_node', 'scan_filter_node',
+             [os.path.join(pkg_config, 'scan_filter.yaml'), dict(shared['scan'], **common)]),
+    ]
+
+    def ekf(name, world_frame, extra_remaps):
+        remaps = [(srv, f'{name}/{srv}') for srv in ('set_pose', 'toggle', 'enable')]
+        return node('robot_localization', 'ekf_node', name,
+                    [ekf_yaml, {'map_frame': 'map', 'odom_frame': odom_frame,
+                                'base_link_frame': base_frame, 'world_frame': world_frame,
+                                **common}], remaps + extra_remaps)
+
+    actions.append(ekf('ekf_filter_node_odom', odom_frame, []))
+
+    if mode == 'slam':
+        actions.append(node('slam_toolbox', 'async_slam_toolbox_node', 'slam_toolbox',
+                            [os.path.join(pkg_config, 'slam_toolbox.yaml'),
+                             {'odom_frame': odom_frame, 'base_frame': base_frame,
+                              'map_frame': 'map', **common}]))
+        # 지도 저장 서비스. slam_toolbox 의 save_map 은 이름공간 아래에서 쓸 수 없다: 지도는 절대
+        # 토픽 /map 에 내면서, 저장 때 자기 프로세스 안에 만드는 nav2 map_saver 는 상대 토픽 map
+        # (= /amr_01/map, 발행자 없음)을 구독해 2 s 뒤 "Failed to spin map subscription" 으로 끝난다
+        # (통합 시나리오 03 에서 매번 재현, 토픽 구독자 목록으로 확인). 그 노드는 전역 인자도 받지
+        # 않아 리맵·파라미터로 고칠 수 없으므로, 표준 map_saver_server 를 우리가 띄워 /map 을 준다
+        # (nav2_bringup 의 SLAM 구성과 같은 방식). 임계값은 요청에 실어 보낸다 (docs slam.md §2).
+        actions += [
+            node('nav2_map_server', 'map_saver_server', 'map_saver_server',
+                 [{'save_map_timeout': 15.0, 'free_thresh_default': 0.19,
+                   'occupied_thresh_default': 0.65, **common}], [('map', '/map')]),
+            node('nav2_lifecycle_manager', 'lifecycle_manager', 'lifecycle_manager_map_saver',
+                 [{'autostart': True, 'node_names': ['map_saver_server'],
+                   'bond_timeout': BOND_TIMEOUT_S, **common}]),
+        ]
+    elif mode == 'localization':
+        actions.append(ekf('ekf_filter_node_map', 'map',
+                           [('odometry/filtered', 'odometry/filtered_map')]))
+        if _flag(context, 'start_map_server'):
+            map_yaml = LaunchConfiguration('map').perform(context)
+            managed = ['map_server']
+            actions.append(
+                node('nav2_map_server', 'map_server', 'map_server',
+                     [{'yaml_filename': map_yaml, 'topic_name': 'map', 'frame_id': 'map',
+                       **common}], namespace=''))
+            # 보행 차선 비용 마스크 (nav2 KeepoutFilter) — **배포에서는 꺼져 있다.**
+            # 애초 의도: 전역 계획이 보행 차선 안을 따라 달리는 것을 막는다 (실측 A→B 계획
+            # 9.00 m 중 8.49 m 가 차선 몸 원통 안, 차선 밖 연속 구간 0.25 m).
+            # 그러나 파라미터 고정 대조(N8 vs i8)에서 **안전 기여가 측정되지 않았고** 이탈·
+            # 복귀·소요는 오히려 나빴다 → nav2_params.yaml 의 filters 에서 뺐다 (커밋 2f28931).
+            # 마스크 점유 90 → 비용 **229** 다. nav2 는 round(v·254/100) 로 옮긴다
+            # (예전 주석의 231 과 "1 + 251·(v−1)/97" 은 틀렸다 — 후자는 비용→점유 역표다).
+            # pedestrian_lanes 인자가 빈 문자열이면(기본) 서버를 띄우지 않는다.
+            lanes_yaml = LaunchConfiguration('pedestrian_lanes').perform(context)
+            if lanes_yaml and os.path.exists(lanes_yaml):
+                managed += ['pedestrian_lane_mask_server', 'pedestrian_lane_filter_info_server']
+                actions += [
+                    node('nav2_map_server', 'map_server', 'pedestrian_lane_mask_server',
+                         [{'yaml_filename': lanes_yaml, 'topic_name': '/pedestrian_lane_mask',
+                           'frame_id': 'map', **common}], namespace=''),
+                    node('nav2_map_server', 'costmap_filter_info_server',
+                         'pedestrian_lane_filter_info_server',
+                         [{'type': 0,                      # 0 = keepout/차선
+                           'filter_info_topic': '/pedestrian_lane_filter_info',
+                           # **절대 이름**이어야 한다. 상대 이름을 주면 코스트맵 노드의
+                           # 네임스페이스에서 /amr_01/global_costmap/... 으로 풀려 아무도
+                           # 발행하지 않는 토픽을 구독하고, 전역 코스트맵 활성화가 0.1 s →
+                           # 78.8 s 로 늘어 lifecycle_manager 의 change_state 가 시한을 넘겨
+                           # 기동 전체가 무너진다 (실측 lane06). keepout_filter 와 같은 규약.
+                           'mask_topic': '/pedestrian_lane_mask',
+                           # KeepoutFilter 는 base/multiplier 를 쓰지 않고 마스크 점유값을
+                           # nav2 표준 변환(1 + 251·(v−1)/97)으로 비용에 옮긴다. 다른 필터
+                           # 종류와 메시지를 공유하므로 값만 채워 둔다.
+                           'base': 0.0, 'multiplier': 1.0, **common}], namespace=''),
+                ]
+            elif lanes_yaml:
+                actions.append(LogInfo(msg=f'보행 차선 마스크 없음 (건너뜀): {lanes_yaml}'))
+            actions.append(
+                node('nav2_lifecycle_manager', 'lifecycle_manager', 'lifecycle_manager_map',
+                     [{'autostart': True, 'node_names': managed,
+                       'bond_timeout': BOND_TIMEOUT_S, **common}],
+                     namespace=''))
+        initial = {f'initial_pose.{k}': float(LaunchConfiguration(f'initial_{k}').perform(context))
+                   for k in ('x', 'y', 'yaw')}
+        amcl_map = {}
+        if _flag(context, 'amcl_half_cell_fix'):
+            actions.append(node('amr_localization', 'amcl_map_adapter', 'amcl_map_adapter',
+                                [{'input_topic': '/map', 'output_topic': 'map_amcl', **common}]))
+            amcl_map = {'map_topic': 'map_amcl'}
+        actions += [
+            node('nav2_amcl', 'amcl', 'amcl',
+                 [os.path.join(pkg_config, 'amcl.yaml'),
+                  {'global_frame_id': 'map', 'odom_frame_id': odom_frame,
+                   'base_frame_id': base_frame, 'initial_pose.z': 0.0, **initial, **amcl_map,
+                   **common}]),
+            node('nav2_lifecycle_manager', 'lifecycle_manager', 'lifecycle_manager_localization',
+                 [{'autostart': True, 'node_names': ['amcl'], 'bond_timeout': BOND_TIMEOUT_S,
+                   **common}]),
+        ]
+        if _flag(context, 'use_kidnap_monitor'):
+            kidnap = {'ekf_set_pose_service': 'ekf_filter_node_map/set_pose',
+                      'fallback_cmd_vel_topic':
+                          LaunchConfiguration('kidnap_fallback_cmd_vel').perform(context),
+                      **common}
+            if shared['lidar_offset'] is not None:
+                kidnap['lidar_offset'] = shared['lidar_offset']
+            actions.append(node('amr_localization', 'kidnap_monitor_node', 'kidnap_monitor_node',
+                                [os.path.join(pkg_config, 'kidnap_monitor.yaml'), kidnap]))
+        if _flag(context, 'use_scan_matcher'):
+            matcher = {'base_frame': base_frame, **common}
+            if shared['lidar_offset'] is not None:
+                matcher['lidar_offset'] = shared['lidar_offset']
+            if shared['range_noise'] is not None:
+                matcher['range_noise'] = shared['range_noise']
+            actions.append(node('amr_localization', 'scan_matcher_node', 'scan_matcher_node',
+                                [os.path.join(pkg_config, 'scan_matcher.yaml'), matcher]))
+    return actions
+
+
+def generate_launch_description() -> LaunchDescription:
+    return LaunchDescription([
+        DeclareLaunchArgument('mode', default_value='localization',
+                              description='slam | localization | odom'),
+        DeclareLaunchArgument('robot_name', default_value='amr_01',
+                              description="네임스페이스 ('' = 없음)"),
+        DeclareLaunchArgument('frame_prefix', default_value='auto',
+                              description="프레임 접두어 ('auto' = robot_name + '/')"),
+        DeclareLaunchArgument('use_sim_time', default_value='true'),
+        DeclareLaunchArgument('config_dir', default_value=_ws_path('config')),
+        DeclareLaunchArgument('map', default_value=_ws_path('maps', 'warehouse.yaml')),
+        DeclareLaunchArgument('start_map_server', default_value='true'),
+        # 기본값이 빈 문자열인 이유: 이 마스크를 쓰는 pedestrian_lane_filter 가
+        # nav2_params.yaml 의 filters 목록에 **의도적으로 빠져 있다** (커밋 2f28931 —
+        # 파라미터 고정 대조 N8 vs i8 에서 안전 기여가 측정되지 않았고 이탈·복귀·소요는
+        # 오히려 나빴다). 소비자가 없는데 서버 두 개를 로봇마다 띄우면 5 대 운용 CPU 예산
+        # (명세 4장 10절 80 %)만 축낸다. 다시 쓰려면 이 인자에 yaml 경로를 준다.
+        DeclareLaunchArgument('pedestrian_lanes', default_value='',
+                              description='보행 차선 비용 마스크 YAML (기본 빈 문자열 = 쓰지 않음). '
+                                          'scripts/gen_pedestrian_lanes.py 가 만든다. 쓰려면 '
+                                          'nav2_params.yaml 의 filters 에 pedestrian_lane_filter '
+                                          '도 넣어야 한다'),
+        DeclareLaunchArgument('initial_x', default_value='0.0'),
+        DeclareLaunchArgument('initial_y', default_value='0.0'),
+        DeclareLaunchArgument('initial_yaw', default_value='0.0'),
+        DeclareLaunchArgument('use_kidnap_monitor', default_value='true'),
+        DeclareLaunchArgument('kidnap_fallback_cmd_vel', default_value=''),
+        DeclareLaunchArgument('use_scan_matcher', default_value='true',
+                              description='스캔-지도 정합 → map EKF pose1'),
+        DeclareLaunchArgument('amcl_half_cell_fix', default_value='true',
+                              description='AMCL 에 원점 반 셀 보정 맵(map_amcl)을 준다'),
+        DeclareLaunchArgument('bias_estimation_time', default_value=''),
+        DeclareLaunchArgument('noise_seed', default_value='0'),
+        DeclareLaunchArgument('log_level', default_value='info'),
+        OpaqueFunction(function=_setup),
+    ])
