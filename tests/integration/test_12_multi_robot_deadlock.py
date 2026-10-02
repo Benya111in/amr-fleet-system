@@ -33,7 +33,7 @@ traffic_manager_node, multi_robot.md §9). 스폰은 fleet_spawn.yaml (대기 �
 import math
 import os
 
-from amr_itest import actions, cases, catalog, docks, gz, metrics, procmon
+from amr_itest import actions, cases, catalog, docks, gz, metrics, procmon, tf_tree
 from amr_itest import requirements as req
 from amr_itest.scenario import Context
 from amr_itest.stack import Stack
@@ -117,6 +117,11 @@ class TestMultiRobotDeadlock(cases.ProbeCase):
         cls.events = cls.probe.subscribe('/fleet/task_events', Task, keep_messages=5000)
         cls.traffic = cls.probe.subscribe('/fleet/traffic_events', DiagnosticArray,
                                           keep_messages=5000)
+        # /tf·/tf_static 구독을 **여기서 시작**한다 (명세 222행 판정용). capture_tf() 는
+        # 구독을 개시하는 함수이고 누적본은 tf_snapshot() 이 준다 — 끝에서 capture_tf() 만
+        # 부르면 그 순간부터 모으기 시작해 **빈 그래프**가 된다 (logs/B12b: frames 0 인데
+        # duplicate_parents {} 라 통과처럼 보였다). 02 와 같은 순서로 쓴다.
+        cls.probe.capture_tf()
         cls.phases = {n: cls.probe.subscribe(f'/{n}/executor/phase', String, 'latched',
                                              keep_messages=2000)
                       for n in NAMES}
@@ -157,36 +162,17 @@ class TestMultiRobotDeadlock(cases.ProbeCase):
     def _tf_namespace_check(self) -> dict:
         """다중 로봇 TF 프레임 충돌 판정 (명세 4장 9절 222행).
 
-        명세: *"각 로봇은 독립된 네임스페이스를 가지며, **TF 프레임 충돌이 없어야 한다**."*
-
-        여태 이 조항은 측정되지 않았다 — `tf_edges.csv` 는 시나리오 02(단일 로봇)만 남겼고
-        거기엔 `amr_0*` 접두 프레임이 한 줄도 없다. 5대가 같은 `/tf` 를 공유하는 구성
-        (multi_robot.md §2: 센서·링크는 접두어, map/odom 계열은 전역 공유)에서만 충돌이
-        드러나므로 여기서 잡는다.
-
-        판정 둘:
-          (a) **이중 부모 0** — 같은 자식 프레임에 부모가 둘이면 트리가 깨진 것이다.
-          (b) **로봇별 링크 프레임이 접두어로 분리** — 로봇 수만큼의 `base_link` 가
-              `amr_01/base_link` … 처럼 서로 다른 이름이어야 한다. 접두어가 빠져 한 이름을
-              여러 로봇이 쓰면 (a) 가 먼저 잡지만, 그때 어느 프레임인지 남겨야 고칠 수 있다.
+        판정 로직은 `tf_tree.namespace_report` 하나로 모았고 **시나리오 02 가 같은 함수로 먼저
+        판정한다** — 1 시간짜리 5대 시나리오 끝에서만 검증되는 코드를 두지 않기 위해서다.
+        여기서는 수집을 setUpClass 에서 시작해 두고 누적본을 찍는다.
         """
-        graph = self.probe.capture_tf()
-        frames = sorted(graph.frames())
-        dups = graph.duplicate_parents()
-        prefixed = {}
-        for f in frames:
-            if '/' in f:
-                ns = f.split('/', 1)[0]
-                if ns.startswith('amr_'):
-                    prefixed.setdefault(ns, []).append(f)
-        rows = [[e.parent, e.child, 'static' if e.static else 'dynamic',
-                 cases.fmt(e.rate(), 2)]
-                for e in sorted(graph.edges, key=lambda x: (x.parent, x.child))]
+        snap = self.probe.tf_snapshot()
+        rep = tf_tree.namespace_report(snap)
+        rows = [[e.parent, e.child, 'static' if e.static else 'dynamic', cases.fmt(e.rate(), 2)]
+                for e in sorted(snap.edges, key=lambda x: (x.parent, x.child))]
         self.ctx.record.write_csv('tf_edges.csv', ['parent', 'child', 'kind', 'rate_hz'], rows)
-        self.ctx.record.write_text('frames.dot', graph.to_dot())
-        return {'frames': len(frames), 'duplicate_parents': dups,
-                'namespaces': sorted(prefixed), 'frames_per_namespace':
-                    {k: len(v) for k, v in sorted(prefixed.items())}}
+        self.ctx.record.write_text('frames.dot', snap.to_dot())
+        return rep
 
     def _rtf_stats(self, own_mean: float = math.nan) -> dict:
         """amr_evaluation cpu 로거의 rtf 열 요약 + 실시간 환산 추정.
@@ -322,12 +308,16 @@ class TestMultiRobotDeadlock(cases.ProbeCase):
                  resolved >= detected and unresolved == 0, ''),
                 ('system CPU mean (ROS nodes + Gazebo, % of host cores)', own_mean, CPU_MAX,
                  bool(cpu_rows) and own_mean <= CPU_MAX, '%'),
-                # 명세 222행 "TF 프레임 충돌이 없어야 한다" — 이중 부모 0 이어야 한다.
+                # 명세 222행 "TF 프레임 충돌이 없어야 한다".
+                # **수집 실패를 통과로 읽지 않게** frames > 0 을 먼저 판정한다 — 빈 그래프에
+                # 이중 부모가 없는 것은 당연하다 (logs/B12b 가 그랬다).
+                ('TF frames observed (all robots)', tf['frames'], '> 0', tf['frames'] > 0, ''),
                 ('TF frame collisions (duplicate parents, all robots)', tf['duplicate_parents'],
                  {}, not tf['duplicate_parents'], ''),
-                # 로봇마다 접두 프레임이 있어야 한다 (접두어가 빠지면 이름이 겹친다)
                 ('TF namespaces with prefixed frames', sorted(tf['namespaces']),
-                 f'>= {ROBOTS}', len(tf['namespaces']) >= ROBOTS, '')):
+                 f'>= {ROBOTS}', len(tf['namespaces']) >= ROBOTS, ''),
+                # 접두어 없는 공유 프레임은 설계상 map 하나뿐이다 (multi_robot.md §2)
+                ('TF frames without prefix', tf['shared'], ['map'], tf['shared'] == ['map'], '')):
             self.ctx.record.check(name, cases.fmt(value), thr, bool(ok), unit)
             if not ok:
                 failed.append(f'{name}: {cases.fmt(value)} (기준 {thr})')

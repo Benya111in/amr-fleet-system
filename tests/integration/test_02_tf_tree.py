@@ -97,6 +97,20 @@ class TestTfTree(cases.ProbeCase):
         prefix = tf_tree.detect_prefix(snap.frames())
         self.check('frame prefix', prefix, self.settings.frame_prefix,
                    prefix == self.settings.frame_prefix)
+        # 명세 4장 9절 222행 "각 로봇은 독립된 네임스페이스를 가지며 TF 프레임 충돌이 없어야
+        # 한다" 의 판정 함수를 **여기서 먼저 검증한다.** 12(5대)에서만 쓰면 한 시간짜리
+        # 시나리오 끝에서만 확인되고, 실제로 그렇게 해서 빈 그래프(frames 0)를 통과로 읽을
+        # 뻔했다 (logs/B12b). 02 는 단일 로봇이지만 접두 네임스페이스가 하나 있어야 하므로
+        # 같은 함수가 같은 방식으로 걸린다 — 수집이 비면 frames 0 으로 바로 드러난다.
+        ns = tf_tree.namespace_report(snap)
+        self.measure('tf_namespaces', ns)
+        self.check('TF frames observed', ns['frames'], '> 0', ns['frames'] > 0)
+        self.check('TF namespaces with prefixed frames', ns['namespaces'],
+                   f'>= {1 if self.settings.frame_prefix else 0}',
+                   len(ns['namespaces']) >= (1 if self.settings.frame_prefix else 0))
+        # 공유 프레임은 설계상 map 하나뿐이다 (multi_robot.md §2)
+        self.check('TF frames without prefix', ns['shared'], ['map'],
+                   ns['shared'] == ['map'] if self.settings.frame_prefix else True)
 
     def test_30_tf2_lookup(self) -> None:
         """tf2 Buffer 로 map → 모든 센서 프레임 조회 (체인이 실제로 이어져 있다)."""

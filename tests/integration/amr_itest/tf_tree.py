@@ -322,3 +322,39 @@ def detect_prefix(frames: Iterable[str], base: str = 'base_link') -> Optional[st
         return ''
     found = sorted(n[:-len(base)] for n in names if n.endswith('/' + base))
     return found[0] if len(found) == 1 else None
+
+
+def namespace_report(graph: TfGraph, prefix_pattern: str = 'amr_') -> Dict[str, object]:
+    """다중 로봇 TF 네임스페이스 보고 (명세 4장 9절 222행).
+
+    명세: *"각 로봇은 독립된 네임스페이스를 가지며, **TF 프레임 충돌이 없어야 한다**."*
+
+    `multi_robot.md` §2 의 규약: `/tf`·`/tf_static` 는 **하나**를 공유하고 `map` 만 접두어가
+    없다. 나머지 프레임은 전부 `amr_0N/` 접두어를 갖는다. 그래서 충돌이 없다는 것은
+
+      (a) 어떤 자식 프레임도 부모가 둘 이상이 아니고 (duplicate_parents 가 비어 있음)
+      (b) 로봇마다 자기 접두어를 가진 프레임 집합이 따로 있다
+
+    는 두 가지다. (b) 가 없으면 (a) 는 **아무것도 못 봤을 때도 참**이 되므로 — 빈 그래프에
+    충돌이 없는 것은 당연하다 — 반드시 둘을 함께 본다. 실측에서 이 함정을 그대로 밟았다
+    (logs/B12b: frames 0 · duplicate_parents {} 인데 통과처럼 보였다).
+
+    돌려주는 dict:
+      frames               관측한 프레임 수 (0 이면 수집 실패 — 판정 근거가 아니다)
+      shared               접두어 없는 프레임 (설계상 map 하나여야 한다)
+      namespaces           관측한 접두어 목록
+      frames_per_namespace 접두어별 프레임 수
+      duplicate_parents    자식 → 부모 목록 (둘 이상인 것만)
+    """
+    frames = sorted(graph.frames())
+    per: Dict[str, List[str]] = {}
+    shared: List[str] = []
+    for f in frames:
+        head, _, _ = f.partition('/')
+        if head and head != f and head.startswith(prefix_pattern):
+            per.setdefault(head, []).append(f)
+        else:
+            shared.append(f)
+    return {'frames': len(frames), 'shared': shared, 'namespaces': sorted(per),
+            'frames_per_namespace': {k: len(v) for k, v in sorted(per.items())},
+            'duplicate_parents': graph.duplicate_parents()}
