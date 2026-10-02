@@ -50,6 +50,29 @@ echo "=== Python 커버리지 (패키지별 → 전체) ==="
 # 전체 합산본과 HTML 은 logs/coverage/ 에 남긴다. 테스트 파일 자체는 집계에서 뺀다.
 # (옵션 값 앞의 공백은 colcon 이 자기 옵션과 구분하기 위해 요구하는 표기)
 COVERAGE_DIR="${ROS_WS}/logs/coverage"
+
+# 출처를 남긴다 — 이게 없어서 logs/coverage 가 어느 커밋 것인지 못 따졌다 (전수 감사 지적).
+# 통합 시나리오는 run_integration.sh 가 HEAD.txt·uncommitted.txt 를 남기는데 커버리지는 빠져 있었다.
+_snap_provenance() {
+    local out="$1"
+    mkdir -p "$out"
+    # git 워크트리를 컨테이너에 마운트하면 .git 이 마운트 **밖**(/home/<user>/.git/worktrees/...)을
+    # 가리켜 컨테이너 안에서는 못 읽는다 (확인: "fatal: not a git repository").
+    # 그래서 호스트가 AMR_HEAD 로 넘겨주면 그것을 쓰고, 없으면 컨테이너 안에서 시도하고,
+    # 그마저 안 되면 **모른다고 적는다** — 빈 값이나 거짓 값을 남기지 않는다.
+    if [ -n "${AMR_HEAD:-}" ]; then
+        printf '%s\n' "${AMR_HEAD}" > "$out/HEAD.txt"
+        printf '%s\n' "${AMR_UNCOMMITTED:-}" > "$out/uncommitted.txt"
+    elif git rev-parse --short HEAD > "$out/HEAD.txt" 2>/dev/null; then
+        git status --short > "$out/uncommitted.txt" 2>/dev/null || true
+    else
+        printf 'UNKNOWN (컨테이너에서 git 접근 불가 — 호스트에서 AMR_HEAD 로 넘겨라)\n' \
+            > "$out/HEAD.txt"
+        : > "$out/uncommitted.txt"
+    fi
+    date -Is > "$out/measured_at.txt"
+}
+_snap_provenance "${COVERAGE_DIR}"
 mkdir -p "${COVERAGE_DIR}"
 colcon coveragepy-result \
     --verbose \

@@ -13,6 +13,28 @@ BUILD=build_cov
 INSTALL=install_cov
 OUT=logs/coverage
 
+# 출처를 남긴다 — 이게 없어서 logs/coverage 가 어느 커밋 것인지 못 따졌다 (전수 감사 지적).
+# 통합 시나리오는 run_integration.sh 가 HEAD.txt·uncommitted.txt 를 남기는데 커버리지는 빠져 있었다.
+_snap_provenance() {
+    local out="$1"
+    mkdir -p "$out"
+    # git 워크트리를 컨테이너에 마운트하면 .git 이 마운트 **밖**(/home/<user>/.git/worktrees/...)을
+    # 가리켜 컨테이너 안에서는 못 읽는다 (확인: "fatal: not a git repository").
+    # 그래서 호스트가 AMR_HEAD 로 넘겨주면 그것을 쓰고, 없으면 컨테이너 안에서 시도하고,
+    # 그마저 안 되면 **모른다고 적는다** — 빈 값이나 거짓 값을 남기지 않는다.
+    if [ -n "${AMR_HEAD:-}" ]; then
+        printf '%s\n' "${AMR_HEAD}" > "$out/HEAD.txt"
+        printf '%s\n' "${AMR_UNCOMMITTED:-}" > "$out/uncommitted.txt"
+    elif git rev-parse --short HEAD > "$out/HEAD.txt" 2>/dev/null; then
+        git status --short > "$out/uncommitted.txt" 2>/dev/null || true
+    else
+        printf 'UNKNOWN (컨테이너에서 git 접근 불가 — 호스트에서 AMR_HEAD 로 넘겨라)\n' \
+            > "$out/HEAD.txt"
+        : > "$out/uncommitted.txt"
+    fi
+    date -Is > "$out/measured_at.txt"
+}
+
 echo "== 커버리지 빌드 ($PKGS) =="
 # --coverage 는 계측 + libgcov 링크. -O0 이어야 줄 대응이 정확하다.
 colcon build --packages-select $PKGS \
@@ -25,6 +47,7 @@ colcon build --packages-select $PKGS \
 
 echo "== 기준선(0 카운트) 캡처 =="
 mkdir -p "$OUT"
+_snap_provenance "$OUT"
 lcov --capture --initial --directory "$BUILD" --output-file "$OUT/base.info" \
   --rc lcov_branch_coverage=0 >/dev/null 2>&1
 
