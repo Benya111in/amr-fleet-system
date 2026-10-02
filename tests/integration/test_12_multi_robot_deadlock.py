@@ -77,11 +77,18 @@ def generate_test_description():
                  req.executable('amr_fleet', 'traffic_manager_node', '교착 탐지·해소'),
                  req.config('amr_behavior', 'behavior.yaml', '도크 표')], 'multi-robot deadlock')
     stack = Stack(CTX, *CTX.select())
-    # 대시보드를 켠다 (명세 9장 564행 "대시보드가 실시간 상태·KPI를 보여주는가").
-    # result.json 557 건 전부 dashboard:"off" 였다 — 한 번도 켜지지 않았다.
-    # **판정에는 쓰지 않는다** (아래 _dashboard_probe 는 기록 전용) — 통과 중인 67 분
-    # 시나리오를 대시보드 결함으로 깨뜨리지 않기 위해서다.
-    stack.multi_robot(ROBOTS, extra_args={'with_dashboard': 'true'})
+    # 대시보드는 **기본 off** 다. 명세 9장 564행("대시보드가 실시간 상태·KPI를 보여주는가")의
+    # 근거는 ITEST_WITH_DASHBOARD=1 로 한 번 돌려 확보한다 (logs/B12b: /api/health ok=true,
+    # /api/state robots=5 · has_kpi=true — 그 실행 전까지 result.json 284 건이 전부 off 였다).
+    #
+    # **왜 상시로 켜지 않는가 (실측).** 켜고 돌린 B12b 가 작업 3/5 로 떨어지고 미해소 교착이
+    # 1 건 생겼으며 소요가 4,012 -> 4,718 s (+18 %) 였다. 끈 실행 셋(reg2·regF·regG)은 모두
+    # 5/5 였다. 노드 하나가 늘면 RTF 0.30 짜리 5대 구성이 하네스 예산을 넘긴다.
+    #
+    # 내가 미리 정한 되돌림 조건은 rtf_mean 만 봤고(0.2985 -> 0.2862, −4 %, 통과) **시나리오
+    # 결과를 넣지 않았다** — 조건을 잘못 고른 것이다. 결과 기준으로 되돌린다.
+    stack.multi_robot(ROBOTS, extra_args=(
+        {'with_dashboard': 'true'} if os.environ.get('ITEST_WITH_DASHBOARD') else None))
     # 명세 4.10 CPU 절차: amr_evaluation cpu_sampler (호스트 전체 · 프로세스 그룹 · RTF · load1) →
     # logs/itest/12_multi_robot_deadlock/cpu_*.csv (하네스 procmon 과 함께 기록)
     stack.eval_logger('cpu_sampler', {})
@@ -293,7 +300,8 @@ class TestMultiRobotDeadlock(cases.ProbeCase):
                              **self._rtf_stats(own_mean)})
         tf = self._tf_namespace_check()
         self.measure('tf', tf)
-        self.measure('dashboard_probe', self._dashboard_probe())
+        if os.environ.get('ITEST_WITH_DASHBOARD'):
+            self.measure('dashboard_probe', self._dashboard_probe())
         detected, resolved, unresolved = deadlock_counts(traffic_rows(self.traffic))
         completed = sum(1 for t in ids if f.get(t) == self.Task.STATUS_COMPLETED)
         self.measure('traffic', {'deadlocks': detected, 'resolved': resolved,
