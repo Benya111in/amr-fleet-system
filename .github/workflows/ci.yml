@@ -127,6 +127,39 @@ jobs:
           rosdep install --from-paths src --ignore-src -y --rosdistro "$ROS_DISTRO" \
             --skip-keys "ros_gz_sim ros_gz_bridge ros_gz_image"
 
+      - name: 저장소 고정 버전 설치 (docker/constraints.txt)
+        # rosdep 이 깔아 주는 것은 Jammy apt 버전(2022년)인데, 이 저장소가 선언한 런타임은
+        # docker/constraints.txt 의 고정 버전이다. 그 차이 때문에 CI 가 "프로젝트가 쓰지 않는
+        # 스택"을 검사하고 있었다 — 실측으로 26 errors + 41 failures 가 나오고, 고정 버전을
+        # 걸면 0 errors + 7 failures(전부 torch 부재, 그 6 개 시험은 skip 으로 가드)가 된다.
+        #   flask 2.0.1 -> 3.1.3        (Flask.json 없음: 20건)
+        #   pytest 6.2.5 -> 8.3.5       (nose-style setup() 충돌: 18건)
+        #   opencv 4.5.4 -> 4.11.0.86   (cv2.aruco API: 16건)
+        #   jsonschema 3.2.0 -> 4.26.0  (Draft202012Validator 없음: 1건)
+        # torch / torchvision / ultralytics 는 수 GB + CUDA 라 깔지 않는다 — 실추론 시험은
+        # 런타임 부재로 skip 된다 (src/amr_perception/test/test_yolo_backend.py 의 requires_torch).
+        # numpy/scipy/matplotlib/pandas 는 실패 원인이 아니므로 apt 판을 그대로 둔다.
+        # PIP_CONSTRAINT 로 버전을 고정하므로 아래 목록에 버전을 중복해 적지 않는다 (단일 출처).
+        env:
+          PIP_CONSTRAINT: docker/constraints.txt
+        run: |
+          apt-get install -y -qq python3-pip
+          pip3 install --no-cache-dir \
+            opencv-contrib-python-headless \
+            pytest pytest-cov pytest-timeout \
+            flask flask-socketio eventlet jsonschema
+          # 고정이 실제로 걸렸는지 못박는다 — 조용히 실패하면 아래 결과가 검사가 아니게 된다
+          python3 - <<'PY'
+          import importlib
+          want = {'flask': '3.1.3', 'jsonschema': '4.26.0', 'pytest': '8.3.5', 'cv2': '4.11'}
+          bad = [f'{m}: {getattr(importlib.import_module(m), "__version__", "?")} != {v}'
+                 for m, v in want.items()
+                 if not str(getattr(importlib.import_module(m), '__version__', '')).startswith(v)]
+          if bad:
+              raise SystemExit('고정 버전이 걸리지 않았다: ' + '; '.join(bad))
+          print('고정 버전 일치:', ', '.join(f'{m}=={v}' for m, v in want.items()))
+          PY
+
       - name: colcon build (경고 = 에러)
         run: |
           # shellcheck source=/dev/null

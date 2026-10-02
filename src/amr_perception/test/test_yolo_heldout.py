@@ -90,5 +90,9 @@ def test_train_eval_label_tools(tool, tmp_path):
     res = tool.cmd_heldout(type('A', (), {'data': str(data), 'out': str(tmp_path / 'held'),
                                           'per_class': 1, 'classes': 3, 'min_px': 16.0})())
     assert res['images'] == ['r_00000.jpg']          # box 는 16 px 미만, person 만 고른다
+    # 여기까지는 라벨 도구(이 시험의 주제)이고 torch 가 필요 없다 — 동작점 재현율만 실추론이다.
+    # torch 없는 환경(CI build-test)에서 위 단언까지는 실제로 돌고 아래만 건너뛴다.
+    if importlib.util.find_spec('torch') is None:
+        pytest.skip('torch 없음 — 동작점 재현율만 실추론이 필요하다 (라벨 도구 단언은 통과했다)')
     op = tool.operating_point(WEIGHTS, str(data), 'test', 'cpu', 0.35, 320)
     assert op['per_class']['person']['gt'] == 1 and op['imgsz'] == 320
