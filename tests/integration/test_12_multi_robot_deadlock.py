@@ -77,7 +77,11 @@ def generate_test_description():
                  req.executable('amr_fleet', 'traffic_manager_node', '교착 탐지·해소'),
                  req.config('amr_behavior', 'behavior.yaml', '도크 표')], 'multi-robot deadlock')
     stack = Stack(CTX, *CTX.select())
-    stack.multi_robot(ROBOTS)
+    # 대시보드를 켠다 (명세 9장 564행 "대시보드가 실시간 상태·KPI를 보여주는가").
+    # result.json 557 건 전부 dashboard:"off" 였다 — 한 번도 켜지지 않았다.
+    # **판정에는 쓰지 않는다** (아래 _dashboard_probe 는 기록 전용) — 통과 중인 67 분
+    # 시나리오를 대시보드 결함으로 깨뜨리지 않기 위해서다.
+    stack.multi_robot(ROBOTS, extra_args={'with_dashboard': 'true'})
     # 명세 4.10 CPU 절차: amr_evaluation cpu_sampler (호스트 전체 · 프로세스 그룹 · RTF · load1) →
     # logs/itest/12_multi_robot_deadlock/cpu_*.csv (하네스 procmon 과 함께 기록)
     stack.eval_logger('cpu_sampler', {})
@@ -116,6 +120,102 @@ class TestMultiRobotDeadlock(cases.ProbeCase):
         cls.phases = {n: cls.probe.subscribe(f'/{n}/executor/phase', String, 'latched',
                                              keep_messages=2000)
                       for n in NAMES}
+
+    def _dashboard_probe(self) -> dict:
+        """대시보드 HTTP API 를 찔러 실시간 상태·KPI 가 실제로 나오는지 기록한다 (명세 9장 564행).
+
+        **기록 전용이다 — 판정하지 않는다.** 명세 9장은 동료 평가 체크리스트이고 수치 기준이
+        없다. 그리고 여기서 실패를 판정으로 올리면 통과 중인 67 분 시나리오가 대시보드 결함
+        하나로 깨진다. 대신 응답 본문의 어느 키가 채워졌는지를 남겨 평가자가 확인할 수 있게 한다.
+        """
+        import json as _json
+        import urllib.error
+        import urllib.request
+        port = int(os.environ.get('ITEST_DASHBOARD_PORT', '8080'))
+        out = {'port': port}
+        for path in ('/api/health', '/api/state'):
+            try:
+                with urllib.request.urlopen(f'http://127.0.0.1:{port}{path}', timeout=5.0) as r:
+                    body = _json.loads(r.read().decode('utf-8'))
+                out[path] = {'http': r.status if hasattr(r, 'status') else 200,
+                             'keys': sorted(body)[:14]}
+                if path == '/api/health':
+                    out[path].update({k: body.get(k) for k in
+                                      ('ok', 'has_status', 'has_map', 'uptime_sec')})
+                else:
+                    # 실시간 상태·KPI 의 실체: 로봇 목록과 KPI 블록이 채워졌는가
+                    robots = body.get('status') or {}
+                    out[path]['robots'] = len(robots.get('robots', [])) \
+                        if isinstance(robots, dict) else 0
+                    out[path]['has_kpi'] = bool(body.get('kpi') or
+                                                (robots.get('kpi') if isinstance(robots, dict)
+                                                 else None))
+            except (urllib.error.URLError, OSError, ValueError, TimeoutError) as exc:
+                out[path] = {'error': f'{type(exc).__name__}: {exc}'}
+        return out
+
+    def _tf_namespace_check(self) -> dict:
+        """다중 로봇 TF 프레임 충돌 판정 (명세 4장 9절 222행).
+
+        명세: *"각 로봇은 독립된 네임스페이스를 가지며, **TF 프레임 충돌이 없어야 한다**."*
+
+        여태 이 조항은 측정되지 않았다 — `tf_edges.csv` 는 시나리오 02(단일 로봇)만 남겼고
+        거기엔 `amr_0*` 접두 프레임이 한 줄도 없다. 5대가 같은 `/tf` 를 공유하는 구성
+        (multi_robot.md §2: 센서·링크는 접두어, map/odom 계열은 전역 공유)에서만 충돌이
+        드러나므로 여기서 잡는다.
+
+        판정 둘:
+          (a) **이중 부모 0** — 같은 자식 프레임에 부모가 둘이면 트리가 깨진 것이다.
+          (b) **로봇별 링크 프레임이 접두어로 분리** — 로봇 수만큼의 `base_link` 가
+              `amr_01/base_link` … 처럼 서로 다른 이름이어야 한다. 접두어가 빠져 한 이름을
+              여러 로봇이 쓰면 (a) 가 먼저 잡지만, 그때 어느 프레임인지 남겨야 고칠 수 있다.
+        """
+        graph = self.probe.capture_tf()
+        frames = sorted(graph.frames())
+        dups = graph.duplicate_parents()
+        prefixed = {}
+        for f in frames:
+            if '/' in f:
+                ns = f.split('/', 1)[0]
+                if ns.startswith('amr_'):
+                    prefixed.setdefault(ns, []).append(f)
+        rows = [[e.parent, e.child, 'static' if e.static else 'dynamic',
+                 cases.fmt(e.rate(), 2)]
+                for e in sorted(graph.edges, key=lambda x: (x.parent, x.child))]
+        self.ctx.record.write_csv('tf_edges.csv', ['parent', 'child', 'kind', 'rate_hz'], rows)
+        self.ctx.record.write_text('frames.dot', graph.to_dot())
+        return {'frames': len(frames), 'duplicate_parents': dups,
+                'namespaces': sorted(prefixed), 'frames_per_namespace':
+                    {k: len(v) for k, v in sorted(prefixed.items())}}
+
+    def _rtf_stats(self, own_mean: float = math.nan) -> dict:
+        """amr_evaluation cpu 로거의 rtf 열 요약 + 실시간 환산 추정.
+
+        로거가 없으면 빈 dict 를 돌려준다 (판정에 쓰지 않는다 — 명세에 RTF 조항이 없다).
+        환산 추정은 own_mean / rtf_mean 의 선형 외삽이므로 **상한 추정**이고 근거용이다."""
+        import csv as _csv
+        import glob as _glob
+        vals = []
+        for path in sorted(_glob.glob(os.path.join(str(self.ctx.record.dir), 'cpu_*.csv'))):
+            try:
+                with open(path) as fh:
+                    for row in _csv.DictReader(fh):
+                        try:
+                            v = float(row.get('rtf', ''))
+                        except (TypeError, ValueError):
+                            continue
+                        if math.isfinite(v) and v > 0.0:
+                            vals.append(v)
+            except OSError:
+                continue
+        if not vals:
+            return {}
+        vals.sort()
+        mean = sum(vals) / len(vals)
+        return {'rtf_mean': cases.fmt(mean, 4), 'rtf_min': cases.fmt(vals[0], 4),
+                'rtf_max': cases.fmt(vals[-1], 4), 'rtf_samples': len(vals),
+                'system_mean_percent_at_rtf1_est': cases.fmt(
+                    own_mean / mean if math.isfinite(own_mean) and mean > 0 else math.nan, 1)}
 
     def _write_traffic(self) -> None:
         self.ctx.record.write_csv('traffic.csv', ['recv_time', 'level', 'event', 'robot',
@@ -197,7 +297,17 @@ class TestMultiRobotDeadlock(cases.ProbeCase):
                              'cores_used_mean': cases.fmt(sum(r[3] for r in cpu_rows) / n, 2),
                              'host_cores': own.cores,
                              'host_mean_percent': cases.fmt(sum(r[2] for r in cpu_rows) / n, 1),
-                             'samples': len(cpu_rows), 'loadavg_end': os.getloadavg()[0]})
+                             'samples': len(cpu_rows), 'loadavg_end': os.getloadavg()[0],
+                             # **실시간 배율(RTF)을 같이 싣는다.** CPU 백분율만 보면 "여유 있다" 로
+                             # 읽히는데, 5대 구성은 RTF 0.2~0.3 (실시간의 20~30 % 속도)에서 돈다.
+                             # 실시간으로 환산하면 측정값의 3~5배가 되므로, 명세 "5대 CPU 80 %
+                             # 이내" 를 이 수치로 주장할 때 반드시 함께 보여야 한다.
+                             # 값은 amr_evaluation 의 cpu 로거가 남긴 rtf 열에서 읽는다
+                             # (하네스 자신의 cpu.csv 에는 rtf 가 없다).
+                             **self._rtf_stats(own_mean)})
+        tf = self._tf_namespace_check()
+        self.measure('tf', tf)
+        self.measure('dashboard_probe', self._dashboard_probe())
         detected, resolved, unresolved = deadlock_counts(traffic_rows(self.traffic))
         completed = sum(1 for t in ids if f.get(t) == self.Task.STATUS_COMPLETED)
         self.measure('traffic', {'deadlocks': detected, 'resolved': resolved,
@@ -211,7 +321,13 @@ class TestMultiRobotDeadlock(cases.ProbeCase):
                  'resolved >= detected, unresolved 0',
                  resolved >= detected and unresolved == 0, ''),
                 ('system CPU mean (ROS nodes + Gazebo, % of host cores)', own_mean, CPU_MAX,
-                 bool(cpu_rows) and own_mean <= CPU_MAX, '%')):
+                 bool(cpu_rows) and own_mean <= CPU_MAX, '%'),
+                # 명세 222행 "TF 프레임 충돌이 없어야 한다" — 이중 부모 0 이어야 한다.
+                ('TF frame collisions (duplicate parents, all robots)', tf['duplicate_parents'],
+                 {}, not tf['duplicate_parents'], ''),
+                # 로봇마다 접두 프레임이 있어야 한다 (접두어가 빠지면 이름이 겹친다)
+                ('TF namespaces with prefixed frames', sorted(tf['namespaces']),
+                 f'>= {ROBOTS}', len(tf['namespaces']) >= ROBOTS, '')):
             self.ctx.record.check(name, cases.fmt(value), thr, bool(ok), unit)
             if not ok:
                 failed.append(f'{name}: {cases.fmt(value)} (기준 {thr})')
