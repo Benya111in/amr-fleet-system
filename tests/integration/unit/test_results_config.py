@@ -290,3 +290,45 @@ def test_report_collect_write_and_exit(tmp_path, capsys, monkeypatch):
     long = report._short({'status': 'passed', 'failed_checks': [],
                           'checks': [{'name': 'n' * 300, 'value': 1}]})
     assert len(long) == 160 and long.endswith('…')
+
+
+def test_scenario_files_only_use_existing_record_attributes():
+    """시나리오가 `ctx.record.<X>` 로 쓰는 이름이 ScenarioRecord 에 실제로 있는지 고정한다.
+
+    왜 생겼나: test_12 가 `self.ctx.record.dir` 를 썼는데 그런 속성이 없어서
+    `AttributeError` 로 **57 분짜리 5대 시나리오가 통째로 error** 로 끝났다 (logs/B12).
+    속성 오타는 import 시점에 안 잡히고 시나리오 끝부분에서야 터지므로, 긴 시나리오에서는
+    한 번 돌리는 데 한 시간이 날아간다. 정적으로 잡는다.
+    """
+    import ast
+    import inspect
+
+    from amr_itest import results as _results
+    from amr_itest.results import ScenarioRecord
+
+    # 클래스 수준 이름(메서드·프로퍼티) + __init__ 이 만드는 인스턴스 속성.
+    # dir() 만 보면 self.log_dir / self.data 같은 인스턴스 속성을 놓쳐 거짓 양성이 난다.
+    allowed = {n for n in dir(ScenarioRecord) if not n.startswith('_')}
+    src = inspect.getsource(_results)
+    cls = next(n for n in ast.walk(ast.parse(src))
+               if isinstance(n, ast.ClassDef) and n.name == 'ScenarioRecord')
+    for node in ast.walk(cls):
+        if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Store) \
+                and isinstance(node.value, ast.Name) and node.value.id == 'self':
+            if not node.attr.startswith('_'):
+                allowed.add(node.attr)
+    root = Path(__file__).resolve().parents[1]
+    bad = []
+    for path in sorted(root.glob('test_*.py')):
+        tree = ast.parse(path.read_text(encoding='utf-8'))
+        for node in ast.walk(tree):
+            # ctx.record.<attr> / self.ctx.record.<attr> 꼴만 본다
+            if not isinstance(node, ast.Attribute):
+                continue
+            base = node.value
+            if not (isinstance(base, ast.Attribute) and base.attr == 'record'):
+                continue
+            if node.attr not in allowed:
+                bad.append(f'{path.name}:{node.lineno} record.{node.attr}')
+    assert not bad, ('ScenarioRecord 에 없는 속성: ' + '; '.join(bad)
+                     + f'\n사용 가능: {sorted(allowed)}')

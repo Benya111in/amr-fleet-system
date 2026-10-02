@@ -196,7 +196,7 @@ class TestMultiRobotDeadlock(cases.ProbeCase):
         import csv as _csv
         import glob as _glob
         vals = []
-        for path in sorted(_glob.glob(os.path.join(str(self.ctx.record.dir), 'cpu_*.csv'))):
+        for path in sorted(_glob.glob(os.path.join(str(self.ctx.record.log_dir), 'cpu_*.csv'))):
             try:
                 with open(path) as fh:
                     for row in _csv.DictReader(fh):
