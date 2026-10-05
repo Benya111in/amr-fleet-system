@@ -32,7 +32,8 @@ CONSTANTS N,           \* 로봇 수
           MinMembers,  \* 진입에 필요한 최소 생존 멤버 수 (자기 포함)
           MaxReq,      \* 로봇당 요청 횟수 상한 (상태 공간 제한)
           ViewModel,   \* "fixed" | "dropOne" | "report" | "any"
-          Requesters   \* 요청·견해 변경을 하는 로봇 (나머지는 응답만 한다)
+          Requesters,  \* 요청을 하는 로봇 (나머지는 응답만 한다)
+          ViewChangers \* 생존 견해가 바뀔 수 있는 로봇 (Requesters 의 부분집합)
 
 ASSUME N \in Nat /\ N >= 2
 ASSUME MinMembers \in 1..N
@@ -42,6 +43,7 @@ ASSUME ViewModel \in {"fixed", "dropOne", "report", "any"}
 Robots == 1..N
 
 ASSUME Requesters \subseteq Robots
+ASSUME ViewChangers \subseteq Requesters
 
 VARIABLES state,     \* "idle" | "waiting" | "inside"
           highest,   \* 지금까지 본 가장 큰 요청 번호 (RA 의 Highest_Sequence_Number)
@@ -151,7 +153,7 @@ Exit(r) ==
 (* 생존 견해 변경: 하트비트 오탐/복구의 추상화. 요청하지 않는 로봇의 견해는  *)
 (* 진입에 쓰이지 않으므로 바꾸지 않는다 (상태 공간 절약, 안전 판정 불변).    *)
 ChangeView(r) ==
-  /\ r \in Requesters
+  /\ r \in ViewChangers
   /\ \E V \in AllowedViews(r) \ {view[r]} :
        view' = [view EXCEPT ![r] = V]
   /\ UNCHANGED <<state, highest, reqTs, replied, deferred, msgs, nreq>>

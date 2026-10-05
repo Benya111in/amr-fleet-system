@@ -1,9 +1,9 @@
-# model=RA_LiveMembers cfg=cfg/RA_any_N5.cfg workers=4 heap=8g image=amr-ai/rl:0.3
+# model=RA_LiveMembers cfg=cfg/RA_any_N5.cfg workers=2 heap=8g image=amr-ai/rl:0.3 timeout=600s
 # jar=/home/CAPYI_AI/downloads/tla/tla2tools-1.7.4.jar sha256=936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
-# head=d8ae80ca8c0036d773d4d806ef7054799789765a dirty=1
-# spec_sha256=e88070dac980a90e937573983ffd580ffb1ca4eb29eac804ce74e524615be363 cfg_sha256=13bb0bfde9cc991141b68c933e82c33a5613fcb863205e308f69d332fe8fe6e7
-# start=2026-10-06T06:03:00+09:00 loadavg=13.74 7.37 4.44
-# end=2026-10-06T06:03:20+09:00 rc=12 loadavg=13.24 7.65 4.59
+# head=170903a75a695757c88f421a9dbcc41e64190281 dirty=8
+# spec_sha256=a4a6bca35ac20367d610a30c8d6561a2d692311dd3297b895469cf8e631276c1 cfg_sha256=d844f5c6270ba9ce51e0b255641dd7b782deddef20f0aa34099b9b41922a8a5f
+# start=2026-10-06T07:27:08+09:00 loadavg=27.66 24.69 35.00
+# end=2026-10-06T07:27:52+09:00 rc=12 loadavg=26.41 24.72 34.57
 TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
 
 ## 상태마다 바뀐 변수만 (trace_diff.py)
@@ -61,10 +61,10 @@ State 11: DeliverRequest
 State 12: ChangeView
     view = <<{1, 2, 3}, 1..5, 1..5, 1..5, {2, 3, 5}>>
 State 13: DeliverReply
-    msgs - [type |-> "rep", from |-> 3, to |-> 5, ts |-> 1]
-    replied = <<{2, 3}, {}, {}, {}, {3}>>
-State 14: DeliverReply
     msgs - [type |-> "rep", from |-> 2, to |-> 5, ts |-> 1]
+    replied = <<{2, 3}, {}, {}, {}, {2}>>
+State 14: DeliverReply
+    msgs - [type |-> "rep", from |-> 3, to |-> 5, ts |-> 1]
     replied = <<{2, 3}, {}, {}, {}, {2, 3}>>
 State 15: Enter
     state = <<"inside", "idle", "idle", "idle", "inside">>
@@ -82,7 +82,7 @@ State 1: <Initial predicate>
 /\ reqTs = <<0, 0, 0, 0, 0>>
 /\ nreq = <<0, 0, 0, 0, 0>>
 
-State 2: <Request line 95, col 3 to line 106, col 33 of module RA_LiveMembers>
+State 2: <Request line 97, col 3 to line 108, col 33 of module RA_LiveMembers>
 /\ deferred = <<{}, {}, {}, {}, {}>>
 /\ state = <<"waiting", "idle", "idle", "idle", "idle">>
 /\ msgs = { [type |-> "req", from |-> 1, to |-> 2, ts |-> 1],
@@ -95,7 +95,7 @@ State 2: <Request line 95, col 3 to line 106, col 33 of module RA_LiveMembers>
 /\ reqTs = <<1, 0, 0, 0, 0>>
 /\ nreq = <<1, 0, 0, 0, 0>>
 
-State 3: <ChangeView line 154, col 3 to line 157, col 71 of module RA_LiveMembers>
+State 3: <ChangeView line 156, col 3 to line 159, col 71 of module RA_LiveMembers>
 /\ deferred = <<{}, {}, {}, {}, {}>>
 /\ state = <<"waiting", "idle", "idle", "idle", "idle">>
 /\ msgs = { [type |-> "req", from |-> 1, to |-> 2, ts |-> 1],
@@ -108,7 +108,7 @@ State 3: <ChangeView line 154, col 3 to line 157, col 71 of module RA_LiveMember
 /\ reqTs = <<1, 0, 0, 0, 0>>
 /\ nreq = <<1, 0, 0, 0, 0>>
 
-State 4: <DeliverRequest line 160, col 22 to line 160, col 54 of module RA_LiveMembers>
+State 4: <DeliverRequest line 162, col 22 to line 162, col 54 of module RA_LiveMembers>
 /\ deferred = <<{}, {}, {}, {}, {}>>
 /\ state = <<"waiting", "idle", "idle", "idle", "idle">>
 /\ msgs = { [type |-> "req", from |-> 1, to |-> 3, ts |-> 1],
@@ -121,7 +121,7 @@ State 4: <DeliverRequest line 160, col 22 to line 160, col 54 of module RA_LiveM
 /\ reqTs = <<1, 0, 0, 0, 0>>
 /\ nreq = <<1, 0, 0, 0, 0>>
 
-State 5: <DeliverReply line 161, col 20 to line 161, col 50 of module RA_LiveMembers>
+State 5: <DeliverReply line 163, col 20 to line 163, col 50 of module RA_LiveMembers>
 /\ deferred = <<{}, {}, {}, {}, {}>>
 /\ state = <<"waiting", "idle", "idle", "idle", "idle">>
 /\ msgs = { [type |-> "req", from |-> 1, to |-> 3, ts |-> 1],
@@ -133,7 +133,7 @@ State 5: <DeliverReply line 161, col 20 to line 161, col 50 of module RA_LiveMem
 /\ reqTs = <<1, 0, 0, 0, 0>>
 /\ nreq = <<1, 0, 0, 0, 0>>
 
-State 6: <DeliverRequest line 160, col 22 to line 160, col 54 of module RA_LiveMembers>
+State 6: <DeliverRequest line 162, col 22 to line 162, col 54 of module RA_LiveMembers>
 /\ deferred = <<{}, {}, {}, {}, {}>>
 /\ state = <<"waiting", "idle", "idle", "idle", "idle">>
 /\ msgs = { [type |-> "req", from |-> 1, to |-> 4, ts |-> 1],
@@ -145,7 +145,7 @@ State 6: <DeliverRequest line 160, col 22 to line 160, col 54 of module RA_LiveM
 /\ reqTs = <<1, 0, 0, 0, 0>>
 /\ nreq = <<1, 0, 0, 0, 0>>
 
-State 7: <DeliverReply line 161, col 20 to line 161, col 50 of module RA_LiveMembers>
+State 7: <DeliverReply line 163, col 20 to line 163, col 50 of module RA_LiveMembers>
 /\ deferred = <<{}, {}, {}, {}, {}>>
 /\ state = <<"waiting", "idle", "idle", "idle", "idle">>
 /\ msgs = { [type |-> "req", from |-> 1, to |-> 4, ts |-> 1],
@@ -156,7 +156,7 @@ State 7: <DeliverReply line 161, col 20 to line 161, col 50 of module RA_LiveMem
 /\ reqTs = <<1, 0, 0, 0, 0>>
 /\ nreq = <<1, 0, 0, 0, 0>>
 
-State 8: <Enter line 136, col 3 to line 140, col 70 of module RA_LiveMembers>
+State 8: <Enter line 138, col 3 to line 142, col 70 of module RA_LiveMembers>
 /\ deferred = <<{}, {}, {}, {}, {}>>
 /\ state = <<"inside", "idle", "idle", "idle", "idle">>
 /\ msgs = { [type |-> "req", from |-> 1, to |-> 4, ts |-> 1],
@@ -167,7 +167,7 @@ State 8: <Enter line 136, col 3 to line 140, col 70 of module RA_LiveMembers>
 /\ reqTs = <<1, 0, 0, 0, 0>>
 /\ nreq = <<1, 0, 0, 0, 0>>
 
-State 9: <Request line 95, col 3 to line 106, col 33 of module RA_LiveMembers>
+State 9: <Request line 97, col 3 to line 108, col 33 of module RA_LiveMembers>
 /\ deferred = <<{}, {}, {}, {}, {}>>
 /\ state = <<"inside", "idle", "idle", "idle", "waiting">>
 /\ msgs = { [type |-> "req", from |-> 1, to |-> 4, ts |-> 1],
@@ -182,7 +182,7 @@ State 9: <Request line 95, col 3 to line 106, col 33 of module RA_LiveMembers>
 /\ reqTs = <<1, 0, 0, 0, 1>>
 /\ nreq = <<1, 0, 0, 0, 1>>
 
-State 10: <DeliverRequest line 160, col 22 to line 160, col 54 of module RA_LiveMembers>
+State 10: <DeliverRequest line 162, col 22 to line 162, col 54 of module RA_LiveMembers>
 /\ deferred = <<{}, {}, {}, {}, {}>>
 /\ state = <<"inside", "idle", "idle", "idle", "waiting">>
 /\ msgs = { [type |-> "req", from |-> 1, to |-> 4, ts |-> 1],
@@ -197,7 +197,7 @@ State 10: <DeliverRequest line 160, col 22 to line 160, col 54 of module RA_Live
 /\ reqTs = <<1, 0, 0, 0, 1>>
 /\ nreq = <<1, 0, 0, 0, 1>>
 
-State 11: <DeliverRequest line 160, col 22 to line 160, col 54 of module RA_LiveMembers>
+State 11: <DeliverRequest line 162, col 22 to line 162, col 54 of module RA_LiveMembers>
 /\ deferred = <<{}, {}, {}, {}, {}>>
 /\ state = <<"inside", "idle", "idle", "idle", "waiting">>
 /\ msgs = { [type |-> "req", from |-> 1, to |-> 4, ts |-> 1],
@@ -212,7 +212,7 @@ State 11: <DeliverRequest line 160, col 22 to line 160, col 54 of module RA_Live
 /\ reqTs = <<1, 0, 0, 0, 1>>
 /\ nreq = <<1, 0, 0, 0, 1>>
 
-State 12: <ChangeView line 154, col 3 to line 157, col 71 of module RA_LiveMembers>
+State 12: <ChangeView line 156, col 3 to line 159, col 71 of module RA_LiveMembers>
 /\ deferred = <<{}, {}, {}, {}, {}>>
 /\ state = <<"inside", "idle", "idle", "idle", "waiting">>
 /\ msgs = { [type |-> "req", from |-> 1, to |-> 4, ts |-> 1],
@@ -227,21 +227,21 @@ State 12: <ChangeView line 154, col 3 to line 157, col 71 of module RA_LiveMembe
 /\ reqTs = <<1, 0, 0, 0, 1>>
 /\ nreq = <<1, 0, 0, 0, 1>>
 
-State 13: <DeliverReply line 161, col 20 to line 161, col 50 of module RA_LiveMembers>
+State 13: <DeliverReply line 163, col 20 to line 163, col 50 of module RA_LiveMembers>
 /\ deferred = <<{}, {}, {}, {}, {}>>
 /\ state = <<"inside", "idle", "idle", "idle", "waiting">>
 /\ msgs = { [type |-> "req", from |-> 1, to |-> 4, ts |-> 1],
   [type |-> "req", from |-> 1, to |-> 5, ts |-> 1],
   [type |-> "req", from |-> 5, to |-> 1, ts |-> 1],
   [type |-> "req", from |-> 5, to |-> 4, ts |-> 1],
-  [type |-> "rep", from |-> 2, to |-> 5, ts |-> 1] }
-/\ replied = <<{2, 3}, {}, {}, {}, {3}>>
+  [type |-> "rep", from |-> 3, to |-> 5, ts |-> 1] }
+/\ replied = <<{2, 3}, {}, {}, {}, {2}>>
 /\ view = <<{1, 2, 3}, 1..5, 1..5, 1..5, {2, 3, 5}>>
 /\ highest = <<1, 1, 1, 0, 1>>
 /\ reqTs = <<1, 0, 0, 0, 1>>
 /\ nreq = <<1, 0, 0, 0, 1>>
 
-State 14: <DeliverReply line 161, col 20 to line 161, col 50 of module RA_LiveMembers>
+State 14: <DeliverReply line 163, col 20 to line 163, col 50 of module RA_LiveMembers>
 /\ deferred = <<{}, {}, {}, {}, {}>>
 /\ state = <<"inside", "idle", "idle", "idle", "waiting">>
 /\ msgs = { [type |-> "req", from |-> 1, to |-> 4, ts |-> 1],
@@ -254,7 +254,7 @@ State 14: <DeliverReply line 161, col 20 to line 161, col 50 of module RA_LiveMe
 /\ reqTs = <<1, 0, 0, 0, 1>>
 /\ nreq = <<1, 0, 0, 0, 1>>
 
-State 15: <Enter line 136, col 3 to line 140, col 70 of module RA_LiveMembers>
+State 15: <Enter line 138, col 3 to line 142, col 70 of module RA_LiveMembers>
 /\ deferred = <<{}, {}, {}, {}, {}>>
 /\ state = <<"inside", "idle", "idle", "idle", "inside">>
 /\ msgs = { [type |-> "req", from |-> 1, to |-> 4, ts |-> 1],
@@ -267,4 +267,4 @@ State 15: <Enter line 136, col 3 to line 140, col 70 of module RA_LiveMembers>
 /\ reqTs = <<1, 0, 0, 0, 1>>
 /\ nreq = <<1, 0, 0, 0, 1>>
 
-22787970 states generated, 1271852 distinct states found, 388783 states left on queue.
+23178063 states generated, 1287759 distinct states found, 388975 states left on queue.
