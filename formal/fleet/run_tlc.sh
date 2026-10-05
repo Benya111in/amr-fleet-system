@@ -37,6 +37,10 @@ jar_name="$(basename "$TLA_JAR")"
   echo "# spec_sha256=$(sha256sum "$here/$mod.tla" | cut -d' ' -f1) cfg_sha256=$(sha256sum "$here/$cfg" | cut -d' ' -f1)"
   echo "# start=$(date -Is) loadavg=$(cut -d' ' -f1-3 /proc/loadavg)"
 } > "$log"
+# 정확히 무엇을 돌렸는지 남긴다 (스펙·cfg 사본)
+mkdir -p "$OUT_DIR/inputs/$name"
+cat "$here/$mod.tla" > "$OUT_DIR/inputs/$name/$mod.tla"
+cat "$here/$cfg" > "$OUT_DIR/inputs/$name/$(basename "$cfg")"
 rc=0
 docker run --rm --name "amr-ai-f2-tla-tlc-$name" --network none --cpus "$WORKERS" \
   -v "$here":/spec:ro -v "$jar_dir":/tla:ro -v "$OUT_DIR":/out -w /spec \

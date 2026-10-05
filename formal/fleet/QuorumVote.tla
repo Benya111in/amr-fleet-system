@@ -325,6 +325,11 @@ Stranded(v, z) ==
 
 NoStrandedCommit == \A v \in Robots, z \in Zones : ~Stranded(v, z)
 
+(* 더 센 활성 결함: 풀리지 않는 C 표가 N - Quorum 개를 넘으면 그 구역은     *)
+(* 남은 투표자로 과반을 못 만든다 -> 아무도 영영 못 들어간다.                *)
+NoDeadZone ==
+  \A z \in Zones : Cardinality({v \in Robots : Stranded(v, z)}) <= N - Quorum
+
 Symm == Permutations(Robots) \cup Permutations(Zones)
 
 (***************************************************************************)
