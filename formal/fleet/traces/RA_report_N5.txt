@@ -1,0 +1,271 @@
+# model=RA_LiveMembers cfg=cfg/RA_report_N5.cfg workers=4 heap=8g image=amr-ai/rl:0.3
+# jar=/home/CAPYI_AI/downloads/tla/tla2tools-1.7.4.jar sha256=936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
+# head=d8ae80ca8c0036d773d4d806ef7054799789765a dirty=1
+# spec_sha256=e88070dac980a90e937573983ffd580ffb1ca4eb29eac804ce74e524615be363 cfg_sha256=43a549ee615331a0148b52ad140ffe085cda07e05c4a8c0f3fbc32c5876a5764
+# start=2026-10-06T06:02:52+09:00 loadavg=13.32 7.08 4.31
+# end=2026-10-06T06:02:54+09:00 rc=12 loadavg=13.45 7.21 4.37
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+
+## 상태마다 바뀐 변수만 (trace_diff.py)
+State 1: Initial
+    deferred = <<{}, {}, {}, {}, {}>>
+    highest = <<0, 0, 0, 0, 0>>
+    msgs = {}
+    nreq = <<0, 0, 0, 0, 0>>
+    replied = <<{}, {}, {}, {}, {}>>
+    reqTs = <<0, 0, 0, 0, 0>>
+    state = <<"idle", "idle", "idle", "idle", "idle">>
+    view = <<1..5, 1..5, 1..5, 1..5, 1..5>>
+State 2: Request
+    highest = <<1, 0, 0, 0, 0>>
+    msgs + [type |-> "req", from |-> 1, to |-> 2, ts |-> 1]
+    msgs + [type |-> "req", from |-> 1, to |-> 3, ts |-> 1]
+    msgs + [type |-> "req", from |-> 1, to |-> 4, ts |-> 1]
+    msgs + [type |-> "req", from |-> 1, to |-> 5, ts |-> 1]
+    nreq = <<1, 0, 0, 0, 0>>
+    reqTs = <<1, 0, 0, 0, 0>>
+    state = <<"waiting", "idle", "idle", "idle", "idle">>
+State 3: ChangeView
+    view = <<{1, 2, 3}, 1..5, 1..5, 1..5, 1..5>>
+State 4: DeliverRequest
+    highest = <<1, 1, 0, 0, 0>>
+    msgs + [type |-> "rep", from |-> 2, to |-> 1, ts |-> 1]
+    msgs - [type |-> "req", from |-> 1, to |-> 2, ts |-> 1]
+State 5: DeliverReply
+    msgs - [type |-> "rep", from |-> 2, to |-> 1, ts |-> 1]
+    replied = <<{2}, {}, {}, {}, {}>>
+State 6: DeliverRequest
+    highest = <<1, 1, 1, 0, 0>>
+    msgs + [type |-> "rep", from |-> 3, to |-> 1, ts |-> 1]
+    msgs - [type |-> "req", from |-> 1, to |-> 3, ts |-> 1]
+State 7: DeliverReply
+    msgs - [type |-> "rep", from |-> 3, to |-> 1, ts |-> 1]
+    replied = <<{2, 3}, {}, {}, {}, {}>>
+State 8: Enter
+    state = <<"inside", "idle", "idle", "idle", "idle">>
+State 9: Request
+    highest = <<1, 1, 1, 0, 1>>
+    msgs + [type |-> "req", from |-> 5, to |-> 1, ts |-> 1]
+    msgs + [type |-> "req", from |-> 5, to |-> 2, ts |-> 1]
+    msgs + [type |-> "req", from |-> 5, to |-> 3, ts |-> 1]
+    msgs + [type |-> "req", from |-> 5, to |-> 4, ts |-> 1]
+    nreq = <<1, 0, 0, 0, 1>>
+    reqTs = <<1, 0, 0, 0, 1>>
+    state = <<"inside", "idle", "idle", "idle", "waiting">>
+State 10: DeliverRequest
+    msgs + [type |-> "rep", from |-> 3, to |-> 5, ts |-> 1]
+    msgs - [type |-> "req", from |-> 5, to |-> 3, ts |-> 1]
+State 11: DeliverRequest
+    highest = <<1, 1, 1, 1, 1>>
+    msgs + [type |-> "rep", from |-> 4, to |-> 5, ts |-> 1]
+    msgs - [type |-> "req", from |-> 5, to |-> 4, ts |-> 1]
+State 12: ChangeView
+    view = <<{1, 2, 3}, 1..5, 1..5, 1..5, {3, 4, 5}>>
+State 13: DeliverReply
+    msgs - [type |-> "rep", from |-> 3, to |-> 5, ts |-> 1]
+    replied = <<{2, 3}, {}, {}, {}, {3}>>
+State 14: DeliverReply
+    msgs - [type |-> "rep", from |-> 4, to |-> 5, ts |-> 1]
+    replied = <<{2, 3}, {}, {}, {}, {3, 4}>>
+State 15: Enter
+    state = <<"inside", "idle", "idle", "idle", "inside">>
+
+## TLC 원문
+Error: Invariant MutualExclusion is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ deferred = <<{}, {}, {}, {}, {}>>
+/\ state = <<"idle", "idle", "idle", "idle", "idle">>
+/\ msgs = {}
+/\ replied = <<{}, {}, {}, {}, {}>>
+/\ view = <<1..5, 1..5, 1..5, 1..5, 1..5>>
+/\ highest = <<0, 0, 0, 0, 0>>
+/\ reqTs = <<0, 0, 0, 0, 0>>
+/\ nreq = <<0, 0, 0, 0, 0>>
+
+State 2: <Request line 95, col 3 to line 106, col 33 of module RA_LiveMembers>
+/\ deferred = <<{}, {}, {}, {}, {}>>
+/\ state = <<"waiting", "idle", "idle", "idle", "idle">>
+/\ msgs = { [type |-> "req", from |-> 1, to |-> 2, ts |-> 1],
+  [type |-> "req", from |-> 1, to |-> 3, ts |-> 1],
+  [type |-> "req", from |-> 1, to |-> 4, ts |-> 1],
+  [type |-> "req", from |-> 1, to |-> 5, ts |-> 1] }
+/\ replied = <<{}, {}, {}, {}, {}>>
+/\ view = <<1..5, 1..5, 1..5, 1..5, 1..5>>
+/\ highest = <<1, 0, 0, 0, 0>>
+/\ reqTs = <<1, 0, 0, 0, 0>>
+/\ nreq = <<1, 0, 0, 0, 0>>
+
+State 3: <ChangeView line 154, col 3 to line 157, col 71 of module RA_LiveMembers>
+/\ deferred = <<{}, {}, {}, {}, {}>>
+/\ state = <<"waiting", "idle", "idle", "idle", "idle">>
+/\ msgs = { [type |-> "req", from |-> 1, to |-> 2, ts |-> 1],
+  [type |-> "req", from |-> 1, to |-> 3, ts |-> 1],
+  [type |-> "req", from |-> 1, to |-> 4, ts |-> 1],
+  [type |-> "req", from |-> 1, to |-> 5, ts |-> 1] }
+/\ replied = <<{}, {}, {}, {}, {}>>
+/\ view = <<{1, 2, 3}, 1..5, 1..5, 1..5, 1..5>>
+/\ highest = <<1, 0, 0, 0, 0>>
+/\ reqTs = <<1, 0, 0, 0, 0>>
+/\ nreq = <<1, 0, 0, 0, 0>>
+
+State 4: <DeliverRequest line 160, col 22 to line 160, col 54 of module RA_LiveMembers>
+/\ deferred = <<{}, {}, {}, {}, {}>>
+/\ state = <<"waiting", "idle", "idle", "idle", "idle">>
+/\ msgs = { [type |-> "req", from |-> 1, to |-> 3, ts |-> 1],
+  [type |-> "req", from |-> 1, to |-> 4, ts |-> 1],
+  [type |-> "req", from |-> 1, to |-> 5, ts |-> 1],
+  [type |-> "rep", from |-> 2, to |-> 1, ts |-> 1] }
+/\ replied = <<{}, {}, {}, {}, {}>>
+/\ view = <<{1, 2, 3}, 1..5, 1..5, 1..5, 1..5>>
+/\ highest = <<1, 1, 0, 0, 0>>
+/\ reqTs = <<1, 0, 0, 0, 0>>
+/\ nreq = <<1, 0, 0, 0, 0>>
+
+State 5: <DeliverReply line 161, col 20 to line 161, col 50 of module RA_LiveMembers>
+/\ deferred = <<{}, {}, {}, {}, {}>>
+/\ state = <<"waiting", "idle", "idle", "idle", "idle">>
+/\ msgs = { [type |-> "req", from |-> 1, to |-> 3, ts |-> 1],
+  [type |-> "req", from |-> 1, to |-> 4, ts |-> 1],
+  [type |-> "req", from |-> 1, to |-> 5, ts |-> 1] }
+/\ replied = <<{2}, {}, {}, {}, {}>>
+/\ view = <<{1, 2, 3}, 1..5, 1..5, 1..5, 1..5>>
+/\ highest = <<1, 1, 0, 0, 0>>
+/\ reqTs = <<1, 0, 0, 0, 0>>
+/\ nreq = <<1, 0, 0, 0, 0>>
+
+State 6: <DeliverRequest line 160, col 22 to line 160, col 54 of module RA_LiveMembers>
+/\ deferred = <<{}, {}, {}, {}, {}>>
+/\ state = <<"waiting", "idle", "idle", "idle", "idle">>
+/\ msgs = { [type |-> "req", from |-> 1, to |-> 4, ts |-> 1],
+  [type |-> "req", from |-> 1, to |-> 5, ts |-> 1],
+  [type |-> "rep", from |-> 3, to |-> 1, ts |-> 1] }
+/\ replied = <<{2}, {}, {}, {}, {}>>
+/\ view = <<{1, 2, 3}, 1..5, 1..5, 1..5, 1..5>>
+/\ highest = <<1, 1, 1, 0, 0>>
+/\ reqTs = <<1, 0, 0, 0, 0>>
+/\ nreq = <<1, 0, 0, 0, 0>>
+
+State 7: <DeliverReply line 161, col 20 to line 161, col 50 of module RA_LiveMembers>
+/\ deferred = <<{}, {}, {}, {}, {}>>
+/\ state = <<"waiting", "idle", "idle", "idle", "idle">>
+/\ msgs = { [type |-> "req", from |-> 1, to |-> 4, ts |-> 1],
+  [type |-> "req", from |-> 1, to |-> 5, ts |-> 1] }
+/\ replied = <<{2, 3}, {}, {}, {}, {}>>
+/\ view = <<{1, 2, 3}, 1..5, 1..5, 1..5, 1..5>>
+/\ highest = <<1, 1, 1, 0, 0>>
+/\ reqTs = <<1, 0, 0, 0, 0>>
+/\ nreq = <<1, 0, 0, 0, 0>>
+
+State 8: <Enter line 136, col 3 to line 140, col 70 of module RA_LiveMembers>
+/\ deferred = <<{}, {}, {}, {}, {}>>
+/\ state = <<"inside", "idle", "idle", "idle", "idle">>
+/\ msgs = { [type |-> "req", from |-> 1, to |-> 4, ts |-> 1],
+  [type |-> "req", from |-> 1, to |-> 5, ts |-> 1] }
+/\ replied = <<{2, 3}, {}, {}, {}, {}>>
+/\ view = <<{1, 2, 3}, 1..5, 1..5, 1..5, 1..5>>
+/\ highest = <<1, 1, 1, 0, 0>>
+/\ reqTs = <<1, 0, 0, 0, 0>>
+/\ nreq = <<1, 0, 0, 0, 0>>
+
+State 9: <Request line 95, col 3 to line 106, col 33 of module RA_LiveMembers>
+/\ deferred = <<{}, {}, {}, {}, {}>>
+/\ state = <<"inside", "idle", "idle", "idle", "waiting">>
+/\ msgs = { [type |-> "req", from |-> 1, to |-> 4, ts |-> 1],
+  [type |-> "req", from |-> 1, to |-> 5, ts |-> 1],
+  [type |-> "req", from |-> 5, to |-> 1, ts |-> 1],
+  [type |-> "req", from |-> 5, to |-> 2, ts |-> 1],
+  [type |-> "req", from |-> 5, to |-> 3, ts |-> 1],
+  [type |-> "req", from |-> 5, to |-> 4, ts |-> 1] }
+/\ replied = <<{2, 3}, {}, {}, {}, {}>>
+/\ view = <<{1, 2, 3}, 1..5, 1..5, 1..5, 1..5>>
+/\ highest = <<1, 1, 1, 0, 1>>
+/\ reqTs = <<1, 0, 0, 0, 1>>
+/\ nreq = <<1, 0, 0, 0, 1>>
+
+State 10: <DeliverRequest line 160, col 22 to line 160, col 54 of module RA_LiveMembers>
+/\ deferred = <<{}, {}, {}, {}, {}>>
+/\ state = <<"inside", "idle", "idle", "idle", "waiting">>
+/\ msgs = { [type |-> "req", from |-> 1, to |-> 4, ts |-> 1],
+  [type |-> "req", from |-> 1, to |-> 5, ts |-> 1],
+  [type |-> "req", from |-> 5, to |-> 1, ts |-> 1],
+  [type |-> "req", from |-> 5, to |-> 2, ts |-> 1],
+  [type |-> "req", from |-> 5, to |-> 4, ts |-> 1],
+  [type |-> "rep", from |-> 3, to |-> 5, ts |-> 1] }
+/\ replied = <<{2, 3}, {}, {}, {}, {}>>
+/\ view = <<{1, 2, 3}, 1..5, 1..5, 1..5, 1..5>>
+/\ highest = <<1, 1, 1, 0, 1>>
+/\ reqTs = <<1, 0, 0, 0, 1>>
+/\ nreq = <<1, 0, 0, 0, 1>>
+
+State 11: <DeliverRequest line 160, col 22 to line 160, col 54 of module RA_LiveMembers>
+/\ deferred = <<{}, {}, {}, {}, {}>>
+/\ state = <<"inside", "idle", "idle", "idle", "waiting">>
+/\ msgs = { [type |-> "req", from |-> 1, to |-> 4, ts |-> 1],
+  [type |-> "req", from |-> 1, to |-> 5, ts |-> 1],
+  [type |-> "req", from |-> 5, to |-> 1, ts |-> 1],
+  [type |-> "req", from |-> 5, to |-> 2, ts |-> 1],
+  [type |-> "rep", from |-> 3, to |-> 5, ts |-> 1],
+  [type |-> "rep", from |-> 4, to |-> 5, ts |-> 1] }
+/\ replied = <<{2, 3}, {}, {}, {}, {}>>
+/\ view = <<{1, 2, 3}, 1..5, 1..5, 1..5, 1..5>>
+/\ highest = <<1, 1, 1, 1, 1>>
+/\ reqTs = <<1, 0, 0, 0, 1>>
+/\ nreq = <<1, 0, 0, 0, 1>>
+
+State 12: <ChangeView line 154, col 3 to line 157, col 71 of module RA_LiveMembers>
+/\ deferred = <<{}, {}, {}, {}, {}>>
+/\ state = <<"inside", "idle", "idle", "idle", "waiting">>
+/\ msgs = { [type |-> "req", from |-> 1, to |-> 4, ts |-> 1],
+  [type |-> "req", from |-> 1, to |-> 5, ts |-> 1],
+  [type |-> "req", from |-> 5, to |-> 1, ts |-> 1],
+  [type |-> "req", from |-> 5, to |-> 2, ts |-> 1],
+  [type |-> "rep", from |-> 3, to |-> 5, ts |-> 1],
+  [type |-> "rep", from |-> 4, to |-> 5, ts |-> 1] }
+/\ replied = <<{2, 3}, {}, {}, {}, {}>>
+/\ view = <<{1, 2, 3}, 1..5, 1..5, 1..5, {3, 4, 5}>>
+/\ highest = <<1, 1, 1, 1, 1>>
+/\ reqTs = <<1, 0, 0, 0, 1>>
+/\ nreq = <<1, 0, 0, 0, 1>>
+
+State 13: <DeliverReply line 161, col 20 to line 161, col 50 of module RA_LiveMembers>
+/\ deferred = <<{}, {}, {}, {}, {}>>
+/\ state = <<"inside", "idle", "idle", "idle", "waiting">>
+/\ msgs = { [type |-> "req", from |-> 1, to |-> 4, ts |-> 1],
+  [type |-> "req", from |-> 1, to |-> 5, ts |-> 1],
+  [type |-> "req", from |-> 5, to |-> 1, ts |-> 1],
+  [type |-> "req", from |-> 5, to |-> 2, ts |-> 1],
+  [type |-> "rep", from |-> 4, to |-> 5, ts |-> 1] }
+/\ replied = <<{2, 3}, {}, {}, {}, {3}>>
+/\ view = <<{1, 2, 3}, 1..5, 1..5, 1..5, {3, 4, 5}>>
+/\ highest = <<1, 1, 1, 1, 1>>
+/\ reqTs = <<1, 0, 0, 0, 1>>
+/\ nreq = <<1, 0, 0, 0, 1>>
+
+State 14: <DeliverReply line 161, col 20 to line 161, col 50 of module RA_LiveMembers>
+/\ deferred = <<{}, {}, {}, {}, {}>>
+/\ state = <<"inside", "idle", "idle", "idle", "waiting">>
+/\ msgs = { [type |-> "req", from |-> 1, to |-> 4, ts |-> 1],
+  [type |-> "req", from |-> 1, to |-> 5, ts |-> 1],
+  [type |-> "req", from |-> 5, to |-> 1, ts |-> 1],
+  [type |-> "req", from |-> 5, to |-> 2, ts |-> 1] }
+/\ replied = <<{2, 3}, {}, {}, {}, {3, 4}>>
+/\ view = <<{1, 2, 3}, 1..5, 1..5, 1..5, {3, 4, 5}>>
+/\ highest = <<1, 1, 1, 1, 1>>
+/\ reqTs = <<1, 0, 0, 0, 1>>
+/\ nreq = <<1, 0, 0, 0, 1>>
+
+State 15: <Enter line 136, col 3 to line 140, col 70 of module RA_LiveMembers>
+/\ deferred = <<{}, {}, {}, {}, {}>>
+/\ state = <<"inside", "idle", "idle", "idle", "inside">>
+/\ msgs = { [type |-> "req", from |-> 1, to |-> 4, ts |-> 1],
+  [type |-> "req", from |-> 1, to |-> 5, ts |-> 1],
+  [type |-> "req", from |-> 5, to |-> 1, ts |-> 1],
+  [type |-> "req", from |-> 5, to |-> 2, ts |-> 1] }
+/\ replied = <<{2, 3}, {}, {}, {}, {3, 4}>>
+/\ view = <<{1, 2, 3}, 1..5, 1..5, 1..5, {3, 4, 5}>>
+/\ highest = <<1, 1, 1, 1, 1>>
+/\ reqTs = <<1, 0, 0, 0, 1>>
+/\ nreq = <<1, 0, 0, 0, 1>>
+
+248021 states generated, 40664 distinct states found, 8136 states left on queue.
