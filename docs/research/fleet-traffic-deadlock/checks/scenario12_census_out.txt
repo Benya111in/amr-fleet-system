@@ -8,14 +8,14 @@ reg2       —        passed    4048    1    1    5  —
 regF       011abdf  passed    3895    2    1    5  —
 regG       80874d3  passed    4011    2    1    5  —
 B12        f0e79ee  error     3425    1    0    5  test_10_concurrent_tasks:기타: Traceback (most recent call last): File "/r
-B12b       658aa12  failed    4717    5    3    5  test_10_concurrent_tasks:작업 미완
+B12b       658aa12  failed    4717    5    3    5  test_10_concurrent_tasks:작업 미완; test_10_concurrent_tasks:미해소 교착(전체)
 E12        b37c687  failed    3708    0    0    5  test_20_forced_deadlock:settle(측위 별칭)
 R12a       cecb0f6  failed    2752    1    0    5  test_20_forced_deadlock:settle(측위 별칭)
 R12b       cecb0f6  failed    2076    2    0    5  test_20_forced_deadlock:settle(측위 별칭)
 S12b       —        failed    2567    0    2    5  test_10_concurrent_tasks:미해소 교착(전체)
 X12        —        failed    4631    3    2    5  test_10_concurrent_tasks:작업 미완
 Y12        —        missing      —    1    0    1  —
-itest      —        ?         4436    4    0    3  test_10_concurrent_tasks:작업 미완
+itest      —        ?         4436    4    0    3  test_10_concurrent_tasks:작업 미완; test_10_concurrent_tasks:미해소 교착(전체)
 late12     —        failed    1772    3    0    5  test_10_concurrent_tasks:작업 미완; test_20_forced_deadlock:미해소 교착(강제)
 late3      —        failed    1282    0    0    5  test_10_concurrent_tasks:작업 미완; test_20_forced_deadlock:settle(측위 별칭)
 r12        —        failed    1792    2    0    5  test_10_concurrent_tasks:작업 미완
@@ -31,10 +31,10 @@ v12        —        failed    3508    1   23    4  test_10_concurrent_tasks:�
 실패 사유 (테스트 단언 기준, 한 실행이 여러 개를 낼 수 있다):
    10  작업 미완
     4  settle(측위 별칭)
+    3  미해소 교착(전체)
     2  busy 작업 거절
     2  러너 타임아웃
     1  기타: Traceback (most recent call last): File "/ros2_ws/
-    1  미해소 교착(전체)
     1  미해소 교착(강제)
     1  IDLE 아님
 

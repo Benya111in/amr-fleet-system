@@ -45,13 +45,18 @@ PATTERNS = [
 ]
 
 
-def classify(text: str) -> str:
-    """단언 메시지(트레이스백 제외)에서 사유 한 가지."""
+def classify(text: str) -> list:
+    """
+    단언 메시지(트레이스백 제외)에서 사유를 **전부** 뽑는다.
+
+    한 가지만 돌려주면 안 된다 — test_10_concurrent_tasks 는 실패한 판정을 모아
+    `assertFalse(failed, '; '.join(failed))` 로 **한 메시지에 합쳐** 올린다
+    (test_12_multi_robot_deadlock.py:336-337). 첫 일치에서 반환하면 B12b·itest 처럼
+    "tasks completed" 와 "detected deadlocks resolved" 를 같이 낸 실행에서 뒤의 것을 놓친다.
+    """
     tail = text.split('AssertionError')[-1] if 'AssertionError' in text else text
-    for name, needle in PATTERNS:
-        if needle in tail:
-            return name
-    return '기타: ' + re.sub(r'\s+', ' ', tail).strip()[:50]
+    hits = [name for name, needle in PATTERNS if needle in tail]
+    return hits or ['기타: ' + re.sub(r'\s+', ' ', tail).strip()[:50]]
 
 
 def one_run(tag: str) -> dict:
@@ -84,7 +89,8 @@ def one_run(tag: str) -> dict:
                 for b in tc:
                     if b.tag in ('failure', 'error'):
                         msg = (b.get('message') or '') + ' ' + (b.text or '')
-                        out['failed_tests'].append((tc.get('name', '?'), classify(msg)))
+                        for k in classify(msg):
+                            out['failed_tests'].append((tc.get('name', '?'), k))
         except ET.ParseError:
             pass
     lg = d / 'launch.log'
