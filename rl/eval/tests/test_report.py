@@ -173,3 +173,34 @@ def test_cli_synthetic(tmp_path):
     js = json.loads((out / 'report.json').read_text(encoding='utf-8'))
     assert js['confirmatory']['hypotheses'][0]['verdict'] == R.MET
     assert len(schema.read_csv(str(out / 'synthetic_episodes.csv'))) == js['n_rows']
+
+
+def test_safety_alarm_fires_on_excess_contacts():
+    rows = synth.make_dataset(seed=10, gz_n=300, gz_collision={'C_hybrid': 0.03})
+    res = R.confirmatory(rows)
+    al = res['alarm']
+    assert al['fired'] and al['k_t'] - al['k_r'] >= 3 and al['p'] < 0.05
+    assert '울림' in R.render_markdown(R.evaluate(rows, reps=100))
+
+
+def test_safety_alarm_silent_when_clean(good):
+    _, res = good
+    al = res['confirmatory']['alarm']
+    assert not al['fired'] and al['k_t'] == 0 and al['test'] == 'barnard'
+
+
+def test_safety_alarm_threshold_three_vs_zero():
+    """240 쌍, A 0 접촉, C 접촉 3 회 → Barnard p = 0.0481 로 경보 (Boschloo 였다면 5 회)."""
+    def mk(arm, coll):
+        return {'arm': arm, 'outcome': 'collision' if coll else 'success', 'contacts': int(coll)}
+    pairs = []
+    for i in range(240):
+        t = mk('C_hybrid', i in (10, 50, 239))
+        t['exec_index'] = i
+        pairs.append((t, mk('A_dwa', False)))
+    al = R.safety_alarm(pairs)
+    assert al['fired'] and al['n'] == 240 and al['k_t'] == 3
+    assert al['p'] == pytest.approx(0.0481, abs=3e-4)
+    pairs2 = [(dict(t, outcome='success', contacts=0) if t['exec_index'] == 239 else t, r)
+              for t, r in pairs]
+    assert not R.safety_alarm(pairs2)['fired']

@@ -182,8 +182,48 @@ def test_calc1_boschloo_used_transposed_table():
     assert N.boschloo_greater(k, 240, 0, 240) > 0.05
 
 
-def test_superiority_alarm_threshold_is_5_not_4():
-    assert N.superiority_alarm_k(240, 240, 0, alpha=0.05, k_max=8) == 5
+def test_superiority_alarm_thresholds():
+    # 240 대 240, 기준 0 회: Barnard 0 대 3 · Boschloo 0 대 5 · Fisher 0 대 5 (이론편 "Boschloo 0 대 4" 정정)
+    assert N.superiority_alarm_k(240, 240, 0, alpha=0.05, k_max=8, method='barnard') == 3
+    assert N.superiority_alarm_k(240, 240, 0, alpha=0.05, k_max=8, method='boschloo') == 5
+    assert N.superiority_alarm_k(240, 240, 0, alpha=0.05, k_max=8, method='fisher') == 5
+    # 기준 1 회면 Barnard 6 · Boschloo 7
+    assert N.superiority_alarm_k(240, 240, 1, alpha=0.05, k_max=10, method='barnard') == 6
+    assert N.superiority_alarm_k(240, 240, 1, alpha=0.05, k_max=10, method='boschloo') == 7
+
+
+BARNARD_ARMS = {2: 0.1059, 3: 0.0481, 4: 0.0243, 5: 0.0126}
+
+
+@pytest.mark.parametrize('k', sorted(BARNARD_ARMS))
+def test_barnard_arms_as_columns(k):
+    assert N.barnard_greater(k, 240, 0, 240) == pytest.approx(BARNARD_ARMS[k], abs=2e-4)
+
+
+def test_barnard_bruteforce_independent():
+    """독립 전수 계산 — 합동 분산 score 통계량, 두 군 n = 240, 귀무 p 위 sup."""
+    n1 = n2 = 240
+    x1 = np.arange(n1 + 1)[:, None]
+    x2 = np.arange(n2 + 1)[None, :]
+    pb = (x1 + x2) / (n1 + n2)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        t = (x1 / n1 - x2 / n2) / np.sqrt(pb * (1 - pb) * (1 / n1 + 1 / n2))
+    t = np.nan_to_num(t, nan=0.0)
+    rej = t >= t[3, 0] - 1e-12
+    best = 0.0
+    for p in np.concatenate([np.linspace(1e-4, 0.05, 500), np.linspace(0.05, 0.5, 300)]):
+        b1 = stats.binom.pmf(np.arange(n1 + 1), n1, p)
+        b2 = stats.binom.pmf(np.arange(n2 + 1), n2, p)
+        best = max(best, float((b1[:, None] * b2[None, :] * rej).sum()))
+    assert best == pytest.approx(BARNARD_ARMS[3], abs=3e-4)
+
+
+def test_scipy_default_nuisance_grid_underestimates_barnard():
+    """기본 격자(scipy n=32)는 0 대 3 의 Barnard p 를 0.0437 로 낮게 낸다 — 그래서 n=200 을 쓴다."""
+    tab = N._arms_table(3, 240, 0, 240)
+    coarse = stats.barnard_exact(tab, alternative='greater').pvalue
+    assert coarse < BARNARD_ARMS[3] - 0.003
+    assert N.NUISANCE_GRID >= 200
 
 
 def test_fm_degenerate_all_events_uses_fallback():

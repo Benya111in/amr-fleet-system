@@ -43,6 +43,8 @@ PREREG = {
     'spec_block': 30,
     'spec_dev_m': 1.0,
     'spec_return_s': 5.0,
+    'alarm_test': 'barnard',
+    'alarm_alpha': 0.05,
 }
 
 
@@ -195,6 +197,32 @@ def pair_rows(rows_t, rows_r):
     return [(t, ref[key(t)]) for t in rows_t if key(t) in ref]
 
 
+def safety_alarm(pairs, prereg=PREREG):
+    """
+    안전 경보 (§6.5, 확증 아님) — 짝을 시험 정책의 실행 순서로 훑으며 누적 접촉을 비교한다.
+
+    시험 정책에 접촉이 날 때마다 (누적 k_t > k_r 이면) 정확 비조건부 단측 검정을 하고, 처음 p < α 인 지점을
+    돌려준다. 반환 dict: fired, n(그때까지 짝 수), k_t, k_r, p, exec_index.
+    """
+    test = ni.ALARM_TESTS[prereg['alarm_test']]
+    seq = sorted(pairs, key=lambda tr: (tr[0].get('exec_index') is None,
+                                        tr[0].get('exec_index') or 0))
+    k_t = k_r = 0
+    last = {'fired': False, 'n': len(seq), 'k_t': 0, 'k_r': 0, 'p': math.nan,
+            'exec_index': None, 'test': prereg['alarm_test']}
+    for i, (t, r) in enumerate(seq, start=1):
+        k_r += int(schema.collided(r))
+        if schema.collided(t):
+            k_t += 1
+            if k_t > k_r:
+                p = test(k_t, i, k_r, i)
+                if p < prereg['alarm_alpha']:
+                    return {'fired': True, 'n': i, 'k_t': k_t, 'k_r': k_r, 'p': p,
+                            'exec_index': t.get('exec_index'), 'test': prereg['alarm_test']}
+    last.update(k_t=k_t, k_r=k_r)
+    return last
+
+
 def _exec_order(rows):
     if all(r.get('exec_index') is not None for r in rows):
         return sorted(rows, key=lambda r: r['exec_index']), True
@@ -258,6 +286,7 @@ def confirmatory(rows, prereg=PREREG, primary_policy=None, arm=None):
     pairs = pair_rows([r for r in t_rows if r['outcome'] != 'error'],
                       [r for r in r_rows if r['outcome'] != 'error'])
     res['pairs'] = len(pairs)
+    res['alarm'] = safety_alarm(pairs, prereg)
     a = prereg['alpha']
     zc = ni.z_quantile(1 - a)
     if pairs:
@@ -516,6 +545,13 @@ def render_markdown(res):
     w('')
     w(f'주 체크포인트: `{c.get("policy")}` · 유효 에피소드 {c.get("n", 0)} · 짝 {c.get("pairs", 0)}')
     w('')
+    al = c.get('alarm')
+    if al:
+        state = (f'**울림** — 짝 {al["n"]} 번째 (exec_index {al["exec_index"]}), C {al["k_t"]} 대 '
+                 f'A {al["k_r"]}, p = {al["p"]:.4f} → C 의 Gazebo 평가를 멈추고 실패 모드 분석'
+                 if al['fired'] else f'울리지 않음 (짝 {al["n"]}, C {al["k_t"]} 대 A {al["k_r"]})')
+        w(f'안전 경보 ({al["test"]} 단측 p < {PREREG["alarm_alpha"]}, 확증 아님): {state}')
+        w('')
     w('| 가설 | 판정 | 근거 |')
     w('| --- | --- | --- |')
     for h in c['hypotheses']:

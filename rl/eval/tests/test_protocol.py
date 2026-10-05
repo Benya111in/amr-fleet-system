@@ -47,7 +47,10 @@ def test_sprt_numbers_in_text():
 
 
 def test_alarm_threshold_text():
-    assert f'p = {N.boschloo_greater(5, 240, 0, 240):.4f}' in DOC
+    assert R.PREREG['alarm_test'] == 'barnard' and 'Barnard 단측 p < 0.05' in _row('안전 경보')
+    k = N.superiority_alarm_k(240, 240, 0, alpha=R.PREREG['alarm_alpha'], k_max=8)
+    assert f'**0 대 {k}** (p = {N.barnard_greater(k, 240, 0, 240):.4f})' in DOC
+    assert f'Boschloo 는 0 대 5 (p = {N.boschloo_greater(5, 240, 0, 240):.4f}' in DOC
     assert f'0 대 4 는 p = {N.boschloo_greater(4, 240, 0, 240):.4f}' in DOC
 
 

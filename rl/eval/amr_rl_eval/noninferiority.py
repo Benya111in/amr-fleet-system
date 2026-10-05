@@ -13,10 +13,14 @@ evaluation_statistics_theory.md §2 (calc2.py·calc3.py 와 같은 공식).
   Tango(1998) 짝지은 score 검정 — 같은 시나리오 시드에서 두 정책을 돌린 쌍
   우월성(시험 정책이 더 자주 부딪친다): Fisher·mid-p·Boschloo (scipy)
 
-**주의 — Boschloo 표 방향.** scipy 의 boschloo_exact·barnard_exact 는 **열**을 이항 표본(군)으로
-본다. 이론편 calc1.py 는 행을 군으로 넣어 (`[[k, 240−k], [0, 240]]`) 다른 설계(총 사건 수 고정)의
-값을 냈다. 240 대 240 에서 0 대 4 의 올바른 Boschloo 단측 p 는 0.0550 이고 (calc1: 0.043),
-유의(α=0.05)는 0 대 5 (p=0.0254) 부터다 — tests/test_noninferiority.py 가 전수 계산으로 확인한다.
+**주의 — 정확 비조건부 검정의 표 방향.** scipy 의 boschloo_exact·barnard_exact 는 **열**을 이항
+표본(군)으로 본다. 이론편 calc1.py 는 행을 군으로 넣어 (`[[k, 240−k], [0, 240]]`) 다른 설계(총 사건 수
+고정)의 값을 냈다. 240 대 240 에서 올바른 단측 p 는 (tests/test_noninferiority.py 가 독립 전수 계산으로 확인):
+  0 대 3: Boschloo 0.1089 · Barnard 0.0481 · Fisher 0.124
+  0 대 4: Boschloo 0.0550 (calc1: 0.043) · Barnard 0.0243 (calc1: 0.112) · Fisher 0.062
+  0 대 5: Boschloo 0.0254 · Barnard 0.0126 · Fisher 0.031
+즉 이 영역에서는 Barnard 가 가장 강력하고 Boschloo 는 Fisher 와 같은 0 대 5 에서야 유의하다 — 이론편의
+"Boschloo 가 0 대 4 부터, Barnard 는 덜 강력" 은 표 방향 오류에서 나왔다.
 """
 
 import math
@@ -276,16 +280,32 @@ def fisher_midp_greater(k_t, n_t, k_r, n_r):
     return float(hg.sf(k_t) + 0.5 * hg.pmf(k_t))
 
 
-def boschloo_greater(k_t, n_t, k_r, n_r, n=32):
+# 귀무 모수(공통 사건률) 위 상한(sup)을 찾는 격자 크기. scipy 기본 32 는 Barnard 에서 p 를 낮게 낸다
+# (240 대 240, 0 대 3: n=32 → 0.0437, n ≥ 200 → 0.0481; 독립 전수 계산 0.0481). 200 이면 수렴한다.
+NUISANCE_GRID = 200
+
+
+def boschloo_greater(k_t, n_t, k_r, n_r, n=NUISANCE_GRID):
     """Boschloo 정확 비조건부 단측 p — 시험 정책의 사건률이 더 크다 (군 = 열)."""
     return float(stats.boschloo_exact(_arms_table(k_t, n_t, k_r, n_r),
                                       alternative='greater', n=n).pvalue)
 
 
-def superiority_alarm_k(n_t, n_r, k_r=0, alpha=0.05, k_max=None):
-    """기준 k_r 회일 때 Boschloo 단측 p < α 가 되는 시험 정책 최소 사건 수 (안전 경보 문턱)."""
+def barnard_greater(k_t, n_t, k_r, n_r, n=NUISANCE_GRID):
+    """Barnard 정확 비조건부 단측 p (합동 분산 score 통계량) — 시험 정책의 사건률이 더 크다 (군 = 열)."""
+    return float(stats.barnard_exact(_arms_table(k_t, n_t, k_r, n_r),
+                                     alternative='greater', pooled=True, n=n).pvalue)
+
+
+ALARM_TESTS = {'barnard': barnard_greater, 'boschloo': boschloo_greater,
+               'fisher': lambda k_t, n_t, k_r, n_r: fisher_greater(k_t, n_t, k_r, n_r)}
+
+
+def superiority_alarm_k(n_t, n_r, k_r=0, alpha=0.05, k_max=None, method='barnard'):
+    """기준 k_r 회일 때 단측 p < α 가 되는 시험 정책 최소 사건 수 (안전 경보 문턱)."""
+    test = ALARM_TESTS[method]
     k_max = n_t if k_max is None else k_max
     for k in range(k_r, k_max + 1):
-        if boschloo_greater(k, n_t, k_r, n_r) < alpha:
+        if test(k, n_t, k_r, n_r) < alpha:
             return k
     return None
