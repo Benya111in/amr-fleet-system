@@ -37,6 +37,7 @@ def main():
     ap.add_argument('--minibatches', type=int, default=8)
     ap.add_argument('--lr', type=float, default=3e-4)
     ap.add_argument('--ent-coef', type=float, default=0.0)
+    ap.add_argument('--target-kl', type=float, default=0.03)
     ap.add_argument('--seed', type=int, default=0)
     ap.add_argument('--obstacles', default='mixed')
     ap.add_argument('--n-obstacles', type=int, nargs=2, default=[0, 4])
@@ -69,7 +70,8 @@ def main():
     env = Sim2DEnv(env_cfg(a.envs, a.seed), log=log)
     eval_env = Sim2DEnv(env_cfg(a.eval_envs, a.seed + 1000), log=log)
     pcfg = PPOConfig(rollout=a.rollout, epochs=a.epochs, minibatches=a.minibatches, lr=a.lr,
-                     ent_coef=a.ent_coef, lagrangian=a.lagrangian, lag_ki=a.lag_ki,
+                     ent_coef=a.ent_coef, target_kl=a.target_kl, lagrangian=a.lagrangian,
+                     lag_ki=a.lag_ki,
                      lag_kp=a.lag_kp)
     tr = Trainer(env, pcfg, seed=a.seed)
     cfg = {'args': vars(a), 'ppo': config_dict(pcfg), 'env': {
