@@ -93,6 +93,7 @@ class Sim2DEnv:
         if len(keep) == 0:
             raise ValueError(f'경로 길이 {cfg.path_len} 인 풀 항목이 없다')
         self.pool_keep = torch.as_tensor(keep, device=dev)
+        self.pool_L = torch.as_tensor(L, device=dev)
         self.pool_pts, self.pool_n, self.pool_cum, self.pool_len = T.path_tensors(
             pool['paths'], dev)
         self.P = self.pool_pts.shape[1]
@@ -155,6 +156,21 @@ class Sim2DEnv:
         self.scan_px = torch.zeros(N, C.LIDAR_SAMPLES, dtype=torch.float32, device=dev)
         self.scan_py = torch.zeros_like(self.scan_px)
         self.scan_ok = torch.zeros_like(self.scan_px, dtype=torch.bool)
+
+    def set_curriculum(self, path_len=None, n_obstacles=None):
+        """
+        커리큘럼 손잡이 (계약 §10: 구조 파라미터의 수동 단계) — 다음 리셋부터 적용.
+
+        path_len: 풀에서 뽑을 경로 길이 범위, n_obstacles: random 배치 개수 범위.
+        """
+        if path_len is not None:
+            keep = torch.nonzero((self.pool_L >= path_len[0]) & (self.pool_L <= path_len[1]))[:, 0]
+            if keep.numel() == 0:
+                raise ValueError(f'경로 길이 {path_len} 인 풀 항목이 없다')
+            self.pool_keep = keep
+            self.cfg.path_len = tuple(path_len)
+        if n_obstacles is not None:
+            self.cfg.n_obstacles = (int(n_obstacles[0]), int(n_obstacles[1]))
 
     def bstate(self):
         """현재 상태의 BState 뷰 (복사 없음)."""
@@ -393,6 +409,8 @@ class Sim2DEnv:
         if di.numel():
             info['done_idx'] = di
             info['final_obs'] = obs[di].clone()
+            if self.want_mask:
+                info['final_mask'] = self.mask[di].clone()
             info['episode'] = {
                 'return': self.ep_ret[di].clone(), 'length': self.ep_len[di].clone(),
                 'success': r['success'][di], 'collision': collided[di],
