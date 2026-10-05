@@ -36,6 +36,7 @@ def test_prereg_table_matches_code():
     assert _row('오류율 상한') == f'{100 * p["error_rate_max"]:.0f} %'
     assert _row('최소 시드') == str(p['min_seeds'])
     assert _row('SRCC 최소 정책 수') == str(p['srcc_min_policies'])
+    assert f'모두 > {p["srcc_ci_lower_min"]}' in _row('SRCC 충족')
     assert _row('CVaR 최소 레벨당 에피소드') == str(p['cvar_min_episodes_per_level'])
 
 

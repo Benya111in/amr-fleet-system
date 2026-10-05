@@ -115,7 +115,9 @@ def test_cvar_and_srcc(good):
     assert {c['arm'] for c in cv} == {'A_dwa', 'B_ppo', 'C_hybrid'}
     assert all(c['enough'] for c in cv)
     s = res['srcc'][0]
-    assert s['n_policies'] == 11 and s['verdict'] == R.MET and s['rho'] > 0.7
+    assert s['n_policies'] == 11 and s['rho'] > 0.7
+    # 충족 기준 (§6.10): 두 하한이 모두 0.5 초과 — 이 합성 자료는 넘는다 (ρ ≈ 0.9)
+    assert s['bw_lo'] > 0.5 and s['boot_lo'] > 0.5 and s['verdict'] == R.MET
 
 
 def test_srcc_few_policies_undecidable():
@@ -296,3 +298,41 @@ def test_gate_counts_test_errors_as_failures():
     assert g['tango_z'] == pytest.approx(-1.169, abs=1e-3) and g['verdict'] == R.NOT_MET
     g2 = R.gate_2d([r for r in rows if r['outcome'] != 'error'])[0]
     assert g2['tango_z'] == pytest.approx(-3.388, abs=1e-3) and g2['verdict'] == R.MET
+
+
+def _reverse_isaac_ranking(rows, s):
+    """Isaac 쪽 정책 이름을 2D 순위의 정반대 정책으로 바꾼다 (리뷰 반례)."""
+    import numpy as np
+    pols = s['policies']
+    order = np.argsort(s['scores_a'])
+    rev = {pols[order[i]]: pols[order[-1 - i]] for i in range(len(pols))}
+    return [dict(r, policy_id=rev[r['policy_id']])
+            if r['simulator'] == 'isaac' and r['policy_id'] in rev else r for r in rows]
+
+
+def test_srcc_reversed_or_weak_ranking_is_not_met():
+    """
+    리뷰 반례: 정책 N = 11 이면 ρ 와 무관하게 '충족' 이 나왔다.
+
+    순위를 뒤집은 자료 (ρ < 0) 와 약한 자료 (ρ ≈ 0.7, BW 하한 ≈ 0.1) 모두 미달이어야 한다.
+    """
+    rows = synth.make_dataset(seed=1, n_seeds=5, levels=12, eps_per_level=20, isaac_eps=20,
+                              gz_n=30)
+    weak = R.srcc_table(rows, reps=200)[0]
+    assert weak['n_policies'] == 11 and weak['bw_lo'] < 0.5
+    assert weak['verdict'] == R.NOT_MET
+    rev = R.srcc_table(_reverse_isaac_ranking(rows, weak), reps=200)[0]
+    assert rev['n_policies'] == 11 and rev['rho'] < 0 and rev['verdict'] == R.NOT_MET
+
+
+@pytest.mark.parametrize('n,bw,boot,want', [
+    (11, 0.60, 0.60, R.MET),
+    (11, 0.90, 0.30, R.NOT_MET),      # BW 만 넘는다
+    (11, 0.30, 0.90, R.NOT_MET),      # 부트스트랩만 넘는다
+    (11, 0.50, 0.90, R.NOT_MET),      # 경계는 '초과' 가 아니다
+    (11, -0.93, -0.08, R.NOT_MET),
+    (9, 0.95, 0.95, R.UNDECIDABLE),
+    (11, 0.90, float('nan'), R.UNDECIDABLE),
+])
+def test_srcc_verdict_needs_both_lower_bounds(n, bw, boot, want):
+    assert R.srcc_verdict(n, bw, boot)[0] == want

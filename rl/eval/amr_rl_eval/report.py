@@ -40,6 +40,7 @@ PREREG = {
     'cvar_alphas': (0.05, 0.10, 0.25),
     'cvar_min_episodes_per_level': 50,
     'srcc_min_policies': 10,
+    'srcc_ci_lower_min': 0.5,      # 충족 = BW 95 % 하한과 시나리오 부트스트랩 95 % 하한이 모두 초과
     'min_seeds': 5,
     'spec_block': 30,
     'spec_dev_m': 1.0,
@@ -443,6 +444,24 @@ def cvar_table(rows, simulator='sim2d', prereg=PREREG, seed=0):
     return out
 
 
+def srcc_verdict(n_policies, bw_lo, boot_lo, prereg=PREREG):
+    """
+    SRCC 판정 (PROTOCOL.md §6.10) → (낱말, 근거 문장).
+
+    정책 N < srcc_min_policies 면 판정 불가. 그 밖에는 Bonett–Wright 95 % 하한과 시나리오 부트스트랩
+    95 % 하한이 **모두** srcc_ci_lower_min 을 넘어야 충족, 아니면 미달 (ρ 의 부호·크기와 무관하게 N 만으로
+    충족이 되지 않는다).
+    """
+    m = prereg['srcc_ci_lower_min']
+    if n_policies < prereg['srcc_min_policies']:
+        return UNDECIDABLE, f'정책 {n_policies} < {prereg["srcc_min_policies"]}'
+    if bw_lo is None or boot_lo is None or math.isnan(bw_lo) or math.isnan(boot_lo):
+        return UNDECIDABLE, '구간 하한을 계산하지 못했다 (부트스트랩 유효 표본 없음)'
+    ok = bw_lo > m and boot_lo > m
+    return (MET if ok else NOT_MET), (f'BW 하한 {bw_lo:.2f}, 부트스트랩 하한 {boot_lo:.2f} — '
+                                      f'{"둘 다" if ok else "둘 다는 아님:"} > {m}')
+
+
 def srcc_table(rows, prereg=PREREG, reps=1000, seed=0):
     """시뮬레이터 쌍별 정책 순위 상관 — 공통 scenario_id 의 정책별 성공률."""
     sub = select(rows, safety_node='on')
@@ -466,10 +485,9 @@ def srcc_table(rows, prereg=PREREG, reps=1000, seed=0):
             mb = np.array([[np.mean(pol_b[p][s]) for s in scen] for p in pols])
             rep = srcc.srcc_report(ma.mean(1), mb.mean(1))
             bs = srcc.scenario_bootstrap(ma, mb, reps=reps, seed=seed)
+            verdict, basis = srcc_verdict(rep['n_policies'], rep['bw_lo'], bs['lo'], prereg)
             rep.update(sim_a=sa, sim_b=sb, n_scenarios=len(scen), boot_lo=bs['lo'],
-                       boot_hi=bs['hi'], policies=pols,
-                       verdict=(MET if rep['n_policies'] >= prereg['srcc_min_policies']
-                                else UNDECIDABLE))
+                       boot_hi=bs['hi'], policies=pols, verdict=verdict, verdict_basis=basis)
             rep['scores_a'] = ma.mean(1).tolist()
             rep['scores_b'] = mb.mean(1).tolist()
             out.append(rep)
@@ -652,15 +670,18 @@ def render_markdown(res):
     w('')
     w('## 7. 시뮬레이터 간 순위 상관 (SRCC)')
     w('')
-    w('| 쌍 | 정책 N | 공통 시나리오 | ρ | τ | BW 95 % | 시나리오 부트스트랩 95 % | 순열 p | 판정 |')
-    w('| --- | ---: | ---: | ---: | ---: | --- | --- | ---: | --- |')
+    w('| 쌍 | 정책 N | 공통 시나리오 | ρ | τ | BW 95 % | 시나리오 부트스트랩 95 % | 순열 p | 판정 | 근거 |')
+    w('| --- | ---: | ---: | ---: | ---: | --- | --- | ---: | --- | --- |')
     for s in res['srcc']:
         w(f'| {s["sim_a"]}–{s["sim_b"]} | {s["n_policies"]} | {s["n_scenarios"]} | '
           f'{_p(s["rho"], 3)} | {_p(s["tau"], 3)} | [{_p(s["bw_lo"])}, {_p(s["bw_hi"])}] | '
           f'[{_p(s["boot_lo"])}, {_p(s["boot_hi"])}] | {_p(s["perm_p"], 4)} | '
-          f'**{s["verdict"]}** |')
+          f'**{s["verdict"]}** | {s["verdict_basis"]} |')
     w('')
-    w('같은 비교군의 시드들은 독립 정책이 아니다 — 구간은 낙관적이다. N < 10 이면 판정 불가로 둔다.')
+    w(f'충족 = 정책 N ≥ {PREREG["srcc_min_policies"]} 이고 BW 95 % 하한과 시나리오 부트스트랩 95 % 하한이 '
+      f'모두 {PREREG["srcc_ci_lower_min"]} 초과 (PROTOCOL.md §6.10). N 이 모자라면 판정 불가. 같은 비교군의 '
+      '시드들은 독립 정책이 아니다 — 구간이 낙관적이고 충족도 그만큼 낙관적이다. 충족이어도 Gazebo 확증을 '
+      '대신하지 않는다.')
     w('')
     w('## 8. 명세 4.7 점검 (Gazebo)')
     w('')
