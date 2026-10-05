@@ -57,7 +57,6 @@ colcon test 가 "다시 생성한 결과 == 커밋된 warehouse.sdf" 를 검사�
 import math
 import os
 import random
-import sys
 from collections import deque
 
 SEED = 42                       # 무작위 보행/상자 배치 난수 seed
@@ -815,14 +814,530 @@ def check_layout(racks, specs):
     assert abs(clear - NARROW_CLEAR) < 1e-6, clear
 
 
-def main():
-    here = os.path.dirname(os.path.abspath(__file__))
-    out_path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(here, "warehouse.sdf")
+# ---- 지면 진실(GT) 내보내기 — --gt-dir 플래그로만 켠다 --------------------------------------------
+# 기본 실행(warehouse.sdf 생성)은 이 절을 거치지 않는다 (표준 라이브러리만, 출력 바이트 불변).
+# GT 는 build_sdf() 의 SDF 문자열 + models/<이름>/model.sdf 의 **시각체**에서 뽑는다. gpu_lidar·깊이 카메라는
+# 렌더링 기반이라 충돌체가 아니라 시각체를 본다 (랙: 충돌체는 통짜 2.0 x 1.0 x 2.5, 시각체는 데크·기둥·선반).
+# 포즈 합성은 amr_localization/world_geometry.py 와 같다: world ← include/model ← link ← visual.
+# numpy 가 필요하다 (GT 함수 안에서만 import).
+GT_SPACING = 0.01               # [m] 3D 표면 점 간격 (면마다 셀 중심 표본, 실제 간격 ≤ 이 값)
+GT_RES = 0.01                   # [m] 2D 래스터 해상도 — 0.05 GT 의 셀 양자화(±2.5 cm)가 ADNN(≈2.6 cm)과 같은 크기라서
+GT_SLICE_Z = (0.20,)            # [m] 2D 스캔 평면 = base_link_height 0.18 + lidar z 0.02 (config)
+GT_BANDS = ((0.05, 0.40), (0.05, 2.0))      # [m] 비교용(로봇 높이 0.30 + 여유) / 운용용(랙 선반까지)
+# 래스터 범위 = map_quality 의 --room ±1 m 와 같다
+GT_BOUNDS = (-HALF_X - 1.0, HALF_X + 1.0, -HALF_Y - 1.0, HALF_Y + 1.0)
+# 움직이는 모델은 뺀다 (actor 는 <model> 이 아니라 처음부터 없다). world_geometry.DEFAULT_EXCLUDE 는
+# ('ground_plane', 'forklift', 'worker', 'amr_') 라 shuttle_amr 가 스폰 자세 그대로 GT 에 들어간다 — 여기서는 뺀다.
+GT_EXCLUDE = ("forklift", "shuttle_amr", "worker", "amr_")
+GT_LEGACY_EXCLUDE = ("ground_plane", "forklift", "worker", "amr_")   # world_geometry 와 같은 집합 (검증용)
+GT_CLASSES = ("floor", "ceiling", "wall", "rack", "cargo", "pillar", "plate", "fixture",
+              "floor_paint", "movable_cargo", "vehicle", "other")
+GT_OFFSET = 1e-4                # [m] 가림 판정: 면 점을 바깥 법선으로 이만큼 민 점이 다른 고체 안이면 버린다
+GT_PLY_DTYPE = [("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("label", "u1")]
+
+
+def gt_label(model, visual):
+    """모델·시각체 이름 → GT 부류 (GT_CLASSES)."""
+    if model == "ground_plane":
+        return "floor"
+    if model == "roof":
+        return "ceiling" if visual == "ceiling" else "fixture"
+    if model == "warehouse_walls":
+        return "wall"
+    if "_marker" in model or model.startswith(("sign_", "door_")):
+        return "plate"
+    if model.startswith(("forklift", "shuttle_amr")):
+        return "vehicle"
+    if model.startswith("dock_") and "_box_" in model:
+        return "movable_cargo"              # 도크 화물: 정적이 아니다(로봇이 밀 수 있다) — 시작 자세 기준
+    if model.startswith("rack_") and "_box_" in model:
+        return "cargo"
+    if model.startswith("rack_"):
+        return "rack"
+    if model.startswith("pillar_"):
+        return "pillar"
+    if model.endswith("_pad") or visual in ("pad", "border"):
+        return "floor_paint"
+    if model.startswith("charging_station_"):
+        return "fixture"
+    return "other"
+
+
+def _pose_matrix(text):
+    """'x y z r p y' → 4x4 (SDF rpy 고정축 X-Y-Z, R = Rz Ry Rx)."""
+    import numpy as np
+    t = np.eye(4)
+    if text is None or not text.strip():
+        return t
+    v = [float(x) for x in text.split()] + [0.0] * 6
+    (cr, sr), (cp, sp), (cy, sy) = [(math.cos(a), math.sin(a)) for a in v[3:6]]
+    rx = np.array([[1, 0, 0], [0, cr, -sr], [0, sr, cr]])
+    ry = np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]])
+    rz = np.array([[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]])
+    t[:3, :3] = rz @ ry @ rx
+    t[:3, 3] = v[:3]
+    return t
+
+
+class GtPrim:
+    """월드 좌표 시각체 도형 1 개 (box | cylinder | sphere | plane)."""
+
+    def __init__(self, name, model, label, kind, size, world_from_shape):
+        import numpy as np
+        self.name, self.model, self.label, self.kind = name, model, label, kind
+        self.size = tuple(float(v) for v in size)
+        self.T = np.asarray(world_from_shape, dtype=float)
+        self.R, self.t = self.T[:3, :3], self.T[:3, 3]
+
+    def half(self):
+        """국소 반 크기 (x, y, z). 평면은 두께 0."""
+        import numpy as np
+        if self.kind == "box":
+            return np.array(self.size) / 2.0
+        if self.kind == "cylinder":
+            return np.array([self.size[0], self.size[0], self.size[1] / 2.0])
+        if self.kind == "sphere":
+            return np.array([self.size[0]] * 3)
+        return np.array([self.size[0] / 2.0, self.size[1] / 2.0, 0.0])
+
+    def aabb(self):
+        """월드 AABB (lo, hi)."""
+        import numpy as np
+        ext = np.abs(self.R) @ self.half()
+        return self.t - ext, self.t + ext
+
+    def contains(self, pts, tol=1e-9):
+        """월드 점 (N, 3) 이 닫힌 도형 안인지 (평면은 아래 반공간 = 법선 반대쪽, 판 범위 안)."""
+        import numpy as np
+        local = (pts - self.t) @ self.R
+        h = self.half()
+        if self.kind == "box":
+            return np.all(np.abs(local) <= h + tol, axis=1)
+        if self.kind == "cylinder":
+            return ((local[:, 0] ** 2 + local[:, 1] ** 2 <= h[0] ** 2 + tol)
+                    & (np.abs(local[:, 2]) <= h[2] + tol))
+        if self.kind == "sphere":
+            return np.sum(local ** 2, axis=1) <= h[0] ** 2 + tol
+        return ((np.abs(local[:, 0]) <= h[0] + tol) & (np.abs(local[:, 1]) <= h[1] + tol)
+                & (local[:, 2] <= tol))
+
+    def yaw_only(self):
+        """국소 z 축이 월드 z 축과 같은지 (높이 대역 래스터는 이 경우만 정확)."""
+        return abs(self.R[2, 2] - 1.0) < 1e-9
+
+
+def _plane_frame(geom):
+    """SDF <plane> → (크기, 국소 z = 법선 회전). 법선은 ±z 만 지원 (바닥·천장)."""
+    import numpy as np
+    normal = [float(v) for v in geom.findtext("normal", "0 0 1").split()]
+    size = [float(v) for v in geom.findtext("size", "1 1").split()]
+    rot = np.eye(4)
+    if normal[2] < 0:
+        rot[:3, :3] = np.diag([1.0, -1.0, -1.0])            # x 축 둘레 π
+    if abs(abs(normal[2]) - 1.0) > 1e-9:
+        raise ValueError(f"plane normal {normal} 은 지원하지 않는다 (±z 만)")
+    return size, rot
+
+
+def gt_primitives(sdf_text, model_dirs, exclude=GT_EXCLUDE):
+    """
+    SDF 문자열의 정적 시각체 → (GtPrim 목록, 건너뛴 것 목록).
+
+    월드 <model>(인라인)과 <include>(model_dirs 의 <uri>/model.sdf) 를 모두 읽는다. 이름이 exclude 접두어로
+    시작하는 모델은 뺀다. 메시 시각체는 건너뛰고 목록에 남긴다 (이 월드의 정적 모델에는 없다).
+    """
+    import xml.etree.ElementTree as ET
+    import numpy as np
+    world = ET.fromstring(sdf_text).find("world")
+    prims, skipped = [], []
+
+    def add_model(model, world_from_model, name):
+        for sub in model.findall("model"):
+            add_model(sub, world_from_model @ _pose_matrix(sub.findtext("pose")),
+                      f"{name}::{sub.get('name', '')}")
+        for link in model.findall("link"):
+            world_from_link = world_from_model @ _pose_matrix(link.findtext("pose"))
+            for vis in link.findall("visual"):
+                vname = vis.get("name", "")
+                label = f"{name}::{link.get('name', '')}::{vname}"
+                geom = vis.find("geometry")
+                tf = world_from_link @ _pose_matrix(vis.findtext("pose"))
+                kind = None if geom is None else next(
+                    (g.tag for g in geom if g.tag in ("box", "cylinder", "sphere", "plane")), None)
+                if kind == "box":
+                    size = [float(v) for v in geom.findtext("box/size", "1 1 1").split()]
+                elif kind == "cylinder":
+                    size = [float(geom.findtext("cylinder/radius", "0.5")),
+                            float(geom.findtext("cylinder/length", "1.0"))]
+                elif kind == "sphere":
+                    size = [float(geom.findtext("sphere/radius", "0.5"))]
+                elif kind == "plane":
+                    size, rot = _plane_frame(geom.find("plane"))
+                    tf = tf @ rot
+                else:
+                    skipped.append(f"{label}: unsupported geometry")
+                    continue
+                top = name.split("::")[0]
+                prims.append(GtPrim(label, top, gt_label(top, vname), kind, size, tf))
+
+    def excluded(name):
+        return any(name.startswith(p) for p in exclude)
+
+    for model in world.findall("model"):
+        name = model.get("name", "")
+        if not excluded(name):
+            add_model(model, _pose_matrix(model.findtext("pose")), name)
+    for inc in world.findall("include"):
+        name = inc.findtext("name") or inc.findtext("uri", "")
+        if excluded(name):
+            continue
+        uri = inc.findtext("uri", "").replace("model://", "").strip("/")
+        path = next((os.path.join(d, uri, "model.sdf") for d in model_dirs
+                     if os.path.isfile(os.path.join(d, uri, "model.sdf"))), None)
+        if path is None:
+            skipped.append(f"{name}: model {uri} not found")
+            continue
+        model = ET.parse(path).getroot().find("model")
+        add_model(model, _pose_matrix(inc.findtext("pose")) @ _pose_matrix(model.findtext("pose")),
+                  name)
+    assert all(np.isfinite(p.T).all() for p in prims)
+    return prims, skipped
+
+
+def gt_raster(prims, z0, z1, res=GT_RES, bounds=GT_BOUNDS):
+    """
+    점유 래스터 (행 0 = 최하단 y, 셀 (0,0) 모서리 = (xmin, ymin)). 평면(바닥·천장)은 넣지 않는다.
+
+    z0 == z1: 높이 z0 단면 — 셀 중심 (x, y, z0) 가 도형 안이면 점유 (world_geometry.rasterize 와 같은 규칙).
+    z0 < z1: 높이 대역 — 도형의 z 범위가 [z0, z1] 과 겹치고 셀 중심 (x, y) 가 그 도형의 xy 발자국 안이면 점유.
+    대역은 국소 z = 월드 z 인 상자만 정확하다 (아니면 ValueError — 이 월드의 정적 시각체는 전부 yaw 회전뿐).
+    """
+    import numpy as np
+    xmin, xmax, ymin, ymax = bounds
+    width = int(math.ceil((xmax - xmin) / res))
+    rows = int(math.ceil((ymax - ymin) / res))
+    occ = np.zeros((rows, width), dtype=bool)
+    for p in prims:
+        if p.kind == "plane":
+            continue
+        lo, hi = p.aabb()
+        if hi[2] < z0 - 1e-9 or lo[2] > z1 + 1e-9:
+            continue
+        if z1 > z0 and not (p.kind == "box" and p.yaw_only()):
+            raise ValueError(f"{p.name}: 높이 대역 래스터는 yaw 만 회전한 상자만 지원")
+        c0 = max(int(math.floor((lo[0] - xmin) / res)), 0)
+        c1 = min(int(math.ceil((hi[0] - xmin) / res)), width)
+        r0 = max(int(math.floor((lo[1] - ymin) / res)), 0)
+        r1 = min(int(math.ceil((hi[1] - ymin) / res)), rows)
+        if c0 >= c1 or r0 >= r1:
+            continue
+        cc, rr = np.meshgrid(np.arange(c0, c1), np.arange(r0, r1))
+        pts = np.stack([xmin + (cc.ravel() + 0.5) * res, ymin + (rr.ravel() + 0.5) * res,
+                        np.full(cc.size, p.t[2] if z1 > z0 else z0)], axis=1)
+        inside = p.contains(pts)
+        occ[rr.ravel()[inside], cc.ravel()[inside]] = True
+    return occ
+
+
+GT_DYN_MARGIN = 0.5            # [m] 동적 장애물 경로 둘레 여유 (사람 반폭 + 팔 흔들림, 차량은 차체 반폭에 더한다)
+GT_DYN_RES = 0.05
+
+
+def gt_dynamic_raster(specs, res=GT_DYN_RES, margin=GT_DYN_MARGIN, bounds=GT_BOUNDS):
+    """
+    동적 장애물이 지나가는 영역 래스터 (유령 점 판정용).
+
+    actor 웨이포인트 꺾은선에서 margin 안 + 차량 왕복 차선(check_layout 의 차체 반폭·전후 길이 + margin).
+    """
+    import numpy as np
+    xmin, xmax, ymin, ymax = bounds
+    width = int(math.ceil((xmax - xmin) / res))
+    rows = int(math.ceil((ymax - ymin) / res))
+    occ = np.zeros((rows, width), dtype=bool)
+
+    def window(x0, x1, y0, y1):
+        c0 = max(int(math.floor((x0 - xmin) / res)), 0)
+        c1 = min(int(math.ceil((x1 - xmin) / res)), width)
+        r0 = max(int(math.floor((y0 - ymin) / res)), 0)
+        r1 = min(int(math.ceil((y1 - ymin) / res)), rows)
+        cc, rr = np.meshgrid(np.arange(c0, max(c0, c1)), np.arange(r0, max(r0, r1)))
+        cc, rr = cc.ravel(), rr.ravel()
+        return cc, rr, xmin + (cc + 0.5) * res, ymin + (rr + 0.5) * res
+
+    for _, _, wps, _ in specs:
+        pts = [(x, y) for _, x, y, _ in wps]
+        for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+            cc, rr, px, py = window(min(ax, bx) - margin, max(ax, bx) + margin,
+                                    min(ay, by) - margin, max(ay, by) + margin)
+            dx, dy = bx - ax, by - ay
+            ll = dx * dx + dy * dy
+            u = np.clip(((px - ax) * dx + (py - ay) * dy) / ll, 0.0, 1.0) if ll > 0 else 0.0 * px
+            hit = np.hypot(px - (ax + u * dx), py - (ay + u * dy)) <= margin
+            occ[rr[hit], cc[hit]] = True
+    half_w = {"forklift_main": 0.7, "shuttle_amr": 0.25}        # check_layout 와 같은 값
+    reach = {"forklift_main": (1.3, 2.1), "shuttle_amr": (0.35, 0.35)}
+    for name, (axis, lo, hi, fixed, *_rest) in VEHICLES.items():
+        w, (back, front) = half_w[name] + margin, reach[name]
+        a0, a1 = lo - back - margin, hi + front + margin
+        box = (a0, a1, fixed - w, fixed + w) if axis == "x" else (fixed - w, fixed + w, a0, a1)
+        cc, rr, _, _ = window(*box)
+        occ[rr, cc] = True
+    return occ
+
+
+def write_pgm_map(occ, res, bounds, stem):
+    """map_server 형식 (P5 PGM 점유 0 / 자유 254 + YAML, 위쪽 행 = +y 끝). world_geometry.write_map 과 같다."""
+    import numpy as np
+    img = np.where(occ, 0, 254).astype(np.uint8)[::-1]
+    with open(stem + ".pgm", "wb") as f:
+        f.write(f"P5\n{img.shape[1]} {img.shape[0]}\n255\n".encode())
+        f.write(img.tobytes())
+    with open(stem + ".yaml", "w", encoding="utf-8") as f:
+        f.write(f"image: {os.path.basename(stem)}.pgm\nmode: trinary\nresolution: {res}\n"
+                f"origin: [{bounds[0]}, {bounds[2]}, 0.0]\nnegate: 0\n"
+                f"occupied_thresh: 0.65\nfree_thresh: 0.19\n")
+
+
+def _faces(p, room):
+    """도형의 면 (c0, eu, ev, n, Lu, Lv): 점 = c0 + a·eu + b·ev (a∈[0,Lu], b∈[0,Lv]), n = 바깥 법선."""
+    import numpy as np
+    if p.kind == "plane":
+        hx, hy = p.size[0] / 2.0, p.size[1] / 2.0
+        x0, x1 = max(p.t[0] - hx, room[0]), min(p.t[0] + hx, room[1])     # 방 안쪽으로 자른다
+        y0, y1 = max(p.t[1] - hy, room[2]), min(p.t[1] + hy, room[3])
+        if x0 >= x1 or y0 >= y1:
+            return []
+        return [(np.array([x0, y0, p.t[2]]), np.array([1.0, 0, 0]), np.array([0, 1.0, 0]),
+                 p.R[:, 2].copy(), x1 - x0, y1 - y0)]
+    if p.kind != "box":
+        raise ValueError(f"{p.name}: 3D 표면 표본은 상자·평면만 지원 ({p.kind})")
+    h = p.half()
+    out = []
+    for a in range(3):
+        b, c = [k for k in range(3) if k != a]
+        for sgn in (-1.0, 1.0):
+            local = np.zeros(3)
+            local[a] = sgn * h[a]
+            local[b], local[c] = -h[b], -h[c]
+            out.append((p.R @ local + p.t, p.R[:, b].copy(), p.R[:, c].copy(), sgn * p.R[:, a],
+                        2 * h[b], 2 * h[c]))
+    return out
+
+
+def _solid(p):
+    """가림 판정용 고체 (lo, hi, contains). 바닥 평면 = 아래 반공간, 천장 평면(법선 −z) = 위 반공간."""
+    lo, hi = p.aabb()
+    if p.kind == "plane":
+        lo, hi = lo.copy(), hi.copy()
+        if p.R[2, 2] > 0:
+            lo[2] = -1e3
+        else:
+            hi[2] = 1e3
+    return lo, hi, p.contains
+
+
+def gt_surface_points(prims, spacing=GT_SPACING, roi=None, sink=None):
+    """
+    시각체 합집합의 표면 점 (부류 라벨 포함) — 가려진 면(다른 고체 안)과 방 밖 면은 뺀다.
+
+    면마다 간격 ≤ spacing 의 셀 중심 격자로 표본하고, 점을 바깥 법선으로 GT_OFFSET 민 위치가 다른 고체 안이면
+    버린다 (상자 바닥이 데크 위에 놓인 면, 데크 윗면 중 상자 아래, 기둥 안쪽에 묻힌 랙 기둥 등).
+    방 밖(외벽 바깥면·모서리) 점은 실내 센서가 볼 수 없으므로 뺀다. 같은 평면에 겹친 두 면(랙 기둥 바깥면과 데크
+    옆면 등)은 둘 다 남아 그 자리 밀도가 두 배다. roi=(xmin, xmax, ymin, ymax) 이면 그 안만.
+    sink(array) 가 있으면 면마다 구조 배열(GT_PLY_DTYPE)을 넘기고, 없으면 모아서 돌려준다.
+    """
+    import numpy as np
+    room = (-HALF_X, HALF_X, -HALF_Y, HALF_Y)
+    tol = 1e-6
+    solids = [_solid(p) for p in prims]
+    lo_all = np.array([s[0] for s in solids])
+    hi_all = np.array([s[1] for s in solids])
+    chunks = []
+    counts = {}
+    for k, p in enumerate(prims):
+        lab = GT_CLASSES.index(p.label)
+        for c0, eu, ev, n, lu, lv in _faces(p, room):
+            nu = max(1, math.ceil(lu / spacing - 1e-9))
+            nv = max(1, math.ceil(lv / spacing - 1e-9))
+            du, dv = lu / nu, lv / nv
+            corners = np.array([c0, c0 + lu * eu, c0 + lv * ev, c0 + lu * eu + lv * ev])
+            flo, fhi = corners.min(0) - 2 * GT_OFFSET, corners.max(0) + 2 * GT_OFFSET
+            if roi is not None and (fhi[0] < roi[0] or flo[0] > roi[1] or fhi[1] < roi[2]
+                                    or flo[1] > roi[3]):
+                continue
+            if (fhi[0] < room[0] - tol or flo[0] > room[1] + tol or fhi[1] < room[2] - tol
+                    or flo[1] > room[3] + tol):
+                continue
+            keep = np.ones((nv, nu), dtype=bool)
+            near = np.nonzero(np.all(lo_all <= fhi, axis=1) & np.all(hi_all >= flo, axis=1))[0]
+            for j in near:
+                if j == k:
+                    continue
+                slo, shi, inside = solids[j]
+                box = np.array([[x, y, z] for x in (slo[0], shi[0]) for y in (slo[1], shi[1])
+                                for z in (slo[2], shi[2])]) - c0
+                u, v = box @ eu, box @ ev
+                i0 = max(0, math.ceil(u.min() / du - 0.5 - 1e-9))
+                i1 = min(nu - 1, math.floor(u.max() / du - 0.5 + 1e-9))
+                j0 = max(0, math.ceil(v.min() / dv - 0.5 - 1e-9))
+                j1 = min(nv - 1, math.floor(v.max() / dv - 0.5 + 1e-9))
+                if i0 > i1 or j0 > j1:
+                    continue
+                ii, jj = np.meshgrid(np.arange(i0, i1 + 1), np.arange(j0, j1 + 1))
+                pts = (c0 + GT_OFFSET * n + np.outer((ii.ravel() + 0.5) * du, eu)
+                       + np.outer((jj.ravel() + 0.5) * dv, ev))
+                hit = inside(pts)
+                keep[jj.ravel()[hit], ii.ravel()[hit]] = False
+            jj, ii = np.nonzero(keep)
+            for s in range(0, len(ii), 4_000_000):
+                a, b = ii[s:s + 4_000_000], jj[s:s + 4_000_000]
+                pts = c0 + np.outer((a + 0.5) * du, eu) + np.outer((b + 0.5) * dv, ev)
+                ok = ((pts[:, 0] >= room[0] - tol) & (pts[:, 0] <= room[1] + tol)
+                      & (pts[:, 1] >= room[2] - tol) & (pts[:, 1] <= room[3] + tol)
+                      & (pts[:, 2] >= -tol) & (pts[:, 2] <= WALL_H + tol))
+                if roi is not None:
+                    ok &= ((pts[:, 0] >= roi[0]) & (pts[:, 0] <= roi[1])
+                           & (pts[:, 1] >= roi[2]) & (pts[:, 1] <= roi[3]))
+                pts = pts[ok]
+                arr = np.empty(len(pts), dtype=GT_PLY_DTYPE)
+                arr["x"], arr["y"], arr["z"] = pts[:, 0], pts[:, 1], pts[:, 2]
+                arr["label"] = lab
+                counts[p.label] = counts.get(p.label, 0) + len(arr)
+                if sink is not None:
+                    sink(arr)
+                else:
+                    chunks.append(arr)
+    if sink is not None:
+        return None, counts
+    return (np.concatenate(chunks) if chunks else np.empty(0, dtype=GT_PLY_DTYPE)), counts
+
+
+def ply_header(n, comments=()):
+    """binary_little_endian PLY 머리 (x, y, z float32 + label uchar)."""
+    lines = ["ply", "format binary_little_endian 1.0"]
+    lines += [f"comment {c}" for c in comments]
+    lines += [f"element vertex {n}", "property float x", "property float y", "property float z",
+              "property uchar label", "end_header"]
+    return ("\n".join(lines) + "\n").encode("ascii")
+
+
+def write_obj(prims, path):
+    """
+    시각체 메시 (OBJ): 상자 = 꼭짓점 8 + 사각면 6, 평면 = 꼭짓점 4 + 사각면 1. g = 부류, o = 시각체 이름.
+
+    원기둥·구(차량 바퀴 등 — 기본 제외 집합에서는 없다)는 쓰지 않고 그 이름 목록을 돌려준다.
+    """
+    import numpy as np
+    lines = [f"# gen_warehouse_world.py --gt-dir: 정적 시각체 {len(prims)} 개 (월드 좌표, m)"]
+    skipped = []
+    base = 1
+    quads = [(0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)]
+    for p in prims:
+        h = p.half()
+        if p.kind == "plane":
+            local = np.array([[-h[0], -h[1], 0], [h[0], -h[1], 0], [h[0], h[1], 0],
+                              [-h[0], h[1], 0]])
+            faces = [(0, 1, 2, 3)]
+        elif p.kind == "box":
+            local = np.array([[sx * h[0], sy * h[1], sz * h[2]] for sx in (-1, 1)
+                              for sy in (-1, 1) for sz in (-1, 1)])
+            faces = quads
+        else:
+            skipped.append(p.name)
+            continue
+        lines.append(f"g {p.label}")
+        lines.append(f"o {p.name}")
+        for q in local @ p.R.T + p.t:
+            lines.append(f"v {q[0]:.6f} {q[1]:.6f} {q[2]:.6f}")
+        lines += ["f " + " ".join(str(base + i) for i in f) for f in faces]
+        base += len(local)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    return skipped
+
+
+def export_gt(out_dir, model_dirs, spacing=GT_SPACING, res=GT_RES, slices=GT_SLICE_Z,
+              bands=GT_BANDS, exclude=GT_EXCLUDE, points=True, roi=None, committed=None):
+    """
+    GT 파일 세트를 out_dir 에 쓴다. 반환: 메타데이터 dict (gt_meta.json 과 같은 내용).
+
+      visual_mesh.obj        정적 시각체 메시
+      primitives.json        시각체 도형 목록 (부류, 종류, 크기, 월드 4x4 변환) — 해석적 거리·광선 추적용
+      surface_points.ply     합집합 표면 점 (간격 ≤ spacing, float32 x y z + uchar label)
+      slice_z<h>_r<res>.{pgm,yaml}       높이 h 단면 래스터 (map_server 형식)
+      band_z<z0>-<z1>_r<res>.{pgm,yaml}  높이 대역 래스터
+      dynamic_swept_r0.050.{pgm,yaml}    동적 장애물 경로 영역 (유령 점 판정용)
+      gt_meta.json           생성 조건·SDF sha256·부류별 점 수
+    """
+    import hashlib
+    import json
+    import shutil
+    import tempfile
+    sdf, _, specs = build_sdf()
+    os.makedirs(out_dir, exist_ok=True)
+    prims, skipped = gt_primitives(sdf, model_dirs, exclude)
+    meta = {"generator": "gen_warehouse_world.py --gt-dir", "seed": SEED,
+            "sdf_sha256": hashlib.sha256(sdf.encode()).hexdigest(),
+            "committed_sdf_sha256": None, "matches_committed_sdf": None,
+            "exclude_prefixes": list(exclude), "classes": list(GT_CLASSES),
+            "spacing": spacing, "raster_resolution": res, "raster_bounds": list(GT_BOUNDS),
+            "slices_z": list(slices), "bands_z": [list(b) for b in bands],
+            "roi": list(roi) if roi else None, "primitives": len(prims),
+            "primitives_by_class": {c: sum(p.label == c for p in prims) for c in GT_CLASSES},
+            "skipped": skipped, "files": []}
+    if committed and os.path.isfile(committed):
+        with open(committed, "rb") as f:
+            meta["committed_sdf_sha256"] = hashlib.sha256(f.read()).hexdigest()
+        meta["matches_committed_sdf"] = meta["committed_sdf_sha256"] == meta["sdf_sha256"]
+
+    def name(*parts):
+        meta["files"].append(parts[-1])
+        return os.path.join(out_dir, *parts)
+
+    meta["not_in_mesh_or_points"] = write_obj(prims, name("visual_mesh.obj"))
+    with open(name("primitives.json"), "w", encoding="utf-8") as f:
+        json.dump([{"name": p.name, "model": p.model, "label": p.label, "kind": p.kind,
+                    "size": list(p.size), "T": [round(float(v), 9) for v in p.T[:3].ravel()]}
+                   for p in prims], f, ensure_ascii=False, indent=0)
+    for z in slices:
+        stem = f"slice_z{z:.3f}_r{res:.3f}"
+        write_pgm_map(gt_raster(prims, z, z, res), res, GT_BOUNDS, os.path.join(out_dir, stem))
+        meta["files"] += [stem + ".pgm", stem + ".yaml"]
+    for z0, z1 in bands:
+        stem = f"band_z{z0:.3f}-{z1:.3f}_r{res:.3f}"
+        write_pgm_map(gt_raster(prims, z0, z1, res), res, GT_BOUNDS, os.path.join(out_dir, stem))
+        meta["files"] += [stem + ".pgm", stem + ".yaml"]
+    stem = f"dynamic_swept_r{GT_DYN_RES:.3f}"
+    write_pgm_map(gt_dynamic_raster(specs), GT_DYN_RES, GT_BOUNDS, os.path.join(out_dir, stem))
+    meta["files"] += [stem + ".pgm", stem + ".yaml"]
+    meta["dynamic_margin"] = GT_DYN_MARGIN
+    if points:
+        with tempfile.TemporaryFile(dir=out_dir) as body:
+            solid = [p for p in prims if p.kind in ("box", "plane")]
+            _, counts = gt_surface_points(solid, spacing, roi, sink=lambda a: a.tofile(body))
+            n = sum(counts.values())
+            body.seek(0)
+            with open(name("surface_points.ply"), "wb") as f:
+                f.write(ply_header(n, [f"gen_warehouse_world.py --gt-dir spacing {spacing} m",
+                                       "label " + " ".join(f"{i}={c}" for i, c in
+                                                           enumerate(GT_CLASSES))]))
+                shutil.copyfileobj(body, f, 16 << 20)
+        meta["points"] = n
+        meta["points_by_class"] = {c: counts.get(c, 0) for c in GT_CLASSES}
+    with open(name("gt_meta.json"), "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+    return meta
+
+
+def build_sdf():
+    """월드 SDF 문자열과 (racks, specs). 호출마다 같은 결과 (seed 난수를 처음부터 다시 쓴다)."""
+    rng.seed(SEED)
     racks = rack_instances()
     dyn_xml, specs = dynamic_obstacles()
     check_layout(racks, specs)
 
     n_loc_markers = 4 * len(PILLARS) + len(rack_marker_poses())
+
     sdf = f"""<?xml version="1.0" ?>
 <!--
   물류센터 월드 (내부 60 x 40 m) — gen_warehouse_world.py 가 생성 (seed {SEED}). 직접 수정하지 말고 생성기를 고칠 것.
@@ -877,12 +1392,62 @@ def main():
 {dyn_xml}  </world>
 </sdf>
 """
-    with open(out_path, "w") as f:
-        f.write(sdf)
-    print(f"wrote {out_path}: racks={len(racks)} actors={len(specs)} vehicles={len(VEHICLES)} "
-          f"signs={len(SIGN_POSES)}")
-    for name, v, wps, _ in specs:
-        print(f"  {name:22s} {v} m/s loop={wps[-1][0]:.1f}s waypoints={len(wps)}")
+    return sdf, racks, specs
+
+
+def _parse_args(argv):
+    import argparse
+    ap = argparse.ArgumentParser(
+        description="warehouse.sdf 생성 (기본). --gt-dir 를 주면 지면 진실(GT) 파일 세트를 쓴다.")
+    ap.add_argument("out", nargs="?", default=None,
+                    help="출력 SDF (기본: 같은 디렉토리 warehouse.sdf; --gt-dir 만 주면 SDF 를 쓰지 않는다)")
+    ap.add_argument("--gt-dir", default=None, help="GT 출력 디렉토리 (export_gt 독스트링 참고)")
+    ap.add_argument("--gt-models", action="append", default=None,
+                    help="model:// 검색 경로 (기본: 이 파일의 ../models)")
+    ap.add_argument("--gt-spacing", type=float, default=GT_SPACING, help="3D 표면 점 간격 [m]")
+    ap.add_argument("--gt-res", type=float, default=GT_RES, help="2D 래스터 해상도 [m]")
+    ap.add_argument("--gt-slice-z", type=float, action="append", default=None,
+                    help=f"단면 높이 [m] (여러 번, 기본 {GT_SLICE_Z})")
+    ap.add_argument("--gt-band", type=float, nargs=2, action="append", default=None,
+                    metavar=("Z0", "Z1"), help=f"높이 대역 [m] (여러 번, 기본 {GT_BANDS})")
+    ap.add_argument("--gt-exclude", action="append", default=None,
+                    help=f"뺄 모델 이름 접두어 (여러 번, 기본 {GT_EXCLUDE})")
+    ap.add_argument("--gt-legacy-exclude", action="store_true",
+                    help=f"world_geometry 와 같은 제외 집합 {GT_LEGACY_EXCLUDE} — 0.20 m 단면 "
+                         "검증 전용 (셔틀의 원기둥·구가 들어와 대역·점·메시에서는 빠진다; 대역 기본값 없음)")
+    ap.add_argument("--gt-roi", type=float, nargs=4, default=None,
+                    metavar=("XMIN", "XMAX", "YMIN", "YMAX"), help="3D 점을 이 xy 범위로 자른다")
+    ap.add_argument("--gt-no-points", action="store_true", help="3D 표면 점 파일을 쓰지 않는다")
+    return ap.parse_args(argv)
+
+
+def main(argv=None):
+    args = _parse_args(argv)
+    here = os.path.dirname(os.path.abspath(__file__))
+    if args.gt_dir is None or args.out is not None:
+        out_path = args.out or os.path.join(here, "warehouse.sdf")
+        sdf, racks, specs = build_sdf()
+        with open(out_path, "w") as f:
+            f.write(sdf)
+        print(f"wrote {out_path}: racks={len(racks)} actors={len(specs)} vehicles={len(VEHICLES)} "
+              f"signs={len(SIGN_POSES)}")
+        for name, v, wps, _ in specs:
+            print(f"  {name:22s} {v} m/s loop={wps[-1][0]:.1f}s waypoints={len(wps)}")
+    if args.gt_dir is not None:
+        exclude = GT_LEGACY_EXCLUDE if args.gt_legacy_exclude else tuple(
+            args.gt_exclude or GT_EXCLUDE)
+        meta = export_gt(args.gt_dir, args.gt_models or [os.path.join(here, os.pardir, "models")],
+                         spacing=args.gt_spacing, res=args.gt_res,
+                         slices=tuple(args.gt_slice_z or GT_SLICE_Z),
+                         bands=tuple(tuple(b) for b in (args.gt_band or (
+                             () if args.gt_legacy_exclude else GT_BANDS))),
+                         exclude=exclude, points=not args.gt_no_points, roi=args.gt_roi,
+                         committed=os.path.join(here, "warehouse.sdf"))
+        print(f"wrote GT to {args.gt_dir}: primitives={meta['primitives']} "
+              f"points={meta.get('points', 0)} "
+              f"matches_committed_sdf={meta['matches_committed_sdf']}")
+        for s in meta["skipped"]:
+            print(f"  skipped: {s}")
 
 
 if __name__ == "__main__":
