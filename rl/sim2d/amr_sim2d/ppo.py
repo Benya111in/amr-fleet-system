@@ -170,6 +170,13 @@ class PPOConfig:
     target_kl: float = 0.03
     hidden: tuple = (256, 256)
     reward_norm: bool = True
+    # 라그랑주 승수 (계약 §7): 비용 채널별 PI 갱신 λ ← max(0, λ_I + Kp·e), λ_I += Ki·e,
+    # e = (끝난 에피소드의 평균 비할인 비용 합 − 예산). 예산 None 인 채널(개입, §7.2 미정)은 λ = 0.
+    lagrangian: bool = False
+    lag_kp: float = 0.0
+    lag_ki: float = 2e-4
+    lag_max: float = 2.0
+    budgets: tuple = C.COST_BUDGETS
 
 
 class Trainer:
@@ -203,6 +210,8 @@ class Trainer:
         self.obs = env.reset()
         self.steps = 0
         self.ep_hist = []
+        self.lam = torch.zeros(C.N_COSTS, device=dev)
+        self.lam_i = torch.zeros(C.N_COSTS, device=dev)
 
     def _scale(self, r, done):
         """할인 수익 표준편차로 나누기만 (계약 §6). done 이면 누적 수익 초기화."""
@@ -233,6 +242,8 @@ class Trainer:
             v = m.value(self.obs, mask)
             obs2, r, term, trunc, info = env.step(u)
             r = r.float()
+            if self.cfg.lagrangian:
+                r = r - (info['cost'] * self.lam[None, :]).sum(-1)
             if 'done_idx' in info:
                 di = info['done_idx']
                 tr = trunc[di]
@@ -258,6 +269,20 @@ class Trainer:
         with torch.no_grad():
             self.last_val = m.value(self.obs, env.mask if self.arm == 'C' else None)
         return eps
+
+    def update_lagrange(self, eps):
+        """끝난 에피소드의 평균 비용 합으로 λ 를 PI 갱신 → λ 목록."""
+        if not (self.cfg.lagrangian and eps):
+            return self.lam.tolist()
+        cost = torch.cat([e['cost'] for e in eps]).float().mean(0)
+        for i, d in enumerate(self.cfg.budgets):
+            if d is None:
+                continue
+            e = float(cost[i]) - d
+            self.lam_i[i] = max(0.0, float(self.lam_i[i]) + self.cfg.lag_ki * e)
+            lam = max(0.0, float(self.lam_i[i]) + self.cfg.lag_kp * e)
+            self.lam[i] = min(self.cfg.lag_max, lam)
+        return self.lam.tolist()
 
     def update(self):
         """GAE + PPO 갱신 → 손실·KL 통계."""

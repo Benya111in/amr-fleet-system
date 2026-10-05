@@ -41,6 +41,9 @@ def main():
     ap.add_argument('--obstacles', default='mixed')
     ap.add_argument('--n-obstacles', type=int, nargs=2, default=[0, 4])
     ap.add_argument('--path-len', type=float, nargs=2, default=[3.0, 15.0])
+    ap.add_argument('--lagrangian', action='store_true', help='계약 §7 비용 제약 (PI 라그랑주)')
+    ap.add_argument('--lag-ki', type=float, default=2e-4)
+    ap.add_argument('--lag-kp', type=float, default=0.0)
     ap.add_argument('--curriculum', type=float, default=0.0,
                     help='학습 앞 이 비율 동안 경로 상한 6 m→목표, 장애물 상한 0→목표로 선형 증가')
     ap.add_argument('--no-dr', action='store_true')
@@ -62,7 +65,8 @@ def main():
     env = Sim2DEnv(env_cfg(a.envs, a.seed), log=log)
     eval_env = Sim2DEnv(env_cfg(a.eval_envs, a.seed + 1000), log=log)
     pcfg = PPOConfig(rollout=a.rollout, epochs=a.epochs, minibatches=a.minibatches, lr=a.lr,
-                     ent_coef=a.ent_coef)
+                     ent_coef=a.ent_coef, lagrangian=a.lagrangian, lag_ki=a.lag_ki,
+                     lag_kp=a.lag_kp)
     tr = Trainer(env, pcfg, seed=a.seed)
     cfg = {'args': vars(a), 'ppo': config_dict(pcfg), 'env': {
         k: (list(v) if isinstance(v, tuple) else v) for k, v in env.cfg.__dict__.items()
@@ -103,6 +107,7 @@ def main():
         eps = tr.collect()
         t1 = time.time()
         st = tr.update()
+        st['lambda'] = tr.update_lagrange(eps)
         t2 = time.time()
         row = {'update': upd, 'env_steps': tr.steps, 'wall_s': time.time() - t_start,
                'collect_s': t1 - t0, 'update_s': t2 - t1,
