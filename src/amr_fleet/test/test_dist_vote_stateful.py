@@ -431,3 +431,33 @@ def test_rejected_variant_fixed_counterexample():
     good.enter('r5')
     assert good.check() == []
     assert len([r for r in MEMBERS if 'zone:a' in good.inside[r]]) <= 1
+
+
+def _ra_shrunk_one_sided_ops(c):
+    """Hypothesis 가 축소한 반례 (시드 0·1 공통 꼴): 한 로봇만 관측이 어긋나도 충분하다."""
+    c.request('r1', ['zone:a'])                  # r1 은 5 대 전원에게 묻는다
+    c.set_view('r3', ['r2', 'r4'])               # r3 은 r1 을 못 본다고 믿는다
+    c.request('r3', ['zone:a'])
+    c.deliver_all()
+    c.enter('r1')
+    c.enter('r3')
+
+
+def test_rejected_variant_shrunk_one_sided_counterexample():
+    """
+    축소 반례 고정: r3 이 r1 에게 묻지 않으니 r1 은 미룰 기회가 없고, r2·r4 는 둘 다에 REPLY 한다.
+
+    보고서의 대칭 반례({A,B,C} 대 {C,D,E})보다 약한 조건 — 한쪽 관측 오류 하나로 두 대가 들어간다.
+    같은 순서에서 투표 코어는 r1 만 허가한다.
+    """
+    ra = Cluster(CFG, boot=RaLiveAgent.boot, strict=False)
+    _ra_shrunk_one_sided_ops(ra)
+    assert any(b.startswith('I1') for b in ra.check())
+    assert 'zone:a' in ra.inside['r1'] and 'zone:a' in ra.inside['r3']
+    good = Cluster(CFG)
+    _ra_shrunk_one_sided_ops(good)
+    good.settle(20)
+    good.enter('r1')
+    good.enter('r3')
+    assert good.check() == []
+    assert good.agents['r1'].authorized() == {'zone:a'} and not good.agents['r3'].authorized()

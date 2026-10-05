@@ -63,7 +63,7 @@
 | `key` | PriorityKey 또는 None | REQUEST 에만. 투표자의 대기열 순서 (7 절) |
 | `deadline` | Stamp 또는 None | REQUEST 에만. 잠정 표의 기한 (요청자의 sim 시각 기준 절대값) |
 | `lamport` | int | 송신 시 Lamport 시각 |
-| `reason` | str | NACK 사유: `busy` `expired` `finished` `stale_epoch` `not_tentative` `amnesic` |
+| `reason` | str | NACK 사유: `busy`(확정 표가 막음) `contended`(다른 요청의 잠정 표가 막음) `expired` `finished` `stale_epoch` `not_tentative` `amnesic` |
 
 | kind | 방향 | 보내는 때 |
 |---|---|---|
@@ -86,8 +86,9 @@ ABANDON 과 RELEASE 는 투표자에게 같은 의미다: "요청 r 의 표(잠�
 | 현재 | 사건 | 다음 | 동작 |
 |---|---|---|---|
 | FREE | REQUEST(r, S): S 의 모든 자원이 FREE, r 보다 앞선 기아 요청의 예약 없음, 기한 미경과 | S 전체 `TENTATIVE(r, deadline)` | 영속화 → VOTE |
-| FREE/점유 | REQUEST(r, S): S 중 하나라도 다른 요청이 쥠 | 그대로, r 을 대기열에 | NACK(busy) |
+| FREE/점유 | REQUEST(r, S): S 중 하나라도 다른 요청이 쥠 | 그대로, r 을 대기열에 | 막는 표가 모두 확정이면 NACK(busy), 아니면 NACK(contended) |
 | `TENTATIVE(r)` | 자기 sim 시각 ≥ deadline | FREE | 대기열에서 다음 요청에 투표 시도 |
+| `TENTATIVE(r)` | 같은 로봇의 더 새 요청 r' > r 의 REQUEST | FREE, r 묘비 | 요청자는 활성 시도가 하나뿐이므로 r 은 끝났다 — 이른 만료와 같아 안전 |
 | `TENTATIVE(r)` | ENTER(r, S) 이고 S 전체가 r 에 묶여 있음 | `COMMITTED(r)` | 영속화 → ENTER_ACK |
 | `COMMITTED(r)` | ENTER(r, S) 중복 | 그대로 | ENTER_ACK 재전송 (멱등) |
 | 그 밖 | ENTER(r, S) | 그대로 | NACK(not_tentative) |
@@ -110,7 +111,7 @@ ABANDON 과 RELEASE 는 투표자에게 같은 의미다: "요청 r 의 표(잠�
 | 단계 | 들어가는 때 | 나가는 때 |
 |---|---|---|
 | IDLE | — | `request(S)` → VOTING |
-| VOTING(r) | 새 ReqId 로 REQUEST 방송 | 과반 VOTE → ENTERING 영속화 → ENTER 송신 / 기한·과반 불가 → ABANDON + 백오프 |
+| VOTING(r) | 새 ReqId 로 REQUEST 방송 | 과반 VOTE → ENTERING 영속화 → ENTER 송신 / 기한 경과, 또는 NACK(contended) > N−Q (표 갈림), 또는 NACK(expired·finished·amnesic) > N−Q → ABANDON + 백오프. NACK(busy) 는 기다린다 (점유가 풀리면 대기열에서 VOTE 가 온다) |
 | ENTERING(r) | 과반 VOTE | 과반 ENTER_ACK(같은 req·같은 epoch) → **HELD 영속화** / 기한·과반 불가·더 높은 epoch → ABANDON + 백오프 |
 | HELD(r, S) | 과반 ENTER_ACK | `release(R)` — 진출 확인한 자원만 내려놓고 RELEASE |
 | BACKOFF | ABANDON 직후 | 무작위 `U(backoff_min, backoff_max) × 2^min(시도-1, 3)` 뒤 새 ReqId 로 재시도 |
