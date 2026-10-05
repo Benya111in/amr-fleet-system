@@ -108,6 +108,8 @@ def test_real_logs_reproduce_performance_md():
     assert {r['head'] for r in s['runs']} == {'cebd351', 'bcc2cca', '80874d3'}
     assert all(r['head_status'] == '있음' for r in s['runs'])
     assert p['harness_failed_runs'] == ['S0a', 'S0b', 'S0c', 'S0d']
+    assert p['chronological']
+    assert [e['exec_index'] for e in s['episodes']] == list(range(240))
 
 
 @needs_real

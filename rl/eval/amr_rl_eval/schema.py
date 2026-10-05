@@ -39,6 +39,8 @@ COLUMNS = [
     ('difficulty', str, True, '난도 층 (rliable task 단위)'),
     ('episode', int, True, '같은 (policy_id, scenario_seed) 안의 순번 (0 부터)'),
     ('run_tag', str, True, '로그 태그·실행 디렉터리'),
+    ('exec_index', int, False, '같은 (arm, simulator, scenario_set) 안의 실행 순번 — 순차 감시 순서 '
+                               '(Gazebo 확증 평가에서는 필수, PROTOCOL.md §6.2)'),
     ('commit', str, True, 'git rev-parse HEAD (모르면 unknown — 판정표에 표시된다)'),
     ('safety_node', str, True, ' | '.join(SAFETY_MODES)),
     ('outcome', str, True, ' | '.join(OUTCOMES)),

@@ -106,11 +106,15 @@ def load_trials_08(log_root, tag):
     return rows, path
 
 
-def trials_to_episodes(tag, prov, trials, episode_index):
-    """시나리오 08 시행 → 결과 CSV 행 (schema v1). 짝짓기 키 scenario_seed = 왕복 순번."""
+def trials_to_episodes(tag, prov, trials, episode_index, exec_start=0):
+    """
+    시나리오 08 시행 → 결과 CSV 행 (schema v1).
+
+    짝짓기 키 scenario_seed = 왕복 순번. exec_index = 실행 순서 (태그를 시간순으로 넘긴다는 전제).
+    """
     out = []
     head = prov.get('head') or 'unknown'
-    for t in trials:
+    for k, t in enumerate(trials):
         contacts = int(t['contacts'])
         if contacts > 0:
             outcome = 'collision'
@@ -123,7 +127,8 @@ def trials_to_episodes(tag, prov, trials, episode_index):
             'policy_id': f'dwa@{head[:7]}', 'train_seed': None, 'simulator': 'gazebo',
             'scenario_set': 'gz_s08_actor42', 'scenario_id': SCEN_08,
             'scenario_seed': int(t['trial']), 'difficulty': 'dynamic_crossing',
-            'episode': episode_index, 'run_tag': tag, 'commit': head, 'safety_node': 'on',
+            'episode': episode_index, 'run_tag': tag, 'exec_index': exec_start + k,
+            'commit': head, 'safety_node': 'on',
             'outcome': outcome, 'contacts': contacts, 'time_s': t['time_s'],
             'max_dev_m': t['max_deviation_m'], 'return_max_s': t['return_s'],
             'min_clearance_m': t['min_distance_m'], 'min_ttc_s': t['min_ttc_s'],
@@ -152,7 +157,7 @@ def summarize_08(log_root=DEFAULT_LOG_ROOT, tags=PRIMARY_08):
         key = prov.get('head') or 'unknown'
         idx = per_policy.get(key, 0)
         per_policy[key] = idx + 1
-        episodes += trials_to_episodes(tag, prov, trials, idx)
+        episodes += trials_to_episodes(tag, prov, trials, idx, len(episodes))
         pooled_trials += trials
         col = {k: [t[k] for t in trials] for k in trials[0]}
         runs.append(dict(prov, n=len(trials), reached=int(sum(col['reached'])),
@@ -191,6 +196,8 @@ def summarize_08(log_root=DEFAULT_LOG_ROOT, tags=PRIMARY_08):
         'return_first_over_5s': int((col['return_first_s'] > 5.0).sum()),
         'replanned': int((col['n_plans'] > 1).sum()),
         'harness_failed_runs': [r['tag'] for r in runs if not r['harness_passed']],
+        # exec_index 는 태그 순서를 실행 순서로 쓴다 — 시작 시각이 그 순서인지 확인해 둔다
+        'chronological': [r['started_at'] for r in runs] == sorted(r['started_at'] for r in runs),
     }
     return {'runs': runs, 'pooled': pooled, 'episodes': episodes, 'sources': sources}
 
