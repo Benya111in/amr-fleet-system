@@ -284,6 +284,70 @@ class Trainer:
             self.lam[i] = min(self.cfg.lag_max, lam)
         return self.lam.tolist()
 
+    def behavior_clone(self, demo, steps, epochs=30, batch=8192, z_clip=0.97, log=print):
+        """
+        시연자 demo(obs → u) 로 B 정책 평균을 회귀 초기화한다 (BC, z = atanh(clip(u))).
+
+        시연 수집은 시연자 행동으로 env 를 굴린다 (정규화 통계도 이 관측으로 갱신). 반환: 마지막 MSE.
+        """
+        assert self.arm == 'B'
+        env, m = self.env, self.model
+        O, Z = [], []
+        obs = self.obs
+        with torch.no_grad():
+            for _ in range(steps):
+                u = demo(obs)
+                O.append(obs)
+                Z.append(torch.atanh(u.clamp(-z_clip, z_clip)))
+                m.norm.update(obs)
+                obs, *_ = env.step(u)
+        self.obs = obs
+        O, Z = torch.cat(O), torch.cat(Z)
+        opt = torch.optim.Adam(m.pi.parameters(), lr=1e-3)
+        n = O.shape[0]
+        for ep in range(epochs):
+            perm = torch.randperm(n, device=self.dev)
+            tot = 0.0
+            for i in range(0, n, batch):
+                idx = perm[i:i + batch]
+                loss = ((m.pi(m.norm(O[idx])) - Z[idx]) ** 2).mean()
+                opt.zero_grad(set_to_none=True)
+                loss.backward()
+                opt.step()
+                tot += float(loss) * idx.numel()
+            if ep % 10 == 0 or ep == epochs - 1:
+                log(f'[bc] epoch {ep} mse {tot / n:.4f} (n={n})')
+        return tot / n
+
+    def warmup_critic(self, iters):
+        """정책을 고정하고 가치망만 iters 롤아웃 학습 (BC 직후 부정확한 critic 이 정책을 흔들지 않게)."""
+        saved = (self.cfg.epochs, self.opt)
+        vopt = torch.optim.Adam(self.model.v.parameters(), lr=self.cfg.lr, eps=1e-5)
+        for _ in range(iters):
+            self.collect()
+            T, N, cfg = self.T, self.N, self.cfg
+            adv = torch.zeros(T, N, device=self.dev)
+            last = torch.zeros(N, device=self.dev)
+            nv = self.last_val
+            for t in reversed(range(T)):
+                nonterm = 1.0 - self.b_done[t]
+                delta = self.b_rew[t] + cfg.gamma * nv * nonterm - self.b_val[t]
+                last = delta + cfg.gamma * cfg.lam * nonterm * last
+                adv[t] = last
+                nv = self.b_val[t]
+            ret = (adv + self.b_val).reshape(-1)
+            obs = self.b_obs.reshape(T * N, -1)
+            for _ in range(cfg.epochs):
+                perm = torch.randperm(T * N, device=self.dev)
+                mb = T * N // cfg.minibatches
+                for i in range(cfg.minibatches):
+                    idx = perm[i * mb:(i + 1) * mb]
+                    vl = 0.5 * ((self.model.value(obs[idx]) - ret[idx]) ** 2).mean()
+                    vopt.zero_grad(set_to_none=True)
+                    vl.backward()
+                    vopt.step()
+        self.cfg.epochs, self.opt = saved
+
     def update(self):
         """GAE + PPO 갱신 → 손실·KL 통계."""
         cfg, T, N = self.cfg, self.T, self.N

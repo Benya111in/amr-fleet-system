@@ -20,22 +20,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
 
-def heuristic(obs):
-    """경로 다음 subgoal(k=2) 방향으로 0.8 m/s, 목표 근처 감속 (장애물 무시)."""
-    import torch
-    b = torch.atan2(obs[:, 199], obs[:, 200])
-    v_cmd, w_cmd = obs[:, 184] * 2.0, obs[:, 185] * 1.5
-    gd = obs[:, 214] * 10.0
-    v_des = 0.8 * torch.clamp(torch.cos(b), min=0.0) * torch.clamp(gd, max=1.0)
-    v_des = torch.where(gd < 0.08, torch.zeros_like(v_des), v_des)
-    w_des = torch.clamp(2.0 * b, -1.2, 1.2)
-    return torch.stack([torch.clamp((v_des - v_cmd) / 0.1, -1, 1),
-                        torch.clamp((w_des - w_cmd) / 0.2, -1, 1)], 1)
-
-
 def run_one(n, steps, warmup, mode, arm, obstacles, compile_):
     import torch
     from amr_sim2d.env import EnvConfig, Sim2DEnv
+    from amr_sim2d.heuristic import path_follower
     torch.cuda.reset_peak_memory_stats()
     env = Sim2DEnv(EnvConfig(num_envs=n, arm=arm, obstacle_mode=obstacles, compile=compile_),
                    log=lambda *a: None)
@@ -49,7 +37,7 @@ def run_one(n, steps, warmup, mode, arm, obstacles, compile_):
             return torch.where(env.mask, lg, torch.full_like(lg, -1.0)).argmax(1)
         if mode == 'random':
             return torch.rand(n, 2, device='cuda', generator=g) * 2 - 1
-        return heuristic(o)
+        return path_follower(o)
     t0 = time.time()
     for _ in range(warmup):
         obs, *_ = env.step(act(obs))

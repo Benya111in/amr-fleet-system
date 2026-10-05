@@ -44,6 +44,10 @@ def main():
     ap.add_argument('--lagrangian', action='store_true', help='계약 §7 비용 제약 (PI 라그랑주)')
     ap.add_argument('--lag-ki', type=float, default=2e-4)
     ap.add_argument('--lag-kp', type=float, default=0.0)
+    ap.add_argument('--bc-steps', type=int, default=0,
+                    help='> 0 이면 경로 추종 휴리스틱 시연으로 정책 평균을 BC 초기화 (B 전용)')
+    ap.add_argument('--bc-log-std', type=float, default=-1.0)
+    ap.add_argument('--critic-warmup', type=int, default=0)
     ap.add_argument('--curriculum', type=float, default=0.0,
                     help='학습 앞 이 비율 동안 경로 상한 6 m→목표, 장애물 상한 0→목표로 선형 증가')
     ap.add_argument('--no-dr', action='store_true')
@@ -95,6 +99,18 @@ def main():
 
     n_upd = int(a.total_steps // (a.envs * a.rollout))
     do_eval(0)
+    if a.bc_steps > 0:
+        from amr_sim2d.heuristic import path_follower
+        mse = tr.behavior_clone(path_follower, a.bc_steps, log=log)
+        with torch.no_grad():
+            tr.model.log_std.fill_(a.bc_log_std)
+        tr.steps += a.bc_steps * a.envs
+        s = do_eval(-1)
+        log(f'[bc] 시연 {a.bc_steps * a.envs} 스텝, mse {mse:.4f}, BC 정책 평가 성공 '
+            f"{s.get('success', 0):.3f}")
+    if a.critic_warmup > 0:
+        tr.warmup_critic(a.critic_warmup)
+        log(f'[critic] 가치망 예열 {a.critic_warmup} 롤아웃')
     t_start = time.time()
     for upd in range(1, n_upd + 1):
         if a.curriculum > 0:
