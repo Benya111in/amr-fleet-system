@@ -303,17 +303,57 @@ def _models(sdf_text):
     return world, names
 
 
-@pytest.mark.parametrize('variant', ['s6-queue', 's6-queue2', 's6-wall'])
+S6_BLOCKED = ['s6-queue', 's6-queue2', 's6-wall']
+
+
+def _actors(sdf_text):
+    """SDF 의 actor 이름 → 웨이포인트 xy 배열 (생성기 specs 가 아니라 출력 SDF 에서 읽는다)."""
+    world, _ = _models(sdf_text)
+    out = {}
+    for a in world.findall('actor'):
+        xy = [[float(v) for v in w.findtext('pose').split()[:2]] for w in a.iter('waypoint')]
+        out[a.get('name')] = np.array(xy)
+    return out
+
+
+def _blocker_aabbs(gen, sdf_text):
+    """SDF 의 s6_blocker_* 시각체 → 월드 축 AABB (x0, x1, y0, y1)."""
+    prims, _ = gen.gt_primitives(sdf_text, [str(MODELS)], gen.GT_EXCLUDE)
+    out = []
+    for p in prims:
+        if p.model.startswith('s6_blocker'):
+            h = np.abs(p.R) @ p.half()
+            out.append((p.t[0] - h[0], p.t[0] + h[0], p.t[1] - h[1], p.t[1] + h[1]))
+    return out
+
+
+def _polyline_box_dist(xy, box, step=0.005):
+    """꺾은선을 step 간격으로 촘촘히 표본해 AABB 까지 최소 거리 (생성기의 해석 거리와 독립인 확인)."""
+    x0, x1, y0, y1 = box
+    pts = [xy[:1]]
+    for a, b in zip(xy[:-1], xy[1:]):
+        n = max(int(np.ceil(np.hypot(*(b - a)) / step)), 1)
+        pts.append(a + (b - a) * (np.arange(1, n + 1)[:, None] / n))
+    p = np.vstack(pts)
+    dx = np.maximum.reduce([x0 - p[:, 0], np.zeros(len(p)), p[:, 0] - x1])
+    dy = np.maximum.reduce([y0 - p[:, 1], np.zeros(len(p)), p[:, 1] - y1])
+    return float(np.hypot(dx, dy).min())
+
+
+@pytest.mark.parametrize('variant', S6_BLOCKED)
 def test_s6_variant_adds_only_blockers_matching_localizability(gen, variant):
-    """S6 변형 = 기본 월드 + 정적 블로커만. 블로커 기하는 localizability.s6_blockers 와 같다."""
+    """S6 막힘 변형 = s6-open(대조군) + 정적 블로커만. 블로커 기하는 localizability.s6_blockers 와 같다."""
     from amr_evaluation.slam3d import localizability as L
-    base = gen.build_sdf()[0]
+    base = gen.build_sdf('s6-open')[0]
     sdf = gen.build_sdf(variant)[0]
-    assert set(base.splitlines()) <= set(sdf.splitlines())
+    n = len(gen.S6_BLOCKERS[variant])
+    same = base.replace('s6-open: 정적 블로커 0개', f'{variant}: 정적 블로커 {n}개')
+    assert set(same.replace('s6-open', variant).splitlines()) <= set(sdf.splitlines())
     world, names = _models(sdf)
     _, base_names = _models(base)
     blockers = sorted(names - base_names)
     assert blockers == [f's6_blocker_{i}' for i in range(len(blockers))] and blockers
+    assert base_names <= names
     prims, _ = gen.gt_primitives(sdf, [str(MODELS)], gen.GT_EXCLUDE)
     blk = [p for p in prims if p.model.startswith('s6_blocker')]
     # 월드 축 AABB (중심, 크기) — yaw ±π/2 AMR 은 x·y 크기가 바뀐다. SDF 자세는 소수 4 자리라 1e-4 허용
@@ -321,6 +361,53 @@ def test_s6_variant_adds_only_blockers_matching_localizability(gen, variant):
     ref = L.s6_blockers(variant.split('-')[1])
     want = sorted(np.r_[c, 2 * np.abs(r) @ h].tolist() for c, r, h in zip(ref.c, ref.R, ref.h))
     assert np.allclose(got, want, atol=1e-4)
+
+
+def test_s6_open_is_default_world_minus_dropped_actors(gen):
+    """s6-open = 기본 월드에서 S6_DROP_ACTORS 의 actor 만 뺀 것 (모델·차량·정적 배치는 그대로)."""
+    base = gen.build_sdf()[0]
+    sdf, _, specs = gen.build_sdf('s6-open')
+    assert _models(sdf)[1] == _models(base)[1]
+    assert set(_actors(base)) - set(_actors(sdf)) == set(gen.S6_DROP_ACTORS)
+    assert set(_actors(sdf)) == {sp[0] for sp in specs} and len(specs) == 4
+    for name, xy in _actors(sdf).items():
+        assert np.array_equal(xy, _actors(base)[name])
+    assert set(gen.VEHICLES) <= _models(sdf)[1]
+
+
+@pytest.mark.parametrize('variant', S6_BLOCKED)
+def test_s6_blockers_clear_actor_paths_and_vehicle_lanes(gen, variant):
+    """
+    리뷰 B2: 블로커는 그 월드에 남은 모든 actor 경로에서 사람 반폭 + 0.1 m 이상, 차량 차선 밖.
+
+    Fortress actor 는 정적 모델과 충돌하지 않으므로 경로가 블로커를 지나면 사람이 상자를 뚫고 지나간다.
+    actor 경로는 출력 SDF 의 웨이포인트, 블로커는 출력 SDF 의 시각체에서 읽는다 (check_blockers 와 독립).
+    """
+    assert gen.BLOCKER_CLEARANCE >= 0.25 + 0.1
+    sdf = gen.build_sdf(variant)[0]
+    boxes = _blocker_aabbs(gen, sdf)
+    assert len(boxes) == len(gen.S6_BLOCKERS[variant])
+    for name, xy in _actors(sdf).items():
+        for box in boxes:
+            assert _polyline_box_dist(xy, box) >= gen.BLOCKER_CLEARANCE - 1e-3, (name, box)
+    for vname, (axis, lo, hi, fixed, *_r) in gen.VEHICLES.items():
+        assert vname in _models(sdf)[1]
+        w = gen.VEHICLE_HALF_W[vname] + gen.BLOCKER_CLEARANCE
+        back, front = gen.VEHICLE_REACH[vname]
+        a0, a1 = lo - back - gen.BLOCKER_CLEARANCE, hi + front + gen.BLOCKER_CLEARANCE
+        lane = (a0, a1, fixed - w, fixed + w) if axis == 'x' else (fixed - w, fixed + w, a0, a1)
+        for x0, x1, y0, y1 in boxes:
+            assert x1 <= lane[0] or x0 >= lane[1] or y1 <= lane[2] or y0 >= lane[3], (vname, lane)
+
+
+def test_dropped_actors_do_cross_the_blockers(gen):
+    """S6_DROP_ACTORS 가 빈 핑계가 아닌지: 기본 월드의 그 actor 경로는 실제로 블로커에 닿거나 너무 가깝다."""
+    base_actors = _actors(gen.build_sdf()[0])
+    queue2 = _blocker_aabbs(gen, gen.build_sdf('s6-queue2')[0])
+    near = {n: min(_polyline_box_dist(xy, b) for b in queue2) for n, xy in base_actors.items()}
+    assert near['worker_slow_south'] == pytest.approx(0.0, abs=1e-6)       # 남쪽 대기 AMR 을 관통
+    assert near['worker_random'] == pytest.approx(0.20, abs=0.01)          # 북쪽 대기 AMR 가장자리 0.20 m
+    assert {n for n, d in near.items() if d < gen.BLOCKER_CLEARANCE} == set(gen.S6_DROP_ACTORS)
 
 
 def test_s1_variant_has_no_dynamic_obstacles(gen):
@@ -347,6 +434,62 @@ def test_variant_requires_out_and_gt_ignores_variant(tmp_path, gen):
 
 def test_blocker_overlapping_rack_is_rejected(gen):
     racks = gen.rack_instances()
-    with pytest.raises(AssertionError):
-        gen.check_blockers(racks, [('wall', 0.0, -7.9, 0.0)])     # 입구 안쪽으로 15 cm → 좁은 통로 랙과 겹침
-    gen.check_blockers(racks, gen.S6_BLOCKERS['s6-wall'])         # 정의된 위치는 통과
+    with pytest.raises(AssertionError, match='rack_narrow'):
+        gen.check_blockers(racks, [('wall', 0.0, -7.9, 0.0)], [])  # 입구 안쪽으로 15 cm → 좁은 통로 랙과 겹침
+    gen.check_blockers(racks, gen.S6_BLOCKERS['s6-wall'], [])      # 정의된 위치는 통과
+
+
+def test_blocker_on_actor_path_or_vehicle_lane_is_rejected(gen):
+    """리뷰 B2 회귀: 기본 월드 actor 전부를 두면 queue·queue2 블로커는 거절된다. 차선 위 블로커도 거절."""
+    racks = gen.rack_instances()
+    specs = {sp[0]: sp for sp in gen.actor_specs()}
+    south = gen.S6_BLOCKERS['s6-queue2'][1:]
+    with pytest.raises(AssertionError, match='worker_slow_south 경로에서 0.00 m'):
+        gen.check_blockers(racks, south, [specs['worker_slow_south']])
+    with pytest.raises(AssertionError, match='worker_random 경로에서 0.20 m'):
+        gen.check_blockers(racks, gen.S6_BLOCKERS['s6-queue'], list(specs.values()))
+    with pytest.raises(AssertionError, match='forklift_main 차선'):
+        gen.check_blockers(racks, [('amr', 0.0, 15.0, 0.0)], [])
+    with pytest.raises(AssertionError, match='shuttle_amr 차선'):
+        gen.check_blockers(racks, [('amr', 9.0, 0.0, math.pi / 2)], [])
+
+
+def test_blocker_actor_clearance_boundary(gen):
+    """
+    여유 경계: worker_crossing (y = -7 직선) 에서 블로커 윗변까지 c − 1 cm 는 거절, c + 1 cm 는 통과.
+
+    AMR 블로커 yaw 0 → y 반폭 0.2. 랙(입구 y = -8)과는 겹치지 않는 위치다.
+    """
+    racks = gen.rack_instances()
+    crossing = [sp for sp in gen.actor_specs() if sp[0] == 'worker_crossing']
+    c = gen.BLOCKER_CLEARANCE
+    with pytest.raises(AssertionError, match='worker_crossing'):
+        gen.check_blockers(racks, [('amr', 0.0, -7.0 - 0.2 - (c - 0.01), 0.0)], crossing)
+    gen.check_blockers(racks, [('amr', 0.0, -7.0 - 0.2 - (c + 0.01), 0.0)], crossing)
+
+
+def test_blocker_vehicle_lane_clearance_boundary(gen):
+    """셔틀 차선(x = 9 ± 차체 반폭 0.25)에서 블로커 옆면까지 c − 1 cm 는 거절, c + 1 cm 는 통과 (y = 0 통로)."""
+    racks = gen.rack_instances()
+    c = gen.BLOCKER_CLEARANCE
+    edge = 9.0 + gen.VEHICLE_HALF_W['shuttle_amr']
+    with pytest.raises(AssertionError, match='shuttle_amr 차선'):
+        gen.check_blockers(racks, [('amr', edge + c - 0.01 + 0.2, 0.0, math.pi / 2)], [])
+    gen.check_blockers(racks, [('amr', edge + c + 0.01 + 0.2, 0.0, math.pi / 2)], [])
+
+
+@pytest.mark.parametrize('seg, box, want', [
+    (((0, 0), (2, 0)), (0.5, 1.0, -0.2, 0.2), 0.0),            # 관통
+    (((0, 1), (2, 1)), (0.5, 1.0, -0.2, 0.2), 0.8),            # 변과 평행
+    (((-1, -1), (-1, 3)), (0.0, 1.0, 0.0, 1.0), 1.0),          # 옆을 지남
+    (((2, 2), (3, 3)), (0.0, 1.0, 0.0, 1.0), math.sqrt(2)),    # 꼭짓점 쪽 끝점
+    (((-1, 1.5), (1.5, -1)), (0.0, 1.0, 0.0, 1.0), 0.0),       # 모서리를 자름
+    (((-1, 3.5), (3.5, -1)), (0.0, 1.0, 0.0, 1.0), 0.5 / math.sqrt(2)),   # 꼭짓점 (1,1) 대 선분
+    (((3, 0.5), (3, 0.5)), (0.0, 1.0, 0.0, 1.0), 2.0),         # 길이 0 선분
+    (((0.4, 0.4), (0.6, 0.6)), (0.0, 1.0, 0.0, 1.0), 0.0),     # 상자 안
+    (((0.5, 0.5), (0.5, 0.5)), (0.0, 1.0, 0.0, 1.0), 0.0),     # 상자 안 점
+])
+def test_seg_box_dist_analytic(gen, seg, box, want):
+    (ax, ay), (bx, by) = seg
+    assert gen._seg_box_dist(ax, ay, bx, by, *box) == pytest.approx(want, abs=1e-12)
+    assert gen._seg_box_dist(bx, by, ax, ay, *box) == pytest.approx(want, abs=1e-12)

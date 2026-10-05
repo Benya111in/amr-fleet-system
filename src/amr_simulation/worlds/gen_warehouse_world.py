@@ -724,6 +724,24 @@ VEHICLES = {
     "forklift_main": ("x", -20.0, 20.0, 15.0, 1.5, 1.0, 0.0, "forklift", 1.1, 0.25),
     "shuttle_amr": ("y", -6.0, 11.0, 9.0, 1.0, 0.8, math.pi / 2, "shuttle_amr", 0.36, 0.0825),
 }
+# 차체 반폭, (후방, 전방(포크) 길이) [m] — 차선 검사·동적 영역 래스터·S6 블로커 검사가 같은 값을 쓴다
+VEHICLE_HALF_W = {"forklift_main": 0.7, "shuttle_amr": 0.25}
+VEHICLE_REACH = {"forklift_main": (1.3, 2.1), "shuttle_amr": (0.35, 0.35)}
+
+
+def vehicle_lanes(side, end=0.0):
+    """
+    차량 왕복 차선 AABB [(이름, x0, x1, y0, y1)].
+
+    반전 지점 lo..hi + 차체 앞뒤 길이 + end, 폭은 차체 반폭 + side.
+    """
+    out = []
+    for name, (axis, lo, hi, fixed, *_rest) in VEHICLES.items():
+        w, (back, front) = VEHICLE_HALF_W[name] + side, VEHICLE_REACH[name]
+        a0, a1 = lo - back - end, hi + front + end
+        box = (a0, a1, fixed - w, fixed + w) if axis == "x" else (fixed - w, fixed + w, a0, a1)
+        out.append((name,) + box)
+    return out
 
 
 def vehicle_start(axis, lo, fixed, speed, accel):
@@ -745,9 +763,10 @@ def vehicles():
     return out
 
 
-def dynamic_obstacles():
-    out = "    <!-- ===== 동적 장애물 (사람 actor 6 + 물리 모델 2: 지게차, 셔틀 AMR) ===== -->\n"
-    specs = actor_specs()
+def dynamic_obstacles(specs=None, header=None):
+    """동적 장애물 XML 과 actor specs. 인자를 안 주면 기본 월드의 전부 (S6 변형은 일부 actor 만 넘긴다)."""
+    out = header or "    <!-- ===== 동적 장애물 (사람 actor 6 + 물리 모델 2: 지게차, 셔틀 AMR) ===== -->\n"
+    specs = actor_specs() if specs is None else specs
     for name, v, wps, desc in specs:
         out += f"    <!-- {name}: {v} m/s, {desc}, 루프 {wps[-1][0]:.1f} s, 웨이포인트 {len(wps)}개 -->\n"
         out += actor_xml(name, wps)
@@ -797,12 +816,7 @@ def check_layout(racks, specs):
         dts = [b[0] - a[0] for a, b in zip(wps, wps[1:])]
         assert min(dts) > 1e-3 and max(dts) <= ACTOR_DT + 1e-6, (aname, min(dts), max(dts))
     # 차량 경로(반전 지점까지 + 차체 반폭 + 여유)가 랙·기둥과 겹치지 않는다
-    half_w = {"forklift_main": 0.7, "shuttle_amr": 0.25}
-    reach = {"forklift_main": (1.3, 2.1), "shuttle_amr": (0.35, 0.35)}   # 후방, 전방(포크) 길이
-    for name, (axis, lo, hi, fixed, *_rest) in VEHICLES.items():
-        w, (back, front) = half_w[name] + 0.3, reach[name]
-        a0, a1 = lo - back, hi + front
-        box = (a0, a1, fixed - w, fixed + w) if axis == "x" else (fixed - w, fixed + w, a0, a1)
+    for name, *box in vehicle_lanes(0.3):
         for oname, x0, x1, y0, y1 in aabbs:
             assert box[1] < x0 or box[0] > x1 or box[3] < y0 or box[2] > y1, \
                 f"{name} 경로가 {oname} 과 겹침"
@@ -1074,12 +1088,7 @@ def gt_dynamic_raster(specs, res=GT_DYN_RES, margin=GT_DYN_MARGIN, bounds=GT_BOU
             u = np.clip(((px - ax) * dx + (py - ay) * dy) / ll, 0.0, 1.0) if ll > 0 else 0.0 * px
             hit = np.hypot(px - (ax + u * dx), py - (ay + u * dy)) <= margin
             occ[rr[hit], cc[hit]] = True
-    half_w = {"forklift_main": 0.7, "shuttle_amr": 0.25}        # check_layout 와 같은 값
-    reach = {"forklift_main": (1.3, 2.1), "shuttle_amr": (0.35, 0.35)}
-    for name, (axis, lo, hi, fixed, *_rest) in VEHICLES.items():
-        w, (back, front) = half_w[name] + margin, reach[name]
-        a0, a1 = lo - back - margin, hi + front + margin
-        box = (a0, a1, fixed - w, fixed + w) if axis == "x" else (fixed - w, fixed + w, a0, a1)
+    for _, *box in vehicle_lanes(margin, margin):
         cc, rr, _, _ = window(*box)
         occ[rr, cc] = True
     return occ
@@ -1329,9 +1338,48 @@ def export_gt(out_dir, model_dirs, spacing=GT_SPACING, res=GT_RES, slices=GT_SLI
     return meta
 
 
-def check_blockers(racks, blockers):
-    """블로커가 랙·기둥과 겹치지 않고 실내에 있는지 (블로커 AABB 대 랙·기둥 AABB, 닿는 것은 허용)."""
+def _seg_box_dist(ax, ay, bx, by, x0, x1, y0, y1):
+    """선분 a-b 와 AABB [x0, x1] x [y0, y1] 사이 최소 거리 (닿거나 겹치면 0)."""
+    dx, dy = bx - ax, by - ay
+    t0, t1 = 0.0, 1.0
+    for p, q in ((-dx, ax - x0), (dx, x1 - ax), (-dy, ay - y0), (dy, y1 - ay)):    # Liang–Barsky
+        if p == 0.0:
+            if q < 0.0:
+                break
+        elif p < 0.0:
+            t0 = max(t0, q / p)
+        else:
+            t1 = min(t1, q / p)
+        if t0 > t1:
+            break
+    else:
+        return 0.0
+
+    def to_box(px, py):
+        return math.hypot(max(x0 - px, 0.0, px - x1), max(y0 - py, 0.0, py - y1))
+
+    def to_seg(px, py):
+        ll = dx * dx + dy * dy
+        u = min(max(((px - ax) * dx + (py - ay) * dy) / ll, 0.0), 1.0) if ll > 0.0 else 0.0
+        return math.hypot(px - ax - u * dx, py - ay - u * dy)
+
+    # 겹치지 않는 두 볼록 집합의 최소 거리는 한쪽의 꼭짓점에서 생긴다
+    return min(to_box(ax, ay), to_box(bx, by),
+               *(to_seg(cx, cy) for cx in (x0, x1) for cy in (y0, y1)))
+
+
+def check_blockers(racks, blockers, specs, clearance=None):
+    """
+    S6 블로커 배치 검사 (어기면 AssertionError).
+
+    - 실내, 랙·기둥 AABB 와 겹치지 않는다 (닿는 것은 허용).
+    - 그 월드에 남는 actor 의 웨이포인트 꺾은선에서 clearance 이상 떨어진다. Fortress 의 actor 는 정적 모델과
+      충돌하지 않으므로, 가까우면 사람이 블로커를 뚫고 지나가 스캔에 겹친 점이 생긴다.
+    - 차량 왕복 차선(차체 반폭·앞뒤 길이 + clearance)과 겹치지 않는다.
+    """
+    clearance = BLOCKER_CLEARANCE if clearance is None else clearance
     aabbs = _aabbs(racks)
+    lanes = vehicle_lanes(clearance, clearance)
     for kind, x, y, yaw in blockers:
         sx, sy = AMR_BLOCKER[:2] if kind == "amr" else WALL_BLOCKER[:2]
         c, s = abs(math.cos(yaw)), abs(math.sin(yaw))
@@ -1340,14 +1388,25 @@ def check_blockers(racks, blockers):
         for name, x0, x1, y0, y1 in aabbs:
             assert x + hx <= x0 or x - hx >= x1 or y + hy <= y0 or y - hy >= y1, \
                 f"블로커 ({x}, {y}) 가 {name} 과 겹침"
+        for aname, _, wps, _ in specs:
+            d, t = min((_seg_box_dist(xa, ya, xb, yb, x - hx, x + hx, y - hy, y + hy), ta)
+                       for (ta, xa, ya, _), (_, xb, yb, _) in zip(wps, wps[1:]))
+            assert d >= clearance, \
+                f"블로커 ({x}, {y}) 가 {aname} 경로에서 {d:.2f} m (루프 t={t:.1f} s) < {clearance} m"
+        for vname, x0, x1, y0, y1 in lanes:
+            assert x + hx <= x0 or x - hx >= x1 or y + hy <= y0 or y - hy >= y1, \
+                f"블로커 ({x}, {y}) 가 {vname} 차선(여유 {clearance} m)과 겹침"
 
 
 # ---- 평가 시나리오용 월드 변형 — --variant 플래그로만 (docs/research/slam3d/evaluation.md §6) ---------
 # 기본 월드(변형 없음)는 위 build_sdf 출력 그대로다. 변형은 커밋하지 않고 기록할 때 만들어 쓴다.
 #   s1        : 동적 장애물(사람 actor 6 + 지게차·셔틀) 없음 — S1 정상
+#   s6-open   : S6 대조군 — 블로커 없음, actor 는 아래 S6_DROP_ACTORS 를 뺀 4 명 (요인 E 의 "열림" 수준)
 #   s6-queue  : 좁은 통로 북쪽 토큰 대기 위치 (0, -5.5) 에 AMR 크기 정적 블로커 (traffic.yaml corridor_approach_m 2.5)
 #   s6-queue2 : 북 (0, -5.5) + 남 (0, -14.5) 양끝 대기
 #   s6-wall   : 양끝 입구 바로 앞 (0, -7.75)·(0, -12.25) 를 0.8 x 0.3 x 0.5 m 화물로 완전 차단 (최악)
+# s6-* 는 모두 같은 actor 집합을 쓴다 — 블로커 자리를 지나는 actor 를 빼야 하는데, 변형마다 다르게 빼면
+# 막힘(요인 E)과 사람 수가 함께 바뀌기 때문이다. 기본 월드와 비교하지 말고 s6-open 과 비교한다.
 # 블로커는 정적 모델이라 GT(--gt-dir)에는 넣지 않는다 — 사전 지도에 없는 물체로 다룬다.
 # 같은 블로커 기하가 amr_evaluation/slam3d/localizability.py s6_blockers 에 있다 (시험이 둘을 대조한다).
 AMR_BLOCKER = (0.6, 0.4, 0.30, 0.03)        # 길이, 폭, 높이, 바닥 틈 [m] — config/robot_params.yaml 차체
@@ -1358,13 +1417,23 @@ S6_BLOCKERS = {
                   ("amr", 0.0, NARROW_CY - 4.5, math.pi / 2)],
     "s6-wall": [("wall", 0.0, NARROW_CY + RACK_L + 0.25, 0.0),
                 ("wall", 0.0, NARROW_CY - RACK_L - 0.25, 0.0)],
+    "s6-open": [],
 }
+# 블로커 둘레 여유 = 동적 영역 래스터의 사람 반폭 + 팔 흔들림 (사람 반폭 0.25 + 0.1 = 0.35 보다 크다).
+# 이 값이면 블로커가 남은 actor·차량의 dynamic_swept 영역(GT_DYN_MARGIN)에도 들어가지 않는다.
+BLOCKER_CLEARANCE = GT_DYN_MARGIN
+# 기본 월드 경로에서 블로커 가장자리까지 [계산, check_blockers 의 꺾은선 거리]:
+#   worker_slow_south — 남쪽 대기 (0, -14.5) 를 그대로 지난다 (0.00 m, 루프 t ≈ 19.5 s)
+#   worker_random     — 북쪽 대기 (0, -5.5) 에서 0.20 m (y = -6 격자선, 루프 t ≈ 133.9 s)
+# 나머지 4 명은 모든 S6 블로커에서 0.60 m 이상 (가장 가까운 것: worker_crossing 대 s6-wall 북쪽 화물).
+S6_DROP_ACTORS = ("worker_random", "worker_slow_south")
 VARIANTS = ("s1",) + tuple(S6_BLOCKERS)
 
 
 def blocker_xml(variant):
     """S6 정적 블로커 모델들 (시각체 + 충돌체 상자)."""
-    out = f"    <!-- ===== 평가 변형 {variant}: 정적 블로커 (evaluation.md §6) ===== -->\n"
+    n = len(S6_BLOCKERS[variant])
+    out = f"    <!-- ===== 평가 변형 {variant}: 정적 블로커 {n}개 (evaluation.md §6) ===== -->\n"
     for i, (kind, x, y, yaw) in enumerate(S6_BLOCKERS[variant]):
         if kind == "amr":
             sx, sy, sz, gap = AMR_BLOCKER
@@ -1390,6 +1459,7 @@ def build_sdf(variant=None):
     월드 SDF 문자열과 (racks, specs). 호출마다 같은 결과 (seed 난수를 처음부터 다시 쓴다).
 
     variant 가 None 이면 커밋된 warehouse.sdf 와 바이트 단위로 같다. VARIANTS 의 값이면 평가용 변형.
+    specs 는 그 월드에 실제로 있는 actor 다 (s1 은 빈 목록, s6-* 는 S6_DROP_ACTORS 를 뺀 것).
     """
     if variant is not None and variant not in VARIANTS:
         raise ValueError(f"variant {variant!r} (가능: {VARIANTS})")
@@ -1398,10 +1468,13 @@ def build_sdf(variant=None):
     dyn_xml, specs = dynamic_obstacles()
     check_layout(racks, specs)
     if variant == "s1":
-        dyn_xml = "    <!-- ===== 평가 변형 s1: 동적 장애물 없음 (evaluation.md §6) ===== -->\n"
+        dyn_xml, specs = "    <!-- ===== 평가 변형 s1: 동적 장애물 없음 (evaluation.md §6) ===== -->\n", []
     elif variant is not None:
-        check_blockers(racks, S6_BLOCKERS[variant])
-        dyn_xml = dyn_xml + blocker_xml(variant)
+        specs = [sp for sp in specs if sp[0] not in S6_DROP_ACTORS]
+        check_blockers(racks, S6_BLOCKERS[variant], specs)
+        header = (f"    <!-- ===== 동적 장애물 (평가 변형 {variant}: 사람 actor {len(specs)} + 물리 모델 2."
+                  f" {', '.join(S6_DROP_ACTORS)} 는 블로커 자리를 지나므로 s6-* 전부에서 뺐다) ===== -->\n")
+        dyn_xml = dynamic_obstacles(specs, header)[0] + blocker_xml(variant)
 
     n_loc_markers = 4 * len(PILLARS) + len(rack_marker_poses())
 
@@ -1500,7 +1573,7 @@ def main(argv=None):
         sdf, racks, specs = build_sdf(args.variant)
         with open(out_path, "w") as f:
             f.write(sdf)
-        n_act, n_veh = (0, 0) if args.variant == "s1" else (len(specs), len(VEHICLES))
+        n_act, n_veh = len(specs), (0 if args.variant == "s1" else len(VEHICLES))
         print(f"wrote {out_path}: racks={len(racks)} actors={n_act} vehicles={n_veh} "
               f"signs={len(SIGN_POSES)}" + (f" variant={args.variant}" if args.variant else ""))
         for name, v, wps, _ in specs:
