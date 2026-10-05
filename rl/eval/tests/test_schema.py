@@ -57,3 +57,12 @@ def test_markdown_table_lists_every_column():
     md = S.markdown_table()
     for name in S.NAMES:
         assert f'`{name}`' in md
+    # 칸 안에 '|' 가 있으면 마크다운 표가 깨진다 — 모든 줄의 칸 수가 같아야 한다
+    assert {line.count('|') for line in md.splitlines()} == {5}
+
+
+def test_protocol_table_matches_schema():
+    import os
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(here, 'PROTOCOL.md'), encoding='utf-8') as f:
+        assert S.markdown_table() in f.read(), 'PROTOCOL.md §5 표를 schema.markdown_table() 로 갱신'
