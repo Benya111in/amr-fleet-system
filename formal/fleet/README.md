@@ -225,7 +225,7 @@ spec sha256 열의 스펙 판은 커밋으로 찾을 수 있다 (§6.7).
 | QV_N3_Z1_R2_C2_view | 위반 없음 (전수) | 930738 | 90981 | 30 | 8 | 36.85 | 1ab2620fb436 |
 | QV_N3_Z2_R3_C1_view | 위반 없음 (전수) | 410010263 | 26007001 | 42 | 1768 | 62.45 | 886be4a88678 |
 | QV_N5_Z1_R2_C1_view | 위반 없음 (전수) | 13523949 | 913764 | 41 | 402 | 35.28 | 1ab2620fb436 |
-| QV_N5_Z2_R2_C1_view | 미완 (시간 상한/중단, rc=없음) | - | >=1,988,455 | >=19 |  | 53.87 | 1ab2620fb436 |
+| QV_N5_Z2_R2_C1_view | 미완 (시간 상한/중단, rc=없음) | - | >=2,242,009 | >=19 |  | 53.87 | 1ab2620fb436 |
 
 ### 6.3 QuorumVote 가드 변이
 
@@ -239,7 +239,7 @@ spec sha256 열의 스펙 판은 커밋으로 찾을 수 있다 (§6.7).
 | QV_N3_Z1_R3_C0_noRidCheck | 위반 MutualExclusion (트레이스 24 상태) | 11535546 | 1046002 | 24 | 38 | 54.75 | 1ab2620fb436 |
 | QV_N3_Z1_R3_C1_volatileInc | 위반 MutualExclusion (트레이스 21 상태) | 20729069 | 1813987 | 22 | 63 | 42.48 | 1ab2620fb436 |
 | QV_N3_Z2_R2_C0_overwriteTentative | 위반 없음 (전수) | 3524076 | 242646 | 34 | 16 | 38.07 | 1ab2620fb436 |
-| QV_N3_Z2_R3_C1_overwriteTentative_view | 미완 (시간 상한/중단, rc=없음) | - | >=5,235,202 | >=15 |  | 21.76 | 1ab2620fb436 |
+| QV_N3_Z2_R3_C1_overwriteTentative_view | 미완 (시간 상한/중단, rc=없음) | - | >=7,821,787 | >=16 |  | 21.76 | 1ab2620fb436 |
 
 ### 6.4 QuorumVote 활성 결함 (ABANDON 처리)
 
@@ -304,6 +304,12 @@ QuorumVote·TaskLock 판 사이의 차이는 `git diff` 로 확인했고 지운 
 - VIEW 없이 돌린 `QV_N3_Z1_R2_C1`(136,276) 과 VIEW 판(30,223)은 둘 다 위반 없음이다.
   깊이가 32 → 29 로 줄어드는 것은 VIEW 가 같다고 본 상태를 합치기 때문이다.
 - `*.reprioritized-killed` 는 더 중요한 실행에 CPU 를 넘기려고 직접 멈춘 것이다.
+- 동작 커버리지 (`-coverage`, cfg `*_coverage`): 설계 모델에서 새 상태를 하나도 못 만든 동작은
+  QuorumVote `EnterOnePhase`(onePhase 변이 전용이라 꺼짐)·`HandleAbandon`, TaskLock `HandleAbandon`,
+  RA 원형 대조군 `ChangeView`(견해 고정이라 꺼짐)뿐이다. QuorumVote 의 `HandleAbandon` 은 보고서 표대로
+  T 만 푸므로 그 결과가 `ExpireVote` 의 결과와 같고, TaskLock 의 것은 확정 뒤 포기한 경우인데 VIEW 가
+  죽은 ACK 를 빼고 보므로 "확정 전에 만료" 한 상태와 같아진다. 나머지 동작은 모두 새 상태를 냈다
+  (가드가 늘 거짓이라 검사가 공허해지는 동작은 없다).
 
 ## 7. 이 결과로 쓸 수 있는 문장 · 쓸 수 없는 문장
 
