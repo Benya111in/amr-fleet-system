@@ -56,8 +56,13 @@ def render(s08, exc, s07, root):
       f'({", ".join("`" + t + "`" for t in failed)}). 실패 검사는 전부 '
       '`return to path (worst of active/original plan)` > 5 s 다. `performance.md` §2 는 이 실행들을 '
       f'활성 계획 기준 복귀(실행별 최대 {min(r["return_max"] for r in runs):.2f}~'
-      f'{max(r["return_max"] for r in runs):.2f} s)로 다시 판정해 통과로 적는다 — 판정 기준이 실행 뒤에 '
-      '바뀐 셈이므로 RL 비교에서는 **두 기준을 다 보고**하고, 새 비교의 기준은 실행 전에 PROTOCOL.md 로 고정한다.')
+      f'{max(r["return_max"] for r in runs):.2f} s)로 다시 판정해 통과로 적는다. 검사 자체가 이 실행들 **뒤에** '
+      '바뀌었다 — `80874d3` "fix(itest): 08 복귀 판정을 이탈과 같은 기준(활성 계획)으로 일치시킨다" '
+      '(`git log cebd351..80874d3 -- tests/integration/test_08_dynamic_obstacles.py`; '
+      'S0a~S0e 는 그 앞 '
+      '`cebd351`·`bcc2cca` 로 돌았다). `performance.md` §4.2 가 첫 계획 기준 값을 함께 싣지만 실행 당시 판정이 '
+      '실패였다는 사실은 적지 않는다. RL 비교에서는 **두 기준을 다 보고**하고, 새 비교의 기준은 실행 전에 '
+      'PROTOCOL.md 로 고정한다.')
     exc_c = [r for r in exc if r['contacts'] > 0]
     same = [r for r in exc_c if r['head'] in {q['head'] for q in runs}]
     tail = ''

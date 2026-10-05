@@ -8,7 +8,7 @@
 
 1. **safety node 개입 횟수·시간은 미측정이다.** 시나리오 08 하네스는 safety node 의 입력(`cmd_vel_smoothed`)·출력(`cmd_vel`)을 구독하지만 시행별로 저장하지 않고 접촉 순간(`contacts.csv`) 에만 쓴다. `safety/zone` 은 구독하지 않는다 (`test_08_dynamic_obstacles.py:411-413`). 그래서 기준선에 개입 지표가 없다 — PROTOCOL.md §5 가 새 실행부터 이 열을 필수로 요구한다.
 2. **240 시행은 독립 시나리오가 아니다.** 월드 actor 루프 seed 42 (src/amr_simulation/worlds/gen_warehouse_world.py:63), 하네스 seed 7 (tests/integration/amr_itest/config.py:163). 같은 월드·같은 actor 루프에서 A↔B 왕복 30 회를 8 번 돌렸다. 접촉 0/240 의 CP 95 % 상한은 시행 독립을 가정하면 **1.24 %**, 실행 간 위상이 재현돼 실효 표본이 30 이면 **9.50 %** 다 (이론편).
-3. **4 / 8 실행이 실행 당시 하네스 판정에서 실패했다** (`S0a`, `S0b`, `S0c`, `S0d`). 실패 검사는 전부 `return to path (worst of active/original plan)` > 5 s 다. `performance.md` §2 는 이 실행들을 활성 계획 기준 복귀(실행별 최대 0.94~3.82 s)로 다시 판정해 통과로 적는다 — 판정 기준이 실행 뒤에 바뀐 셈이므로 RL 비교에서는 **두 기준을 다 보고**하고, 새 비교의 기준은 실행 전에 PROTOCOL.md 로 고정한다.
+3. **4 / 8 실행이 실행 당시 하네스 판정에서 실패했다** (`S0a`, `S0b`, `S0c`, `S0d`). 실패 검사는 전부 `return to path (worst of active/original plan)` > 5 s 다. `performance.md` §2 는 이 실행들을 활성 계획 기준 복귀(실행별 최대 0.94~3.82 s)로 다시 판정해 통과로 적는다. 검사 자체가 이 실행들 **뒤에** 바뀌었다 — `80874d3` "fix(itest): 08 복귀 판정을 이탈과 같은 기준(활성 계획)으로 일치시킨다" (`git log cebd351..80874d3 -- tests/integration/test_08_dynamic_obstacles.py`; S0a~S0e 는 그 앞 `cebd351`·`bcc2cca` 로 돌았다). `performance.md` §4.2 가 첫 계획 기준 값을 함께 싣지만 실행 당시 판정이 실패였다는 사실은 적지 않는다. RL 비교에서는 **두 기준을 다 보고**하고, 새 비교의 기준은 실행 전에 PROTOCOL.md 로 고정한다.
 4. **240 에 넣지 않은 08 실행 2 개에 접촉이 있다** — 아래 §4. 커밋이 240 묶음과 같은 `S0f` 를 넣으면 접촉 1/270 이다.
 5. **CTE 는 실행 2 개뿐이고 실행 사이 차이가 크다** (§3: 직선 최대 60.2 cm (`regG`) 대 9.4 cm (`E07`)). 실행 간 변동을 잴 반복이 없다.
 6. 공유 서버 측정이다 — 시작·끝 1 분 loadavg 2.4~12.2 (32 코어). 시간 지표는 **공유 부하 하 예비값**이다.
