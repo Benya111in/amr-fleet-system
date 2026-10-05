@@ -358,3 +358,20 @@ QuorumVote·TaskLock 판 사이의 차이는 `git diff` 로 확인했고 지운 
   (구역을 쥔 채 다음 사슬을 청하는 hold-and-wait)를 넣으면 VIEW 의 단조 전제도 다시 따져야 한다.
 - epoch·서버 권고 순서를 넣은 모델, 그리고 f1-vote 의 이벤트 로그를 이 스펙의 행동으로 재생하는 경량 trace 검사.
 - N = 5 범위 넓히기 (구역 2·요청 3): 상태 수가 커서 이번에는 못 했다.
+
+## 10. f1-vote 구현과의 이름 대응 (코드·문서 읽기, 검사 아님)
+
+f1-vote 브랜치 HEAD `6115e8d` 의 `docs/research/fleet-distributed/protocol.md` 와 `distributed/messages.py` 를 읽고 맞춘 표다.
+2 차 물결에서 trace 재생 검사를 붙일 때의 출발점이다.
+
+| 이 모델 | f1-vote | 비고 |
+|---|---|---|
+| 표 `F` / `T(rid)` / `C(rid)` | FREE / TENTATIVE / COMMITTED | 같음 |
+| 요청자 `idle` / `voting` / `entering` / `inside` | IDLE / VOTING / ENTERING / HELD (+ BACKOFF, RELEASING) | BACKOFF·RELEASING 은 활성 장치라 모델에 없다 |
+| 메시지 req / vote / enter / ack / abandon / release | REQUEST / VOTE / ENTER / ENTER_ACK / ABANDON / RELEASE (+ NACK, RELEASE_ACK) | NACK·RELEASE_ACK 는 안전 판정에 쓰이지 않아 뺐다 |
+| rid `<<robot, inc, seq>>` | ReqId (robot, incarnation, seq) | 같음 |
+| `ExpireVote` (아무 때나) | 기한 만료, 같은 로봇의 더 새 요청에 의한 이른 만료, 더 높은 epoch 채택 때 TENTATIVE 폐기 | 셋 다 "잠정 표를 아무 때나 푼다" 에 들어간다 |
+| 메시지를 끝내 안 받음 | 낮은 epoch 메시지 거절(수용 0) | 유실과 같다 |
+| `Variant = fixB` 의 `done` | 묘비(tombstone, 상한 256 FIFO) + ABANDON 이 C 도 회수 | 방향 같음 (§8-1) |
+| `Mutation = forget` (반례) | 영속 상태를 잃은 투표자는 영구 기권 (`amnesic`) | 기권한 투표자는 "다시는 아무 동작도 안 하는 투표자" 와 같아 설계 검사 범위 안이다 (추론) |
+| (없음) | NACK 사유·대기열·순서 규칙·백오프, 구역별 부분 해제 `release(R)`, 보유 여러 개, "요청 없는 응답 정리"(활성도 보유도 아닌 rid 의 VOTE/ENTER_ACK 에 RELEASE), epoch | 모델 밖. 특히 "요청 없는 응답 정리" 는 §4.3 의 풀리지 않는 C 표를 요청자 쪽에서 치우는 또 하나의 장치다 |
