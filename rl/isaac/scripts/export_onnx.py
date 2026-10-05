@@ -39,6 +39,7 @@ def main():
     ap.add_argument('--run', required=True)
     ap.add_argument('--policy', default='policy_final.pt')
     ap.add_argument('--obs_batch', default=None)
+    ap.add_argument('--algo', default='PPO (rsl_rl 3.1.2)')
     a = ap.parse_args()
     import onnx
     import onnxruntime as ort
@@ -53,11 +54,12 @@ def main():
     if os.path.exists(sp):
         summ = json.load(open(sp))
     meta = {'contract_version': C.CONTRACT_VERSION, 'arm': 'B', 'obs_dim': '291', 'dt': '0.1',
-            'normalization': 'inside', 'algo': 'PPO (rsl_rl 3.1.2)',
+            'normalization': 'inside', 'algo': a.algo,
             'seed': str(summ.get('seed', '')), 'git_commit': head,
             'train_steps': str(summ.get('env_steps', '')), 'simulator': 'isaac',
             'normalization_var_floor': str(PE.VAR_FLOOR)}
-    path = os.path.join(a.run, 'policy_b.onnx')
+    stem = os.path.splitext(a.policy)[0]
+    path = os.path.join(a.run, f'{stem}.onnx')
     PE.export_onnx(pol, path, meta)
     m = onnx.load(path)
     opset = [o.version for o in m.opset_import if o.domain in ('', 'ai.onnx')]
@@ -108,7 +110,7 @@ def main():
         if name == 'golden_decision':
             res['golden_actions'] = got[0].round(5).tolist()
     res['fails'] = fails
-    with open(os.path.join(a.run, 'onnx_check.json'), 'w') as f:
+    with open(os.path.join(a.run, f'onnx_check_{stem}.json'), 'w') as f:
         json.dump(res, f, indent=1, ensure_ascii=False)
     print('ONNX_CHECK ' + json.dumps({'fails': fails, 'checks': {k: v['value'] for k, v in
                                       res['checks'].items() if 'ort' in k},

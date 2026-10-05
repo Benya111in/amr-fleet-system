@@ -104,6 +104,9 @@ def bc_warm_start(env, venv, pol, out):
         nz._var[:] = X.var(0, unbiased=False, keepdim=True)
         nz._std[:] = torch.sqrt(nz._var)
         nz.count.fill_(X.shape[0])
+        # BC 로 맞춘 actor 는 이 통계에 묶여 있다 — 롤아웃 중 통계가 움직이면 입력 분포가 바뀌어 정책이
+        # 무너진다 (첫 시도에서 actor 를 얼린 채로도 성공 98.9 % → 5.3 %). 통계를 여기서 고정한다.
+        nz.until = int(X.shape[0])
     opt = torch.optim.Adam(pol.actor.parameters(), lr=1e-3)
     n = X.shape[0]
     losses = []
@@ -192,9 +195,10 @@ def main():
         env.lagrange[:] = torch.tensor([float(x) for x in l0.split(',')], dtype=torch.float64)
     while it < args.iterations:
         n = min(args.chunk, args.iterations - it)
-        if args.bc_steps > 0 and it >= args.critic_warmup and runner.alg.schedule == 'fixed':
+        if args.bc_steps > 0 and frozen and it >= args.critic_warmup:
             for p in frozen:
                 p.requires_grad_(True)
+            frozen = []
             runner.alg.schedule = sched
             print(f'UNFREEZE actor at iteration {it}', flush=True)
         if cur:
