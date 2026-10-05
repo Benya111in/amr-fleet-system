@@ -281,7 +281,8 @@ def confirmatory(rows, prereg=PREREG, primary_policy=None, arm=None):
             hyps.append({'name': nm, 'verdict': UNDECIDABLE,
                          'detail': f'오류율 {n_err}/{len(t_rows)} > {prereg["error_rate_max"]:.0%}'})
         return res
-    ordered, given = _exec_order([r for r in t_rows if r['outcome'] != 'error'])
+    t_valid = [r for r in t_rows if r['outcome'] != 'error']
+    ordered, given = _exec_order(t_valid)
     res['exec_order_given'] = given
     design = sprt_design(prereg)
     st = sequential.run_sprt([schema.collided(r) for r in ordered], design)
@@ -298,20 +299,29 @@ def confirmatory(rows, prereg=PREREG, primary_policy=None, arm=None):
     else:
         v1, d1 = NOT_MET, f'상한 {design.n_max} 도달, 접촉 {st.failures} — NI 미입증'
     verdicts = [(names[0], v1, d1)]
-    # 짝
-    pairs = pair_rows([r for r in t_rows if r['outcome'] != 'error'],
-                      [r for r in r_rows if r['outcome'] != 'error'])
-    res['pairs'] = len(pairs)
+    # 짝 — 오류 처리 (PROTOCOL.md §6.6). 성공률(H2·H3)은 C 의 오류를 **실패**로 센다. A 의 오류
+    # 짝은 뺀다 (A 의 관측이 없다 — 실패로 세면 C 에 유리해진다). 접촉 경보·복귀(H4)는 둘 다 오류가
+    # 아닌 짝만 쓴다 (관측이 없다).
+    pairs_all = pair_rows(t_rows, r_rows)
+    pairs_succ = [(t, r) for t, r in pairs_all if r['outcome'] != 'error']
+    pairs = [(t, r) for t, r in pairs_succ if t['outcome'] != 'error']
+    res['pairs'] = len(pairs_succ)
+    res['pairs_valid'] = len(pairs)
+    res['pairs_ref_error_dropped'] = len(pairs_all) - len(pairs_succ)
     res['alarm'] = safety_alarm(pairs, prereg)
     a = prereg['alpha']
     zc = ni.z_quantile(1 - a)
-    if pairs:
-        fail_t = [not schema.success(t) for t, _ in pairs]
-        fail_r = [not schema.success(r) for _, r in pairs]
+    if pairs_succ:
+        fail_t = [not schema.success(t) for t, _ in pairs_succ]     # error → 실패
+        fail_r = [not schema.success(r) for _, r in pairs_succ]
         _, n10, n01, _ = ni.paired_table(fail_t, fail_r)
-        z2 = ni.tango_z(n10, n01, len(pairs), prereg['delta_success'])
+        c_err = sum(t['outcome'] == 'error' for t, _ in pairs_succ)
+        err_note = (f' (C 오류 {c_err} 는 실패로 셈, A 오류 짝 {res["pairs_ref_error_dropped"]} 제외)'
+                    if c_err or res['pairs_ref_error_dropped'] else '')
+        z2 = ni.tango_z(n10, n01, len(pairs_succ), prereg['delta_success'])
         verdicts.append((names[1], MET if z2 < -zc else NOT_MET,
-                         f'쌍 {len(pairs)}, C만 실패 {n10}, A만 실패 {n01}, z={z2:.3f}'))
+                         f'쌍 {len(pairs_succ)}{err_note}, C만 실패 {n10}, A만 실패 {n01}, '
+                         f'z={z2:.3f}'))
         p3 = paired.mcnemar_midp(n01, n10, 'greater')
         verdicts.append((names[2], MET if p3 <= a else NOT_MET,
                          f'C만 성공 {n01}, A만 성공 {n10}, 단측 mid-p={p3:.4f}'))
@@ -384,16 +394,18 @@ def gate_2d(rows, prereg=PREREG):
     """
     Gazebo 진출 게이트 — 2D 충돌 CP 95 % 상한 ≤ 0.5 % 그리고 2D-DWA 대비 성공률 NI δ=2%p (Tango 짝).
 
-    체크포인트(policy_id) 마다 판정한다.
+    체크포인트(policy_id) 마다 판정한다. 오류는 §6.6 대로: 접촉 상한의 분모에서 빼고, 성공률 NI 에서는
+    시험 쪽 오류를 실패로 센다 (기준 쪽 오류 짝은 뺀다).
     """
     sub = select(rows, simulator='sim2d', safety_node='on')
-    ref = [r for r in select(sub, arm=prereg['reference_arm']) if r['outcome'] != 'error']
+    ref = select(sub, arm=prereg['reference_arm'])
     out = []
     for pol in sorted({r['policy_id'] for r in sub if r['arm'] != prereg['reference_arm']}):
-        t = [r for r in select(sub, policy_id=pol) if r['outcome'] != 'error']
+        t_all = select(sub, policy_id=pol)
+        t = [r for r in t_all if r['outcome'] != 'error']
         x_c = sum(schema.collided(r) for r in t)
         ub = binomial.cp_upper(x_c, len(t))
-        pairs = pair_rows(t, ref)
+        pairs = [(a, b) for a, b in pair_rows(t_all, ref) if b['outcome'] != 'error']
         if pairs:
             _, n10, n01, _ = ni.paired_table([not schema.success(a) for a, _ in pairs],
                                              [not schema.success(b) for _, b in pairs])
@@ -403,9 +415,9 @@ def gate_2d(rows, prereg=PREREG):
             z, ni_ok = math.nan, False
         c_ok = ub <= prereg['gate_collision_cp_upper']
         verdict = MET if (c_ok and ni_ok) else (UNDECIDABLE if not pairs else NOT_MET)
-        out.append({'policy_id': pol, 'arm': t[0]['arm'] if t else '', 'n': len(t),
-                    'collisions': x_c, 'cp_upper': ub, 'pairs': len(pairs), 'tango_z': z,
-                    'verdict': verdict})
+        out.append({'policy_id': pol, 'arm': t_all[0]['arm'], 'n': len(t),
+                    'errors': len(t_all) - len(t), 'collisions': x_c, 'cp_upper': ub,
+                    'pairs': len(pairs), 'tango_z': z, 'verdict': verdict})
     return out
 
 
@@ -571,7 +583,8 @@ def render_markdown(res):
         w('**확증 대체안** (PROTOCOL.md §6.2 끝): 결론은 "seed 42 actor 구성에서, 시행이 독립이라면" 으로 '
           '한정한다. 같은 실행 안의 시행은 직렬로 의존한다.')
         w('')
-    w(f'주 체크포인트: `{c.get("policy")}` · 유효 에피소드 {c.get("n", 0)} · 짝 {c.get("pairs", 0)}')
+    w(f'주 체크포인트: `{c.get("policy")}` · 유효 에피소드 {c.get("n", 0)} · 오류 {c.get("errors", 0)} · '
+      f'성공률 짝 {c.get("pairs", 0)} (C 오류 = 실패) · 접촉·복귀 짝 {c.get("pairs_valid", 0)}')
     w('')
     al = c.get('alarm')
     if al:
@@ -612,11 +625,13 @@ def render_markdown(res):
     w('')
     w('## 4. 2D → Gazebo 진출 게이트')
     w('')
-    w('| 체크포인트 | n | 접촉 | CP 95 % 상한 (≤ 0.5 %) | 짝 | Tango z (δ=2%p) | 판정 |')
-    w('| --- | ---: | ---: | --- | ---: | ---: | --- |')
+    w('| 체크포인트 | n (오류 제외) | 오류 | 접촉 | CP 95 % 상한 (≤ 0.5 %) | 짝 (오류 = 실패) | '
+      'Tango z (δ=2%p) | 판정 |')
+    w('| --- | ---: | ---: | ---: | --- | ---: | ---: | --- |')
     for g in res['gate_2d']:
-        w(f'| `{g["policy_id"]}` | {g["n"]} | {g["collisions"]} | {_p(g["cp_upper"], 3, True)} | '
-          f'{g["pairs"]} | {_p(g["tango_z"])} | **{g["verdict"]}** |')
+        w(f'| `{g["policy_id"]}` | {g["n"]} | {g["errors"]} | {g["collisions"]} | '
+          f'{_p(g["cp_upper"], 3, True)} | {g["pairs"]} | {_p(g["tango_z"])} | '
+          f'**{g["verdict"]}** |')
     w('')
     w('## 5. 보조 비교군 (탐색적 — 확증 아님)')
     w('')

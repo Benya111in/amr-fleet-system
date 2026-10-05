@@ -94,3 +94,13 @@ def test_ville_oc_quoted_matches_simulation():
         assert f'{quoted}' in DOC
         r = sequential.simulate_oc(d, p_true, reps=20000, seed=21)
         assert r['p_ni'] == pytest.approx(quoted, abs=0.012)
+
+
+def test_error_rule_example_numbers():
+    """§6.6 의 예 (C 오류 6/306 → H2 z) 가 Tango 계산과 같은지."""
+    d = R.PREREG['delta_success']
+    z_fail = N.tango_z(3 + 6, 0, 306, d)
+    z_drop = N.tango_z(3, 0, 300, d)
+    assert f'z = {z_fail:.3f} (미달)'.replace('-', '−') in DOC
+    assert f'z = {z_drop:.3f} 로 충족'.replace('-', '−') in DOC
+    assert z_fail > -N.z_quantile(1 - R.PREREG['alpha']) > z_drop

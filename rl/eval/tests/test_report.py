@@ -232,3 +232,67 @@ def test_safety_alarm_counts_reference_contacts():
         pairs.append((t, mk('A_dwa', i in (5, 60, 200))))
     al = R.safety_alarm(pairs)
     assert not al['fired'] and (al['k_t'], al['k_r']) == (3, 3)
+
+
+def _ep(arm, seed, outcome, sim='gazebo', sset='gz_new600'):
+    """짝 시험용 에피소드 한 행 (접촉은 outcome 에서)."""
+    r = dict.fromkeys(schema.NAMES)
+    r.update(schema_version=schema.SCHEMA_VERSION, arm=arm,
+             policy_id='dwa@x' if arm == 'A_dwa' else f'{arm}/s0/best',
+             train_seed=None if arm == 'A_dwa' else 0, simulator=sim, scenario_set=sset,
+             scenario_id='G', scenario_seed=seed, difficulty='d', episode=0, run_tag='t',
+             exec_index=seed, commit='x', safety_node='on', outcome=outcome,
+             contacts=int(outcome == 'collision'), time_s=15.0,
+             return_max_s=1.0 if arm == 'C_hybrid' else 2.0)
+    return r
+
+
+def test_c_errors_count_as_failures_in_h2():
+    """
+    리뷰 반례: C 오류 6/306 (1.96 %, 오류율 문턱 안), C만 실패 3, A만 실패 0.
+
+    오류를 짝에서 빼면 z = −2.031 로 '충족' 이 나왔다. §6.6 대로 오류를 실패로 세면 z = −0.060 → 미달.
+    """
+    rows = []
+    for s in range(306):
+        rows.append(_ep('A_dwa', s, 'success'))
+        rows.append(_ep('C_hybrid', s, 'error' if s >= 300 else
+                        ('timeout' if s < 3 else 'success')))
+    res = R.confirmatory(rows)
+    h = res['hypotheses']
+    assert h[0]['verdict'] == R.MET                       # 접촉 SPRT 는 오류를 뺀 300 으로
+    assert res['errors'] == 6 and res['n'] == 300
+    assert res['pairs'] == 306 and res['pairs_valid'] == 300
+    assert h[1]['verdict'] == R.NOT_MET and 'z=-0.060' in h[1]['detail']
+    assert 'C만 실패 9' in h[1]['detail'] and 'C 오류 6 는 실패로 셈' in h[1]['detail']
+    assert h[2]['verdict'] == R.SKIPPED
+    # 같은 자료에서 오류 6 행만 없애면 충족 — 판정을 뒤집은 것이 오류 처리라는 확인
+    res2 = R.confirmatory([r for r in rows if r['outcome'] != 'error'])
+    assert res2['hypotheses'][1]['verdict'] == R.MET
+
+
+def test_reference_errors_drop_the_pair_not_count_as_a_failures():
+    """A 오류를 A 실패로 세면 C 에 유리해진다 (z −1.692 → −2.808) — 그 짝은 빼야 한다."""
+    rows = []
+    for s in range(306):
+        rows.append(_ep('A_dwa', s, 'error' if s >= 300 else 'success'))
+        rows.append(_ep('C_hybrid', s, 'timeout' if s < 4 else 'success'))
+    res = R.confirmatory(rows)
+    assert res['pairs'] == 300 and res['pairs_ref_error_dropped'] == 6
+    h2 = res['hypotheses'][1]
+    assert h2['verdict'] == R.NOT_MET and 'z=-1.692' in h2['detail'] and 'A만 실패 0' in h2['detail']
+
+
+def test_gate_counts_test_errors_as_failures():
+    """2D 게이트: 1010 짝, C 오류 10 (1 %), C만 실패 5 → 오류 = 실패면 z −1.169 로 미달 (빼면 −3.388 충족)."""
+    rows = []
+    for s in range(1010):
+        rows.append(_ep('A_dwa', s, 'success', sim='sim2d', sset='sim2d_heldout'))
+        rows.append(_ep('C_hybrid', s, 'error' if s >= 1000 else
+                        ('timeout' if s < 5 else 'success'), sim='sim2d', sset='sim2d_heldout'))
+    g = R.gate_2d(rows)[0]
+    assert g['errors'] == 10 and g['n'] == 1000 and g['pairs'] == 1010
+    assert g['cp_upper'] <= R.PREREG['gate_collision_cp_upper']
+    assert g['tango_z'] == pytest.approx(-1.169, abs=1e-3) and g['verdict'] == R.NOT_MET
+    g2 = R.gate_2d([r for r in rows if r['outcome'] != 'error'])[0]
+    assert g2['tango_z'] == pytest.approx(-3.388, abs=1e-3) and g2['verdict'] == R.MET
