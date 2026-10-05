@@ -38,6 +38,30 @@ def test_constant_offset_none_vs_aligned():
     assert se2.rpe(g, e, (1.0,))[1.0]['trans']['max'] == pytest.approx(0, abs=1e-12)
 
 
+def test_origin_alignment_recovers_heading_offset():
+    """
+    리뷰 N1: 추정 = 월드 쪽 SE(2) (t, θ) 를 곱한 GT (첫 자세의 방위도 θ 만큼 다르다).
+
+    추정 = R(θ)·GT + t 이므로 origin 정렬은 역변환 (−R(−θ) t, −θ) 를 내고 정렬 뒤 ATE 는 병진·방위 모두 0.
+    정렬 없음 ATE 는 e_i = ‖R(θ) p_i + t − p_i‖ (닫힌 식). 방위 부호가 뒤집힌 정렬은 2θ 가 남는다.
+    """
+    th, t = math.radians(3.0), np.array([0.4, -0.2])
+    g = line(yaw=0.3)
+    e = se2.apply_se2(g, t[0], t[1], th)
+    tx, ty, a = se2.alignment(g, e, 'origin')
+    c, s = math.cos(-th), math.sin(-th)
+    assert a == pytest.approx(-th, abs=1e-12)
+    assert (tx, ty) == pytest.approx((-(c * t[0] - s * t[1]), -(s * t[0] + c * t[1])), abs=1e-12)
+    r = se2.ate(g, e, 'origin')
+    assert r['trans']['max'] == pytest.approx(0, abs=1e-9)
+    assert r['yaw_deg']['max'] == pytest.approx(0, abs=1e-9)
+    rot = np.array([[math.cos(th), -math.sin(th)], [math.sin(th), math.cos(th)]])
+    want = np.linalg.norm(g.xy @ rot.T + t - g.xy, axis=1)
+    r0 = se2.ate(g, e)
+    assert r0['errors'] == pytest.approx(want, abs=1e-12)
+    assert r0['yaw_deg']['max'] == pytest.approx(3.0, abs=1e-9)
+
+
 def test_yaw_bias_rpe():
     """
     방위만 ε 틀림: ATE 병진 0, 방위 ε. 거리 Δ 쌍의 상대 병진은 추정 좌표계에서 R(−ε)d 라 오차 2Δ sin(ε/2).
@@ -259,6 +283,23 @@ def test_grid_surface_vs_filled_reference():
     mb = gridmap.grid_metrics(grid(b, 0.05, -1.0, -1.0), gt)
     assert mb['adnn0'] == 0.0
     assert mb['adnn0_surface'] == pytest.approx(0.02, abs=1e-9)
+
+
+def test_surface_uses_eight_neighbours():
+    """
+    리뷰 N2: surface() = 점유 셀 중 **8 이웃**에 비점유가 있는 셀.
+
+    3 x 3 덩어리에서 모서리 한 칸 (3, 3) 을 비우면 가운데 (2, 2) 는 4 이웃이 모두 점유지만 대각 이웃이 비어
+    경계다 → 8 칸 전부 경계. 5 x 5 꽉 찬 덩어리는 안쪽 3 x 3 만 내부 (경계 16 칸).
+    """
+    occ = np.zeros((5, 5), dtype=bool)
+    occ[1:4, 1:4] = True
+    occ[3, 3] = False
+    assert np.array_equal(gridmap.surface(occ), occ)
+    full = np.zeros((7, 7), dtype=bool)
+    full[1:6, 1:6] = True
+    surf = gridmap.surface(full)
+    assert surf.sum() == 16 and not surf[2:5, 2:5].any()
 
 
 def test_grid_observed_mask_limits_recall():
