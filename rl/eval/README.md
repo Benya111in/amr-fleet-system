@@ -11,6 +11,7 @@ ROS 패키지가 아니다 (`COLCON_IGNORE`). 순수 Python(numpy·scipy, rliabl
 | `amr_rl_eval/` | 통계 라이브러리 (`binomial` `noninferiority` `sequential` `aggregate` `paired` `multiplicity` `srcc` `cvar` `planning`), 결과 스키마 (`schema`), 판정 (`report`), 그림 (`figures`), 합성 데이터 (`synth`), 기준선 추출 (`baseline`) |
 | `scripts/evaluate.py` | 결과 CSV → 판정표(`report.md`)·`report.json`·그림 4 장 |
 | `scripts/dwa_baseline.py` | 측정 로그 → `baseline/` 재생성 |
+| `scripts/s08_to_csv.py` | 아무 비교군의 시나리오 08 실행 로그 → 결과 CSV (`gz_s08_actor42`) |
 | `tests/` | pytest — 이론편 수치 재현·리서치 calc 스크립트 교차 확인·판정 분기 |
 
 결과를 붓는 쪽(r1·r2·r3)이 할 일:

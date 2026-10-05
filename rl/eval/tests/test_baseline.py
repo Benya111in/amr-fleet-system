@@ -136,3 +136,27 @@ def test_committed_episode_csv_is_valid():
     assert len(rows) == 240
     assert sum(schema.collided(r) for r in rows) == 0
     assert {r['policy_id'] for r in rows} == {'dwa@cebd351', 'dwa@bcc2cca', 'dwa@80874d3'}
+
+
+def test_s08_runs_to_episodes_for_any_arm(tmp_path):
+    root = str(tmp_path)
+    _mk_run(root, 'C1', [_trial(i) for i in range(3)], head='feed123')
+    rows, provs = BL.s08_runs_to_episodes(root, ['C1'], 'C_hybrid', 'C_hybrid/s3/best', 3)
+    assert {r['arm'] for r in rows} == {'C_hybrid'} and rows[0]['train_seed'] == 3
+    assert rows[0]['policy_id'] == 'C_hybrid/s3/best' and rows[0]['commit'] == 'feed123'
+    assert [r['exec_index'] for r in rows] == [0, 1, 2]
+
+
+def test_s08_cli(tmp_path):
+    import subprocess
+    import sys
+    root = tmp_path / 'logs'
+    _mk_run(str(root), 'C1', [_trial(i) for i in range(3)])
+    out = tmp_path / 'c.csv'
+    script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          'scripts', 's08_to_csv.py')
+    r = subprocess.run([sys.executable, script, '--log-root', str(root), '--arm', 'C_hybrid',
+                        '--policy-id', 'C/s0', '--out', str(out), 'C1'],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert len(schema.read_csv(str(out))) == 3

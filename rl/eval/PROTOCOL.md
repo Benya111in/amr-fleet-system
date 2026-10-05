@@ -358,6 +358,9 @@ docker run --rm --network none -v <worktree>:/ws -w /ws/rl/eval --entrypoint bas
 # DWA 기준선 표 다시 만들기 (측정 로그 읽기 전용 마운트)
 docker run --rm --network none -v <worktree>:/ws -v <logs>:<logs>:ro -w /ws --entrypoint bash amr-ai/rl:0.3 \
   -lc 'python3 rl/eval/scripts/dwa_baseline.py --log-root <logs>'
+# 시나리오 08 실행 로그(r3 플러그인 등) → 결과 CSV (gz_s08_actor42)
+python3 rl/eval/scripts/s08_to_csv.py --log-root <logs> --arm C_hybrid --policy-id <체크포인트> \
+  --train-seed <시드> --out c_s08.csv <태그1> <태그2> ...
 # 결과 CSV → 판정표·그림
 python3 rl/eval/scripts/evaluate.py results/*.csv --out-dir <출력> [--primary-policy C_hybrid/s3/best]
 # 합성 데이터로 파이프라인 점검 (측정값 아님)
@@ -368,4 +371,5 @@ python3 rl/eval/scripts/evaluate.py --synthetic --out-dir /tmp/eval_synth
 
 | 날짜 | 커밋 | 내용 |
 | --- | --- | --- |
-| 2026-10-06 | (이 커밋) | 초판 — 결과 0 건 상태에서 등록 |
+| 2026-10-06 | `5533457` | 초판 — 결과 0 건 상태에서 등록 |
+| 2026-10-06 | (이 커밋) | §11 에 08 로그 변환 도구 추가 — 기준·표본·순서 변경 없음, 결과 0 건 |

@@ -106,7 +106,8 @@ def load_trials_08(log_root, tag):
     return rows, path
 
 
-def trials_to_episodes(tag, prov, trials, episode_index, exec_start=0):
+def trials_to_episodes(tag, prov, trials, episode_index, exec_start=0, arm='A_dwa',
+                       policy_id=None, train_seed=None):
     """
     시나리오 08 시행 → 결과 CSV 행 (schema v1).
 
@@ -114,6 +115,7 @@ def trials_to_episodes(tag, prov, trials, episode_index, exec_start=0):
     """
     out = []
     head = prov.get('head') or 'unknown'
+    policy_id = policy_id or f'dwa@{head[:7]}'
     for k, t in enumerate(trials):
         contacts = int(t['contacts'])
         if contacts > 0:
@@ -123,8 +125,8 @@ def trials_to_episodes(tag, prov, trials, episode_index, exec_start=0):
         else:
             outcome = 'timeout'
         out.append({
-            'schema_version': schema.SCHEMA_VERSION, 'arm': 'A_dwa',
-            'policy_id': f'dwa@{head[:7]}', 'train_seed': None, 'simulator': 'gazebo',
+            'schema_version': schema.SCHEMA_VERSION, 'arm': arm,
+            'policy_id': policy_id, 'train_seed': train_seed, 'simulator': 'gazebo',
             'scenario_set': 'gz_s08_actor42', 'scenario_id': SCEN_08,
             'scenario_seed': int(t['trial']), 'difficulty': 'dynamic_crossing',
             'episode': episode_index, 'run_tag': tag, 'exec_index': exec_start + k,
@@ -240,3 +242,22 @@ def summarize_07(log_root=DEFAULT_LOG_ROOT, tags=CTE_07):
         out.append(dict(prov, cte=rows, cte_matches_result_json=agree, goals=goals, eta=eta,
                         source=csv_path, source_sha=_sha256(csv_path)))
     return out
+
+
+def s08_runs_to_episodes(log_root, tags, arm, policy_id, train_seed=None):
+    """
+    임의 비교군의 시나리오 08 실행들 → 결과 CSV 행 (`gz_s08_actor42`, PROTOCOL.md §3.1).
+
+    tags 는 실행 순서(시간순)로 준다. 같은 policy_id 의 실행마다 episode 를 0, 1, … 로 매긴다.
+    반환: (행 리스트, 실행별 출처 리스트). 시작 시각이 시간순이 아니면 ValueError.
+    """
+    rows, provs = [], []
+    for i, tag in enumerate(tags):
+        prov, _ = provenance(log_root, tag, SCEN_08)
+        trials, _ = load_trials_08(log_root, tag)
+        rows += trials_to_episodes(tag, prov, trials, i, len(rows), arm, policy_id, train_seed)
+        provs.append(prov)
+    starts = [p['started_at'] for p in provs]
+    if starts != sorted(starts):
+        raise ValueError(f'태그가 시간순이 아니다: {list(zip(tags, starts))}')
+    return rows, provs
