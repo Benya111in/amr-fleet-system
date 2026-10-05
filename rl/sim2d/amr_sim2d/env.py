@@ -338,7 +338,8 @@ class Sim2DEnv:
         # _sense_rest 전체를 묶으면 inductor 가 느린 커널(4096 env 114 ms)을 만든다 → 장애물 레이캐스트만 묶는다
         self._k = {'substep': wrap(K.substep), 'post': wrap(K.post_step),
                    'obst': wrap(K.obstacle_state), 'sense': _sense_rest,
-                   'min_ttc': wrap(K.min_ttc), 'ray_obst': wrap(RC.raycast_obstacles)}
+                   'min_ttc': wrap(K.min_ttc), 'ray_obst': wrap(RC.raycast_obstacles),
+                   'observe': wrap(_observe_all)}
         self._kf = [torch.tensor(k / SUB, dtype=self.fd, device=self.dev)
                     for k in range(1, SUB + 1)]
         self._first = [torch.tensor(k == 1, device=self.dev) for k in range(1, SUB + 1)]
@@ -419,13 +420,20 @@ class Sim2DEnv:
                 'path_len': self.path_len[di].clone(), 'time': self.t[di].clone(),
                 'fallback': self.ep_fallback[di].clone()}
             self._reset_idx(di)
-            st = self.bstate().index(di)
-            pj = T.project_onto_path(st.path_pts, st.path_n, st.path_cum, st.pose[:, :2])
-            obs = obs.clone()
-            obs[di] = T.build_observation(st, pj)
+            # 리셋된 env 의 관측: 부분집합 eager 대신 고정 N 컴파일 함수로 전체를 다시 계산해 고른다
+            # (커널 발행 수가 부분집합 크기와 무관해진다)
+            obs = torch.where(done[:, None], self._k['observe'](self.bstate()), obs)
             if self.want_mask:
+                st = self.bstate().index(di)
+                pj = T.project_onto_path(st.path_pts, st.path_n, st.path_cum, st.pose[:, :2])
                 self.mask[di] = T.compute_mask(st, pj)['mask']
         return obs, rew.float(), term, trunc, info
+
+
+def _observe_all(st):
+    """전체 env 관측 (투영 포함)."""
+    proj = T.project_onto_path(st.path_pts, st.path_n, st.path_cum, st.pose[:, :2])
+    return T.build_observation(st, proj)
 
 
 def _sense_rest(ranges, pose_d, ob, lsig, bdrop, nz, ud, psig, vsig, pdrop, nxy, nv, udr,
