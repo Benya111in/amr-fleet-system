@@ -226,6 +226,10 @@ git_head, gt_sha256, tool, notes`. 실패 실행도 행을 남기고(`failed=1`,
 actor·차량은 sim 시간으로 결정적으로 돌므로, 기록 시작(경로 출발) 시각을 씨드 난수로 0–120 s 에서 뽑으면 동적 장애물과의
 만남이 달라진다. 생성기 `SEED` 를 바꾸는 방식은 **정적 화물 자세까지 바뀌어** 씨드마다 GT 를 따로 만들어야 하므로 쓰지 않는다.
 
+변형 월드 적재 확인 [측정]: 기본·s1·s6-queue·s6-queue2·s6-wall 다섯 SDF 를 Fortress 6.18 서버(헤드리스 렌더링,
+`--iterations 2000`)로 띄워 모두 rc 0, `[Err]`·`[Wrn]` 0 줄 (`/home/CAPYI_AI/runs/s2-eval/variants/load_*.log`,
+`gz_slot.sh` 슬롯, 07:05–07:06 load ≈ 46–54). 런타임에 블로커 엔티티 목록을 조회하지는 않았다.
+
 | 시나리오 | 정의 | 지금 가능한가 |
 | --- | --- | --- |
 | S1 정상 | 동적 장애물 정지 — actor·차량 없는 월드 변형 | 된다: `gen_warehouse_world.py --variant s1 <out.sdf>` (지게차·셔틀 odom 브리지 토픽은 비게 된다) |
