@@ -131,35 +131,37 @@ reliable transient_local)로 구독한다. 발행자 `LATCHED_QOS` 와 정확히
 
 ## 4. 남은 위험 (불리한 것부터)
 
+0. **비대칭 발견에서 늦게 뜬 로봇이 선다 — 이 수정이 바꾼 것, 다중 로봇 Gazebo 판정은 미측정.** §6 의 시나리오 12
+   세 번(도메인 210 두 번, 61 한 번)에서 늦게 뜬 실행기(amr_04·amr_05)가 관리자 발행자를 본 뒤에도(발행자 1, QoS 맞는
+   것 1) 값을 하나도 받지 못한 채 `awaiting` 으로 중단 때까지 14~19 분 머물렀다 (실행 B·C). 관리자 쪽은 그 실행기의 구독을 발견하지 못해
+   (관리자가 값을 내도 전달 대상이 없다) 같은 상태가 이어졌다 — 같은 컨테이너에서 새로 띄운 탐침은 latched 값을 즉시
+   받았다(`logs/f0_probe/probe_b1.txt`). 수정 전에는 같은 상황에서 실행기가 아무것도 받지 못한 채 **조용히 통과**했을
+   것이고, 수정 뒤에는 **경고를 내며 선다**. 안전 쪽으로는 맞는 방향(관리자가 보지 못하는 로봇은 관리자가 지켜 줄 수
+   없다)이지만, 발견이 느린 환경에서는 작업이 시작되지 않아 시나리오 판정을 떨어뜨릴 수 있다. 세 실행 모두 기동 단계에서
+   환경이 무너져(공유 부하 loadavg 최대 108/32 코어, lifecycle bringup 실패) 판정까지 가지 못했으므로 이 수정이
+   시나리오 12 통과율에 주는 영향은 **미측정**이다. 관리자의 오도메트리 구독(이 수정이 건드리지 않은 경로)도 같은 로봇을
+   발견하지 못했으므로 발견 실패 자체는 이 수정과 무관하다. 도메인 210 의 포트가 임시 포트 범위와 겹치는 점은 도메인 61
+   에서도 같은 증상이 나와 필요조건이 아니다.
 1. **관리자 사망 뒤 마지막 값.** 받은 값이 false 였던 로봇은 관리자가 죽은 뒤 관리 없이 움직인다. 보고서가 말하는
    "인계 공백" 과 같은 종류이고 이 수정으로 바뀌지 않았다. 보고서의 비대칭 분할(상향만 끊김 → lost 반납 → 다른 로봇에
    부여, 이 로봇은 hold 갱신을 못 받음) 틈도 그대로다 — 둘 다 분산 폴백(P1~P3) 범위.
-2. **유예보다 늦은 발견.** `auto` 에서 실행기 시작 뒤 2 s 안에 관리자 발행자가 그래프에 안 보이면 그 뒤 매칭될
-   때까지 `unmanaged`(통과)다. 매칭되면 latched 값이 곧 도착하고 BT 게이트가 reactive 라 그 순간 멈춘다. 재기동한
+2. **유예보다 늦은 발견.** `auto` 에서 실행기 시작 뒤 2 s 안에 관리자 발행자가 그래프에 안 보이면 그 뒤 발행자가
+   보일 때까지 `unmanaged`(통과)다. 보이면 `awaiting` 으로 바뀌고 BT 게이트가 reactive 라 그 순간 멈춘다. 재기동한
    실행기는 작업이 없어 그 창에서 움직일 이유가 대개 없지만(작업은 fleet_manager → assign_task 경로), 배터리 부족
    자동 충전처럼 작업 없이 움직이는 경로는 있다. 교통 관리자가 있다고 아는 런치는 `required` 를 줘야 이 창이 닫힌다 —
    `behavior.launch.py` 에 `traffic_hold_policy` 인자를 두었고, `amr_bringup` 이 `with_fleet` 일 때 넘기는 배선은 그 소유자
-   몫이다.
-   **[측정] 이 창은 이론이 아니다.** Gazebo 시나리오 12 첫 실행(`logs/f0_s12_a`, 2620160, 호스트 loadavg 17→78 /
-   32 코어, 공유 부하 하 예비값, 기동 단계에서 수동 중단)에서 실행기 5 대 중 `amr_01`·`amr_02` 는 유예 안에 관리자
-   발행자를 보고 첫 값을 받았지만(`awaiting` → `clear`, 관리자 발행 뒤 0.37 s·0.10 s), 스택 지연 간격(6~9 s)으로 늦게 뜬
-   `amr_03`·`amr_04`·`amr_05` 는 2 s 안에 발행자를 못 보고 `unmanaged` 가 됐다. 그 뒤 중단까지 약 15 분 동안 `amr_03` 은 관리자가
-   낸 첫 값(관리자 로그 `amr_03 hold=False (첫 값)`)을 받았다는 기록이 없다. 관리자는 `amr_04`·`amr_05` 에 첫 값도,
-   당시 구현의 "관측 못 한 로봇 해제"(첫 주기 + sim 3 s)도 내지 않았다 — 둘 중 하나는 주기마다 반드시 나와야 하므로
-   관리자 주기 자체가 멈췄을(예: `/clock` 수신 중단) 가능성이 크지만 원인은 확인하지 못했다. 같은 때 컨테이너 안에서
-   45 s 동안 돈 그래프 탐침은 노드 77 개만 보았다
-   (`logs/f0_probe/probe1.txt`, 프로세스는 약 150). 즉 이 부하에서는 DDS 발견이 분 단위로 늦거나 실패했고, 그 경우
-   어떤 유예 값도 창을 닫지 못한다. `required` 는 창을 닫는 대신 그 로봇을 발견될 때까지 세운다 (fail-closed) —
-   통과율과 안전 사이의 선택이라 측정 없이 기본값으로 켜지 않았다. 할당된 `ROS_DOMAIN_ID` 210 의 Fast DDS 포트
-   (59900~60258)가 리눅스 임시 포트 범위(32768~60999)와 겹친다는 점(`run_integration.sh` 경고)이 원인에 끼는지는
-   **미측정**이다 — 같은 실행에서 59900 멀티캐스트 포트에 171 개 소켓이 정상으로 묶여 있었다.
+   몫이다. 측정(§6)에서 늦게 뜬 실행기의 발행자 발견은 2.3 s · 2.7 s · 3.5 s · 14 s · 77 s · 83 s 였다 — 어떤 유예 값도
+   이 창을 닫지 못하고, `required` 는 창을 닫는 대신 그 로봇을 발견될 때까지 세운다(위험 0). 그래서 기본값으로 켜지
+   않았다.
 3. **관측 못 한 로봇의 시간 기반 해제(D6).** 시간이 지나면 풀어 주는 fail-open-after-timeout 형태다. 대상을
    "한 번도 관측하지 못한" 로봇으로 좁혔고, 그런 로봇은 관리자의 예측·토큰 밖이므로 해제해도 관리자가 줄 수 있었던
    보호를 잃는 것은 없다. 실행기가 뜬 뒤 측위(EKF)가 `obs_timeout_s`(sim 3 s)보다 늦게 오도메트리를 내면 그 로봇은
    잠깐 false 를 받았다가 관측되는 주기에 평가 값으로 바뀐다 — 수정 전(기동 즉시 false)보다 나빠지지는 않는다.
 4. **volatile 발행자.** 누군가 volatile 로 `traffic/hold` 를 내면 `auto` 는 그 로봇을 영영 세운다(경고와 함께).
    의도한 fail-closed 이지만 운영자가 알아야 한다.
-5. **유예 2 s 가 측정 판정에 닿는지 미측정.** 단일 로봇 시나리오(10·11·13·14)는 이번에 Gazebo 로 돌리지 않았다 (§5).
+5. **유예 2 s 가 단일 로봇 측정 판정에 닿는지.** 수정 전 단일 로봇 실행 34 개(시나리오 11 21 · 13 9 · 14 4, 측정용 worktree 로그)에서
+   실행기 시작 → 첫 `assign_task` 는 최소 10.0 s · 중앙 11.0 s 였다 **[계산]** — 유예 2 s 는 첫 작업 전에 끝난다.
+   Gazebo 로는 시나리오 10 만 돌렸고(통과, §6) 그 시나리오는 실행기에 작업을 주지 않는다. 13(응답 시간)은 돌리지 않았다.
 
 ## 5. 검증
 
@@ -173,4 +175,50 @@ reliable transient_local)로 구독한다. 발행자 `LATCHED_QOS` 와 정확히
 - 관리자(`test_traffic_node.py`): 관측 전에는 hold 를 아무도 받지 않음(포켓 없음은 latched), 관측한 로봇은 첫 평가
   값, 관측 못 한 로봇은 구독자가 붙은 주기 + `obs_timeout_s` 뒤 false, 구독자가 없는 로봇에는 내지 않음, 포켓 먼저
   규칙이 낸 적 없는 로봇에 false 를 내지 않음.
-- 변이 검사·전체 단위 시험·Gazebo 회귀 결과는 에이전트 보고(`/home/CAPYI_AI/logs/agents/f0-holdfix/`)와 PR 본문에 적는다.
+- 전체 단위 시험: `colcon test --packages-select amr_behavior amr_fleet` 774 tests, 0 failures, 60 skipped(cppcheck)
+  — 수정 전 764. `colcon build` 전 패키지 Release `-Wall -Wextra -Wpedantic -Werror` 경고 0.
+- 변이 검사 15 종, 전부 시험이 잡았다 (가드를 하나씩 되돌리고 위 시험 실행):
+
+  | # | 되돌린 가드 | 잡은 시험 |
+  |---|---|---|
+  | M1 | 실행기 hold 구독 QoS → volatile | `LateExecutorReceivesLatchedHoldAndPocket` |
+  | M2 | yield_pose 구독 QoS → volatile | 같음 |
+  | M3 | `trafficHold()` 가 교통 관리 여부 무시 | 단위 · BT · 노드 4 건 |
+  | M4 | 수신해도 received 안 세움 | 단위 · BT · 노드 다수 |
+  | M5 | 발견 유예 무시 | `ParseAndManagedRule`, `WithoutTrafficManagerProceedsAfterDiscoveryGrace` |
+  | M6 | 발행자 수 무시 | `ParseAndManagedRule`, `AwaitsFirstValueWhileTrafficPublisherExists` |
+  | M7 | required 무시 | `ParseAndManagedRule`, `RequiredPolicyWaitsWithoutPublisher` |
+  | M8 | tick 마다 갱신 안 함 | `AssignRunsFullTask…`, `WithoutTrafficManager…` |
+  | M9 | 받은 뒤에도 교통 관리 여부를 봄 | 단위 · BT · 노드 |
+  | M10 | 관리자 기동 시 hold=false 복원 | `test_hold_published_only_after_evaluation` 외 1 |
+  | M11 | 관측 못 한 로봇 해제 제거 | `test_hold_published_only_after_evaluation` |
+  | M12 | 해제를 obs_timeout_s 없이 즉시 | 같음 |
+  | M13 | 포켓 먼저 미룸에서 false 를 냄 | `test_first_hold_behind_new_pocket_is_deferred_not_false` |
+  | M14 | 해제를 이미 낸 로봇에도 반복 | `test_hold_published_only_after_evaluation` (처음엔 놓쳤다 → "다시 내지 않음" 단언 추가 뒤 잡음) |
+  | M15 | 구독자 없이도 해제 시계 시작 | `test_hold_published_only_after_evaluation` |
+
+## 6. Gazebo 회귀 — 측정 기록 (공유 부하 하 예비값)
+
+모든 실행: `amr-ai/rl:0.3`, `run_integration.sh --no-unit --timeout-scale 3`, IGN 파티션 `amr_ai_f0`, 로그는 worktree 의
+`logs/<태그>/` (HEAD.txt·uncommitted.txt·start.txt·end.txt 동봉, gitignore). loadavg 는 32 코어 호스트의 1 분 값.
+
+| 태그 | 시나리오 | 커밋 | 도메인 | loadavg 시작→끝 | 결과 |
+|---|---|---|---|---|---|
+| `f0_s01_a` | 01 센서 토픽 | 2620160 | 210 | 17.6 → 16.9 | **통과** 10/10 (15.8 s) — 이 수정과 무관한 스모크 |
+| `f0_s12_a` | 12 다중 로봇 교착 | 2620160 | 210 | 17.6 → 65.9 | **판정 없음** — 기동 단계 정체(amr_04·05 ROBOT_LOST, E-stop sensor_late), 16 분에 수동 중단 |
+| `f0_s12_b` | 12 | 19a1b82 | 210 | 27.8 → 48.7 (중간 90) | **판정 없음** — 17 분 동안 작업 할당 0, 수동 중단 |
+| `f0_s10_a` | 10 정밀 도킹 (단일, 관리자 없음) | 19a1b82 | 210 | 48.7 → 34.9 | **통과** 5/5 (968.8 s). 실행기: `awaiting` 2.0 s → `unmanaged` |
+| `f0_s12_c61` | 12 | 19a1b82 | 61 | 34.9 → 59.6 (중간 108) | **판정 없음** — amr_04 navigation bringup 중단, amr_01 amcl 전환 실패, 21 분에 수동 중단 |
+
+시나리오 12 의 실행기별 첫 값 (실행기 시작 기준, 관리자 로그 `hold=… (첫 값)` 과 실행기 로그 `traffic/hold:` 대조):
+
+| 실행 | amr_01 | amr_02 | amr_03 | amr_04 | amr_05 |
+|---|---|---|---|---|---|
+| A (210) | 유예 안 발견, 관리자 발행 +0.37 s 수신 | 유예 안, +0.10 s | 중단까지 15 분 미발견 | 미발견 | 미발견 |
+| B (210) | 유예 안, +0.002 s | 유예 안, +0.015 s | 발견 2.3 s, +0.010 s | 발견 83 s, 중단까지 14 분 값 없음 | 발견 2.7 s, 중단까지 15 분 값 없음 |
+| C (61) | 유예 안, +0.32 s | 유예 안, +0.84 s | 발견 3.5 s, +0.14 s | 발견 77 s, 중단까지 18 분 값 없음 | 발견 14 s, 중단까지 19 분 값 없음 |
+
+기준선(수정 전) 시나리오 12 는 handover1006 §4 의 측위 수정 뒤 7 실행 4 통과(`Z12`·`R12c`·`S12a`·`S12c` 통과, `R12a`·`R12b`
+`test_20` 378 행, `S12b` `test_10` 337 행)이고, 그 실행들의 시작 loadavg 는 3.3~48 이었다. 이번 세 실행은 그 어느 것과도
+같은 조건에서 비교할 수 없다. 수정 전 커밋을 같은 부하에서 돌린 대조 실행은 하지 않았다.
+
