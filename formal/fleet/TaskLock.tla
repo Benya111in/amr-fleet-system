@@ -217,4 +217,12 @@ AtMostOnce == \A t \in Tasks : execCount[t] <= 1
 
 Symm == Permutations(Robots) \cup Permutations(Tasks)
 
+(* 상태 축약용 VIEW -- QuorumVote 의 View 와 같은 논리. 요청 id 는 로봇마다    *)
+(* 단조 증가하고, 요청자는 cur[r] 의 VOTE/ACK 만 세므로 다른 rid 의 VOTE/ACK 는 *)
+(* 다시 쓰이지 않는다. 그 죽은 메시지만 빼고 상태를 비교한다.                  *)
+LiveMsg(m) == m.type \in {"vote", "ack"} => (cur[m.rid[1]] = m.rid)
+
+View == <<lock, phase, cur, curT, inc, seq, {m \in msgs : LiveMsg(m)},
+          execCount, nreqs, ncrash>>
+
 =============================================================================
