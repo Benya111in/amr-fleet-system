@@ -10,6 +10,8 @@
 대조: 보고서가 기각한 "생존 멤버 전원 REPLY" 변형(RaLiveAgent)은 같은 하네스에서 반례가 나와야 한다.
 """
 
+import collections
+import json
 import os
 
 import pytest
@@ -31,12 +33,16 @@ MEMBERS = ('r1', 'r2', 'r3', 'r4', 'r5')
 CHAINS = (('zone:a',), ('zone:b',), ('zone:a', 'zone:b'), ('pocket:p', 'zone:b'))
 RESOURCES = ('zone:a', 'zone:b', 'pocket:p')
 DTS = (0.25, 1.0, 3.0, 10.0)
+SKEW_MAX = 12.0          # 로봇 간 시계 어긋남 상한 [s] (잠정 기한 4 s 의 3 배 — 만료 순서 뒤집힘은 충분히 생긴다)
 CFG = VoteConfig(MEMBERS, tentative_s=4.0, retry_s=0.5, backoff_min_s=0.2, backoff_max_s=1.0,
                  tombstone_cap=8)
 
 EXAMPLES = int(os.environ.get('AMR_DIST_HYP_EXAMPLES', '150'))
 STEPS = int(os.environ.get('AMR_DIST_HYP_STEPS', '60'))
 SEED = os.environ.get('AMR_DIST_HYP_SEED')
+SKIP_I4 = os.environ.get('AMR_DIST_SKIP_I4') == '1'   # 변이 검사: 핵심 불변식만으로 잡히나
+STATS_PATH = os.environ.get('AMR_DIST_HYP_STATS')     # 주면 실행 통계를 JSON 으로 쓴다
+STATS = collections.Counter()
 
 
 class MutexViolation(AssertionError):
@@ -62,19 +68,43 @@ class VoteMachine(RuleBasedStateMachine):
     BOOT = staticmethod(ZoneAgent.boot)
     STRICT = True
     CRASH = True
+    MAX_CRASHES = 3          # 실행당 상한 — 흔들기만 하면 진행이 없어 허가 상태에 거의 닿지 못한다
+    MAX_CLOCK_RESETS = 2
 
     def __init__(self):
         super().__init__()
-        self.c = Cluster(CFG, seed=0, boot=type(self).BOOT, strict=type(self).STRICT)
+        self.c = Cluster(CFG, seed=0, boot=type(self).BOOT, strict=type(self).STRICT,
+                         check_i4=not SKIP_I4)
+        STATS[f'{type(self).__name__}.runs'] += 1
+        self.crashes = 0
+        self.resets = 0
+
+    def _count(self, what):
+        STATS[f'{type(self).__name__}.{what}'] += 1
 
     # ---- 로봇 동작
     @rule(r=robots, chain=st.sampled_from(CHAINS), prio=st.integers(0, 2))
     def request(self, r, chain, prio):
+        self._count('request')
         self.c.request(r, chain, prio)
 
     @rule(r=robots)
     def enter(self, r):
-        self.c.enter(r)
+        if self.c.enter(r):
+            self._count('enter')
+            if sum(1 for x in MEMBERS if self.c.inside[x]) >= 2:
+                self._count('enter_while_other_inside')
+
+    @rule()
+    def enter_all(self):
+        for r in MEMBERS:
+            self.enter(r)
+
+    @rule(r=robots)
+    def exit_one(self, r):
+        if self.c.inside[r]:
+            self._count('exit')
+            self.c.exit(r, sorted(self.c.inside[r])[0])
 
     @rule(r=robots, z=st.sampled_from(RESOURCES))
     def exit(self, r, z):
@@ -84,9 +114,13 @@ class VoteMachine(RuleBasedStateMachine):
     def give_up(self, r, z):
         self.c.give_up(r, z)
 
-    @rule(r=robots, view=st.sets(robots, max_size=4))
+    @rule(r=robots, view=st.sets(robots, min_size=2, max_size=4))
     def set_view(self, r, view):
         self.c.set_view(r, view)
+
+    @rule(r=robots)
+    def clear_view(self, r):
+        self.c.set_view(r, MEMBERS)
 
     # ---- 네트워크
     @precondition(lambda self: self.c.net)
@@ -109,9 +143,30 @@ class VoteMachine(RuleBasedStateMachine):
     def deliver_all(self):
         self.c.deliver_all(max_msgs=300)
 
+    @rule(dt=st.sampled_from(DTS), go_in=st.booleans(), go_out=st.booleans())
+    def protocol_round(self, dt, go_in, go_out):
+        """
+        손실 없는 한 라운드: 배달 → tick → 배달 → (허가받은 로봇 진입) → (안에 있는 로봇 하나씩 진출) → 시계 dt.
+
+        로봇은 허가를 받으면 곧 들어가고 언젠가 나온다 — 그 흐름을 자주 만들어야 위반이 날 수 있는
+        상태(누가 안에 있는데 다른 로봇이 같은 자원을 요청)에 닿는다.
+        """
+        self._count('round')
+        self.c.deliver_all(max_msgs=300)
+        self.c.tick_all()
+        self.c.deliver_all(max_msgs=300)
+        if go_in:
+            self.enter_all()
+        if go_out:
+            for r in MEMBERS:
+                self.exit_one(r)
+        self.c.advance_all(dt)
+
     # ---- 시계 · 타이머
+    @precondition(lambda self: max(self.c.clock.values()) - min(self.c.clock.values()) < SKEW_MAX)
     @rule(r=robots, dt=st.sampled_from(DTS))
     def advance(self, r, dt):
+        """로봇 하나의 시계만 진행 (시계 어긋남). 어긋남 상한 SKEW_MAX — 넘으면 서로의 기한이 늘 지나 있다."""
         self.c.advance(r, dt)
 
     @rule(dt=st.sampled_from(DTS))
@@ -126,14 +181,23 @@ class VoteMachine(RuleBasedStateMachine):
     def tick_all(self):
         self.c.tick_all()
 
+    @precondition(lambda self: self.resets < type(self).MAX_CLOCK_RESETS)
     @rule(r=robots)
     def reset_clock(self, r):
+        if self.c.alive(r):
+            self._count('clock_reset')
+            self.resets += 1
         self.c.reset_clock(r, 0.0)
 
     # ---- 크래시
-    @precondition(lambda self: type(self).CRASH)
+    @precondition(lambda self: type(self).CRASH and self.crashes < type(self).MAX_CRASHES)
     @rule(r=robots)
     def crash(self, r):
+        if self.c.alive(r):
+            self.crashes += 1
+            self._count('crash')
+            if self.c.inside[r] or self.c.net:
+                self._count('crash_mid_protocol')
         self.c.crash(r)
 
     @precondition(lambda self: type(self).CRASH)
@@ -144,6 +208,21 @@ class VoteMachine(RuleBasedStateMachine):
     # ---- 불변식
     @invariant()
     def safety(self):
+        self._count('steps')
+        auth = {}
+        for r in MEMBERS:
+            if self.c.alive(r):
+                for z in self.c.agents[r].authorized():
+                    auth[z] = r
+        if auth:
+            self._count('steps_with_authorized')
+            for r in MEMBERS:
+                a = self.c.agents.get(r)
+                att = getattr(a, 'attempt', None) if a is not None else None
+                res = getattr(att, 'resources', None) or getattr(a, 'req_res', frozenset())
+                if any(auth.get(z) not in (None, r) for z in res):
+                    self._count('steps_with_contention')   # 남이 허가받은 자원을 요청 중
+                    break
         bad = self.c.check()
         if bad:
             tail = '\n'.join(self.c.trace[-60:])
@@ -268,16 +347,31 @@ class RaLiveMachine(VoteMachine):
 
 
 # ---------------------------------------------------------------------- 시험
+def _dump_stats():
+    if STATS_PATH:
+        with open(STATS_PATH, 'w') as f:
+            json.dump(dict(STATS, examples_setting=EXAMPLES, steps_setting=STEPS,
+                           seed_mode='random' if SEED else 'derandomize'), f, indent=1,
+                      sort_keys=True)
+
+
 def test_vote_core_state_machine():
     """정적 과반 투표: 손실 · 중복 · 재정렬 · 크래시 재시작 · 시계 · 멤버십 어긋남에서 불변식 위반 0."""
-    run_state_machine_as_test(VoteMachine, settings=hyp_settings())
+    try:
+        run_state_machine_as_test(VoteMachine, settings=hyp_settings())
+    finally:
+        _dump_stats()
 
 
 def test_rejected_live_member_variant_has_counterexample():
     """대조: 기각 변형은 같은 하네스에서 반례가 나와야 한다 (시험이 공허하지 않다는 증거)."""
-    with pytest.raises(MutexViolation) as ei:
-        run_state_machine_as_test(RaLiveMachine,
-                                  settings=hyp_settings(examples=max(EXAMPLES, 300)))
+    try:
+        with pytest.raises(MutexViolation) as ei:
+            # 반례는 생성 예제 100 여 개째에 처음 나온다 (REPORT 측정) — 예산은 넉넉히 2000
+            run_state_machine_as_test(RaLiveMachine,
+                                      settings=hyp_settings(examples=max(EXAMPLES, 2000)))
+    finally:
+        _dump_stats()
     assert 'I1' in str(ei.value) or 'I2' in str(ei.value)
 
 

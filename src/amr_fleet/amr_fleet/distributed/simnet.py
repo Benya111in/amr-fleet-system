@@ -30,12 +30,14 @@ class Cluster:
     """N 대 플릿 모의. 모든 연산은 trace 에 한 줄씩 남는다 (반례 출력용)."""
 
     def __init__(self, config: VoteConfig, seed: int = 0,
-                 boot: Optional[AgentFactory] = None, strict: bool = True):
+                 boot: Optional[AgentFactory] = None, strict: bool = True,
+                 check_i4: bool = True):
         self.cfg = config
         self.members = list(config.members)
         self.seed = seed
         self._boot_fn = boot or ZoneAgent.boot
         self.strict = strict
+        self.check_i4 = check_i4 and strict
         self.stores = {r: MemoryStore() for r in self.members}
         self.clock: Dict[str, float] = {r: 0.0 for r in self.members}
         self.agents: Dict[str, Optional[object]] = {}
@@ -265,7 +267,7 @@ class Cluster:
             have = set().union(*auth.get(r, {}).values()) if auth.get(r) else set()
             if zs - have:
                 bad.append(f'I3 허가 없이 안에 있음: {r} {sorted(zs - have)}')
-        if self.strict:
+        if self.check_i4:
             com = self.committed()
             for r, reqs in auth.items():
                 for req, zones in reqs.items():
