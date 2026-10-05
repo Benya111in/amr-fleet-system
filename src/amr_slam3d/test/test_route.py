@@ -83,9 +83,10 @@ def test_rotation_takes_shortest_direction_across_pi():
 
 
 def test_heading_wraparound_while_driving_west():
+    """서쪽(선분 방향 +π)으로 달리는데 방위가 −π 쪽에 있다: 직진 중 방향 오차도 정규화해야 한다."""
     spec = RouteSpec(waypoints=[(-6.0, 0.0), (-6.0, 1.0)], hold_start_s=0.0, hold_end_s=0.0,
                      dwell_s=0.0)
-    log = simulate(spec, (0.0, 0.0, math.pi - 0.001))
+    log = simulate(spec, (0.0, 0.0, -math.pi + 0.001), t_max=200.0)
     assert log[-1][4].done
     drive_w = [abs(c.w) for *_, c in log if c.phase == 'drive']
     assert max(drive_w[:200]) < 0.2               # π 경계에서 방향 오차가 2π 로 튀지 않는다

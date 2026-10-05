@@ -67,6 +67,15 @@ def test_tf_tree_two_parents_invalid():
     assert r['multi_parent'] == {'amr_01/base_footprint': ['amr_01/liosam_odom', 'amr_01/odom']}
 
 
+def test_tf_tree_two_parents_off_the_checked_chain_still_invalid():
+    """부모가 둘인 프레임이 조회 경로 밖에 있어도 트리는 무효다 (tf2 는 그 프레임 조회를 흔든다)."""
+    edges = [('map', 'slam_map'), ('slam_map', 'base'), ('base', 'lidar_link'),
+             ('liosam_odom', 'lidar_link')]
+    r = tftree.check(edges, ['base'], root='map')
+    assert r['chains']['base']['ok']
+    assert not r['valid'] and 'lidar_link' in r['multi_parent']
+
+
 def test_tf_tree_wrong_root_and_cycle():
     r = tftree.check([('odom', 'base')], ['base'], root='map')
     assert not r['valid'] and r['chains']['base']['root'] == 'odom'
