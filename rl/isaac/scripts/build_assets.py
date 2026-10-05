@@ -10,7 +10,6 @@
 """
 
 import argparse
-import hashlib
 import json
 import os
 import sys
@@ -23,19 +22,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
 from amr_isaac import paths as PA  # noqa: E402
+from amr_isaac.assets import geometry_sha  # noqa: E402
 from amr_isaac import warehouse_geom as W  # noqa: E402
-
-
-def geometry_sha():
-    """창고 SDF·모델·변환기·경로 모듈 소스의 해시 (캐시 키)."""
-    sdf, models = W.default_paths()
-    h = hashlib.sha256()
-    for p in [sdf, W.__file__, PA.__file__] + sorted(
-            os.path.join(models, m, 'model.sdf') for m in os.listdir(models)):
-        if os.path.exists(p):
-            with open(p, 'rb') as f:
-                h.update(f.read())
-    return h.hexdigest()[:10]
 
 
 def _job(args):

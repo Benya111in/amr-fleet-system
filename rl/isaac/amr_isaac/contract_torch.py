@@ -459,6 +459,8 @@ def build_observation(state, return_parts=False):
     obs = torch.cat([parts[name] for name, _ in OBS_LAYOUT], dim=1).to(torch.float32)
     assert obs.shape == (B, OBS_DIM), obs.shape
     if return_parts:
+        parts['s0'] = s0          # 투영 호길이 (env 가 Φ = −κ·d_arc 캐시에 쓴다)
+        parts['d_arc'] = d_arc
         return obs, parts
     return obs
 
