@@ -105,3 +105,11 @@ def test_error_rule_example_numbers():
     assert f'z = {z_fail:.3f} (미달)'.replace('-', '−') in DOC
     assert f'z = {z_drop:.3f} 로 충족'.replace('-', '−') in DOC
     assert z_fail > -N.z_quantile(1 - R.PREREG['alpha']) > z_drop
+
+
+def test_fallback_run_count_reaches_sprt_end():
+    """대체안: 0 접촉 SPRT 종료(243) 에 필요한 30 시행 실행 수가 문서와 같다 (8 실행 = 240 으로는 안 끝난다)."""
+    d = R.sprt_design()
+    runs = math.ceil(d.n_zero / 30)
+    assert 8 * 30 < d.n_zero and runs == 9
+    assert f'**최소 {runs} 실행**' in DOC and f'상한 {d.n_max} = {d.n_max // 30} 실행' in DOC
