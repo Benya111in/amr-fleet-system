@@ -1,5 +1,6 @@
 """fleet_spawn: 스폰 목록 해석·검증, 공통·로봇별 통신 지연 → fleet 파라미터 (명세 4.9)."""
 
+import dataclasses
 import math
 from pathlib import Path
 
@@ -27,6 +28,42 @@ def test_default_config_has_five_robots():
     assert spawn.comm_latency_ms is None
     for r in spawn.robots:
         assert r.yaw == pytest.approx(math.pi / 2, abs=1e-4)   # 북쪽(창고 안쪽)을 본다
+    # 3D LiDAR 키가 없다 → 모두 false (기본 5대의 URDF·브리지 무변화, 보너스 2)
+    assert not any(r.lidar3d for r in spawn.robots)
+    assert fs.lidar3d_robots(spawn.robots) == []
+    raw = yaml.safe_load(CONFIG.read_text(encoding='utf-8'))
+    assert all('lidar3d' not in item for item in raw['robots'])
+
+
+def _without_lidar3d(spawn):
+    return [dataclasses.replace(r, lidar3d=False) for r in spawn.robots], \
+        dataclasses.replace(spawn, robots=())
+
+
+@pytest.mark.parametrize('name, expected', [
+    ('fleet_spawn_lidar3d.yaml', ['amr_01']),
+    ('fleet_spawn_lidar3d_all.yaml', [f'amr_0{i}' for i in range(1, 6)]),
+])
+def test_lidar3d_variants_differ_only_in_lidar3d(name, expected):
+    """3D LiDAR 변형 목록은 기본 목록과 lidar3d 키만 다르다 (자세·공통 옵션이 어긋나지 않게)."""
+    base = fs.load_fleet_spawn(str(CONFIG))
+    var = fs.load_fleet_spawn(str(CONFIG.parent / name))
+    assert fs.lidar3d_robots(var.robots) == expected
+    assert _without_lidar3d(var) == _without_lidar3d(base)
+
+
+@pytest.mark.parametrize('value', ['yes', 1, 0, None, 'true'])
+def test_parse_robot_rejects_non_bool_lidar3d(value):
+    item = {'name': 'amr_01', 'x': 0, 'y': 0, 'yaw': 0, 'lidar3d': value}
+    with pytest.raises(ValueError, match='lidar3d'):
+        fs.parse_robot(item, 0)
+
+
+def test_parse_robot_lidar3d():
+    base = {'name': 'amr_01', 'x': 0, 'y': 0, 'yaw': 0}
+    assert fs.parse_robot(base, 0).lidar3d is False
+    assert fs.parse_robot({**base, 'lidar3d': False}, 0).lidar3d is False
+    assert fs.parse_robot({**base, 'lidar3d': True}, 0).lidar3d is True
 
 
 @pytest.mark.parametrize('value, expected', [

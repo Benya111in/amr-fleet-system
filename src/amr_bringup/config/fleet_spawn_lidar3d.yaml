@@ -1,0 +1,18 @@
+# 다중 로봇 스폰 목록 — 3D LiDAR 1대 (명세 보너스 2, docs/research/slam3d/sensor.md)
+# fleet_spawn.yaml 과 같고 amr_01 에만 lidar3d: true 를 더했다 (test_fleet_spawn.py 가 나머지가 같은지 대조한다).
+#   ros2 launch amr_bringup multi_robot.launch.py robots_file:=$(ros2 pkg prefix amr_bringup)/share/amr_bringup/config/fleet_spawn_lidar3d.yaml
+# 형식·좌표·배치 근거는 fleet_spawn.yaml 머리말.
+
+robots:
+  - {name: amr_01, x: 18.0, y: -16.0, yaw: 1.5708, lidar3d: true}
+  - {name: amr_02, x: 20.0, y: -16.0, yaw: 1.5708}
+  - {name: amr_03, x: 22.0, y: -16.0, yaw: 1.5708}
+  - {name: amr_04, x: 24.0, y: -16.0, yaw: 1.5708}
+  - {name: amr_05, x: 26.0, y: -16.0, yaw: 1.5708}
+
+# ---- 공통 옵션 --------------------------------------------------------------
+spawn_z: 0.02                # [m] 바퀴가 살짝 떠서 내려앉도록 (spawn.launch.py 기본과 같음)
+pause_during_spawn: true     # 월드 로드 직후 멈추고 전 로봇 스폰·확인 뒤 재개 (world_gate.py)
+spawn_timeout_s: 120.0       # [s, 벽시계] 모든 모델이 보일 때까지 기다리는 상한. 넘으면 누락 로봇을 ERROR 로 알리고 재개
+comm_latency_ms: null        # null = amr_fleet fleet.yaml ([0, 100] ms). 값을 주면 manager·모든 adapter 에 적용
+min_separation_m: 1.0        # [m] 로봇 중심 간 최소 거리 (스폰 겹침 방지)

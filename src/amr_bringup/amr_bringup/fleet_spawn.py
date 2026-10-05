@@ -2,7 +2,7 @@
 다중 로봇 스폰 목록(config/fleet_spawn.yaml) 해석·검증 (launch 비의존 순수 모듈).
 
 형식
-    robots: [{name, x, y, yaw, comm_latency_ms?}, ...]   월드 좌표 [m, rad]
+    robots: [{name, x, y, yaw, comm_latency_ms?, lidar3d?}, ...]   월드 좌표 [m, rad]
     spawn_z, pause_during_spawn, spawn_timeout_s, comm_latency_ms, min_separation_m   공통 옵션 (모두 선택)
 
 - name 은 네임스페이스 = Gazebo 모델 이름이다: amr_ + 두 자리 (multi_robot.md §1, amr_99 까지).
@@ -10,6 +10,9 @@
   공통 값은 fleet_manager(assign_task 호출)와 모든 fleet_adapter(robot_state) 에, 로봇별 값은 그 로봇의
   fleet_adapter 에만 들어간다 — manager 의 지연 모델은 로봇 구분 없이 하나다 (amr_fleet fleet.yaml).
 - 로봇 사이 거리 < min_separation_m 이면 거절한다 (스폰 순간 차체가 겹치면 물리가 튕겨 낸다).
+- lidar3d: true 면 그 로봇에 3D LiDAR(보너스 2, 0.90 m 마스트 16 ch)를 단다. 없으면 false — 기본 목록은 키가 없어
+  URDF·브리지가 이 키 이전과 같다. 이 키는 amr_description description/spawn.launch.py 가 lidar3d:=auto(기본)일 때
+  런치 범위의 robots_file 에서 직접 읽는다 (amr_description/lidar3d.py) — 여기서는 형식만 검증한다.
 """
 
 from __future__ import annotations
@@ -26,7 +29,7 @@ ROBOT_NAME_RE = re.compile(r'^amr_\d{2}$')
 SPEC_MAX_LATENCY_MS = 100.0          # 명세 4.9
 MANAGER_KEY = '/fleet/fleet_manager_node'
 ADAPTER_KEY = '/**/fleet_adapter_node'
-_ROBOT_KEYS = {'name', 'x', 'y', 'yaw', 'comm_latency_ms'}
+_ROBOT_KEYS = {'name', 'x', 'y', 'yaw', 'comm_latency_ms', 'lidar3d'}
 _SHARED_DEFAULTS = {
     'spawn_z': 0.02,                 # [m] spawn.launch.py 기본과 같다 (바퀴가 살짝 떠서 내려앉게)
     'pause_during_spawn': True,      # 스폰 동안 월드 일시 정지 (world_gate.py 참고)
@@ -38,13 +41,14 @@ _SHARED_DEFAULTS = {
 
 @dataclass(frozen=True)
 class RobotSpec:
-    """로봇 1대의 이름과 스폰 자세 (+ 선택: robot_state 송신 지연)."""
+    """로봇 1대의 이름과 스폰 자세 (+ 선택: robot_state 송신 지연, 3D LiDAR 장착)."""
 
     name: str
     x: float
     y: float
     yaw: float
     comm_latency_ms: Optional[Tuple[float, float]] = None
+    lidar3d: bool = False
 
 
 @dataclass(frozen=True)
@@ -96,12 +100,16 @@ def parse_robot(item: Any, index: int) -> RobotSpec:
     name = str(item['name'])
     if not ROBOT_NAME_RE.match(name):
         raise ValueError(f'{where}: 이름은 amr_ + 두 자리 숫자 (multi_robot.md §1): {name!r}')
+    lidar3d = item.get('lidar3d', False)
+    if not isinstance(lidar3d, bool):
+        raise ValueError(f'{where} ({name}): lidar3d 는 true/false: {lidar3d!r}')
     return RobotSpec(name=name,
                      x=_number(item['x'], f'{where}.x'),
                      y=_number(item['y'], f'{where}.y'),
                      yaw=_number(item['yaw'], f'{where}.yaw'),
                      comm_latency_ms=parse_latency(item.get('comm_latency_ms'),
-                                                   f'{where} ({name})'))
+                                                   f'{where} ({name})'),
+                     lidar3d=lidar3d)
 
 
 def check_separation(robots: Sequence[RobotSpec], min_separation_m: float) -> None:
@@ -193,3 +201,8 @@ def fleet_params_with_latency(fleet_params: Dict[str, Any], spawn: FleetSpawn,
 def robot_ids(robots: Sequence[RobotSpec]) -> List[str]:
     """이름 목록 (스폰 순서)."""
     return [r.name for r in robots]
+
+
+def lidar3d_robots(robots: Sequence[RobotSpec]) -> List[str]:
+    """3D LiDAR 를 단 로봇 이름 (스폰 순서)."""
+    return [r.name for r in robots if r.lidar3d]

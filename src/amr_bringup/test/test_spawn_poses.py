@@ -1,5 +1,5 @@
 """
-config/fleet_spawn.yaml 의 스폰 자세가 월드(warehouse.sdf)의 빈 바닥인지 SDF 와 대조한다.
+config/fleet_spawn*.yaml (기본 목록 + 3D LiDAR 변형) 의 스폰 자세가 월드(warehouse.sdf)의 빈 바닥인지 SDF 와 대조한다.
 
 - 정적 충돌체: 월드의 <include>(models/<uri>/model.sdf)와 인라인 <model> 의 box 충돌체를 바닥 평면에 투영한
   회전 사각형. 로봇 외접원(0.60 x 0.40 → r 0.36 m) + 여유 STATIC_CLEARANCE 이상 떨어져야 한다.
@@ -15,6 +15,7 @@ from amr_bringup import fleet_spawn as fs
 import pytest
 
 CONFIG = Path(__file__).resolve().parents[1] / 'config' / 'fleet_spawn.yaml'
+SPAWN_FILES = sorted(CONFIG.parent.glob('fleet_spawn*.yaml'))
 ROBOT_RADIUS = math.hypot(0.60 / 2, 0.40 / 2)   # config/robot_params.yaml footprint
 STATIC_CLEARANCE = 0.5                           # [m] 외접원 바깥 여유
 DYNAMIC_CLEARANCE = 3.0                          # [m] 로봇 중심 ↔ 동적 장애물 경로
@@ -112,9 +113,13 @@ def world():
     return _world(share)
 
 
-@pytest.fixture(scope='module')
-def spawn():
-    return fs.load_fleet_spawn(str(CONFIG))
+@pytest.fixture(scope='module', params=SPAWN_FILES, ids=[p.name for p in SPAWN_FILES])
+def spawn(request):
+    return fs.load_fleet_spawn(str(request.param))
+
+
+def test_spawn_files_found():
+    assert CONFIG in SPAWN_FILES and len(SPAWN_FILES) >= 3
 
 
 def test_world_parsed(world):

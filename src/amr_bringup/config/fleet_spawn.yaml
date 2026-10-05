@@ -11,6 +11,9 @@
 #   - 충전 구역(-22, -16)은 비워 둔다 (도킹 시험 대상, 스테이션 C1~C3)
 # 로봇별 선택 키 comm_latency_ms: 숫자 hi (= [0, hi]) 또는 [lo, hi] ms, 0 ≤ lo ≤ hi ≤ 100 —
 #   그 로봇의 robot_state 송신 지연(fleet_adapter_node). 없으면 아래 공통 값 → amr_fleet fleet.yaml 순.
+# 로봇별 선택 키 lidar3d: true 면 그 로봇에 3D LiDAR(보너스 2: 0.90 m 마스트, 16 ch gpu_lidar, IMU 200 Hz)를 단다.
+#   없으면 false — 이 기본 목록에는 없다 (기본 5대의 URDF·브리지 무변화). 1대 장착 목록: fleet_spawn_lidar3d.yaml,
+#   부하 측정용 5대 장착: fleet_spawn_lidar3d_all.yaml (robots_file:= 로 고른다). 계약: docs/research/slam3d/sensor.md
 
 robots:
   - {name: amr_01, x: 18.0, y: -16.0, yaw: 1.5708}
