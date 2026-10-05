@@ -42,14 +42,15 @@ def test_golden_files_present():
         assert d['contract_version'] == C.CONTRACT_VERSION
 
 
+@pytest.mark.parametrize('static', [False, True])
 @pytest.mark.parametrize('device,dtype,scan_dtype', CONFIGS)
-def test_decision_replay_batched(device, dtype, scan_dtype):
+def test_decision_replay_batched(device, dtype, scan_dtype, static):
     cases = _kind('decision')
     assert len(cases) == 17
     states = [State.from_dict(d['state']) for d in cases]
     b = bstate_from_states(states, device, dtype, scan_dtype)
     obs = T.build_observation(b).double().cpu().numpy()
-    res = T.compute_mask(b, roll_dtype=scan_dtype)
+    res = T.compute_mask(b, roll_dtype=scan_dtype, static=static)
     for i, d in enumerate(cases):
         e, tol, name = d['expected'], d['tolerance'], d['name']
         err = np.abs(obs[i] - np.array(e['obs']))

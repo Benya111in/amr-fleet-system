@@ -456,12 +456,14 @@ def sim_time(v):
     return (v.abs() / C.A_MAX + 0.5).clamp(C.SIM_TIME_MIN, C.SIM_TIME_MAX)
 
 
-def compute_mask(st, proj=None, max_cand=9, roll_dtype=torch.float32):
+def compute_mask(st, proj=None, max_cand=9, roll_dtype=torch.float32, static=False):
     """
     mask.compute_mask 배치판.
 
     저크 조건이 셀을 env 당 최대 9 개로 줄이므로(a_v 창 0.4 / 간격 0.2, a_ω 창 1.2 / 간격 0.5), 가행성·VO 는
     그 후보만 계산한다. 후보가 max_cand 보다 많으면(저크 표 바뀜) 예외.
+    static=True 면 후보 수를 max_cand 로 고정하고 호스트 동기화(검사·조기 건너뛰기)를 하지 않는다 —
+    torch.compile 용. 결과는 같다 (시험 test_golden_torch 가 두 경로를 다 돌린다).
     반환 dict 는 기준 구현과 같은 키 (텐서, env 축 포함).
     """
     N = st.pose.shape[0]
@@ -478,10 +480,13 @@ def compute_mask(st, proj=None, max_cand=9, roll_dtype=torch.float32):
     jerk_ok = ((av[None, :] - apv).abs() <= C.JERK_STEP_V + tol) & \
         ((aw[None, :] - apw).abs() <= C.JERK_STEP_W + tol)
     cand = speed_ok & jerk_ok
-    n_cand = int(cand.sum(dim=1).max()) if N > 0 else 0
-    if n_cand > max_cand:
-        raise RuntimeError(f'후보 셀 {n_cand} > {max_cand}')
-    K = max(1, n_cand)
+    if static:
+        K = max_cand
+    else:
+        n_cand = int(cand.sum(dim=1).max()) if N > 0 else 0
+        if n_cand > max_cand:
+            raise RuntimeError(f'후보 셀 {n_cand} > {max_cand}')
+        K = max(1, n_cand)
     order = torch.argsort((~cand).to(torch.int8), dim=1, stable=True)[:, :K]
     c_ok = cand.gather(1, order)                         # [N,K]
     cv = v1.gather(1, order)
@@ -508,7 +513,7 @@ def compute_mask(st, proj=None, max_cand=9, roll_dtype=torch.float32):
         t = k * C.SIM_DT
         s_k = cv.abs() * t
         act = c_ok & (k <= n_k) & ~(s_k > (d_goal[:, None] + C.GOAL_OVERSHOOT_MARGIN))
-        if not bool(act.any()):
+        if not static and not bool(act.any()):
             continue
         x, y, th = integrate_arc(cvr, cwr, t)
         c = torch.cos(th)[..., None]

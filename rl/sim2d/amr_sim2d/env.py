@@ -339,7 +339,7 @@ class Sim2DEnv:
         self._k = {'substep': wrap(K.substep), 'post': wrap(K.post_step),
                    'obst': wrap(K.obstacle_state), 'sense': _sense_rest,
                    'min_ttc': wrap(K.min_ttc), 'ray_obst': wrap(RC.raycast_obstacles),
-                   'observe': wrap(_observe_all)}
+                   'observe': wrap(_observe_all), 'mask': wrap(_mask_static)}
         self._kf = [torch.tensor(k / SUB, dtype=self.fd, device=self.dev)
                     for k in range(1, SUB + 1)]
         self._first = [torch.tensor(k == 1, device=self.dev) for k in range(1, SUB + 1)]
@@ -396,7 +396,7 @@ class Sim2DEnv:
         self.d_arc, self.base_xy, self.base_t = r['d_arc'], r['base_xy'], r['base_t']
         obs, rew, term, trunc = r['obs'], r['reward'], r['terminated'], r['truncated']
         if self.want_mask:
-            self.mask = T.compute_mask(self.bstate(), r['proj'])['mask']
+            self.mask = self._k['mask'](self.bstate(), r['proj'])
         self.ep_ret += rew
         self.ep_len += 1
         self.ep_cost += r['cost']
@@ -428,6 +428,11 @@ class Sim2DEnv:
                 pj = T.project_onto_path(st.path_pts, st.path_n, st.path_cum, st.pose[:, :2])
                 self.mask[di] = T.compute_mask(st, pj)['mask']
         return obs, rew.float(), term, trunc, info
+
+
+def _mask_static(st, proj):
+    """비교군 C 마스크 (고정 후보 수 — 컴파일 경로)."""
+    return T.compute_mask(st, proj, static=True)['mask']
 
 
 def _observe_all(st):
