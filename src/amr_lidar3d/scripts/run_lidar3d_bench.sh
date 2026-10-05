@@ -8,6 +8,8 @@
 #       동적 행위자를 뺀 월드에 amr_01(3D) 1대만 띄우고 lidar3d_sensor_check.py 를 돌린다.
 #
 # 환경: ROS_DOMAIN_ID·IGN_PARTITION 은 호출자가 준다 (s1-sensor: 206 / amr_ai_s1). 로그는 출력 디렉터리에 남는다.
+# BENCH_LAUNCH_ARGS: multi_robot.launch.py 에 더할 인자 (예 'lidar3d_preprocessor:=false' — 최상위 인자는
+#   포함된 spawn.launch.py 에도 보인다. 3D 로봇을 띄우되 아무도 구독하지 않는 "브리지 끔" 조건).
 set -eo pipefail
 
 MODE=${1:?mode (load|check)}; OUT=${2:?출력 디렉터리}; shift 2
@@ -23,6 +25,7 @@ LIB=$(ros2 pkg prefix amr_lidar3d)/lib/amr_lidar3d
 {
   echo "date: $(date -Iseconds)"
   echo "ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-} IGN_PARTITION=${IGN_PARTITION:-} ROS_LOCALHOST_ONLY=${ROS_LOCALHOST_ONLY:-}"
+  echo "BENCH_LAUNCH_ARGS=${BENCH_LAUNCH_ARGS:-} mode=$MODE args=$*"
   echo "loadavg: $(cat /proc/loadavg)"
   nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total --format=csv,noheader 2>/dev/null || true
 } > "$OUT/env.txt"
@@ -67,8 +70,9 @@ case "$MODE" in
     LABEL=${1:?라벨}; ROBOTS=${2:?robots_file}; DUR=${3:?측정 s}; shift 3
     case "$ROBOTS" in /*) ;; *) ROBOTS="$SHARE_BRINGUP/config/$ROBOTS" ;; esac
     NUM=$(python3 -c "import yaml,sys; print(len(yaml.safe_load(open(sys.argv[1]))['robots']))" "$ROBOTS")
+    # shellcheck disable=SC2086
     ros2 launch amr_bringup multi_robot.launch.py robots_file:="$ROBOTS" num_robots:="$NUM" \
-      "${NO_STACK[@]}" > "$OUT/launch.log" 2>&1 &
+      "${NO_STACK[@]}" ${BENCH_LAUNCH_ARGS:-} > "$OUT/launch.log" 2>&1 &
     LAUNCH_PID=$!
     last=$(python3 -c "import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))['robots'][-1]['name'])" "$ROBOTS")
     wait_for_topic "/$last/scan" 600 || { echo "스폰 대기 초과" >&2; exit 3; }

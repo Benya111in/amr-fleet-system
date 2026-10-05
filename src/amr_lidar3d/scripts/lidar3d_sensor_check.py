@@ -86,6 +86,9 @@ def describe_cloud(msgs):
         'is_dense_all': all(dense), 'is_dense_any': any(dense),
         'points_per_msg_min': min(widths), 'points_per_msg_max': max(widths),
         'rate': cio.interval_stats([t for t, _ in msgs]),
+        # 따라잡기 렌더 진단: 시뮬레이션 시각 간격이 주기(0.1 s)의 절반보다 짧은 쌍의 수와 앞 20 개 간격
+        'burst_intervals': int(np.sum(np.diff([t for t, _ in msgs]) < 0.05)),
+        'first_intervals': [round(float(v), 4) for v in np.diff([t for t, _ in msgs])[:20]],
     }
 
 

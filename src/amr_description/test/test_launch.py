@@ -249,3 +249,13 @@ def test_description_lidar3d_flag_substitution(tmp_path):
     ctx = LaunchContext()
     ctx.launch_configurations["lidar3d_config"] = ""
     assert cfg.perform(ctx).endswith("config/lidar3d.yaml")
+
+
+def test_lidar3d_preprocessor_params_not_lazy():
+    """늦게 켜진 Fortress 센서는 놓친 주기를 몰아 렌더한다 → 전처리는 기동 즉시 구독(lazy 끔)."""
+    from amr_description import lidar3d as l3d
+    params = l3d.load_config(str(Path(spawn.__file__).resolve().parents[1] / "config"
+                                 / "lidar3d.yaml"))
+    p = spawn.lidar3d_preprocessor_params(params, True)
+    assert p == {"input_topic": "lidar3d/points_raw", "output_topic": "lidar3d/points",
+                 "frame_id": "", "lazy": False, "use_sim_time": True}

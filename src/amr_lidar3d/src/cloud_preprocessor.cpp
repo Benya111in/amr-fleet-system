@@ -7,9 +7,12 @@
 //                          필드 배치(x·y·z·intensity·ring, point_step) 그대로
 // 계약 (토픽·프레임·QoS·필드): docs/research/slam3d/sensor.md. 순수 로직: cloud_filter.cpp.
 //
-// lazy (기본 true): 출력 구독자가 없으면 입력을 구독하지 않는다. 그러면 lazy 브리지도
-// gz 구독을 열지 않고 Gazebo Sensors 시스템이 이 센서를 렌더하지 않는다
-// → 아무도 3D 점군을 쓰지 않는 실행은 렌더 비용이 0 이다.
+// 입력은 기동 즉시 구독한다 (lazy 기본 false). lazy:=true 면 출력 구독자가 있을 때만 입력을
+// 구독해 브리지·렌더까지 끈다 — 하지만 Fortress 센서의 다음 갱신 시각은 한 주기씩만 늘어나
+// (nextUpdateTime += period) 시뮬레이션 시각 T 에 켜진 센서는 T × 10 장을 물리 스텝마다(1 kHz)
+// 몰아서 렌더하며 따라잡는다. 실측(s1_check_a): 켠 뒤 3.7 s(sim) 동안 98 장, 간격 중앙값 1 ms,
+// 그동안 RTF 저하. 그래서 3D 로봇은 일시 정지 중(스폰 때)부터 구독해 sim 0 에서 센서를 켠다.
+// lazy 는 기동 직후(sim ≈ 0)에 소비자가 붙는 것이 보장될 때만 쓴다.
 // Humble 에는 발행자 matched 이벤트가 없어 구독자 수를 주기적으로 본다 (lazy_check_period, 벽시계).
 // 컴포넌트로 SLAM 노드와 같은 컨테이너에 올리면 intra-process 로 복사 없이 넘긴다
 // (use_intra_process_comms).
@@ -37,7 +40,7 @@ public:
     input_topic_ = declare_parameter<std::string>("input_topic", "lidar3d/points_raw");
     const auto output_topic = declare_parameter<std::string>("output_topic", "lidar3d/points");
     frame_id_ = declare_parameter<std::string>("frame_id", "");
-    lazy_ = declare_parameter<bool>("lazy", true);
+    lazy_ = declare_parameter<bool>("lazy", false);
     input_reliable_ = declare_parameter<bool>("input_reliable", false);
     const bool output_reliable = declare_parameter<bool>("output_reliable", true);
     const int depth = static_cast<int>(declare_parameter<int>("qos_depth", 5));
@@ -132,7 +135,7 @@ private:
 
   std::string input_topic_;
   std::string frame_id_;
-  bool lazy_{true};
+  bool lazy_{false};
   bool input_reliable_{false};
   std::size_t depth_{5};
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_;

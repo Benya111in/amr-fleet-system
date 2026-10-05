@@ -10,7 +10,8 @@
     namespace     로봇 네임스페이스 (기본 amr_01). 토픽은 그 아래 상대 이름
     input_topic   (기본 lidar3d/points_raw)  output_topic (기본 lidar3d/points)
     frame_id      '' = 입력 header.frame_id 유지 (Gazebo ignition_frame_id = <prefix>lidar3d_link)
-    lazy          true(기본) = 출력 구독자가 있을 때만 입력 구독
+    lazy          false(기본) = 기동 즉시 입력 구독. true = 출력 구독자가 있을 때만 입력 구독 —
+                  sim 시각 T 에 켜면 센서가 T x 10 장을 몰아 렌더한다 (src/cloud_preprocessor.cpp 머리말)
     container     비우면 독립 프로세스, 컨테이너 이름을 주면 그 컨테이너에 컴포넌트로 싣는다
     use_sim_time  (기본 true)
 계약: docs/research/slam3d/sensor.md.
@@ -48,7 +49,7 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('input_topic', default_value='lidar3d/points_raw'),
         DeclareLaunchArgument('output_topic', default_value='lidar3d/points'),
         DeclareLaunchArgument('frame_id', default_value=''),
-        DeclareLaunchArgument('lazy', default_value='true'),
+        DeclareLaunchArgument('lazy', default_value='false'),
         DeclareLaunchArgument('container', default_value=''),
         DeclareLaunchArgument('use_sim_time', default_value='true'),
         OpaqueFunction(function=_setup),

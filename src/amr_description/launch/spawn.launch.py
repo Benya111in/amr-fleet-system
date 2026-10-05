@@ -35,8 +35,9 @@ description.launch.py 가 먼저 떠서 /<robot_name>/robot_description 을 발�
     lidar3d_preprocessor
                   true(기본)면 lidar3d 로봇에 amr_lidar3d cloud_preprocessor_node 를 띄운다
                   (lidar3d/points_raw → lidar3d/points: 비유한 점 제거, is_dense=true, ring 유지).
-                  출력 구독자가 있을 때만 입력을 구독하므로
-                  (lazy) 아무도 3D 점군을 보지 않으면 브리지도 gz 구독을 열지 않고 센서도 렌더하지 않는다.
+                  전처리는 스폰과 함께(월드 일시 정지 중) 입력을 구독해 센서를 sim 0 부터 켠다 — Fortress 센서는
+                  늦게 켜면 놓친 주기를 물리 스텝마다 몰아 렌더하며 따라잡는다 (실측: 켠 뒤 1 ms 간격 98 장).
+                  false 면 브리지는 있지만(lazy) 구독자가 없어 렌더하지 않는다 — 나중에 구독하면 같은 따라잡기
                   amr_lidar3d 가 ament index 에 없으면 로그 한 줄 남기고 건너뛴다
 
 스폰 (결정: ros_gz_sim create 대신 scripts/gz_world.py spawn)
@@ -306,16 +307,25 @@ def lidar3d_preprocessor_action(robot_name: str, params: dict, use_sim_time: boo
     except PackageNotFoundError:
         return LogInfo(msg=(f"[{robot_name}] lidar3d 전처리 건너뜀: amr_lidar3d 가 ament index 에 없다"
                             " (lidar3d/points 가 나오지 않는다 — points_raw 만 있다)"))
-    l3 = params["lidar3d"]
     return Node(
         package="amr_lidar3d",
         executable="cloud_preprocessor_node",
         name="lidar3d_preprocessor",
         namespace=robot_name,
         output="screen",
-        parameters=[{"input_topic": l3["points_raw_topic"], "output_topic": l3["points_topic"],
-                     "frame_id": "", "lazy": True, "use_sim_time": use_sim_time}],
+        parameters=[lidar3d_preprocessor_params(params, use_sim_time)],
     )
+
+
+def lidar3d_preprocessor_params(params: dict, use_sim_time: bool) -> dict:
+    """
+    전처리 노드 파라미터. lazy 는 끈다 (인자 lidar3d_preprocessor 설명 — 늦게 켜진 센서의 따라잡기 렌더).
+
+    frame_id '' = Gazebo 가 붙인 <prefix>lidar3d_link 를 그대로 쓴다.
+    """
+    l3 = params["lidar3d"]
+    return {"input_topic": l3["points_raw_topic"], "output_topic": l3["points_topic"],
+            "frame_id": "", "lazy": False, "use_sim_time": use_sim_time}
 
 
 def payload_manager_action(robot_name: str, world: str, config_dir: str, use_sim_time: bool):

@@ -81,7 +81,7 @@ TEST_F(PreprocessorRos, LazySubscribesOnlyWithOutputSubscriber)
   const std::string ns = "/t_lazy";
   rclcpp::NodeOptions opts;
   opts.arguments(
-    {"--ros-args", "-r", "__ns:=" + ns, "-p", "lazy_check_period:=0.05",
+    {"--ros-args", "-r", "__ns:=" + ns, "-p", "lazy:=true", "-p", "lazy_check_period:=0.05",
       "-p", "report_period:=0.0"});
   auto node = amr_lidar3d::createCloudPreprocessor(opts);
   auto peer = std::make_shared<rclcpp::Node>("peer", ns);
@@ -125,7 +125,7 @@ TEST_F(PreprocessorRos, NonLazyFrameOverride)
   const std::string ns = "/t_eager";
   rclcpp::NodeOptions opts;
   opts.arguments(
-    {"--ros-args", "-r", "__ns:=" + ns, "-p", "lazy:=false",
+    {"--ros-args", "-r", "__ns:=" + ns,   // lazy 기본 false: 기동 즉시 입력 구독
       "-p", "frame_id:=fixed_frame", "-p", "report_period:=0.0"});
   auto node = amr_lidar3d::createCloudPreprocessor(opts);
   auto peer = std::make_shared<rclcpp::Node>("peer2", ns);
