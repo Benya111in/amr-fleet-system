@@ -538,9 +538,15 @@ def test_backend_coming_back_rewinds_attempts_and_trusts_its_pose():
     det.tick(200.0)                         # 시한이 멈춰 있다
     assert det.state == State.RECOVERING
 
-    det.set_backend_ready(210.0, True)
+    actions = det.set_backend_ready(210.0, True)
     assert det.backend_ready and det.backend_down_time == pytest.approx(208.0)
-    assert det._reinits_done == 0           # 백엔드가 죽은 동안의 시도는 없던 것으로
+    # **복구를 반드시 다시 시작해야 한다.** 백엔드가 죽은 동안 on_spin_done 이 아무 동작도 내지
+    # 않았으므로 돌고 있는 회전이 없다 — 여기서 깨우지 않으면 상태기가 영원히 멈춰 선다.
+    # (logs/Y12 실측으로 드러난 회귀: amr_04 가 재시도 1 회에서 멈춘 채 20 분간 조용했다.
+    #  이 시험의 앞선 판은 FAILED 경로만 덮고 RECOVERING 경로를 비워 둬서 그것을 놓쳤다.)
+    assert ActionType.REINITIALIZE in kinds(actions), '백엔드 복귀가 복구를 재시작하지 않았다'
+    assert ActionType.SPIN in kinds(actions)
+    assert det.state == State.RECOVERING and det._reinits_done == 1
 
     # 대기 구역 스폰 자세의 실측 여백 0.034 (< converge_margin 0.05) 에서도 수렴한다 —
     # 백엔드가 올라오며 적용한 설정 자세는 우리 스캔 정합 바깥의 증거다

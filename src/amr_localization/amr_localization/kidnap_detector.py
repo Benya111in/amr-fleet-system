@@ -366,7 +366,10 @@ class KidnapDetector:
             self._lost_since = t
             if self.state == State.FAILED:
                 self._set_state(t, State.RECOVERING, 'backend active: retry recovery')
-                return self._reinitialize(t, 'localization backend came back')
+            # **반드시 복구를 다시 시작한다.** 백엔드가 죽은 동안 on_spin_done 이 아무 동작도
+            # 내지 않았으므로 이 시점에 돌고 있는 회전이 없다 — 여기서 깨우지 않으면 상태기가
+            # 영원히 멈춰 선다 (logs/Y12 실측: amr_04 가 재시도 1 회에서 멈춘 채 조용했다).
+            return self._reinitialize(t, 'localization backend came back')
         return []
 
     def on_marker_fix(self, t: float, pose: Pose) -> List[Action]:
