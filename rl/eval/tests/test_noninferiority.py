@@ -184,3 +184,10 @@ def test_calc1_boschloo_used_transposed_table():
 
 def test_superiority_alarm_threshold_is_5_not_4():
     assert N.superiority_alarm_k(240, 240, 0, alpha=0.05, k_max=8) == 5
+
+
+def test_fm_degenerate_all_events_uses_fallback():
+    # p̂_t = p̂_r = 1, δ = 0 에서는 3 차식 닫힌 해가 정의되지 않는다 → 수치 최적화 대체 경로
+    pt, pr = N.fm_restricted(16, 16, 20, 20, 0.0)
+    assert math.isfinite(pt) and math.isfinite(pr)
+    assert pt == pytest.approx(1.0, abs=1e-4) and pr == pytest.approx(1.0, abs=1e-4)

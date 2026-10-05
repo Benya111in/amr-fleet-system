@@ -108,6 +108,14 @@ def test_cross_check_calc1_wilson():
                                                                    rel=1e-12)
 
 
+def test_all_events_bounds():
+    # x = n 이면 상한은 1 (scipy beta.ppf(·, n+1, 0) 은 nan)
+    assert B.cp_upper(10, 10) == 1.0 and B.jeffreys_upper(10, 10) == 1.0
+    assert B.cp_lower(0, 10) == 0.0
+    lo, hi = B.cp_interval(10, 10)
+    assert hi == 1.0 and 0.6 < lo < 1.0
+
+
 def test_invalid_inputs():
     with pytest.raises(ValueError):
         B.cp_upper(5, 3)
