@@ -2,6 +2,8 @@
 """
 변이 검사: 가드를 하나씩 되돌린 사본에서 시험이 실패하는지 본다 (COORDINATION §4, handover §5).
 
+패키지 밖 도구라 CI 린트 대상이 아니다 (치환 문자열이 소스와 정확히 같아야 해서 긴 줄이 있다).
+
 사용 (컨테이너 안, 저장소 루트에서):
   python3 docs/research/fleet-distributed/tools/mutate.py --out /logs/mutation [--only M1,M3]
 각 변이마다 src/amr_fleet 을 임시 디렉터리에 복사하고 문자열 치환(정확히 1 회 일치해야 함)을 적용한 뒤
@@ -29,9 +31,12 @@ MUTATIONS = [
         ('q = len(members) // 2 + 1 if self.quorum is None', 'q = len(members) // 2 if self.quorum is None'),
         ('if not 2 * q > len(members) or q > len(members):', 'if q > len(members):'),
     ]),
-    ('M2', '배타 투표 제거: 남의 잠정 표를 덮어쓴다', VC, [
+    ('M2', '잠정 표 배타 제거: 남의 잠정 표를 덮어쓴다 (예상: 안전 무관 — 2단계 확정이 배타를 다시 세운다)', VC, [
         ('free = all(z not in self.votes for z in p.resources)',
          'free = all(z not in self.votes or not self.votes[z].committed for z in p.resources)'),
+    ]),
+    ('M2b', '배타 투표 제거: 확정 표까지 덮어쓴다', VC, [
+        ('free = all(z not in self.votes for z in p.resources)', 'free = True'),
     ]),
     ('M3', '확정 표도 기한 만료 (리스 회수형)', VC, [
         ('gone = [z for z, v in self.votes.items() if not v.committed and v.deadline <= now]',
@@ -113,6 +118,46 @@ MUTATIONS = [
     ]),
 ]
 
+MUTATIONS += [
+    ('F1', '감지: 과반 대신 1 대의 DEAD 로 DEGRADED', FD, [
+        ('return len(self.dead_votes(now)) >= self.quorum', 'return len(self.dead_votes(now)) >= 1'),
+    ]),
+    ('F2', '감지: 자기 정지 직후 DEAD 보류 제거', FD, [
+        ('            if self.health is not None and self.health.late:\n',
+         '            if False:\n'),
+    ]),
+    ('F3', '감지: 옛 · 중복 하트비트도 갱신', FD, [
+        ('        if self.last_key is not None and key <= self.last_key:\n',
+         '        if False:\n'),
+    ]),
+    ('F4', '감지: 지역 건강 배수 무시', FD, [
+        ('mult = self.health.multiplier() if self.health is not None else 1.0', 'mult = 1.0'),
+    ]),
+    ('F5', 'EpochFence: 낮은 epoch 도 수용', FD, [
+        ('        if self.max is not None and key < self.max:\n', '        if False:\n'),
+    ]),
+    ('F6', '과반 의심: 비컨 신선도 무시', FD, [
+        ('                if b.rx <= now and _sec(b.rx, now) <= self.ttl_s}', '                if True}'),
+    ]),
+    ('W1', 'WFG 희생자: 어린 쪽 대신 늙은 쪽', WF, [
+        ('    return (-int(info.priority), ts, info.robot)', '    return (-int(info.priority), -ts, info.robot)'),
+    ]),
+    ('W2', 'WFG: block SCC 의 knot 조건 제거', WF, [
+        ('                continue          # OR 대기', '                pass          # OR 대기'),
+    ]),
+    ('W3', 'WFG: 묵은 비컨도 판정에 씀', WF, [
+        ('            if rx <= now and (now.total_ns() - rx.total_ns()) / 1e9 <= self.ttl_s:',
+         '            if True:'),
+    ]),
+    ('W4', 'WFG: 진행이 있어도 확정 타이머를 다시 재지 않음', WF, [
+        ('            if base is None or moved:', '            if base is None:'),
+    ]),
+    ('W5', 'WFG: 재정렬된 옛 비컨으로 덮어씀', WF, [
+        ('        if old is not None and (info.incarnation, info.seq) <= (old[1].incarnation, old[1].seq):',
+         '        if False:'),
+    ]),
+]
+
 SUITES = {
     'unit': ['test/test_dist_vote_core.py', 'test/test_dist_store.py', 'test/test_dist_ordering.py',
              'test/test_dist_failure_detector.py', 'test/test_dist_wfg.py',
@@ -176,7 +221,9 @@ def main():
                 open(fp, 'w', encoding='utf-8').write(s)
         row = {'id': mid, 'desc': desc, 'file': path, 'applied': ok, 'suites': {}}
         if ok:
-            for suite in suites:
+            # 감지기 · WFG 변이는 투표 상태기계와 무관하다 — 단위 시험만
+            my_suites = ['unit'] if path in (FD, WF) else suites
+            for suite in my_suites:
                 rc, dt, out = run_suite(pkg, suite, env_extra, args.timeout)
                 row['suites'][suite] = {'rc': rc, 'killed': None if rc is None else rc != 0,
                                         'sec': round(dt, 1)}

@@ -99,6 +99,32 @@ class Cluster:
         self.net.append(self.net[i])
         self._note(f'dup {self.net[i].short()}')
 
+    def chaos(self, rng: random.Random, loss: float = 0.0, dup: float = 0.0, hold: float = 0.0,
+              max_events: int = 300) -> None:
+        """
+        무작위 순서로 배달한다 (재정렬 · 지연 · 손실 · 중복).
+
+        매번 in-flight 에서 하나를 골라 hold 확률로 다음 라운드로 미루고(지연), loss 확률로 버리고(손실),
+        dup 확률로 복제한 뒤 배달한다(중복). 새로 생긴 메시지도 같은 라운드에 섞인다.
+        """
+        later: List[VoteMsg] = []
+        n = 0
+        while self.net and n < max_events:
+            i = rng.randrange(len(self.net))
+            n += 1
+            if rng.random() < hold:
+                later.append(self.net.pop(i))
+                continue
+            if rng.random() < loss:
+                self.drop(i)
+                continue
+            if rng.random() < dup:
+                self.duplicate(i)
+            self.deliver(i)
+        if later:
+            self._note(f'hold {len(later)} msgs')
+        self.net.extend(later)
+
     def deliver_all(self, max_msgs: int = 10_000) -> None:
         """손실 없이 FIFO 로 모두 배달 (새로 생긴 메시지 포함, 상한 max_msgs)."""
         n = 0

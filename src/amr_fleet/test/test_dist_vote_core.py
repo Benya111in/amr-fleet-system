@@ -371,3 +371,60 @@ def test_all_robots_eventually_served_on_lossless_network():
             break
     assert sorted(served) == sorted(MEMBERS)
     assert c.check() == []
+
+
+# ---------------------------------------------------------------------- 크래시 재시작 이중 투표
+def _authorize_with_commits_at(c, robot, zone, committers):
+    """요청자 robot 이 zone 을 허가받게 하되 ENTER 는 committers 에게만 닿게 한다 (나머지는 잠정)."""
+    c.request(robot, [zone])
+    guard = 0
+    while c.net and guard < 1000:
+        guard += 1
+        msg = c.net[0]
+        if msg.kind == m.ENTER and msg.dst not in committers:
+            c.drop(0)
+        else:
+            c.deliver(0)
+    assert c.agents[robot].authorized() == {zone}
+
+
+def test_restarted_voter_does_not_double_vote():
+    """
+    재시작한 투표자는 확정 표를 되살려 이중 투표하지 않는다.
+
+    a 가 z 를 {a,b,c} 의 확정 표로 쥔 채, d·e 의 잠정 표는 만료되고, c 가 재시작한다.
+
+    c 가 확정 표를 디스크에서 되살리지 못하면 e 가 {c,d,e} 로 과반을 모아 함께 들어간다 (I1 위반).
+    영속화 누락 · 응답 뒤 영속화 변이를 잡는 결정적 시나리오.
+    """
+    c = Cluster(CFG)
+    _authorize_with_commits_at(c, 'a', 'z', {'a', 'b', 'c'})
+    c.enter('a')
+    for r in ('d', 'e'):
+        c.advance(r, 20.0)
+        c.tick(r)
+    c.deliver_all()
+    assert 'z' not in c.agents['d'].votes and 'z' not in c.agents['e'].votes
+    c.crash('c')
+    c.restart('c')
+    c.request('e', ['z'])
+    c.settle(10)
+    assert not c.agents['e'].authorized()
+    assert c.check() == []
+
+
+def test_voter_crash_between_vote_and_enter_is_safe():
+    """잠정 표를 준 투표자가 ENTER 전에 재시작해도 그 잠정 표를 기억한다 — 다른 요청자가 끼지 못한다."""
+    c = Cluster(CFG)
+    c.request('a', ['z'])
+    for _ in range(5):                              # REQUEST 만 배달 (VOTE 는 아직 a 에 안 감)
+        i = next(i for i, x in enumerate(c.net) if x.kind == m.REQUEST)
+        c.deliver(i)
+    for v in ('b', 'c'):
+        c.crash(v)
+        c.restart(v)
+        assert c.agents[v].votes['z'].req.robot == 'a'
+    c.request('e', ['z'])
+    c.settle(3, dt=0.1)
+    assert sum(1 for r in MEMBERS if c.agents[r].authorized()) == 1
+    assert c.check() == []

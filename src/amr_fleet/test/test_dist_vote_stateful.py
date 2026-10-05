@@ -6,13 +6,15 @@
 (I1 허가 배타 · I2 물리 배타 · I3 점유 ⊆ 허가 · I4 허가 ⇒ 과반 확정 · I5 낮은 epoch 수용 0)을 확인한다.
 
 예제 수 · 단계 수는 환경 변수로 키운다 (CI 기본은 작게, 결정적):
-  AMR_DIST_HYP_EXAMPLES (기본 150), AMR_DIST_HYP_STEPS (기본 60), AMR_DIST_HYP_SEED (없으면 derandomize)
+  AMR_DIST_HYP_EXAMPLES (기본 400), AMR_DIST_HYP_STEPS (기본 80),
+  AMR_DIST_HYP_SEED=1 이면 무작위 탐색 (시드는 pytest --hypothesis-seed=N), 없으면 derandomize
 대조: 보고서가 기각한 "생존 멤버 전원 REPLY" 변형(RaLiveAgent)은 같은 하네스에서 반례가 나와야 한다.
 """
 
 import collections
 import json
 import os
+import random
 
 import pytest
 
@@ -37,8 +39,8 @@ SKEW_MAX = 12.0          # 로봇 간 시계 어긋남 상한 [s] (잠정 기한
 CFG = VoteConfig(MEMBERS, tentative_s=4.0, retry_s=0.5, backoff_min_s=0.2, backoff_max_s=1.0,
                  tombstone_cap=8)
 
-EXAMPLES = int(os.environ.get('AMR_DIST_HYP_EXAMPLES', '150'))
-STEPS = int(os.environ.get('AMR_DIST_HYP_STEPS', '60'))
+EXAMPLES = int(os.environ.get('AMR_DIST_HYP_EXAMPLES', '400'))
+STEPS = int(os.environ.get('AMR_DIST_HYP_STEPS', '80'))
 SEED = os.environ.get('AMR_DIST_HYP_SEED')
 SKIP_I4 = os.environ.get('AMR_DIST_SKIP_I4') == '1'   # 변이 검사: 핵심 불변식만으로 잡히나
 STATS_PATH = os.environ.get('AMR_DIST_HYP_STATS')     # 주면 실행 통계를 JSON 으로 쓴다
@@ -87,6 +89,35 @@ class VoteMachine(RuleBasedStateMachine):
     def request(self, r, chain, prio):
         self._count('request')
         self.c.request(r, chain, prio)
+
+    @rule(rs=st.lists(robots, min_size=2, max_size=5, unique=True),
+          chain=st.sampled_from(CHAINS))
+    def contend(self, rs, chain):
+        """여러 로봇이 같은 사슬을 동시에 요청 (경합)."""
+        self._count('contend')
+        for r in rs:
+            self.c.request(r, chain)
+
+    @rule(seed=st.integers(0, 2 ** 16), loss=st.sampled_from((0.0, 0.1, 0.3)),
+          dup=st.sampled_from((0.0, 0.1)), hold=st.sampled_from((0.0, 0.2, 0.5)),
+          go_in=st.booleans(), go_out=st.booleans(), dt=st.sampled_from(DTS))
+    def chaos_round(self, seed, loss, dup, hold, go_in, go_out, dt):
+        """
+        한 라운드를 무작위 순서 · 손실 · 중복 · 지연(다음 라운드로 미룸)으로 돌린다.
+
+        개별 deliver(i) 규칙만으로는 표가 갈리는 끼어들기 순서에 거의 닿지 못한다 (REPORT 변이 1 차 결과).
+        """
+        self._count('chaos_round')
+        rng = random.Random(seed)
+        self.c.chaos(rng, loss, dup, hold)
+        self.c.tick_all()
+        self.c.chaos(rng, loss, dup, hold)
+        if go_in:
+            self.enter_all()
+        if go_out:
+            for r in MEMBERS:
+                self.exit_one(r)
+        self.c.advance_all(dt)
 
     @rule(r=robots)
     def enter(self, r):
