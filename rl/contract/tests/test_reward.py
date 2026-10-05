@@ -227,3 +227,12 @@ def test_intervention_cost_zero_when_untouched():
     assert R.intervention_cost([((0.5, 0.1), (0.5, 0.1))]) == 0.0
     assert R.intervention_cost([((1.0, 0.0), (0.0, 0.0))]) == pytest.approx(1.0)
     assert math.isfinite(R.intervention_cost([((0.3, 1.5), (0.0, 0.0))]))
+
+
+def test_track_penalty_off_during_deviation_episode():
+    pre = _st(5.0, 0.45, dev=DevState(True, 0.5, 1.0))
+    r = R.step(pre, _st(5.05, 0.25), (0.0, 0.0), False)
+    assert r.dev.in_dev and r.terms['track'] == 0.0
+    pre = _st(5.0, 0.05)
+    r = R.step(pre, _st(5.05, 0.25), (0.0, 0.0), False)
+    assert not r.dev.in_dev and r.terms['track'] == pytest.approx(-C.TRACK_WEIGHT * 9.0)

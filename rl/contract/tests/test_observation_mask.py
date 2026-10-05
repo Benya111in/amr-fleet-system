@@ -125,3 +125,26 @@ def test_mask_vo_ignores_slow_and_far_tracks():
     far = Track(2, 7.0, 0.0, -1.5, 0.0, True)        # 6 m 밖
     res = M.compute_mask(_state(v_cmd=0.6, tracks=[slow, far]))
     assert not res['saturated'] and np.all(np.isinf(res['vo_time']))
+
+
+def test_safety_block_none_means_unlimited():
+    parts = OB.build_observation(_state(safety=SafetyState(C.ZONE_CLEAR, None, False, None)),
+                                 return_parts=True)[1]
+    assert list(parts['safety']) == [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0]
+    parts = OB.build_observation(_state(safety=SafetyState(C.ZONE_CRITICAL, 0.2, True, 1.0)),
+                                 return_parts=True)[1]
+    assert list(parts['safety']) == pytest.approx([0.0, 0.0, 1.0, 0.0, 0.1, 1.0, 0.2])
+
+
+def test_goal_overshoot_exemption():
+    r = empty_scan()
+    for i in range(330, 391):
+        ang = C.LIDAR_ANGLE_MIN + i * C.LIDAR_ANGLE_INC
+        r[i] = (0.95 - C.LIDAR_X) / math.cos(ang)       # 벽 x = 0.95 (전면 0.65 m 앞)
+    kw = dict(scan_ranges=r, v_cmd=0.5, prev_actions=[(0.0, 0.0)] * 3)
+    straight = [i for i in range(C.N_CELLS) if K.cell_accel(i)[1] == 0.0]
+    near_goal = M.compute_mask(_state(path=[(0.0, 0.0), (0.45, 0.0)], **kw))
+    far_goal = M.compute_mask(_state(path=[(0.0, 0.0), (5.0, 0.0)], **kw))
+    ok = [i for i in straight if near_goal['jerk_ok'][i]]
+    assert ok and all(near_goal['fp_ok'][i] for i in ok)       # 목표(0.45)+0.1 너머는 안 본다
+    assert not any(far_goal['fp_ok'][i] for i in ok)           # 목표가 멀면 벽에 닿는다

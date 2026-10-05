@@ -157,3 +157,9 @@ def test_safety_filter_rules():
     assert (out['v'], out['w'], out['zone']) == (0.0, 0.0, C.ZONE_STOP)
     out = S.safety_filter(0.3, 0.0, 0.28, None, False)            # 확정 전 STOP → CRITICAL, 상한 0
     assert out['zone'] == C.ZONE_CRITICAL and out['v'] == 0.0
+
+
+def test_safety_latched_stop_holds_beyond_stop_distance():
+    # 래치는 해제 거리(0.50, P:223)까지 유지된다 — D 가 0.30 을 넘어도 정지
+    out = S.safety_filter(0.4, 0.2, 0.45, None, True)
+    assert (out['v'], out['w'], out['zone']) == (0.0, 0.0, C.ZONE_STOP)
