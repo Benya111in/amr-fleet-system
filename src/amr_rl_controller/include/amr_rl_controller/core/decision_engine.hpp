@@ -1,0 +1,125 @@
+// 결정 엔진 (ROS 비의존) — 20 Hz 제어 틱을 10 Hz 정책 결정으로 묶는다
+// (onnx_io.md 「플러그인 쪽 처리 순서」).
+//
+//  - 결정 주기(0.1 s)마다: 이탈 상태 갱신 → 관측 291 → (C) 마스크 100 → 정책 → 적분.
+//    결정 사이 틱에서는 가속도를 붙잡고 v_cmd + a·(j·Δt_c) 를 낸다 (ZOH, contract.md §3).
+//  - 계약 폴백(C 의 99, DWA 제동 규칙)과 별개로, 정책을 쓸 수 없는 결정 주기는 **DWA 폴백**이다:
+//    입력 무효(스캔·경로), 추론 실패(예외·모양), 시간 초과(추론 > max_inference_ms), 비유한 출력.
+//    그 주기의 모든 틱은 호출자가 DWA 로 명령을 만들고 commitDwa() 로 알려 준다.
+//  - 목표 성공 조건(xy ≤ 0.10 m, |v| ≤ 0.05 m/s)에서는 정책 대신 제자리 yaw 정렬 (contract.md §8).
+//  - prev_actions = 실제로 낸 명령의 결정 주기 가속도 (DWA·정렬 주기 포함), 최근 순.
+#ifndef AMR_RL_CONTROLLER__CORE__DECISION_ENGINE_HPP_
+#define AMR_RL_CONTROLLER__CORE__DECISION_ENGINE_HPP_
+
+#include <array>
+#include <cstdint>
+#include <string>
+
+#include "amr_rl_controller/core/kinematics.hpp"
+#include "amr_rl_controller/core/mask.hpp"
+#include "amr_rl_controller/core/observation.hpp"
+#include "amr_rl_controller/core/policy.hpp"
+#include "amr_rl_controller/core/state.hpp"
+
+namespace amr_rl_controller
+{
+
+struct EngineConfig
+{
+  double control_period{0.05};      ///< [s] 1 / controller_frequency
+  double decision_period{contract::kDt};
+  /// 이보다 오래 걸린 추론 결과는 버리고 DWA (20 Hz 예산 50 ms 의 절반)
+  double max_inference_ms{25.0};
+  double hysteresis_beta{0.0};      ///< C: 직전 셀 logit 가산점 (0 = 끔, contract.md §5.2)
+  double reset_gap{0.5};            ///< [s] 틱 간격이 이보다 크면 측정 속도로 재동기
+  double goal_xy_tol{contract::kGoalXyTol};
+  double goal_stop_speed{contract::kGoalStopSpeed};
+  double yaw_tol{0.05};             ///< [rad] 정렬 목표 (N:99)
+};
+
+enum class Source : int {kPolicy = 0, kFallbackCell = 1, kDwa = 2, kAlign = 3};
+enum class DwaReason : int
+{
+  kNone = 0, kStateInvalid = 1, kPolicyError = 2, kTimeout = 3, kNonFinite = 4
+};
+
+struct TickInput
+{
+  double now{0.0};                ///< [s]
+  bool state_ok{true};            ///< 관측 입력(스캔 720 빔·경로)이 유효한가
+  std::string state_error;
+  ContractState state;            ///< v_cmd·w_cmd·prev_actions·dev 는 엔진이 채운다
+  double dist_to_goal{kInf};      ///< [m] 목표 직선거리
+  double yaw_error_to_goal{0.0};  ///< [rad] wrap(목표 yaw − yaw)
+};
+
+struct TickResult
+{
+  bool need_dwa{false};           ///< 참이면 호출자가 DWA 명령을 만들어 commitDwa() 를 부른다
+  double v{0.0};
+  double w{0.0};
+  bool new_decision{false};
+  Source source{Source::kPolicy};
+  DwaReason dwa_reason{DwaReason::kNone};
+  int action{-1};                 ///< C: 실행한 행동 (셀 또는 99)
+  int model_action{-1};           ///< C: 모델 argmax
+  bool invalid_action{false};     ///< C: 모델 행동이 마스크 밖이라 99 로 바꿨다
+  int n_valid{-1};
+  bool saturated{false};
+  double obs_ms{0.0};
+  double mask_ms{0.0};
+  double infer_ms{0.0};
+  std::string error;
+};
+
+class DecisionEngine
+{
+public:
+  DecisionEngine(const EngineConfig & cfg, PolicyInterface * policy);
+
+  /// activate·재시작: 다음 틱에 측정 속도로 재동기, 이전 행동 0, 은닉 상태 0, 이탈 상태 0.
+  void reset();
+  /// 새 목표 (에피소드 경계): 은닉 상태·이탈 상태만 0 (속도 명령은 연속).
+  void resetEpisode();
+  TickResult tick(TickInput & in);
+  /// need_dwa 틱에 실제로 낸 명령.
+  void commitDwa(double v, double w);
+
+  double vCmd() const {return v_cmd_;}
+  double wCmd() const {return w_cmd_;}
+  const std::array<Accel, contract::kNPrevActions> & prevActions() const {return prev_;}
+  const DevState & dev() const {return dev_;}
+  const EngineConfig & config() const {return cfg_;}
+  int ticksPerDecision() const {return ticks_per_decision_;}
+  double lastV() const {return v_out_;}
+  double lastW() const {return w_out_;}
+
+private:
+  enum class Kind {kNone, kPolicy, kDwa, kAlign};
+  void closePeriod();
+  void startPeriod(TickInput & in, TickResult & res);
+  int selectC(const PolicyOutput & out, const MaskResult & m, TickResult & res);
+
+  EngineConfig cfg_;
+  PolicyInterface * policy_;
+  MaskBuilder mask_builder_;
+  int ticks_per_decision_{2};
+
+  bool synced_{false};
+  double last_tick_{-1e9};
+  int tick_in_period_{0};
+  Kind kind_{Kind::kNone};
+  double v_cmd_{0.0};             ///< 이번 결정 주기 시작 명령 (= 직전 주기 끝 명령)
+  double w_cmd_{0.0};
+  Command target_;                ///< 정책·정렬 주기의 끝 명령과 실행 가속도
+  double v_out_{0.0};             ///< 마지막으로 낸 명령
+  double w_out_{0.0};
+  std::array<Accel, contract::kNPrevActions> prev_{};
+  DevState dev_;
+  int prev_cell_{-1};
+  TickResult period_info_;        ///< 결정 틱의 진단을 주기 안 다른 틱에도 싣는다
+};
+
+}  // namespace amr_rl_controller
+
+#endif  // AMR_RL_CONTROLLER__CORE__DECISION_ENGINE_HPP_

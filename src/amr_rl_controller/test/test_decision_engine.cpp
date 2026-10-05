@@ -1,0 +1,315 @@
+// DecisionEngine 시험 (가짜 정책, ROS·ORT 비의존).
+//  20 Hz 틱 → 10 Hz 결정 (ZOH 가속도), prev_actions 갱신, DWA 폴백 네 사유, 계약 폴백(99),
+//  히스테리시스, 목표 정렬, 재동기, 이탈 상태.
+#include <gtest/gtest.h>
+
+#include <cmath>
+#include <limits>
+#include <string>
+#include <vector>
+
+#include "amr_rl_controller/core/decision_engine.hpp"
+#include "golden_io.hpp"
+
+namespace C = amr_rl_controller::contract;
+using amr_rl_controller::Arm;
+using amr_rl_controller::DecisionEngine;
+using amr_rl_controller::DwaReason;
+using amr_rl_controller::EngineConfig;
+using amr_rl_controller::PolicyInterface;
+using amr_rl_controller::PolicyOutput;
+using amr_rl_controller::Source;
+using amr_rl_controller::TickInput;
+
+namespace
+{
+class FakePolicy : public PolicyInterface
+{
+public:
+  explicit FakePolicy(Arm a)
+  : arm_(a) {}
+  Arm arm() const override {return arm_;}
+  PolicyOutput run(const float * obs, const float * mask) override
+  {
+    ++calls;
+    last_obs.assign(obs, obs + C::kObsDim);
+    if (mask) {
+      last_mask.assign(mask, mask + C::kNActionsC);
+    }
+    PolicyOutput o;
+    o.ok = ok;
+    o.error = ok ? "" : "가짜 실패";
+    o.infer_ms = infer_ms;
+    o.b_action = {u0, u1};
+    o.logits.assign(C::kNActionsC, -1e9f);
+    if (mask) {
+      for (int i = 0; i < C::kNActionsC; ++i) {
+        if (mask[i] > 0.5f) {
+          o.logits[static_cast<std::size_t>(i)] = logit_of(i);
+        }
+      }
+    }
+    o.c_action = forced_action >= 0 ? forced_action : argmax(o.logits);
+    return o;
+  }
+  void resetHidden() override {++resets;}
+  static int64_t argmax(const std::vector<float> & l)
+  {
+    int64_t b = 0;
+    for (std::size_t i = 1; i < l.size(); ++i) {
+      if (l[i] > l[static_cast<std::size_t>(b)]) {
+        b = static_cast<int64_t>(i);
+      }
+    }
+    return b;
+  }
+  float logit_of(int i) const {return prefer >= 0 ? (i == prefer ? 1.0f : 0.0f) : 0.01f * i;}
+
+  Arm arm_;
+  int calls{0};
+  int resets{0};
+  bool ok{true};
+  double infer_ms{0.1};
+  float u0{0.5f};
+  float u1{0.0f};
+  int64_t forced_action{-1};
+  int prefer{-1};
+  std::vector<float> last_obs;
+  std::vector<float> last_mask;
+};
+
+TickInput openInput(double t, double v_meas = 0.0)
+{
+  TickInput in;
+  in.now = t;
+  in.state.pose = {0.0, 0.0, 0.0};
+  for (int k = 0; k <= 200; ++k) {
+    in.state.path.push_back({0.05 * k, 0.0});
+  }
+  in.state.scan_ranges.assign(C::kLidarSamples, std::numeric_limits<double>::infinity());
+  in.state.v_meas = v_meas;
+  in.dist_to_goal = 10.0;
+  return in;
+}
+}  // namespace
+
+TEST(DecisionEngine, HoldsAccelerationBetweenDecisions)
+{
+  FakePolicy p(Arm::kB);
+  DecisionEngine eng(EngineConfig{}, &p);
+  ASSERT_EQ(eng.ticksPerDecision(), 2);
+  std::vector<double> v;
+  for (int k = 0; k < 6; ++k) {
+    auto in = openInput(0.05 * k);
+    const auto r = eng.tick(in);
+    EXPECT_FALSE(r.need_dwa);
+    EXPECT_EQ(r.new_decision, k % 2 == 0) << k;
+    v.push_back(r.v);
+  }
+  EXPECT_EQ(p.calls, 3);   // 결정은 2 틱마다
+  // a_v = 0.5 m/s² ZOH: 0.025, 0.05, 0.075, 0.10, …
+  for (int k = 0; k < 6; ++k) {
+    EXPECT_NEAR(v[static_cast<std::size_t>(k)], 0.025 * (k + 1), 1e-12) << k;
+  }
+  EXPECT_NEAR(eng.prevActions()[0].first, 0.5, 1e-12);
+  // 셋째 결정의 관측: v_cmd = 0.1 (/2.0), 최근 행동 a_v 0.5 (/1.0) 두 개
+  EXPECT_NEAR(p.last_obs[C::kObsEgo + 4], 0.1 / 2.0, 1e-7);
+  EXPECT_NEAR(p.last_obs[C::kObsEgo + 6], 0.5, 1e-7);
+  EXPECT_NEAR(p.last_obs[C::kObsEgo + 8], 0.5, 1e-7);
+  EXPECT_NEAR(p.last_obs[C::kObsEgo + 10], 0.0, 1e-7);
+}
+
+TEST(DecisionEngine, DwaFallbackReasons)
+{
+  struct Case
+  {
+    std::string name;
+    DwaReason why;
+  };
+  for (const auto & c : std::vector<Case>{{"timeout", DwaReason::kTimeout},
+      {"error", DwaReason::kPolicyError}, {"invalid", DwaReason::kStateInvalid},
+      {"nan", DwaReason::kNonFinite}})
+  {
+    FakePolicy p(Arm::kB);
+    EngineConfig cfg;
+    cfg.max_inference_ms = 5.0;
+    DecisionEngine eng(cfg, &p);
+    auto in = openInput(0.0);
+    if (c.name == "timeout") {
+      p.infer_ms = 6.0;
+    } else if (c.name == "error") {
+      p.ok = false;
+    } else if (c.name == "invalid") {
+      in.state_ok = false;
+      in.state_error = "스캔 없음";
+    } else {
+      p.u0 = std::numeric_limits<float>::quiet_NaN();
+    }
+    auto r = eng.tick(in);
+    EXPECT_TRUE(r.need_dwa) << c.name;
+    EXPECT_EQ(r.dwa_reason, c.why) << c.name;
+    EXPECT_EQ(r.source, Source::kDwa) << c.name;
+    eng.commitDwa(0.15, 0.05);
+    auto in2 = openInput(0.05);
+    r = eng.tick(in2);
+    EXPECT_TRUE(r.need_dwa) << c.name;   // 결정 주기 전체가 DWA
+    EXPECT_FALSE(r.new_decision);
+    eng.commitDwa(0.3, 0.1);
+    // 다음 결정: v_cmd = 마지막 DWA 명령, 실행 가속도 = (0.3 − 0)/0.1
+    p.ok = true;
+    p.infer_ms = 0.1;
+    p.u0 = 0.0f;
+    auto in3 = openInput(0.1);
+    r = eng.tick(in3);
+    EXPECT_FALSE(r.need_dwa) << c.name;
+    EXPECT_NEAR(eng.vCmd(), 0.3, 1e-12) << c.name;
+    EXPECT_NEAR(eng.wCmd(), 0.1, 1e-12) << c.name;
+    EXPECT_NEAR(eng.prevActions()[0].first, 3.0, 1e-9) << c.name;
+    EXPECT_NEAR(eng.prevActions()[0].second, 1.0, 1e-9) << c.name;
+  }
+}
+
+TEST(DecisionEngine, ModeCChoosesMaskedCellAndRechecksMask)
+{
+  FakePolicy p(Arm::kC);
+  DecisionEngine eng(EngineConfig{}, &p);
+  auto in = openInput(0.0);
+  auto r = eng.tick(in);
+  ASSERT_FALSE(r.need_dwa);
+  ASSERT_EQ(p.last_mask.size(), static_cast<std::size_t>(C::kNActionsC));
+  // 정지·직전 행동 0: 저크 조건으로 a_v ∈ {−0.2, 0, 0.2} 중 v' ≥ 0 인 0·0.2, a_ω ∈ {−0.5, 0, 0.5}
+  EXPECT_EQ(r.n_valid, 6);
+  EXPECT_FLOAT_EQ(p.last_mask[C::kFallbackIndex], 1.0f);
+  // 가짜 정책은 0.01·i (큰 인덱스 선호) → 유효 셀 중 가장 큰 59 = (0.2, 0.5)? 폴백 99 가 더 크다
+  EXPECT_EQ(r.action, C::kFallbackIndex);
+  EXPECT_EQ(r.source, Source::kFallbackCell);
+
+  // 마스크 밖 행동을 내는 모델 → 99 로 바꾼다 (onnx_io.md 플러그인 의무)
+  FakePolicy q(Arm::kC);
+  q.forced_action = 0;   // (−1.0, −2.0) — 저크 마스크 밖
+  DecisionEngine e2(EngineConfig{}, &q);
+  auto in2 = openInput(0.0);
+  r = e2.tick(in2);
+  EXPECT_TRUE(r.invalid_action);
+  EXPECT_EQ(r.model_action, 0);
+  EXPECT_EQ(r.action, C::kFallbackIndex);
+
+  // 유효 셀 선호: 58 = (0.2, 0) → 첫 틱 v = 0.2·0.05
+  FakePolicy s(Arm::kC);
+  s.prefer = 58;
+  DecisionEngine e3(EngineConfig{}, &s);
+  auto in3 = openInput(0.0);
+  r = e3.tick(in3);
+  EXPECT_EQ(r.action, 58);
+  EXPECT_EQ(r.source, Source::kPolicy);
+  EXPECT_NEAR(r.v, 0.01, 1e-12);
+  EXPECT_NEAR(r.w, 0.0, 1e-12);
+}
+
+TEST(DecisionEngine, HysteresisKeepsPreviousCell)
+{
+  FakePolicy p(Arm::kC);
+  EngineConfig cfg;
+  cfg.hysteresis_beta = 10.0;
+  DecisionEngine eng(cfg, &p);
+  p.prefer = 49;   // (0, 0)
+  auto in = openInput(0.0);
+  auto r = eng.tick(in);
+  EXPECT_EQ(r.action, 49);
+  auto in1 = openInput(0.05);
+  eng.tick(in1);
+  p.prefer = 58;   // 정책이 바꾸려 해도 β 가 더 크면 직전 셀 유지
+  auto in2 = openInput(0.1);
+  r = eng.tick(in2);
+  EXPECT_EQ(r.action, 49);
+}
+
+TEST(DecisionEngine, GoalAlignRotatesInPlaceWithAlphaLimit)
+{
+  FakePolicy p(Arm::kB);
+  DecisionEngine eng(EngineConfig{}, &p);
+  auto in = openInput(0.0);
+  in.dist_to_goal = 0.05;
+  in.yaw_error_to_goal = 1.0;
+  auto r = eng.tick(in);
+  EXPECT_EQ(r.source, Source::kAlign);
+  EXPECT_EQ(p.calls, 0);
+  EXPECT_NEAR(r.v, 0.0, 1e-12);
+  EXPECT_NEAR(r.w, 0.1, 1e-12);   // α 2.0 × 0.05 s
+  auto in1 = openInput(0.05);
+  in1.dist_to_goal = 0.05;
+  in1.yaw_error_to_goal = 1.0;
+  r = eng.tick(in1);
+  EXPECT_NEAR(r.w, 0.2, 1e-12);
+  // 아직 움직이는 중(|v| > 0.05)이면 정책이 맡는다
+  auto in2 = openInput(0.1, 0.3);
+  in2.dist_to_goal = 0.05;
+  r = eng.tick(in2);
+  EXPECT_EQ(r.source, Source::kPolicy);
+}
+
+TEST(DecisionEngine, ResyncsAfterGapAndOnReset)
+{
+  FakePolicy p(Arm::kB);
+  p.u0 = 0.0f;
+  DecisionEngine eng(EngineConfig{}, &p);
+  auto in = openInput(0.0, 0.4);
+  auto r = eng.tick(in);
+  EXPECT_NEAR(r.v, 0.4, 1e-12);   // 측정 속도에서 시작
+  auto in1 = openInput(3.0, 0.7);   // 0.5 s 넘는 공백
+  r = eng.tick(in1);
+  EXPECT_NEAR(r.v, 0.7, 1e-12);
+  EXPECT_TRUE(r.new_decision);
+  eng.reset();
+  EXPECT_EQ(p.resets, 1);
+  auto in2 = openInput(3.05, 0.2);
+  r = eng.tick(in2);
+  EXPECT_NEAR(r.v, 0.2, 1e-12);
+}
+
+TEST(DecisionEngine, DevStateUpdatedBeforeObservation)
+{
+  FakePolicy p(Arm::kB);
+  DecisionEngine eng(EngineConfig{}, &p);
+  auto in = openInput(0.0);
+  in.state.pose = {1.0, 0.4, 0.0};   // 경로에서 0.4 m
+  eng.tick(in);
+  EXPECT_TRUE(eng.dev().in_dev);
+  EXPECT_NEAR(eng.dev().peak, 0.4, 1e-12);
+  EXPECT_FLOAT_EQ(p.last_obs[C::kObsDev], 1.0f);
+  EXPECT_NEAR(p.last_obs[C::kObsDev + 1], 0.4, 1e-6);
+  auto in1 = openInput(0.05);
+  in1.state.pose = {1.0, 0.4, 0.0};
+  eng.tick(in1);
+  auto in2 = openInput(0.1);
+  in2.state.pose = {1.05, 0.35, 0.0};
+  eng.tick(in2);
+  EXPECT_NEAR(eng.dev().t_since_peak, 0.1, 1e-12);
+  eng.resetEpisode();
+  EXPECT_FALSE(eng.dev().in_dev);
+}
+
+TEST(DecisionEngine, GoldenStateDecisionUsesContractMask)
+{
+  // d03 (전방 장애물) 상태로 C 결정: 엔진이 만든 관측·마스크 = golden (prev/v_cmd 를 맞춘 뒤)
+  const auto j = golden::load(std::string(RL_CONTRACT_DIR) + "/golden/d03_obstacle_front.json");
+  const auto s = golden::toState(j["state"]);
+  FakePolicy p(Arm::kC);
+  DecisionEngine eng(EngineConfig{}, &p);
+  TickInput in;
+  in.now = 0.0;
+  in.state = s;
+  in.state.v_meas = s.v_cmd;     // 재동기 v_cmd = 측정 속도
+  in.state.w_meas = s.w_cmd;
+  in.dist_to_goal = 5.0;
+  const bool prev_zero = s.prev_actions[0].first == 0.0 && s.prev_actions[0].second == 0.0 &&
+    s.prev_actions[1].first == 0.0 && s.prev_actions[2].first == 0.0;
+  if (!prev_zero || s.v_meas != s.v_cmd || s.w_meas != s.w_cmd) {
+    GTEST_SKIP() << "d03 은 재동기 상태와 다르다";
+  }
+  eng.tick(in);
+  const auto & em = j["expected"]["mask"];
+  for (int i = 0; i < C::kNActionsC; ++i) {
+    EXPECT_EQ(p.last_mask[static_cast<std::size_t>(i)] > 0.5f, em[i].get<bool>()) << i;
+  }
+}
