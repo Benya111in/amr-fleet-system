@@ -26,7 +26,7 @@ namespace
 constexpr const char * kStatsFields =
   "0 cycle_ms, 1 obs_ms, 2 mask_ms, 3 infer_ms, 4 source(0 policy 1 fallback_cell 2 dwa 3 align), "
   "5 dwa_reason(0 none 1 state 2 policy_error 3 timeout 4 nonfinite), 6 action, 7 model_action, "
-  "8 n_valid, 9 saturated, 10 v, 11 w, 12 new_decision, 13 decisions, 14 dwa_ticks, "
+  "8 n_valid, 9 saturated, 10 v, 11 w, 12 new_decision, 13 decisions, 14 dwa_decisions, "
   "15 fallback_cell, 16 invalid_action, 17 timeouts, 18 scan_age, 19 track_age, 20 n_tracks, "
   "21 v_cap, 22 dev_in, 23 dev_peak";
 

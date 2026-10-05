@@ -10,7 +10,9 @@ follow  : 현재 자세(odometry/filtered)에서 앞으로 --length m 직선 경
           (controller_id 지정, BT 를 거치지 않는다).
 navigate: navigate_to_pose 액션 (BT 기본 제어기 — replace_dwa:=true 로 띄웠을 때 RL).
 기록: cmd_vel_nav (controller_server 출력, navigation.launch.py 의 리맵), rl_controller/stats,
-      sim/footprint_clearance (운동학 시뮬레이터가 있으면). 결과는 <out>/summary.json.
+      sim/footprint_clearance (운동학 시뮬레이터: 정적 지도까지, 1 m 안에 없으면 1.0),
+      동적 장애물 여유 = ground_truth/odom 풋프린트 ↔ perception/tracked_obstacles 원(--obstacle-radius)
+      최소 거리. 결과는 <out>/summary.json.
 """
 import argparse
 import json
@@ -21,6 +23,7 @@ import time
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped, Twist
 from nav2_msgs.action import FollowPath, NavigateToPose
+from amr_msgs.msg import TrackedObstacleArray
 from nav_msgs.msg import Odometry, Path
 import rclpy
 from rclpy.action import ActionClient
@@ -45,21 +48,45 @@ def pct(v, p):
 class Smoke(Node):
     """명령·통계 기록기."""
 
-    def __init__(self):
+    def __init__(self, obstacle_radius):
         super().__init__('rl_smoke')
         self.cmds = []
         self.stats = []
         self.clear = []
+        self.dyn_clear = []
         self.odom = None
+        self.gt = None
+        self.r_obs = obstacle_radius
         self.create_subscription(Twist, 'cmd_vel_nav', self.cmds.append, 50)
         self.create_subscription(Float64MultiArray, 'rl_controller/stats',
                                  lambda m: self.stats.append(list(m.data)), 50)
         self.create_subscription(Float64, 'sim/footprint_clearance',
                                  lambda m: self.clear.append(m.data), 50)
         self.create_subscription(Odometry, 'odometry/filtered', self._odom, 10)
+        self.create_subscription(Odometry, 'ground_truth/odom', self._gt, 10)
+        self.create_subscription(TrackedObstacleArray, 'perception/tracked_obstacles',
+                                 self._tracks, 10)
 
     def _odom(self, m):
         self.odom = m
+
+    def _gt(self, m):
+        self.gt = m
+
+    def _tracks(self, m):
+        if self.gt is None or not m.obstacles:
+            return
+        p = self.gt.pose.pose
+        q = p.orientation
+        th = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+        c, s = math.cos(th), math.sin(th)
+        best = math.inf
+        for o in m.obstacles:
+            dx, dy = o.position.x - p.position.x, o.position.y - p.position.y
+            lx, ly = c * dx + s * dy, -s * dx + c * dy
+            ex, ey = max(abs(lx) - 0.30, 0.0), max(abs(ly) - 0.20, 0.0)
+            best = min(best, math.hypot(ex, ey) - self.r_obs)
+        self.dyn_clear.append(best)
 
     def pose_now(self):
         """현재 자세 (odom 프레임 x, y, yaw, frame)."""
@@ -97,10 +124,11 @@ def main():
     ap.add_argument('--goal', default='')
     ap.add_argument('--frame', default='map', help='navigate 목표 프레임')
     ap.add_argument('--timeout', type=float, default=90.0)
+    ap.add_argument('--obstacle-radius', type=float, default=0.30)
     ap.add_argument('--out', required=True)
     args, ros_args = ap.parse_known_args()
     rclpy.init(args=ros_args)
-    node = Smoke()
+    node = Smoke(args.obstacle_radius)
     os.makedirs(args.out, exist_ok=True)
     summary = {'mode': args.mode, 'controller_id': args.controller_id}
     if not spin_until(node, lambda: node.odom is not None, 60.0):
@@ -167,6 +195,10 @@ def main():
     summary['infer_ms'] = {'p50': pct(inf, 50), 'p99': pct(inf, 99), 'max': pct(inf, 100)}
     summary['cycle_ms'] = {'p50': pct(cyc, 50), 'p99': pct(cyc, 99), 'max': pct(cyc, 100)}
     summary['min_footprint_clearance'] = min(node.clear) if node.clear else None
+    summary['min_dynamic_clearance'] = min(node.dyn_clear) if node.dyn_clear else None
+    summary['n_valid_cells'] = {'p50': pct([s[8] for s in dec if s[8] >= 0], 50),
+                                'min': pct([s[8] for s in dec if s[8] >= 0], 0)}
+    summary['saturated_decisions'] = sum(1 for s in dec if s[9] > 0.5)
     with open(os.path.join(args.out, 'summary.json'), 'w', encoding='utf-8') as f:
         json.dump(summary, f, ensure_ascii=False, indent=1)
     print(json.dumps(summary, ensure_ascii=False))
