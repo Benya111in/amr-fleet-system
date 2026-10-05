@@ -1,0 +1,84 @@
+# docker compose up 기동 기록
+#
+# 왜 있는가: 명세 79행이 'docker-compose up 명령으로 실행 가능해야 한다' 를 요구하는데,
+#   이 저장소의 모든 측정은 docker run 으로 돌렸고 compose 기동 기록이 없었다 (명세 대조에서
+#   유일한 '미측정' 항목이었다). 이 파일이 그것을 닫는다.
+#
+# 측정: 2026-10-06 00:40:43 KST · HEAD b79c3c5
+# 명령: COMPOSE_PROJECT_NAME=specaudit1006 docker compose up -d --no-build && docker compose wait builder
+#
+# 두 가지 편차를 적는다.
+#  (1) COMPOSE_PROJECT_NAME 을 따로 줬다 — 서버를 여럿이 쓰고 다른 사람의 compose 프로젝트를
+#      재생성하지 않기 위해서다 (docker-compose.yml:12-14 가 같은 이유로 container_name 을 뺀다).
+#  (2) --no-build 를 줬다 — dev 서비스가 amr-fleet-system:latest 를 빌드하는데 그 태그는 이미
+#      돌고 있는 개발 컨테이너의 것이라 옮기지 않았다. 이미지 빌드 자체는 verify_env.txt
+#      (37 통과 / 0 실패) 가 증거다. 이 파일이 닫는 것은 compose 조율 + builder 경로다.
+
+
+=== docker compose up -d --no-build ===
+ Volume "specaudit1006_ros2_ws_install"  Creating
+ Volume "specaudit1006_ros2_ws_install"  Created
+ Volume "specaudit1006_ros2_ws_log"  Creating
+ Volume "specaudit1006_ros2_ws_log"  Created
+ Volume "specaudit1006_ros2_ws_build"  Creating
+ Volume "specaudit1006_ros2_ws_build"  Created
+ Container specaudit1006-builder-1  Creating
+ Container specaudit1006-dev-1  Creating
+ Container specaudit1006-builder-1  Created
+ Container specaudit1006-dev-1  Created
+ Container specaudit1006-builder-1  Starting
+ Container specaudit1006-dev-1  Starting
+ Container specaudit1006-builder-1  Started
+ Container specaudit1006-dev-1  Started
+up rc=0
+
+=== docker compose ps ===
+NAME                      IMAGE                     COMMAND                   SERVICE   CREATED        STATUS                  PORTS
+specaudit1006-builder-1   amr-fleet-system:latest   "/usr/local/bin/entr…"   builder   1 second ago   Up Less than a second   
+specaudit1006-dev-1       amr-fleet-system:latest   "/usr/local/bin/entr…"   dev       1 second ago   Up Less than a second   
+
+=== docker compose wait builder ===
+container "7af85b3b960ef3146a9ce0bb8a4ae42a5562e943d2fe7d53f6429815a6d9ece8" exited with status code 0
+wait rc=0
+
+=== builder 로그 (끝 40줄) ===
+builder-1  | -- Symlinking: /ros2_ws/install/amr_bringup/share/amr_bringup/config/fleet_spawn.yaml
+builder-1  | -- Symlinking: /ros2_ws/install/amr_bringup/share/amr_bringup/rviz/perception.rviz
+builder-1  | -- Symlinking: /ros2_ws/install/amr_bringup/share/ament_index/resource_index/package_run_dependencies/amr_bringup
+builder-1  | -- Symlinking: /ros2_ws/install/amr_bringup/share/ament_index/resource_index/parent_prefix_path/amr_bringup
+builder-1  | -- Symlinking: /ros2_ws/install/amr_bringup/share/amr_bringup/environment/ament_prefix_path.sh
+builder-1  | -- Symlinking: /ros2_ws/install/amr_bringup/share/amr_bringup/environment/ament_prefix_path.dsv
+builder-1  | -- Symlinking: /ros2_ws/install/amr_bringup/share/amr_bringup/environment/path.sh
+builder-1  | -- Symlinking: /ros2_ws/install/amr_bringup/share/amr_bringup/environment/path.dsv
+builder-1  | -- Symlinking: /ros2_ws/install/amr_bringup/share/amr_bringup/local_setup.bash
+builder-1  | -- Symlinking: /ros2_ws/install/amr_bringup/share/amr_bringup/local_setup.sh
+builder-1  | -- Symlinking: /ros2_ws/install/amr_bringup/share/amr_bringup/local_setup.zsh
+builder-1  | -- Symlinking: /ros2_ws/install/amr_bringup/share/amr_bringup/local_setup.dsv
+builder-1  | -- Symlinking: /ros2_ws/install/amr_bringup/share/amr_bringup/package.dsv
+builder-1  | -- Symlinking: /ros2_ws/install/amr_bringup/share/ament_index/resource_index/packages/amr_bringup
+builder-1  | -- Symlinking: /ros2_ws/install/amr_bringup/share/amr_bringup/cmake/amr_bringupConfig.cmake
+builder-1  | -- Symlinking: /ros2_ws/install/amr_bringup/share/amr_bringup/cmake/amr_bringupConfig-version.cmake
+builder-1  | -- Symlinking: /ros2_ws/install/amr_bringup/share/amr_bringup/package.xml
+builder-1  | Listing '/ros2_ws/install/amr_bringup/local/lib/python3.10/dist-packages/amr_bringup'...
+builder-1  | Compiling '/ros2_ws/install/amr_bringup/local/lib/python3.10/dist-packages/amr_bringup/__init__.py'...
+builder-1  | Compiling '/ros2_ws/install/amr_bringup/local/lib/python3.10/dist-packages/amr_bringup/fleet_spawn.py'...
+builder-1  | Compiling '/ros2_ws/install/amr_bringup/local/lib/python3.10/dist-packages/amr_bringup/launch_utils.py'...
+builder-1  | Compiling '/ros2_ws/install/amr_bringup/local/lib/python3.10/dist-packages/amr_bringup/lifecycle_watchdog.py'...
+builder-1  | Compiling '/ros2_ws/install/amr_bringup/local/lib/python3.10/dist-packages/amr_bringup/world_gate.py'...
+builder-1  | --- stderr: amr_bringup
+builder-1  | CMake Warning at /opt/ros/humble/share/ament_cmake_pytest/cmake/ament_add_pytest_test.cmake:120 (message):
+builder-1  |   The Python module 'pytest-cov' was not found, test coverage will not be
+builder-1  |   produced.  On Linux, install the 'python3-pytest-cov' package.  On other
+builder-1  |   platforms, install 'pytest-cov' using pip.
+builder-1  | Call Stack (most recent call first):
+builder-1  |   CMakeLists.txt:40 (ament_add_pytest_test)
+builder-1  | 
+builder-1  | 
+builder-1  | ---
+builder-1  | Finished <<< amr_bringup [0.76s]
+builder-1  | 
+builder-1  | Summary: 11 packages finished [1min 44s]
+builder-1  |   10 packages had stderr output: amr_behavior amr_bringup amr_dashboard amr_description amr_evaluation amr_fleet amr_localization amr_navigation amr_perception amr_simulation
+builder-1  | 
+builder-1  | 빌드 완료. 다음 명령으로 환경을 소싱한다:
+builder-1  |   source /ros2_ws/install/setup.bash

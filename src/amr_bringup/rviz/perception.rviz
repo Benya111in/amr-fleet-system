@@ -1,0 +1,89 @@
+# RViz2 설정 — YOLO 인지 결과를 3D 마커로 본다 (명세 4장 6절 / 9장 체크리스트 552행).
+#
+#   ros2 run rviz2 rviz2 -d $(ros2 pkg prefix amr_bringup)/share/amr_bringup/rviz/perception.rviz
+#
+# 토픽 이름은 로봇 네임스페이스 amr_01 기준이다 (multi_robot.md §2: 센서·인지는 접두어,
+# map/tf 는 전역 공유). 다른 로봇을 보려면 /amr_01/ 을 /amr_0N/ 으로 바꾼다.
+# src/amr_bringup/test/test_rviz_config.py 가 아래 토픽이 실제 발행 토픽과 일치하는지 고정한다.
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+    Property Tree Widget:
+      Expanded: ~
+Visualization Manager:
+  Class: ""
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: map
+    Frame Rate: 30
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Cell Size: 1
+      Plane Cell Count: 60
+      Reference Frame: map
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: true
+      Show Names: true
+      Marker Scale: 0.6
+    - Class: rviz_default_plugins/RobotModel
+      Name: RobotModel
+      Enabled: true
+      Description Topic:
+        Value: /amr_01/robot_description
+    - Class: rviz_default_plugins/Map
+      Name: Map
+      Enabled: true
+      Topic:
+        Value: /map
+      Color Scheme: map
+    - Class: rviz_default_plugins/LaserScan
+      Name: LaserScan
+      Enabled: true
+      Topic:
+        Value: /amr_01/scan
+      Size (m): 0.03
+      Color: 255; 85; 0
+    # ---- 명세 4.6 의 핵심: 인지 결과 3D 마커 ----
+    - Class: rviz_default_plugins/MarkerArray
+      Name: DetectedObjects (CUBE + TEXT)
+      Enabled: true
+      Topic:
+        Value: /amr_01/perception/markers
+        Depth: 10
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+    - Class: rviz_default_plugins/Image
+      Name: YOLO debug image
+      Enabled: true
+      Topic:
+        Value: /amr_01/perception/debug_image
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Depth points
+      Enabled: false
+      Topic:
+        Value: /amr_01/camera/depth/image_raw/points
+      Size (m): 0.02
+    - Class: rviz_default_plugins/Path
+      Name: Global plan
+      Enabled: true
+      Topic:
+        Value: /amr_01/plan
+      Color: 0; 255; 0
+  Global Options:
+    Fixed Frame: map
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 25
+      Focal Point: {X: 0, Y: 0, Z: 0}
+      Pitch: 0.9
+      Yaw: 1.5
+Window Geometry:
+  Height: 900
+  Width: 1600

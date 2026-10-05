@@ -1,0 +1,43 @@
+== 1 LPF group delay (samples -> ms) @ [0.01 1.   2.   5.  ] Hz: [0.973 0.976 0.984 1.043] -> [ 9.73  9.76  9.84 10.43] ms
+   analog approx sqrt2/(2 pi fc) = 11.25 ms
+   white-noise variance gain of LPF: 0.408
+
+== 2 timing bias vs residual sigma (Tw = 0.2 s, gate 13.8)
+ delta = 2.0 ms
+   r_v bias (const a): 0.00 mm/s  -> /sigma_rv(floor 0.0141) = 0.00
+   r_v bias (jerk 2 m/s^3 ramp): 0.80 mm/s  -> /sigma_rv(floor 0.0141) = 0.06
+   r_v bias (step 1 m/s^2): 2.00 mm/s  -> /sigma_rv(floor 0.0141) = 0.14
+   r_w v=0.0 w=0.75: sigma 0.0032 rad/s, bias 0.0040 (1.3 sigma), P(s>13.8 | ramp) = 0.013
+   r_w v=0.0 w=1.5: sigma 0.0034 rad/s, bias 0.0040 (1.2 sigma), P(s>13.8 | ramp) = 0.011
+   r_w v=1.0 w=1.0: sigma 0.0126 rad/s, bias 0.0040 (0.3 sigma), P(s>13.8 | ramp) = 0.001
+   r_w v=2.0 w=0.0: sigma 0.0248 rad/s, bias 0.0040 (0.2 sigma), P(s>13.8 | ramp) = 0.001
+ delta = 5.0 ms
+   r_v bias (const a): 0.00 mm/s  -> /sigma_rv(floor 0.0141) = 0.00
+   r_v bias (jerk 2 m/s^3 ramp): 2.00 mm/s  -> /sigma_rv(floor 0.0141) = 0.14
+   r_v bias (step 1 m/s^2): 5.00 mm/s  -> /sigma_rv(floor 0.0141) = 0.35
+   r_w v=0.0 w=0.75: sigma 0.0032 rad/s, bias 0.0100 (3.2 sigma), P(s>13.8 | ramp) = 0.343
+   r_w v=0.0 w=1.5: sigma 0.0034 rad/s, bias 0.0100 (3.0 sigma), P(s>13.8 | ramp) = 0.280
+   r_w v=1.0 w=1.0: sigma 0.0126 rad/s, bias 0.0100 (0.8 sigma), P(s>13.8 | ramp) = 0.004
+   r_w v=2.0 w=0.0: sigma 0.0248 rad/s, bias 0.0100 (0.4 sigma), P(s>13.8 | ramp) = 0.002
+ delta = 9.7 ms
+   r_v bias (const a): 0.00 mm/s  -> /sigma_rv(floor 0.0141) = 0.00
+   r_v bias (jerk 2 m/s^3 ramp): 3.89 mm/s  -> /sigma_rv(floor 0.0141) = 0.28
+   r_v bias (step 1 m/s^2): 9.73 mm/s  -> /sigma_rv(floor 0.0141) = 0.69
+   r_w v=0.0 w=0.75: sigma 0.0032 rad/s, bias 0.0195 (6.2 sigma), P(s>13.8 | ramp) = 0.995
+   r_w v=0.0 w=1.5: sigma 0.0034 rad/s, bias 0.0195 (5.8 sigma), P(s>13.8 | ramp) = 0.986
+   r_w v=1.0 w=1.0: sigma 0.0126 rad/s, bias 0.0195 (1.5 sigma), P(s>13.8 | ramp) = 0.025
+   r_w v=2.0 w=0.0: sigma 0.0248 rad/s, bias 0.0195 (0.8 sigma), P(s>13.8 | ramp) = 0.004
+   max delta for bias <= 1 sigma at floor-limited sigma_rw: 1.58 ms
+
+== 3 constant-R baseline vs encoder model
+   v=0.5: sigma_v^2 1.25e-05 (0.1x of 1e-4), sigma_w^2 3.86e-04 (3.9x of 1e-4)
+   v=1.0: sigma_v^2 5.00e-05 (0.5x of 1e-4), sigma_w^2 1.54e-03 (15.4x of 1e-4)
+   v=2.0: sigma_v^2 2.00e-04 (2.0x of 1e-4), sigma_w^2 6.17e-03 (61.7x of 1e-4)
+
+== 4 pose-graph dof: residual dim 3|E|, free params 3(|V|-1) -> dof = 3(|E|-|V|+1)
+   e.g. |V|=300, |E|=330: doc 3|E|-3|V| = 90, correct = 93
+
+== 5 odom-frame position error from gyro delay during a turn: v*tau*dTheta
+   v=1.0, dTheta=1.57 rad: 1.53 cm (tau 9.7 ms)
+   v=2.0, dTheta=1.57 rad: 3.06 cm (tau 9.7 ms)
+   v=0.5, dTheta=3.14 rad: 1.53 cm (tau 9.7 ms)

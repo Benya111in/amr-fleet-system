@@ -3,18 +3,35 @@
 <package format="3">
   <name>amr_simulation</name>
   <version>0.1.0</version>
-  <description>물류센터 Gazebo 월드 및 동적 장애물 시뮬레이션</description>
+  <description>물류센터 Gazebo 월드, 동적 장애물 시뮬레이션, 동적 장애물 지면 진실·충돌 판정, 런타임 적재물(payload_manager_node)</description>
   <maintainer email="enhyunss@gmail.com">enhyunss</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
 
   <depend>ros_gz_sim</depend>
   <depend>ros_gz_bridge</depend>
   <depend>amr_description</depend>
 
+  <!-- obstacle_truth_node / collision_monitor_node / payload_manager_node -->
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>amr_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+  <exec_depend>visualization_msgs</exec_depend>
+  <exec_depend>builtin_interfaces</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
+  <test_depend>ament_cmake_pytest</test_depend>
+  <test_depend>python3-pytest</test_depend>
+  <test_depend>python3-pytest-cov</test_depend>
+  <test_depend>xacro</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

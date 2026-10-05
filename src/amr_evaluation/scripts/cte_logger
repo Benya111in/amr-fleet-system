@@ -1,0 +1,7 @@
+#!/usr/bin/env python3
+"""ros2 run amr_evaluation cte_logger 진입점."""
+
+from amr_evaluation.cte_logger import main
+
+if __name__ == '__main__':
+    main()

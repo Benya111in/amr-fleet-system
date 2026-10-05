@@ -1,0 +1,8 @@
+GT v > 0.005 m/s: jerk-limited 71 ms, with a0=0.3 16 ms
+GT v > 0.01 m/s: jerk-limited 100 ms, with a0=0.3 30 ms
+GT v > 0.02 m/s: jerk-limited 141 ms, with a0=0.3 56 ms
+GT displacement > 1 mm: jerk-limited 144 ms, with a0=0.3 76 ms
+GT displacement > 5 mm: jerk-limited 247 ms, with a0=0.3 157 ms
+contract budget (mean): 180 ms + profiler/safety hops 20 ms = 200 ms (first cmd_vel != 0)
+physical first motion (GT v > 0.005): >= 291 ms mean (event-driven hops: 271 ms; with a0=0.3: 216 ms)
+physical first motion (GT v > 0.02): >= 361 ms mean (event-driven hops: 341 ms; with a0=0.3: 256 ms)

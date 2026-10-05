@@ -1,0 +1,27 @@
+# 다중 로봇 스폰 목록 (multi_robot.launch.py robots_file, 명세 4.9 "최소 5대 동시 운용")
+# 형식·검증 규칙: amr_bringup/fleet_spawn.py. num_robots:=N 이면 앞에서 N 대, system.launch.py 는 robot_name 항목.
+#
+# 좌표: 월드 좌표 [m, rad] (worlds/gen_warehouse_world.py: 원점 = 창고 중심, +x 동쪽, +y 북쪽).
+# 배치: 남동 대기 구역 waiting_zone_pad (중심 (22, -16), 10 x 4 m 바닥 도색, 충돌체 없음) 안에 x 2 m 간격,
+#   북쪽(+y, 창고 안쪽)을 보고 선다. 차체 0.60 x 0.40 → 옆 로봇과 1.6 m 틈.
+#   - 가장 가까운 충돌체 (로봇 중심 기준): 남쪽 벽 안쪽 면 y = -19.8 (3.8 m), amr_05 ↔ 동쪽 벽 x = 29.8 (3.8 m),
+#     기둥 (10, -12)·(25, -6) (≥ 8.6 m). 랙의 가장 남쪽 끝은 좁은 통로 구간 y = -12
+#   - 가장 가까운 동적 장애물 경로: worker_straight_fast (x = 22, y -10..10) 남쪽 끝 (≥ 6.0 m)
+#   - test/test_spawn_poses.py 가 warehouse.sdf 의 충돌체·actor 궤적과 대조해 검사한다
+#   - 충전 구역(-22, -16)은 비워 둔다 (도킹 시험 대상, 스테이션 C1~C3)
+# 로봇별 선택 키 comm_latency_ms: 숫자 hi (= [0, hi]) 또는 [lo, hi] ms, 0 ≤ lo ≤ hi ≤ 100 —
+#   그 로봇의 robot_state 송신 지연(fleet_adapter_node). 없으면 아래 공통 값 → amr_fleet fleet.yaml 순.
+
+robots:
+  - {name: amr_01, x: 18.0, y: -16.0, yaw: 1.5708}
+  - {name: amr_02, x: 20.0, y: -16.0, yaw: 1.5708}
+  - {name: amr_03, x: 22.0, y: -16.0, yaw: 1.5708}
+  - {name: amr_04, x: 24.0, y: -16.0, yaw: 1.5708}
+  - {name: amr_05, x: 26.0, y: -16.0, yaw: 1.5708}
+
+# ---- 공통 옵션 --------------------------------------------------------------
+spawn_z: 0.02                # [m] 바퀴가 살짝 떠서 내려앉도록 (spawn.launch.py 기본과 같음)
+pause_during_spawn: true     # 월드 로드 직후 멈추고 전 로봇 스폰·확인 뒤 재개 (world_gate.py)
+spawn_timeout_s: 120.0       # [s, 벽시계] 모든 모델이 보일 때까지 기다리는 상한. 넘으면 누락 로봇을 ERROR 로 알리고 재개
+comm_latency_ms: null        # null = amr_fleet fleet.yaml ([0, 100] ms). 값을 주면 manager·모든 adapter 에 적용
+min_separation_m: 1.0        # [m] 로봇 중심 간 최소 거리 (스폰 겹침 방지)

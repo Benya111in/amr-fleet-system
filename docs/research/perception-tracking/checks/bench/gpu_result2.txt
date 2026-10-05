@@ -1,0 +1,30 @@
+View Ultralytics Settings with 'yolo settings' or at '/tmp/Ultralytics/settings.json'
+Update Settings with 'yolo settings key=value', i.e. 'yolo settings runs_dir=path/to/dir'. For help see https://docs.ultralytics.com/usage/settings.
+YOLOv8n summary (fused): 72 layers, 3,151,904 parameters, 0 gradients, 8.7 GFLOPs
+{
+ "torch": "2.11.0+cu128",
+ "cuda": true,
+ "gpu": "NVIDIA GeForce RTX 5090",
+ "gpu_fp16_fused_forward_b1": {
+  "median_ms": 14.22,
+  "p95_ms": 54.89
+ },
+ "gpu_fp16_fused_forward_b5": {
+  "median_ms": 13.59,
+  "p95_ms": 45.31
+ },
+ "gpu_predict_b1_full": {
+  "median_ms": 26.0,
+  "p95_ms": 79.81
+ },
+ "gpu_predict_b5_full": {
+  "median_ms": 54.07,
+  "p95_ms": 131.21
+ },
+ "gpu_mem_alloc_MB": 67.8,
+ "host_loadavg": [
+  51.58642578125,
+  48.3671875,
+  50.28759765625
+ ]
+}

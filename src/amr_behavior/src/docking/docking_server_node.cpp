@@ -1,0 +1,630 @@
+// docking_server_node 구현 (docking_server_node.hpp 설명 참고).
+#include "amr_behavior/docking/docking_server_node.hpp"
+
+#include <chrono>
+#include <cmath>
+#include <functional>
+#include <memory>
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "tf2/LinearMath/Matrix3x3.h"
+#include "tf2/LinearMath/Quaternion.h"
+#include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
+
+namespace amr_behavior
+{
+namespace docking
+{
+
+std::optional<MarkerObservation> markerToObservation(
+  const geometry_msgs::msg::Pose & pose, const std::string & normal_axis)
+{
+  const auto & q = pose.orientation;
+  const double norm = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+  if (!std::isfinite(norm) || norm < 1e-6 || !std::isfinite(pose.position.x) ||
+    !std::isfinite(pose.position.y))
+  {
+    return std::nullopt;
+  }
+  const tf2::Matrix3x3 rot(tf2::Quaternion(q.x / norm, q.y / norm, q.z / norm, q.w / norm));
+  // 마커 축 (열 벡터) 을 base_link 에서 표현
+  const bool negative = !normal_axis.empty() && normal_axis[0] == '-';
+  const char axis = normal_axis.empty() ? 'x' : normal_axis.back();
+  const int col = axis == 'x' ? 0 : (axis == 'y' ? 1 : 2);
+  double nx = rot[0][col];
+  double ny = rot[1][col];
+  if (negative) {
+    nx = -nx;
+    ny = -ny;
+  }
+  if (std::hypot(nx, ny) < 0.2) {
+    return std::nullopt;   // 법선이 거의 수직 (평면 투영 불가) → 잘못된 관측 또는 축 규약 불일치
+  }
+  MarkerObservation obs;
+  obs.x = pose.position.x;
+  obs.y = pose.position.y;
+  obs.normal_yaw = std::atan2(ny, nx);
+  return obs;
+}
+
+std::vector<std::pair<double, double>> exclusionPolygon(
+  const MarkerObservation & m, const ExclusionBox & box)
+{
+  // 마커 프레임 (x = 바깥 법선, y = 판 가로) 꼭짓점 → base_link: p = m + R(θn)·(px, py)
+  const double c = std::cos(m.normal_yaw);
+  const double s = std::sin(m.normal_yaw);
+  const std::pair<double, double> local[4] = {
+    {box.front_margin, -box.half_width}, {box.front_margin, box.half_width},
+    {-box.depth, box.half_width}, {-box.depth, -box.half_width}};
+  std::vector<std::pair<double, double>> out;
+  for (const auto & p : local) {
+    out.emplace_back(m.x + c * p.first - s * p.second, m.y + s * p.first + c * p.second);
+  }
+  return out;
+}
+
+double distanceFromPlate(const MarkerObservation & m)
+{
+  // 로봇(원점) − 마커 중심 을 바깥 법선에 사영
+  return -(m.x * std::cos(m.normal_yaw) + m.y * std::sin(m.normal_yaw));
+}
+
+DockingServerNode::DockingServerNode(const rclcpp::NodeOptions & options)
+: rclcpp::Node("docking_server_node", options)
+{
+  Params & p = base_params_;
+  const std::string law = declare_parameter<std::string>("control_law", "graceful");
+  if (const auto parsed = parseControlLaw(law)) {
+    p.law = *parsed;
+  } else {
+    RCLCPP_WARN(get_logger(), "control_law '%s' 모름 → graceful", law.c_str());
+  }
+  p.standoff = declare_parameter<double>("standoff", p.standoff);
+  p.position_tolerance = declare_parameter<double>("position_tolerance", p.position_tolerance);
+  p.angle_tolerance = declare_parameter<double>("angle_tolerance", p.angle_tolerance);
+  p.settle_frames = declare_parameter<int>("settle_frames", p.settle_frames);
+  p.final_distance = declare_parameter<double>("final_distance", p.final_distance);
+  p.stop_distance = declare_parameter<double>("stop_distance", p.stop_distance);
+  p.heading_stop_tolerance = declare_parameter<double>(
+    "heading_stop_tolerance", p.heading_stop_tolerance);
+  p.align_threshold = declare_parameter<double>("align_threshold", p.align_threshold);
+  p.max_linear_speed = declare_parameter<double>("max_linear_speed", p.max_linear_speed);
+  p.final_linear_speed = declare_parameter<double>("final_linear_speed", p.final_linear_speed);
+  p.min_linear_speed = declare_parameter<double>("min_linear_speed", p.min_linear_speed);
+  p.max_angular_speed = declare_parameter<double>("max_angular_speed", p.max_angular_speed);
+  p.search_angular_speed = declare_parameter<double>(
+    "search_angular_speed", p.search_angular_speed);
+  p.search_sweep = declare_parameter<double>("search_sweep", p.search_sweep);
+  p.k_distance = declare_parameter<double>("k_distance", p.k_distance);
+  p.k_heading = declare_parameter<double>("k_heading", p.k_heading);
+  p.lookahead = declare_parameter<double>("lookahead", p.lookahead);
+  p.k_phi = declare_parameter<double>("k_phi", p.k_phi);
+  p.k_delta = declare_parameter<double>("k_delta", p.k_delta);
+  p.beta = declare_parameter<double>("beta", p.beta);
+  p.lambda = declare_parameter<double>("lambda", p.lambda);
+  p.slowdown_radius = declare_parameter<double>("slowdown_radius", p.slowdown_radius);
+  p.linear_deadband = declare_parameter<double>("linear_deadband", p.linear_deadband);
+  p.angular_deadband = declare_parameter<double>("angular_deadband", p.angular_deadband);
+  p.marker_timeout = declare_parameter<double>("marker_timeout", p.marker_timeout);
+  p.search_timeout = declare_parameter<double>("search_timeout", p.search_timeout);
+  p.attempt_timeout = declare_parameter<double>("attempt_timeout", p.attempt_timeout);
+  p.backup_distance = declare_parameter<double>("backup_distance", p.backup_distance);
+  p.backup_speed = declare_parameter<double>("backup_speed", p.backup_speed);
+  p.max_overshoot = declare_parameter<double>("max_overshoot", p.max_overshoot);
+  p.filter_coef = declare_parameter<double>("filter_coef", p.filter_coef);
+  control_rate_hz_ = declare_parameter<double>("control_rate_hz", 20.0);
+  p.control_period = 1.0 / std::max(1.0, control_rate_hz_);
+  default_max_attempts_ = declare_parameter<int>("max_attempts", 3);
+  base_frame_ = declare_parameter<std::string>("base_frame", "base_link");
+  // 계약 C3: aruco_detector_node 는 마커 모델 프레임 (+x = 판 바깥 법선, +z = 위) 으로 낸다
+  normal_axis_ = declare_parameter<std::string>("marker_normal_axis", "x");
+  detector_service_ = declare_parameter<std::string>("detector_enable_service", "");
+  exclusion_enabled_ = declare_parameter<bool>("exclusion.enabled", true);
+  exclusion_box_.half_width = declare_parameter<double>(
+    "exclusion.half_width", exclusion_box_.half_width);
+  exclusion_box_.depth = declare_parameter<double>("exclusion.depth", exclusion_box_.depth);
+  exclusion_box_.front_margin = declare_parameter<double>(
+    "exclusion.front_margin", exclusion_box_.front_margin);
+  exclusion_release_distance_ = declare_parameter<double>(
+    "exclusion.release_distance", exclusion_release_distance_);
+  exclusion_marker_timeout_ = declare_parameter<double>(
+    "exclusion.marker_timeout", exclusion_marker_timeout_);
+
+  const auto ids = declare_parameter<std::vector<std::string>>(
+    "docks.ids", std::vector<std::string>{});
+  for (const auto & id : ids) {
+    standoffs_[id] = declare_parameter<double>("docks." + id + ".standoff", p.standoff);
+    marker_ids_[id] = static_cast<int>(declare_parameter<int>("docks." + id + ".marker_id", -1));
+    // 마커의 지도 자세 [x, y, yaw] (계약 C3: +x = 판 바깥 법선). 적으면 다른 도크의 마커를 봤을 때
+    // 로봇 자세를 역산해 재위치추정 근거로 낸다 (marker_relocalization.hpp).
+    const auto mp = declare_parameter<std::vector<double>>(
+      "docks." + id + ".marker_pose", std::vector<double>{});
+    if (mp.size() == 3 && marker_ids_[id] >= 0) {
+      marker_poses_[marker_ids_[id]] = MapPose2D{mp[0], mp[1], mp[2]};
+    } else if (!mp.empty()) {
+      RCLCPP_WARN(
+        get_logger(), "docks.%s.marker_pose 는 [x, y, yaw] 여야 한다 (%zu 개) → 무시",
+        id.c_str(), mp.size());
+    }
+  }
+  reloc_enabled_ = declare_parameter<bool>("relocalization.enabled", reloc_enabled_);
+  reloc_max_range_ = declare_parameter<double>("relocalization.max_range", reloc_max_range_);
+  reloc_tolerance_ = declare_parameter<double>("relocalization.tolerance", reloc_tolerance_);
+  reloc_min_observations_ = static_cast<int>(declare_parameter<int>(
+      "relocalization.min_observations", reloc_min_observations_));
+  reloc_position_sigma_ = declare_parameter<double>(
+    "relocalization.position_sigma", reloc_position_sigma_);
+  reloc_yaw_sigma_ = declare_parameter<double>("relocalization.yaw_sigma", reloc_yaw_sigma_);
+  reloc_max_yaw_var_ = declare_parameter<double>(
+    "relocalization.max_yaw_variance", reloc_max_yaw_var_);
+  // 도크가 아닌 위치 표지 마커 (기둥 네 면). 창고 통로는 랙 열 간격 6 m 로 주기적이라 통로 방향
+  // 6 m 순간 이동은 LiDAR + 지도만으로 구별할 수 없다 — 스캔이 옆 통로에 그대로 맞아 AMCL 추정이
+  // 움직이지 않는다 (통합 11 실측). 전역 기준점을 레지스트리에 함께 넣는다.
+  const auto lm_ids = declare_parameter<std::vector<int64_t>>(
+    "relocalization.landmark_ids", std::vector<int64_t>{});
+  const auto lm_poses = declare_parameter<std::vector<double>>(
+    "relocalization.landmark_poses", std::vector<double>{});
+  if (lm_poses.size() == 3 * lm_ids.size()) {
+    for (std::size_t i = 0; i < lm_ids.size(); ++i) {
+      marker_poses_[static_cast<int>(lm_ids[i])] =
+        MapPose2D{lm_poses[3 * i], lm_poses[3 * i + 1], lm_poses[3 * i + 2]};
+    }
+    RCLCPP_INFO(get_logger(), "위치 표지 마커 %zu 개를 레지스트리에 넣었다", lm_ids.size());
+  } else if (!lm_ids.empty() || !lm_poses.empty()) {
+    RCLCPP_WARN(
+      get_logger(),
+      "relocalization.landmark_poses 는 landmark_ids 개수의 3 배여야 한다 (%zu vs %zu) → 무시",
+      lm_poses.size(), 3 * lm_ids.size());
+  }
+  marker_id_max_age_ = declare_parameter<double>("marker_id_max_age", marker_id_max_age_);
+
+  tf_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
+  tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+  cmd_pub_ = create_publisher<geometry_msgs::msg::Twist>("cmd_vel_nav", rclcpp::QoS(1));
+  exclusion_pub_ = create_publisher<geometry_msgs::msg::PolygonStamped>(
+    "safety/dock_exclusion", rclcpp::QoS(10));
+  marker_fix_pub_ = create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>(
+    "localization/marker_fix", rclcpp::QoS(10));
+  preferred_id_pub_ = create_publisher<std_msgs::msg::Int32>(
+    "perception/aruco/preferred_id", rclcpp::QoS(1).reliable().transient_local());
+  // id 는 **공분산(=관측 원천) 보다 먼저 등록한다.** 검출기는 자세 → id → 공분산 순으로 내지만,
+  // 단일 스레드 실행기는 한 주기 안에서 **등록 순서**로 콜백을 돌린다. id 를 뒤에 등록하면 같은
+  // 프레임의 id 가 관측보다 늦게 처리돼, 관측 시점의 last_marker_id_ 가 직전 프레임 것이 된다.
+  // 평소에는 마커가 하나라 같은 값이지만, 마커가 공백 뒤 다시 잡히는 **첫 프레임**에서는 id 가
+  // 공백 길이만큼 오래돼 wrongMarker() 의 나이 검사에 걸리고 — 그 분기는 확인을 생략하므로 —
+  // id 검사가 통째로 꺼진 채 관측이 통과한다. 08/10 로그에 공백 길이와 같은 경고가 남는다
+  // (w10 14.32 s, a10 12.45 s, reg1 32.37 s). reg1 가림 시험에서는 그렇게 통과한 관측이
+  // 위치 5.03 m / 각도 74.3° 였다 — 엉뚱한 마커를 도크 마커로 채택할 수 있는 경로다.
+  // 나이 검사 자체는 그대로 둔다: 검출기가 id 발행을 아예 멈춘 구성에서 관측을 전부 버리면
+  // 도킹이 3 시도를 소진한다 (회귀 시험 StaleMarkerIdSkipsTheIdCheckInsteadOfDroppingObservations).
+  marker_id_sub_ = create_subscription<std_msgs::msg::Int32>(
+    "perception/dock_marker_id", rclcpp::QoS(10),
+    [this](const std_msgs::msg::Int32::SharedPtr msg) {
+      last_marker_id_ = msg->data;
+      last_marker_id_time_ = now().seconds();
+    });
+  // 마커 관측의 원천은 공분산 토픽이다: 같은 메시지에 자세와 모호성(회전 공분산)이 함께 들어
+  // 있어 둘을 맞출 필요가 없다. 자세만 있는 토픽과 따로 받으면 도착 순서가 보장되지 않아,
+  // 앞 프레임의 공분산을 이 프레임에 쓰게 된다 (통합 10 실측: "yaw 분산 0.0000 > 0.0500" 처럼
+  // 멀쩡한 관측이 '오래됨' 으로 버려졌다).
+  marker_cov_sub_ = create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
+    "perception/dock_marker_pose_cov", rclcpp::SensorDataQoS(),
+    [this](geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr m) {
+      marker_cov_yaw_var_ = m->pose.covariance[35];
+      marker_cov_time_ = now().seconds();
+      auto p = std::make_shared<geometry_msgs::msg::PoseStamped>();
+      p->header = m->header;
+      p->pose = m->pose.pose;
+      in_cov_callback_ = true;
+      onMarker(p);
+      in_cov_callback_ = false;
+    });
+  marker_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
+    "perception/dock_marker_pose", rclcpp::SensorDataQoS(),
+    std::bind(&DockingServerNode::onMarker, this, std::placeholders::_1));
+  if (!detector_service_.empty()) {
+    detector_client_ = create_client<std_srvs::srv::SetBool>(detector_service_);
+  }
+  server_ = rclcpp_action::create_server<Dock>(
+    this, "dock",
+    std::bind(&DockingServerNode::onGoal, this, std::placeholders::_1, std::placeholders::_2),
+    std::bind(&DockingServerNode::onCancel, this, std::placeholders::_1),
+    std::bind(&DockingServerNode::onAccepted, this, std::placeholders::_1));
+  // 제어·예외 발행 주기 (goal 이 없을 때는 세션 확인만 한다)
+  const auto period = std::chrono::duration<double>(1.0 / std::max(1.0, control_rate_hz_));
+  timer_ = rclcpp::create_timer(
+    this, get_clock(), std::chrono::duration_cast<std::chrono::nanoseconds>(period),
+    [this]() {controlStep();});
+  RCLCPP_INFO(
+    get_logger(),
+    "dock 서버 준비 (법칙 %s, %.0f Hz, 허용 %.3f m / %.2f°, 최대 %d 회, 마커 법선 축 %s, 예외 %s)",
+    law.c_str(), control_rate_hz_, p.position_tolerance, p.angle_tolerance * 180.0 / M_PI,
+    default_max_attempts_, normal_axis_.c_str(), exclusion_enabled_ ? "켬" : "끔");
+}
+
+double DockingServerNode::standoffFor(const std::string & dock_id) const
+{
+  const auto it = standoffs_.find(dock_id);
+  return it == standoffs_.end() ? base_params_.standoff : it->second;
+}
+
+int DockingServerNode::markerIdFor(const std::string & dock_id) const
+{
+  const auto it = marker_ids_.find(dock_id);
+  return it == marker_ids_.end() ? -1 : it->second;
+}
+
+bool DockingServerNode::wrongMarker(double t) const
+{
+  if (expected_marker_id_ < 0 || last_marker_id_time_ < 0.0) {
+    return false;   // 도크 id 를 모르거나 검출기가 id 를 내지 않는다 (이전 규약과 호환)
+  }
+  if (t - last_marker_id_time_ > marker_id_max_age_) {
+    return false;   // id 가 오래됐다 → 확인 생략 (자세만 쓴다)
+  }
+  return last_marker_id_ != expected_marker_id_;   // 최근 id 가 다른 마커면 버린다
+}
+
+rclcpp_action::GoalResponse DockingServerNode::onGoal(
+  const rclcpp_action::GoalUUID & /*uuid*/, std::shared_ptr<const Dock::Goal> goal)
+{
+  if (active_ && active_->is_canceling()) {
+    // 취소 요청을 받은 goal 은 다음 제어 주기에 끝난다 → 새 goal 이 선점
+    // (BT 가 halt 직후 다시 보낸다)
+    controller_->cancel();
+    finish(true);
+  }
+  if (active_) {
+    RCLCPP_WARN(get_logger(), "도킹 실행 중 → 새 goal(%s) 거절", goal->dock_id.c_str());
+    return rclcpp_action::GoalResponse::REJECT;
+  }
+  return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
+}
+
+rclcpp_action::CancelResponse DockingServerNode::onCancel(
+  const std::shared_ptr<GoalHandle>/*handle*/)
+{
+  return rclcpp_action::CancelResponse::ACCEPT;
+}
+
+void DockingServerNode::onAccepted(const std::shared_ptr<GoalHandle> handle)
+{
+  const auto goal = handle->get_goal();
+  Params params = base_params_;
+  params.standoff = standoffFor(goal->dock_id);
+  const int attempts = goal->max_retries > 0 ? goal->max_retries : default_max_attempts_;
+  controller_ = std::make_unique<DockingController>(params);
+  controller_->start(now().seconds(), attempts);
+  last_phase_ = controller_->phase();
+  active_ = handle;
+  pending_obs_.reset();
+  session_standoff_ = params.standoff;
+  expected_marker_id_ = markerIdFor(goal->dock_id);
+  if (!session_active_) {
+    session_active_ = true;
+    setDetectorEnabled(true);
+  }
+  publishPreferredMarker(expected_marker_id_);   // 도크 마커를 우선 (랙 마커가 더 가까워도)
+  RCLCPP_INFO(
+    get_logger(), "도킹 시작: %s (standoff %.3f m, 최대 %d 회)", goal->dock_id.c_str(),
+    params.standoff, attempts);
+}
+
+void DockingServerNode::onMarker(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
+{
+  // 공분산 토픽이 흐르는 동안에는 그쪽이 원천이다 (자세만 있는 토픽은 중복 — 검출기가 공분산을
+  // 내지 않는 구성에서만 쓴다). 이 구분은 발행 주기와 무관하게 성립한다.
+  if (!in_cov_callback_) {
+    if (marker_cov_time_ >= 0.0 && now().seconds() - marker_cov_time_ < cov_source_timeout_) {
+      return;
+    }
+    marker_cov_yaw_var_ = -1.0;    // 공분산을 모르는 경로 → 모호성 판정 없음 (예전 동작)
+  }
+  const bool idle = !active_ && !session_active_;
+  if (idle && !reloc_enabled_) {
+    return;
+  }
+  const double now_s = now().seconds();
+  const bool wrong = wrongMarker(now_s);
+  if (expected_marker_id_ >= 0 && last_marker_id_time_ >= 0.0 &&
+    now_s - last_marker_id_time_ > marker_id_max_age_)
+  {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 5000,
+      "마커 id 가 %.2f s 오래됨 → id 확인 생략 (도크 %d)", now_s - last_marker_id_time_,
+      expected_marker_id_);
+  }
+  geometry_msgs::msg::Pose pose = msg->pose;
+  const std::string & frame = msg->header.frame_id;
+  if (!frame.empty() && frame != base_frame_) {
+    try {
+      const auto tf = tf_buffer_->lookupTransform(
+        base_frame_, frame, tf2::TimePointZero);
+      tf2::doTransform(msg->pose, pose, tf);
+    } catch (const tf2::TransformException & e) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 2000, "마커 프레임 %s → %s 변환 실패: %s", frame.c_str(),
+        base_frame_.c_str(), e.what());
+      return;
+    }
+  }
+  if (auto obs = markerToObservation(pose, normal_axis_)) {
+    // 모호한 자세는 도킹에도 쓰지 않는다: 평면 마커의 IPPE 두 해 중 뒤집힌 쪽을 그대로 쓰면
+    // 엉뚱한 곳에 선다 (통합 10 실측 w10 시행 7: 위치 오차 1.73 m, 각도 92.7°, 시도 3 회 실패 —
+    // 나머지 9 회는 4~8 mm 였다). 검출기가 그 모호성을 회전 공분산에 실어 보낸다.
+    if (ambiguousMarker()) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 5000,
+        "마커 자세가 모호하다 (yaw 분산 %.4f > %.4f rad²) → 관측 버림", marker_cov_yaw_var_,
+        reloc_max_yaw_var_);
+      return;
+    }
+    if (idle) {
+      // 도킹 중이 아니다: 도킹에는 쓰지 않고 위치 표지로만 쓴다 (주행 중 기둥 마커를 보면 보정).
+      publishMarkerFix(last_marker_id_, *obs);
+      return;
+    }
+    if (wrong) {
+      // 다른 도크의 마커다: 도킹에는 쓰지 않되(관측 버림), 위치 추정이 틀어졌다는 증거로는 쓴다.
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 5000, "마커 id %d ≠ 도크 마커 %d → 관측 버림", last_marker_id_,
+        expected_marker_id_);
+      publishMarkerFix(last_marker_id_, *obs);
+      return;
+    }
+    if (active_) {
+      pending_obs_ = obs;
+    }
+    last_obs_ = obs;
+    last_obs_time_ = now().seconds();
+  } else if (wrong) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 5000, "마커 id %d ≠ 도크 마커 %d → 관측 버림", last_marker_id_,
+      expected_marker_id_);
+  } else {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 5000,
+      "마커 자세의 %s 축이 수평이 아니다 → 관측 버림 (marker_normal_axis 규약 확인)",
+      normal_axis_.c_str());
+  }
+}
+
+void DockingServerNode::publishMarkerFix(int observed_id, const MarkerObservation & obs)
+{
+  if (!reloc_enabled_ || observed_id < 0) {
+    return;
+  }
+  const auto it = marker_poses_.find(observed_id);
+  if (it == marker_poses_.end()) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 5000,
+      "마커 %d 의 지도 자세가 레지스트리에 없다 → 재위치추정 근거로 쓰지 않는다", observed_id);
+    return;
+  }
+  const double range = std::hypot(obs.x, obs.y);
+  if (range > reloc_max_range_) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 5000,
+      "마커 %d 가 %.2f m 로 멀다 (상한 %.2f m) → 재위치추정 근거로 쓰지 않는다", observed_id, range,
+      reloc_max_range_);
+    return;
+  }
+  const MapPose2D fix = impliedRobotPose(obs, it->second);
+  // 연속 관측이 서로 가까울 때만 낸다 (한 프레임의 오검출로 위치 추정을 흔들지 않는다)
+  if (reloc_streak_id_ == observed_id && poseDistance(fix, reloc_last_fix_) <= reloc_tolerance_) {
+    ++reloc_streak_;
+  } else {
+    reloc_streak_ = 1;
+    reloc_streak_id_ = observed_id;
+  }
+  reloc_last_fix_ = fix;
+  if (reloc_streak_ < reloc_min_observations_) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 5000, "마커 %d 역산 자세 연속 %d/%d 회 (일치 대기)", observed_id,
+      reloc_streak_, reloc_min_observations_);
+    return;
+  }
+  reloc_streak_ = 0;
+  geometry_msgs::msg::PoseWithCovarianceStamped msg;
+  msg.header.stamp = now();
+  msg.header.frame_id = "map";
+  msg.pose.pose.position.x = fix.x;
+  msg.pose.pose.position.y = fix.y;
+  msg.pose.pose.orientation.z = std::sin(fix.yaw / 2.0);
+  msg.pose.pose.orientation.w = std::cos(fix.yaw / 2.0);
+  // 공분산은 거리에 따라 키운다: 화소 각도 오차가 그대로 거리 오차로 커진다
+  const double sigma = reloc_position_sigma_ * std::max(1.0, range);
+  msg.pose.covariance[0] = sigma * sigma;
+  msg.pose.covariance[7] = sigma * sigma;
+  msg.pose.covariance[35] = reloc_yaw_sigma_ * reloc_yaw_sigma_;
+  marker_fix_pub_->publish(msg);
+  RCLCPP_WARN(
+    get_logger(),
+    "마커 %d 를 %.2f m 앞에서 봤다 → 로봇 자세 역산 (%.2f, %.2f, %.1f°) 발행 (σ %.2f m)",
+    observed_id, range, fix.x, fix.y, fix.yaw * 180.0 / M_PI, sigma);
+}
+
+void DockingServerNode::controlStep()
+{
+  const double t = now().seconds();
+  if (active_ && controller_) {
+    goalStep(t);
+  }
+  exclusionStep(t);
+}
+
+std::optional<double> DockingServerNode::markerBearingError()
+{
+  // 지도에 등록된 도크 마커 방향 − 로봇 헤딩. 탐색 단계에서 그쪽을 먼저 보게 한다
+  // (docking_controller.hpp setMarkerBearing 의 실측 근거 참고).
+  const auto it = marker_poses_.find(expected_marker_id_);
+  if (expected_marker_id_ < 0 || it == marker_poses_.end()) {
+    return std::nullopt;
+  }
+  geometry_msgs::msg::TransformStamped tf;
+  try {
+    tf = tf_buffer_->lookupTransform("map", base_frame_, tf2::TimePointZero);
+  } catch (const tf2::TransformException &) {
+    return std::nullopt;   // 지도 기준 자세를 모르면 예전처럼 삼각파 탐색만 한다
+  }
+  const double rx = tf.transform.translation.x;
+  const double ry = tf.transform.translation.y;
+  const auto & q = tf.transform.rotation;
+  const double yaw = std::atan2(
+    2.0 * (q.w * q.z + q.x * q.y),
+    1.0 - 2.0 * (q.y * q.y + q.z * q.z));
+  return wrapAngle(std::atan2(it->second.y - ry, it->second.x - rx) - yaw);
+}
+
+void DockingServerNode::goalStep(double t)
+{
+  if (active_->is_canceling()) {
+    controller_->cancel();
+    finish(true);
+    return;
+  }
+  controller_->setMarkerBearing(markerBearingError());
+  const Command cmd = controller_->update(t, pending_obs_);
+  pending_obs_.reset();
+  publishCommand(cmd);
+  const Phase phase = controller_->phase();
+  if (phase == Phase::kBackup && last_phase_ != Phase::kBackup) {
+    RCLCPP_WARN(
+      get_logger(), "도킹 시도 %d 실패 (%s) → 후진 후 재시도", controller_->attempt(),
+      controller_->failureReason().c_str());
+  }
+  last_phase_ = phase;
+
+  auto feedback = std::make_shared<Dock::Feedback>();
+  feedback->current_phase = phaseName(controller_->phase());
+  const double remaining = controller_->distanceRemaining();
+  feedback->distance_remaining = static_cast<float>(std::isfinite(remaining) ? remaining : -1.0);
+  feedback->attempt = static_cast<uint8_t>(controller_->attempt());
+  active_->publish_feedback(feedback);
+
+  if (controller_->finished()) {
+    finish(false);
+  }
+}
+
+void DockingServerNode::exclusionStep(double t)
+{
+  if (!session_active_) {
+    return;
+  }
+  // 마커 추정: goal 중에는 추적기(관측 사이 예측 포함), 끝난 뒤에는 신선한 관측
+  std::optional<MarkerObservation> marker;
+  if (active_ && controller_) {
+    marker = controller_->markerEstimate();
+  }
+  const bool fresh = last_obs_ && t - last_obs_time_ <= exclusion_marker_timeout_;
+  if (!marker && fresh) {
+    marker = last_obs_;
+  }
+  if (!active_) {
+    // goal 이 끝난 뒤: 판에서 standoff + release 밖으로 물러났거나 마커가 안 보이면 세션 종료
+    if (!fresh ||
+      distanceFromPlate(*last_obs_) > session_standoff_ + exclusion_release_distance_)
+    {
+      endSession();
+      return;
+    }
+  }
+  if (!exclusion_enabled_ || !marker) {
+    return;
+  }
+  geometry_msgs::msg::PolygonStamped msg;
+  msg.header.frame_id = base_frame_;
+  msg.header.stamp = now();
+  for (const auto & p : exclusionPolygon(*marker, exclusion_box_)) {
+    geometry_msgs::msg::Point32 pt;
+    pt.x = static_cast<float>(p.first);
+    pt.y = static_cast<float>(p.second);
+    msg.polygon.points.push_back(pt);
+  }
+  exclusion_pub_->publish(msg);
+}
+
+void DockingServerNode::endSession()
+{
+  session_active_ = false;
+  last_obs_.reset();
+  setDetectorEnabled(false);
+  publishPreferredMarker(-1);    // 다시 가장 가까운 마커 (위치 표지 재위치추정용)
+  RCLCPP_INFO(get_logger(), "도킹 세션 종료 (예외 사각형 발행 중단)");
+}
+
+void DockingServerNode::finish(bool canceled)
+{
+  publishCommand(Command{});
+  auto result = std::make_shared<Dock::Result>();
+  const DockErrors & e = controller_->errors();
+  result->success = controller_->succeeded();
+  result->final_position_error = static_cast<float>(e.valid() ? e.position() : -1.0);
+  result->final_angle_error = static_cast<float>(e.valid() ? std::fabs(e.heading) : -1.0);
+  result->attempts_used = static_cast<uint8_t>(controller_->attempt());
+  const double angle_deg = e.valid() ? std::fabs(e.heading) * 180.0 / M_PI : -1.0;
+  const unsigned attempts = result->attempts_used;
+  if (canceled) {
+    active_->canceled(result);
+    RCLCPP_INFO(get_logger(), "도킹 취소");
+  } else if (result->success) {
+    active_->succeed(result);
+    RCLCPP_INFO(
+      get_logger(), "도킹 성공: 위치 %.4f m, 각도 %.3f°, 시도 %u",
+      result->final_position_error, angle_deg, attempts);
+  } else {
+    active_->abort(result);
+    RCLCPP_WARN(
+      get_logger(), "도킹 실패 (%s): 위치 %.4f m, 각도 %.3f°, 시도 %u",
+      controller_->failureReason().c_str(), result->final_position_error, angle_deg, attempts);
+  }
+  active_.reset();
+}
+
+void DockingServerNode::publishCommand(const Command & cmd)
+{
+  geometry_msgs::msg::Twist twist;
+  twist.linear.x = cmd.linear;
+  twist.angular.z = cmd.angular;
+  cmd_pub_->publish(twist);
+}
+
+bool DockingServerNode::ambiguousMarker() const
+{
+  // 공분산을 모르는 경로(-1)는 예전처럼 쓴다. 아는 경로는 이 프레임의 값이라 신선도를 따질
+  // 필요가 없다 — 같은 메시지에서 왔다.
+  return marker_cov_yaw_var_ >= 0.0 && marker_cov_yaw_var_ > reloc_max_yaw_var_;
+}
+
+void DockingServerNode::publishPreferredMarker(int marker_id)
+{
+  if (!preferred_id_pub_) {
+    return;
+  }
+  std_msgs::msg::Int32 msg;
+  msg.data = marker_id;
+  preferred_id_pub_->publish(msg);
+}
+
+void DockingServerNode::setDetectorEnabled(bool enabled)
+{
+  if (!detector_client_) {
+    return;
+  }
+  if (!detector_client_->service_is_ready()) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 5000, "%s 서비스 없음 (검출기 켜기/끄기 생략)",
+      detector_service_.c_str());
+    return;
+  }
+  auto request = std::make_shared<std_srvs::srv::SetBool::Request>();
+  request->data = enabled;
+  detector_client_->async_send_request(request);
+}
+
+}  // namespace docking
+}  // namespace amr_behavior

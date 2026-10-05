@@ -1,0 +1,80 @@
+<root BTCPP_format="4" main_tree_to_execute="MissionLoop">
+ <BehaviorTree ID="MissionLoop">
+  <KeepRunningUntilFailure>                  <!-- 자식 SUCCESS → reset 후 RUNNING (루프) -->
+   <ForceSuccess>                            <!-- 한 사이클의 FAILURE 흡수 → 루트는 FAILURE 를 받지 않음 -->
+    <ReactiveSequence>                       <!-- 자식 RUNNING 시 나머지 자식 halt -->
+     <SafetyGate/>                           <!-- R5: E-Stop 활성 = RUNNING → 뒤 형제 전부 halt -->
+     <ReactiveFallback>                      <!-- R4: 매 tick 배터리 재평가 → 작업 선점 -->
+      <Sequence> <IsBatteryLow enter_pct="20" exit_pct="80"/> <SubTree ID="GoCharge" _autoremap="true"/> </Sequence>
+      <SubTree ID="FetchAndDeliver" _autoremap="true"/>
+     </ReactiveFallback>
+    </ReactiveSequence>
+   </ForceSuccess>
+  </KeepRunningUntilFailure>
+ </BehaviorTree>
+
+ <BehaviorTree ID="FetchAndDeliver">         <!-- 대기-이동-인식-작업-이동-인식-작업-복귀 -->
+  <Fallback>
+   <Sequence>
+    <WaitForTask task_id="{task_id}" _skipIf="task_phase > 0"/>
+    <Sequence _skipIf="task_phase > 0">
+     <AcceptTask task_id="{task_id}" pickup_staging="{pickup_staging}" pickup_dock="{pickup_dock}"
+                 dropoff_staging="{dropoff_staging}" dropoff_dock="{dropoff_dock}" item_type="{item_type}"
+                 item_mass="{item_mass}" load_time_ms="{load_time_ms}" budget_ms="{budget_ms}"/>
+     <Script code="task_phase:=1"/>
+    </Sequence>
+    <Timeout msec="{budget_ms}" _skipIf="task_phase >= 8">
+     <Sequence>
+      <Sequence _skipIf="task_phase >= 2"> <SubTree ID="NavigateWithRecovery" goal="{pickup_staging}" fail_reason="{fail_reason}"/> <Script code="task_phase:=2"/> </Sequence>
+      <Sequence _skipIf="task_phase >= 3"> <SubTree ID="DockWithRecovery" dock_id="{pickup_dock}" fail_reason="{fail_reason}"/> <Script code="task_phase:=3"/> </Sequence>
+      <Sequence _skipIf="task_phase >= 4"> <SubTree ID="LoadPayload" item_type="{item_type}" load_time_ms="{load_time_ms}"/> <Script code="task_phase:=4"/> </Sequence>
+      <Sequence _skipIf="task_phase >= 5"> <SubTree ID="NavigateWithRecovery" goal="{dropoff_staging}" fail_reason="{fail_reason}"/> <Script code="task_phase:=5"/> </Sequence>
+      <Sequence _skipIf="task_phase >= 6"> <SubTree ID="DockWithRecovery" dock_id="{dropoff_dock}" fail_reason="{fail_reason}"/> <Script code="task_phase:=6"/> </Sequence>
+      <Sequence _skipIf="task_phase >= 7"> <SubTree ID="UnloadPayload" load_time_ms="{load_time_ms}"/> <Script code="task_phase:=7"/> </Sequence>
+      <PublishTaskEvent status="COMPLETED" reason="OK"/> <LogTaskRecord/> <Script code="task_phase:=8"/>
+     </Sequence>
+    </Timeout>
+    <Fallback> <HasPendingTask/> <ForceSuccess><SubTree ID="ReturnHome" _autoremap="true"/></ForceSuccess> </Fallback>   <!-- 복귀 -->
+    <Script code="task_phase:=0"/>
+   </Sequence>
+   <Sequence>                                <!-- 단일 실패 처리기: R1 소진 · R3 3회 소진 · Timeout · 거부 -->
+    <PublishTaskEvent status="FAILED" reason="{fail_reason}"/> <LogTaskRecord/> <RequestReassignment/>
+    <Script code="task_phase:=0"/>
+    <ForceSuccess><SubTree ID="ReturnHome" _autoremap="true"/></ForceSuccess>          <!-- 대체 작업: 대기구역 복귀 -->
+   </Sequence>
+  </Fallback>
+ </BehaviorTree>
+
+ <BehaviorTree ID="NavigateWithRecovery">   <!-- R1 -->
+  <RecoveryNode number_of_retries="4">
+   <Sequence>
+    <ForceSuccess><Sequence> <IsDeadlineAtRisk speed_limit="{lim}"/> <SetSpeedLimit limit="{lim}"/> </Sequence></ForceSuccess>
+    <ReactiveSequence> <TrafficGate/> <NavigateTo goal="{goal}" eta="{eta}" result="{fail_reason}"/> </ReactiveSequence>
+   </Sequence>
+   <RoundRobin> <ClearCostmaps/> <BackUp dist="0.3"/> <Spin angle="1.57"/> <Delay delay_msec="3000"><AlwaysSuccess/></Delay> </RoundRobin>
+  </RecoveryNode>
+ </BehaviorTree>
+
+ <BehaviorTree ID="DockWithRecovery">       <!-- R2, R3 -->
+  <RetryUntilSuccessful num_attempts="3">   <!-- 유일한 도킹 재시도 카운터 (명세 ≤3) -->
+   <Sequence>
+    <Fallback> <IsMarkerVisible dock_id="{dock_id}"/> <SearchMarker dock_id="{dock_id}" budget_s="8" result="{fail_reason}"/> </Fallback>   <!-- R2 -->
+    <Fallback>
+     <DockToStation dock_id="{dock_id}" max_retries="0" result="{fail_reason}"/>   <!-- 접근 1회, 서버 내부 재시도 없음 -->
+     <ForceFailure><BackToStaging dock_id="{dock_id}"/></ForceFailure>             <!-- R3: staging 복귀, 이 시도는 실패로 계수 -->
+    </Fallback>
+   </Sequence>
+  </RetryUntilSuccessful>
+ </BehaviorTree>
+
+ <BehaviorTree ID="LoadPayload">   <Sequence> <VirtualLoad item_type="{item_type}"/> <Delay delay_msec="{load_time_ms}"><AlwaysSuccess/></Delay> </Sequence> </BehaviorTree>
+ <BehaviorTree ID="UnloadPayload"> <Sequence> <VirtualUnload/> <Delay delay_msec="{load_time_ms}"><AlwaysSuccess/></Delay> </Sequence> </BehaviorTree>
+ <BehaviorTree ID="ReturnHome">    <SubTree ID="NavigateWithRecovery" goal="{home_pose}" fail_reason="{fail_reason}"/> </BehaviorTree>
+ <BehaviorTree ID="GoCharge">
+  <SequenceWithMemory>
+   <SubTree ID="NavigateWithRecovery" goal="{charger_staging}" fail_reason="{fail_reason}"/>
+   <SubTree ID="DockWithRecovery" dock_id="{charger_dock}" fail_reason="{fail_reason}"/>
+   <ChargeUntil level_pct="80"/>
+  </SequenceWithMemory>
+ </BehaviorTree>
+</root>

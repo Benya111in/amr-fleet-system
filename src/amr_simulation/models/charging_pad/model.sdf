@@ -1,0 +1,25 @@
+<?xml version="1.0" ?>
+<!-- 충전 구역 바닥 표시. 모델 원점 = 패드 중심, x = 10 m, y = 4 m. 충돌체 없음(도색). -->
+<sdf version="1.8">
+  <model name="charging_pad">
+    <static>true</static>
+    <link name="link">
+      <visual name="pad">
+        <pose>0 0 0.003 0 0 0</pose>
+        <geometry><box><size>10.0 4.0 0.006</size></box></geometry>
+        <material>
+          <ambient>0.55 0.80 0.35 1</ambient>
+          <diffuse>0.55 0.80 0.35 1</diffuse>
+        </material>
+      </visual>
+      <visual name="border">
+        <pose>0 0 0.002 0 0 0</pose>
+        <geometry><box><size>10.3 4.3 0.004</size></box></geometry>
+        <material>
+          <ambient>0.95 0.95 0.95 1</ambient>
+          <diffuse>0.95 0.95 0.95 1</diffuse>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>

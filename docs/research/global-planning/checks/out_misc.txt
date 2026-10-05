@@ -1,0 +1,28 @@
+Theta* 2*(26/252)^2 = 0.0213 ; unknown -> 26+0.9*253 = 253.70000000000002 ; LOS safe iff 26+0.9c<=252 -> c<= 251
+NavFn kappa-eq 0.8*252/50 = 4.032
+octile max excess = 1.0824 at 22.50 deg
+smoother (w_d,w_s)=(0.2,0.3) omega=0.80 jacobi_bound=1.40: GS rate=0.7137  Jacobi rate=0.7999
+smoother (w_d,w_s)=(0.2,0.5) omega=1.20 jacobi_bound=2.20: GS rate=0.5943  Jacobi rate=1.1896
+smoother (w_d,w_s)=(0.2,0.85) omega=1.90 jacobi_bound=3.60: GS rate=0.9043  Jacobi rate=2.5553
+smoother (w_d,w_s)=(0.2,0.95) omega=2.10 jacobi_bound=4.00: GS rate=1.0782  Jacobi rate=2.9457
+tube L=6 rho=1: raster=6601  formula=6400
+tube L=6 rho=3: raster=29161  formula=28800
+tube L=6 rho=6: raster=87001  formula=86400
+tube L=6 rho=12: raster=289081  formula=288000
+tube L=15 rho=1: raster=13981  formula=13600
+tube L=15 rho=3: raster=50941  formula=50400
+worst cells (L=6): 9.95e+05; at 150-300 ns: 149-299 ms
+FULL alone: 144-288 ms ; tube budget 40 ms + FULL max = 328 ms
+turning-angle >= Menger violations (random unequal steps): 0
+  equal step h, dth=10: Menger=3.486  turning=3.491
+  equal step h, dth=45: Menger=15.307  turning=15.708
+  equal step h, dth=90: Menger=28.284  turning=31.416
+rotate 45 deg: |dth|/w_max=0.524 s  trapezoid(alpha=2)=1.253 s
+rotate 90 deg: |dth|/w_max=1.047 s  trapezoid(alpha=2)=1.797 s
+rotate 180 deg: |dth|/w_max=2.094 s  trapezoid(alpha=2)=2.844 s
+L=5 m: trapezoid 4.50 s, S-curve(j=2) 5.00 s (+11.1 %)
+L=20 m: trapezoid 12.00 s, S-curve(j=2) 12.50 s (+4.2 %)
+L=40 m: trapezoid 22.00 s, S-curve(j=2) 22.50 s (+2.3 %)
+raytrace cells/scan: 172800  inflation window cells: 278784
+BT 1.0 Hz: e2e worst = 200 (costmap 5 Hz) + 1000 (BT) + 400 (deadline) = 1600 ms; typical-worst with FULL p95 100 ms = 1300 ms
+BT 5.0 Hz: e2e worst = 200 (costmap 5 Hz) + 200 (BT) + 400 (deadline) = 800 ms; typical-worst with FULL p95 100 ms = 500 ms

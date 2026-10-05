@@ -1,0 +1,16 @@
+trial 1: rank(trimmed) 1, modes within 0.02 of best 6, rank(masked, top-10) 1, masked margin 0.010, masked-best correct True
+trial 2: rank(trimmed) 1, modes within 0.02 of best 6, rank(masked, top-10) 4, masked margin 0.001, masked-best correct False
+trial 3: rank(trimmed) 2, modes within 0.02 of best 2, rank(masked, top-10) 1, masked margin 0.128, masked-best correct True
+trial 4: rank(trimmed) 1, modes within 0.02 of best 15, rank(masked, top-10) 1, masked margin 0.001, masked-best correct True
+trial 5: rank(trimmed) 14, modes within 0.02 of best 31, rank(masked, top-10) None, masked margin 0.005, masked-best correct False
+trial 6: rank(trimmed) 10, modes within 0.02 of best 50, rank(masked, top-10) 2, masked margin 0.010, masked-best correct False
+trial 7: rank(trimmed) 1, modes within 0.02 of best 2, rank(masked, top-10) 1, masked margin 0.007, masked-best correct True
+trial 8: rank(trimmed) 1, modes within 0.02 of best 11, rank(masked, top-10) 2, masked margin 0.001, masked-best correct False
+trial 9: rank(trimmed) 12, modes within 0.02 of best 50, rank(masked, top-10) None, masked margin 0.008, masked-best correct False
+trial 10: rank(trimmed) None, modes within 0.02 of best 35, rank(masked, top-10) None, masked margin 0.007, masked-best correct False
+trial 11: rank(trimmed) 1, modes within 0.02 of best 10, rank(masked, top-10) 5, masked margin 0.000, masked-best correct False
+trial 12: rank(trimmed) None, modes within 0.02 of best 47, rank(masked, top-10) None, masked margin 0.012, masked-best correct False
+trial 13: rank(trimmed) 1, modes within 0.02 of best 1, rank(masked, top-10) 1, masked margin 0.027, masked-best correct True
+trial 14: rank(trimmed) 1, modes within 0.02 of best 12, rank(masked, top-10) 3, masked margin 0.000, masked-best correct False
+trial 15: rank(trimmed) 1, modes within 0.02 of best 1, rank(masked, top-10) 1, masked margin 0.066, masked-best correct True
+SUMMARY: correct mode present in top-10 modes: 11 / 15 ; rank1 trimmed: 9 ; rank1 masked: 6 ; masked margin>0.02 & correct: 3 ; masked margin>0.02 & wrong: 0 ; median ambiguity-set size: 11.0

@@ -1,0 +1,328 @@
+{
+ "slug": "fleet-traffic-deadlock",
+ "doc_path": "docs/research/fleet-traffic-deadlock/fleet-traffic-deadlock.md",
+ "web_tools_available": true,
+ "papers": [
+  {
+   "title": "Online Multi-Agent Pickup and Delivery with Task Deadlines (D-TP / D-TPTS)",
+   "authors": "H. Makino, S. Ito",
+   "venue_year": "IROS 2024",
+   "url": "https://arxiv.org/abs/2403.12377",
+   "status": "VERIFIED",
+   "relevance": "Closest prior work to our deadline-aware assignment (HRA): deadline-aware token passing with task swaps; we position HRA as a variant."
+  },
+  {
+   "title": "Guidance Graph Optimization for Lifelong Multi-Agent Path Finding",
+   "authors": "Y. Zhang, H. Jiang, V. Bhatt, S. Nikolaidis, J. Li",
+   "venue_year": "IJCAI 2024",
+   "url": "https://arxiv.org/abs/2402.01446",
+   "status": "VERIFIED",
+   "relevance": "Edge-weight guidance for throughput; our optional congestion-aware edge weights are a 5-robot lightweight version."
+  },
+  {
+   "title": "Traffic Flow Optimisation for Lifelong Multi-Agent Path Finding",
+   "authors": "Z. Chen, D. Harabor, J. Li, P. J. Stuckey",
+   "venue_year": "AAAI 2024",
+   "url": "https://arxiv.org/abs/2308.11234",
+   "status": "VERIFIED",
+   "relevance": "Congestion-avoiding guidance paths raise lifelong throughput; informs optional proposal 3."
+  },
+  {
+   "title": "Scaling Lifelong MAPF to More Realistic Settings: Research Challenges and Opportunities",
+   "authors": "H. Jiang, Y. Zhang, R. Veerapaneni, J. Li",
+   "venue_year": "SoCS 2024",
+   "url": "https://arxiv.org/abs/2404.16162",
+   "status": "VERIFIED",
+   "relevance": "Lists the real-world gaps (kinodynamics, execution uncertainty) our design must close."
+  },
+  {
+   "title": "Engineering LaCAM*: Towards Real-Time, Large-Scale, and Near-Optimal MAPF",
+   "authors": "K. Okumura",
+   "venue_year": "AAMAS 2024",
+   "url": "https://arxiv.org/abs/2308.04292",
+   "status": "VERIFIED",
+   "relevance": "State-of-the-art MAPF-lite reference; overkill for 5 robots but cited for positioning."
+  },
+  {
+   "title": "Windowed MAPF with Completeness Guarantees (WinC-MAPF)",
+   "authors": "R. Veerapaneni, M. S. Saleem, J. Li, M. Likhachev",
+   "venue_year": "AAAI 2025",
+   "url": "https://arxiv.org/abs/2410.01798",
+   "status": "VERIFIED",
+   "relevance": "Shows windowed/myopic planning causes deadlock/livelock; motivates our order-DAG (ADG) enforcement instead of windowed replanning."
+  },
+  {
+   "title": "Streamlining the Action Dependency Graph Framework: Two Key Enhancements",
+   "authors": "J. Dunkel",
+   "venue_year": "arXiv 2024",
+   "url": "https://arxiv.org/abs/2412.01277",
+   "status": "VERIFIED",
+   "relevance": "Sparse ADG construction and wait-action removal; adopted for our precedence-graph construction."
+  },
+  {
+   "title": "Real-Time LaCAM for Real-Time MAPF",
+   "authors": "R. Liang, R. Veerapaneni, D. Harabor, J. Li, M. Likhachev",
+   "venue_year": "SoCS 2025",
+   "url": "https://arxiv.org/abs/2504.06091",
+   "status": "VERIFIED",
+   "relevance": "Real-time complete MAPF baseline for MAPF-lite comparison."
+  },
+  {
+   "title": "Anytime Single-Step MAPF Planning with Anytime PIBT",
+   "authors": "N. Gandotra, R. Veerapaneni, M. S. Saleem, D. Harabor, J. Li, M. Likhachev",
+   "venue_year": "arXiv 2025",
+   "url": "https://arxiv.org/abs/2504.07841",
+   "status": "VERIFIED",
+   "relevance": "PIBT-family reference for priority-inheritance style local conflict resolution."
+  },
+  {
+   "title": "Adaptive Deadlock Avoidance for Decentralized Multi-agent Systems via CBF-inspired Risk Measurement",
+   "authors": "Y. Zhang, Y. Lyu, S. Jo, Y. Yang, W. Luo",
+   "venue_year": "ICRA 2025",
+   "url": "https://arxiv.org/abs/2503.09621",
+   "status": "VERIFIED",
+   "relevance": "Control-level deadlock indicator; contrasts with our resource-level approach, relevant to local-planner standoff (type T5)."
+  },
+  {
+   "title": "Merry-Go-Round: Safe Control of Decentralized Multi-Robot Systems with Deadlock Prevention",
+   "authors": "W. Lee, J. Sim, J. Kim, S. Jo, W. Luo, C. Nam",
+   "venue_year": "IROS 2025",
+   "url": "https://arxiv.org/abs/2503.05848",
+   "status": "VERIFIED",
+   "relevance": "Roundabout maneuver as an alternative yield strategy for deadlock resolution."
+  },
+  {
+   "title": "Advancing MAPF Toward the Real World: A Scalable Multi-Agent Realistic Testbed (SMART)",
+   "authors": "J. Yan, Z. Li, W. Kang, K. Zheng, Y. Zhang, Z. Chen, Y. Zhang, D. Harabor, S. F. Smith, J. Li",
+   "venue_year": "IEEE RA-L 2026",
+   "url": "https://arxiv.org/abs/2503.04798",
+   "status": "VERIFIED",
+   "relevance": "Physics-engine + ADG execution monitor evaluation methodology; same structure as our Gazebo evaluation."
+  },
+  {
+   "title": "Where Paths Collide: A Comprehensive Survey of Classic and Learning-Based MAPF",
+   "authors": "S. Wang et al.",
+   "venue_year": "arXiv 2025",
+   "url": "https://arxiv.org/abs/2505.19219",
+   "status": "VERIFIED",
+   "relevance": "Literature map and benchmarking-gap analysis."
+  },
+  {
+   "title": "Task Allocation in Mobile Robot Fleets: A review",
+   "authors": "A. Meseguer Valenzuela, F. Blanes Noguera",
+   "venue_year": "arXiv 2025",
+   "url": "https://arxiv.org/abs/2501.08726",
+   "status": "VERIFIED",
+   "relevance": "Survey of fleet task-allocation methods; basis for baseline selection."
+  },
+  {
+   "title": "A Group Consensus-Driven Auction Algorithm for Cooperative Task Allocation Among Heterogeneous Multi-Agents",
+   "authors": "G. Wang, H. Han, X. Liu, H. Jiang, M. Zhang",
+   "venue_year": "arXiv 2025",
+   "url": "https://arxiv.org/abs/2508.02015",
+   "status": "VERIFIED",
+   "relevance": "Time-window auction with scenario-aware path cost; reference for the distributed-auction bonus."
+  },
+  {
+   "title": "WinkTPG: An Execution Framework for MAPF Using Temporal Reasoning",
+   "authors": "J. Yan, S. F. Smith, J. Li",
+   "venue_year": "arXiv 2025/2026",
+   "url": "https://arxiv.org/abs/2508.01495",
+   "status": "VERIFIED",
+   "relevance": "Kinodynamic TPG refinement of MAPF plans; supports our ETA/rotation-time model and order-based execution."
+  },
+  {
+   "title": "A Holistic Architecture for Monitoring and Optimization of Robust MAPF Plan Execution",
+   "authors": "D. Zahrádka, D. Mužíková, D. Woller, M. Kulich, J. Švancara, R. Barták",
+   "venue_year": "arXiv 2025",
+   "url": "https://arxiv.org/abs/2509.10284",
+   "status": "VERIFIED",
+   "relevance": "ADG-based execution-time estimation to decide replanning; same idea as our re-timing step."
+  },
+  {
+   "title": "RobotFleet: An Open-Source Framework for Centralized Multi-Robot Task Planning",
+   "authors": "R. Gupta, T. Asbery, Z. Merchant, A. Anwar, J. Thomason",
+   "venue_year": "arXiv 2025",
+   "url": "https://arxiv.org/abs/2510.10379",
+   "status": "VERIFIED",
+   "relevance": "Centralized fleet architecture reference (LLM part excluded by spec)."
+  },
+  {
+   "title": "Multi-Agent Reinforcement Learning for Deadlock Handling among Autonomous Mobile Robots",
+   "authors": "M. Müller",
+   "venue_year": "arXiv 2025 (dissertation)",
+   "url": "https://arxiv.org/abs/2511.07071",
+   "status": "VERIFIED",
+   "relevance": "Finds rule-based deadlock handling remains competitive in simpler/small settings; justifies our rule-based design for 5 robots."
+  },
+  {
+   "title": "LSMART: Lifelong Scalable Multi-Agent Realistic Testbed and Design Choices in Lifelong AGV Fleet Management Systems",
+   "authors": "J. Yan, Y. Zhang, Z. Liu, H. Zhang, H. Jiang, J. Chen, S. F. Smith, J. Li",
+   "venue_year": "arXiv 2026",
+   "url": "https://arxiv.org/abs/2602.15721",
+   "status": "VERIFIED",
+   "relevance": "Studies when to plan, recovery on failure, communication delays in centralized FMS; direct reference for our design decisions."
+  },
+  {
+   "title": "A Lightweight Traffic Map for Efficient Anytime LaCAM*",
+   "authors": "B. Shen, Y. Zhang, Z. Chen, D. Harabor",
+   "venue_year": "arXiv 2026",
+   "url": "https://arxiv.org/abs/2603.07891",
+   "status": "VERIFIED",
+   "relevance": "Dynamic traffic map during search; optional congestion-weighting reference."
+  },
+  {
+   "title": "Should I Replan? Learning to Spot the Right Time in Robust MAPF Execution",
+   "authors": "D. Zahrádka, D. Woller, D. Mužíková, M. Kulich, L. Přeučil",
+   "venue_year": "arXiv 2026",
+   "url": "https://arxiv.org/abs/2604.25567",
+   "status": "VERIFIED",
+   "relevance": "Learned replanning trigger under delays; we use a slack-threshold rule instead."
+  },
+  {
+   "title": "From Gridworlds to Warehouses: Adapting Lightweight One-shot MAPF for AGVs (MAWPF)",
+   "authors": "H. Nagai, K. Okumura",
+   "venue_year": "IJCAI 2026",
+   "url": "https://arxiv.org/abs/2605.15799",
+   "status": "VERIFIED",
+   "relevance": "Differential-drive MAPF constraints (straight/rotate, multi-step rotation, accel/decel, no follower collisions) matching our corridor model."
+  },
+  {
+   "title": "Lifelong LaCAM with Local Guidance for Lifelong MAPF",
+   "authors": "T. Arita, K. Okumura",
+   "venue_year": "SoCS 2026",
+   "url": "https://arxiv.org/abs/2605.16855",
+   "status": "VERIFIED",
+   "relevance": "Latest lifelong MAPF baseline (receding-horizon LaCAM)."
+  },
+  {
+   "title": "The Hungarian Method for the Assignment Problem",
+   "authors": "H. W. Kuhn",
+   "venue_year": "Naval Research Logistics Quarterly 1955",
+   "url": "https://doi.org/10.1002/nav.3800020109",
+   "status": "RECALLED",
+   "relevance": "Required baseline assignment algorithm (O(N^3))."
+  },
+  {
+   "title": "The Auction Algorithm: A Distributed Relaxation Method for the Assignment Problem",
+   "authors": "D. P. Bertsekas",
+   "venue_year": "Annals of Operations Research 1988",
+   "url": "https://doi.org/10.1007/BF02186476",
+   "status": "RECALLED",
+   "relevance": "Auction baseline with epsilon-complementary-slackness optimality bound."
+  },
+  {
+   "title": "SIPP: Safe Interval Path Planning for Dynamic Environments",
+   "authors": "M. Phillips, M. Likhachev",
+   "venue_year": "ICRA 2011",
+   "url": "https://doi.org/10.1109/ICRA.2011.5980306",
+   "status": "RECALLED",
+   "relevance": "Primitive used for time-window routing on the corridor graph."
+  },
+  {
+   "title": "Conflict-free shortest-time bidirectional AGV routeing",
+   "authors": "C. W. Kim, J. M. A. Tanchoco",
+   "venue_year": "Int. J. Production Research 1991",
+   "url": "https://doi.org/10.1080/00207549108948063",
+   "status": "RECALLED",
+   "relevance": "Classic time-window reservation routing for AGVs."
+  },
+  {
+   "title": "Persistent and Robust Execution of MAPF Plans in Warehouses (Action Dependency Graph)",
+   "authors": "W. Hönig, S. Kiesel, A. Tinka, J. Durham, N. Ayanian",
+   "venue_year": "IEEE RA-L / ICRA 2019",
+   "url": "https://doi.org/10.1109/LRA.2019.2894217",
+   "status": "RECALLED",
+   "relevance": "Order-based (not time-based) execution guaranteeing deadlock-freedom under delays; core of CTR token execution."
+  },
+  {
+   "title": "A Feedback Scheme to Reorder a Multi-Agent Execution Schedule by Persistently Optimizing a Switchable ADG",
+   "authors": "A. Berndt, N. van Duijkeren, L. Palmieri, T. Keviczky",
+   "venue_year": "arXiv 2020",
+   "url": "https://arxiv.org/abs/2010.05254",
+   "status": "RECALLED",
+   "relevance": "Closest prior to our slack-aware precedence switch."
+  },
+  {
+   "title": "Complete Decentralized Method for On-Line Multi-Robot Trajectory Planning in Well-formed Infrastructures",
+   "authors": "M. Čáp, J. Vokřínek, A. Kleiner",
+   "venue_year": "ICAPS 2015",
+   "url": "https://ojs.aaai.org/index.php/ICAPS/article/view/13696",
+   "status": "RECALLED",
+   "relevance": "Well-formed infrastructure property giving completeness of prioritized planning; our pocket-endpoint design relies on it."
+  },
+  {
+   "title": "Lifelong Multi-Agent Path Finding for Online Pickup and Delivery Tasks (Token Passing)",
+   "authors": "H. Ma, J. Li, T. K. S. Kumar, S. Koenig",
+   "venue_year": "AAMAS 2017",
+   "url": "https://arxiv.org/abs/1705.10868",
+   "status": "RECALLED",
+   "relevance": "MAPD formulation and token passing baseline."
+  },
+  {
+   "title": "Priority Inheritance with Backtracking for Iterative Multi-agent Path Finding (PIBT)",
+   "authors": "K. Okumura, M. Machida, X. Défago, Y. Tamura",
+   "venue_year": "IJCAI 2019 / AIJ 2022",
+   "url": "https://arxiv.org/abs/1901.11282",
+   "status": "RECALLED",
+   "relevance": "Priority-inheritance idea for local conflict resolution on the corridor graph."
+  },
+  {
+   "title": "Deadlock avoidance for sequential resource allocation systems: hard and easy cases",
+   "authors": "M. A. Lawley, S. A. Reveliotis",
+   "venue_year": "Int. J. Flexible Manufacturing Systems 2001",
+   "url": "https://doi.org/10.1023/A:1011294320501",
+   "status": "RECALLED",
+   "relevance": "Banker-style safety for single-unit RAS; NP-completeness caveat and polynomial sufficient test."
+  },
+  {
+   "title": "System Deadlocks",
+   "authors": "E. G. Coffman, M. Elphick, A. Shoshani",
+   "venue_year": "ACM Computing Surveys 1971",
+   "url": "https://doi.org/10.1145/356586.356588",
+   "status": "RECALLED",
+   "relevance": "Four necessary deadlock conditions used to classify deadlock types and justify prevention."
+  }
+ ],
+ "baseline_summary": "Assignment baselines derived in seconds-unit cost c_ij = t_free_i + T(pos_i→pickup_j) + τ_load + T(pickup_j→drop_j) + τ_unload + β·W_ij + γ·tardiness: nearest (greedy O(n) per task, myopic), load-balance (queue work + travel), Hungarian (LAP with TU constraint matrix, dual u_i+v_j≤c_ij, O(N^3); scipy is BROKEN in the image so it must be hand-implemented with brute-force oracle tests), and Bertsekas auction (ε-CS bound nε, ε-scaling polynomial). ETA model: trapezoidal profile T=ℓ/v_c+v_c/a for ℓ≥v_c²/a else 2√(ℓ/a), plus rotation |Δθ|/ω_max, with per-edge EMA calibration κ_e; dimensionally checked. Traffic baseline: corridor graph G_c (~100-150 nodes vs 960k grid cells), capacity-1 resources (narrow corridors, junctions; wide corridors as two one-way lanes), continuous-time reservation table with interval-overlap conflict predicate and safety pad δ_s = d_safe + v_max(τ_c+τ_ctrl) + ε_loc = 0.68 m, prioritized SIPP planning (complete under well-formed pocket endpoints). Deadlock baseline: Coffman's 4 conditions, five warehouse deadlock types (head-on, intersection cycle, endpoint blocking, convoy, local-planner standoff), wait-for graph from token/geometric blocking with Tarjan SCC O(n+e) (detection latency ≤ T_b + tick), Banker safety check (greedy O(n²|ρ|) sufficient test), aging-based intersection priority Π_i guaranteeing no starvation.",
+ "proposals": [
+  {
+   "name": "CTR — Corridor-Token Reservation traffic manager",
+   "idea": "Plan in time, execute by order: prioritized SIPP on a corridor graph builds a conflict-free time-window reservation table; from it a per-resource entry-order precedence DAG is derived (sparse ADG construction) and enforced with corridor tokens; a robot's Nav2 goal is extended only to the exit node of its granted prefix (NavigateThroughPoses goal update, SpeedLimit for headway, BackUp for yielding), so per-robot Nav2 stacks are untouched. Slack-aware precedence switch reorders a delayed predecessor and a deadline-critical waiter when the resulting graph stays a DAG. Periodic re-timing recomputes ETAs in topological order for assignment costs and KPIs. Theorems: time-feasible reservations ⇒ DAG; DAG + finite-time traversal + well-formed pocket endpoints ⇒ deadlock-free execution; switch safe iff DAG preserved. Execution-level wait-for-graph cycle detection is a safety net for unmodeled effects.",
+   "closest_prior_work": "Hönig et al. 2019 ADG (order-based execution), Berndt et al. 2020 switchable ADG, Kim & Tanchoco 1991 time-window AGV routing, Phillips & Likhachev 2011 SIPP, Dunkel 2024 sparse ADG, Makino & Ito 2024 deadline priorities, Čáp et al. 2015 well-formed completeness; LSMART 2026 for FMS design choices.",
+   "novelty_claim": "new_combination",
+   "expected_gain": "Zero deadlocks and zero collisions among robots in S2/S3 scenarios (vs Nav2-only baseline that deadlocks in narrow corridors), ≥15% throughput gain over Nav2-only and over look-ahead-free zone mutual exclusion, tolerance to 100 ms comm latency with ≤10% throughput loss, deadlock detection ≤2.5 s and resolution success ≥95% on injected deadlocks.",
+   "risks": "Nav2 goal preemption may cause DWA to decelerate at each prefix extension (mitigate with K=2 look-ahead grants or FollowPath stitching); manual corridor-graph authoring effort; local-planner symmetric standoffs (type T5) are outside the resource model and rely on geometric wait-for detection; conservative δ_s may cost throughput (sweep in S4).",
+   "realtime_budget": "Traffic tick 10 Hz; per tick O(n) state update, O(n²) wait-for, O(nK) token checks, O(|E_P|) DAG check; SIPP on reroute <5 ms on a ≤500-node graph; total central CPU <0.1 core. Response-time chain (assign ≤5 ms, SIPP+grant ≤5 ms, DDS+simulated latency 5–105 ms, agent+BT ≤15 ms, A* first segment + first cmd_vel ≤100 ms) ≈180 ms mean, ≈230 ms worst; speculative pre-planning recommended to trim worst case."
+  },
+  {
+   "name": "HRA — Hungarian + Regret-swap Auction under deadlines",
+   "idea": "Event-triggered batch Hungarian on an n×K_t cost matrix (K_t = max(2n, idle) earliest-deadline tasks) using congestion-aware ETA from CTR re-timing (W_ij) and a tardiness penalty; followed by 2-opt regret swaps Δ = c_ij + c_kl − c_il − c_kj > θ and a reassignment auction for not-yet-picked-up tasks with a switching cost θ_sw to prevent oscillation.",
+   "closest_prior_work": "Makino & Ito 2024 (D-TP / D-TPTS deadline-aware token passing with task swaps); Hungarian (Kuhn 1955) and Bertsekas auction (1988) as components; GCBHA (Wang et al. 2025) for time-window auctions.",
+   "novelty_claim": "variant_of_prior",
+   "expected_gain": "Total travel distance ≤0.9× nearest-first; tardy-task ratio reduced ≥30% vs nearest/load-balance in S1 (Poisson arrivals 30/60/120 tasks/h); assignment compute <10 ms.",
+   "risks": "Cost-matrix quality depends on ETA accuracy (spec requires ≤15% error); reassignment churn if θ_sw too small; scipy unavailable so Hungarian correctness must be proven by brute-force oracle tests.",
+   "realtime_budget": "Hungarian 5×≤50 ≤5 ms in pure Python; regret swap O(n²); executed only on events (task burst, robot idle, slack violation), not per tick."
+  },
+  {
+   "name": "Congestion-aware edge weights on the corridor graph (optional ablation)",
+   "idea": "SIPP edge cost κ_e·T_e·(1 + μ·occ_e) where occ_e is the reserved occupancy fraction of edge e over the next H seconds, steering new routes away from corridors already crowded in the reservation table.",
+   "closest_prior_work": "Chen et al. AAAI 2024 traffic-flow optimisation; Zhang et al. IJCAI 2024 guidance graph optimization; Shen et al. 2026 lightweight traffic map for LaCAM*.",
+   "novelty_claim": "engineering_adaptation",
+   "expected_gain": "Small for 5 robots; expected ≤5% reduction in intersection waiting time; reported as an ablation row rather than a headline claim.",
+   "risks": "May lengthen routes without throughput benefit at low density; adds a tuning parameter μ.",
+   "realtime_budget": "O(|E_c|) occupancy recomputation per reroute; negligible."
+  }
+ ],
+ "evaluation_plan": "KPIs defined from logs: throughput λ̂ = N_done/T_win [tasks/h] (cumulative + 10-min sliding), mean task time W̄ = mean(t_done − t_assign) [s], utilisation U_i = T_busy/T_total with Little's-law consistency check L = λW, tardiness and on-time rate, total distance, intersection wait, deadlock count and resolution time, conflict-prediction precision/recall vs near-misses (<0.7 m), response time in the spec's [cmd_time, response_time, latency_ms] format, CPU%. Scenarios mapped to spec 4.9/4.10: S1 assignment benchmark (50 static tasks + Poisson λ∈{30,60,120}/h, 5 seeds, 20 min; nearest/load-balance/Hungarian/auction/HRA; targets HRA ≤0.9× nearest distance, compute <10 ms); S2 traffic (head-on corridor 2 robots, 4-way intersection, bottleneck aisle 5 robots, 1-h random; baselines B0 Nav2-only with robots as costmap obstacles and B1 zone mutual exclusion without look-ahead vs CTR; targets 0 collisions, 0 deadlocks, ≥+15% throughput vs B0); S3 injected deadlocks ×20 (R1 yield, R2 reroute, R1→R2; detection ≤2.5 s, success ≥95%, mean resolution ≤20 s); S4 latency sweep τ_c∈{0,50,100} ms with jitter × 3 pad levels (0 collisions at 100 ms, ≤10% throughput loss); S5 4-hour endurance (0 deadlocks, CPU ≤80%, no memory growth); S6 50-sample response time (mean ≤200 ms); A1 ablations (Banker admission off, aging off, switch off, congestion weights on). Statistics: 5 seeds mean±std, Welch t-test α=0.05; all automated as launch_testing integration scenarios (7 of the ≥10 required).",
+ "implementation_plan": "Language: Python 3.10 in the existing ament_cmake_python package src/amr_fleet (ROS-free algorithm modules + rclpy nodes). Files: amr_fleet/graph/corridor_graph.py (geojson compatible with nav2_route format, corridor compression, resources/pockets), eta.py (trapezoid + rotation + κ_e EMA), assignment/{hungarian,auction,baselines,hra}.py, traffic/{reservation_table,sipp,precedence,tokens,banker}.py, deadlock/{wait_for_graph,detector,resolver}.py, kpi.py, nodes/{fleet_manager_node,traffic_manager_node,robot_agent_node,latency_bridge_node,kpi_node}.py, config/{fleet.yaml,corridor_graph.geojson}, launch/fleet.launch.py, test/test_*.py, docs/algorithms/{assignment,traffic,deadlock}.md (deadlock.md already listed in docs README). Interfaces: existing amr_msgs Task/RobotState/FleetStatus(deadlock_count)/AssignTask.srv; new PassageGrant.msg, TrafficState.msg, DeadlockEvent.msg, ReportPassage.srv. Nav2 (verified in amr-fleet-system:latest, Nav2 1.1.20): per-namespace navigate_through_poses (goal-prefix extension), speed_limit topic (nav2_msgs/SpeedLimit; 0.0 = no limit, so never used to stop), backup action for yielding, IsPathValid; optional nav2_route DynamicEdges (closed/opened/adjust edges) for R2 rerouting. latency_bridge delays fleet↔agent topics by τ~U(20,100) ms; agent↔Nav2 actions stay local. Unit tests (≥70% coverage): Hungarian vs brute force (N≤7, incl. rectangular), auction nε bound, ETA vs numeric integration, interval-overlap boundaries, SIPP toy graphs, time-feasible⇒DAG, Banker rejects classic 2-robot swap, Tarjan cycles, resolver determinism, KPI Little check, latency distribution. Compute: central nodes <0.3 core total; response-time budget ≈180 ms mean / 230 ms worst with 100 ms simulated latency, speculative pre-planning recommended. Environment: scipy.optimize import fails (scipy 1.8.0 apt vs numpy 2.2.6 pip) — no scipy at runtime; networkx only as a test oracle. Timeline: W1 graph/ETA/assignment+S1, W2 reservations/SIPP/precedence/tokens/goal extension+S2, W3 detection/resolution/latency bridge/KPI+S3/S4, W4 S5/S6/ablations/docs/dashboard.",
+ "open_questions": [
+  "Does the team's A*/DWA continue smoothly when NavigateThroughPoses goals are extended (preempted) at each token grant, or should FollowPath stitching be used instead?",
+  "Who fixes the scipy/numpy ABI break in the Docker image (pin numpy<2 or pip-install scipy)? Our code does not depend on it, but other packages might.",
+  "Corridor graph authoring: manual geojson (~100-150 nodes) vs semi-automatic skeletonisation from the SLAM map?",
+  "Tuning of the geometric wait-for threshold d_dl in wide corridors to catch local-planner standoffs (type T5) without false positives.",
+  "Trade-off of the conservative safety pad δ_s = 0.68 m (quantify via S4 sweep).",
+  "Should ETA use payload-dependent acceleration (25 kg loads) instead of relying on per-edge EMA calibration alone?",
+  "arXiv API was rate-limited (HTTP 429 ×4, shared quota across parallel agents); abstracts were verified via arxiv.org/abs pages instead — a later pass could rerun the API queries to catch any papers missed by WebSearch."
+ ]
+}

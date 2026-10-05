@@ -30,6 +30,8 @@ RUN curl -sSL https://packages.osrfoundation.org/gazebo.gpg \
     && rm -rf /var/lib/apt/lists/*
 
 # --- ROS2 스택: Nav2, SLAM, 로컬라이제이션, TF, 시각화 ----------------------
+# foxglove-bridge: 명세 4.9 모니터링 — Foxglove Studio 를 실시간(WebSocket)으로 연결한다.
+# (rosbag 재생만으로는 라이브 모니터링이 안 된다.)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-humble-navigation2 \
         ros-humble-nav2-bringup \
@@ -51,9 +53,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-humble-vision-opencv \
         ros-humble-laser-filters \
         ros-humble-pointcloud-to-laserscan \
+        ros-humble-foxglove-bridge \
     && rm -rf /var/lib/apt/lists/*
 
-# --- BehaviorTree.CPP + Groot2 연동 (명세 8장) ------------------------------
+# --- BehaviorTree.CPP + Groot2 연동 (명세 4.8) ------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-humble-behaviortree-cpp \
         ros-humble-behaviortree-cpp-v3 \
@@ -61,7 +64,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libzmq3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# --- 테스트/커버리지 도구 (명세 10장: 커버리지 70% 이상) --------------------
+# --- 테스트/커버리지 도구 (명세 4.10: 커버리지 70% 이상) --------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-humble-ament-cmake-gtest \
         ros-humble-ament-lint-auto \
@@ -76,25 +79,55 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # RTX 5090은 compute capability 12.0 이므로 cu128 이상 휠이 필요하다.
 # ros:humble 이미지의 sympy/mpmath 는 distutils 로 설치되어 있어 pip 이 제거하지 못한다.
 # --ignore-installed 로 해당 패키지만 덮어쓴다.
+# 버전은 고정한다 — 미고정 시 빌드 시점마다 다른 torch 가 잡혀 이미지가 재현되지 않는다.
 RUN pip3 install --no-cache-dir --upgrade pip wheel \
-    && pip3 install --no-cache-dir --ignore-installed sympy mpmath \
+    && pip3 install --no-cache-dir --ignore-installed sympy==1.14.0 mpmath==1.3.0 \
     && pip3 install --no-cache-dir \
-        torch torchvision --index-url https://download.pytorch.org/whl/cu128
+        torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cu128
 
-RUN pip3 install --no-cache-dir \
-        ultralytics \
-        opencv-python-headless \
-        numpy'<2' \
-        scipy \
-        matplotlib \
-        pandas \
-        transforms3d \
-        pytest pytest-cov pytest-timeout \
-        flask flask-socketio eventlet \
-        pyyaml jsonschema
+# --- pip 제약 파일 (docker/constraints.txt) ----------------------------------
+# 아래 pip 층의 고정 버전을 제약 파일로도 두고 PIP_CONSTRAINT 로 가리킨다. 이 Dockerfile 의 pip 설치는
+# 물론 컨테이너 안의 ad-hoc `pip install ...` 도 이 버전을 벗어나지 못한다 — 예: `pip install -U ultralytics`
+# 가 opencv-python 을 다시 깔아 contrib 의 cv2.aruco 를 지우거나 numpy 2 가 들어오는 요청을 pip 이 거부한다.
+# torch 층 뒤에 두어 제약 파일이 바뀌어도 torch 층 캐시는 유지된다 (pip 층부터 다시 빌드).
+COPY docker/constraints.txt /etc/amr/constraints.txt
+ENV PIP_CONSTRAINT=/etc/amr/constraints.txt
 
-# --- 도킹용 ArUco (명세 8장 도킹 시스템) ------------------------------------
-RUN pip3 install --no-cache-dir opencv-contrib-python-headless
+# --- Python 과학/테스트/웹 스택 (전부 버전 고정 — 재현 가능한 이미지) ---------
+# * numpy 1.x 필수: cv_bridge(boost.python), apt matplotlib 등 ROS 측 C 확장이 numpy 1.x
+#   ABI 로 빌드되어 있어 numpy 2 에서는 import/변환이 깨진다 (_ARRAY_API not found).
+# * opencv-python: ultralytics 의 하드 의존성이라 제거할 수 없다. 실제 cv2 바이너리는
+#   아래 마지막 단계에서 같은 버전의 contrib-headless 로 덮어쓴다 (동일 버전 → 설정 파일 동일).
+#   opencv-python-headless 는 셋이 같은 cv2/ 를 두고 겹치므로 설치하지 않는다.
+# * scipy: apt 1.8.0 은 numpy>=1.25 에서 "unsupported NumPy" 경고를 내므로 pip 휠로 올린다.
+#   matplotlib/pyyaml 은 apt 버전(3.5.1 / 5.4.1)이 numpy 1.26 과 호환되어 그대로 쓴다
+#   (pip 은 동일 버전이 이미 있으면 건너뛴다).
+# * pytest 8.x: pytest 9 는 launch_testing 의 pytest 플러그인(hookimpl 'path' 인자)과
+#   충돌해 ROS 를 소싱한 상태에서는 pytest 자체가 뜨지 않는다.
+# * transforms3d 0.4.2: apt 0.3.1 은 numpy>=1.24 에서 import 실패(np.float 제거) →
+#   tf_transformations 가 깨진다. apt 판은 sympy 처럼 distutils egg-info 라 pip 이 제거하지
+#   못하므로 --ignore-installed --no-deps 로 먼저 덮어쓴다 (/usr/local 이 sys.path 에서 앞선다).
+RUN pip3 install --no-cache-dir --no-deps --ignore-installed transforms3d==0.4.2 \
+    && pip3 install --no-cache-dir \
+        numpy==1.26.4 \
+        opencv-python==4.11.0.86 \
+        ultralytics==8.4.155 \
+        transforms3d==0.4.2 \
+        scipy==1.15.3 \
+        matplotlib==3.5.1 \
+        pandas==2.3.3 \
+        pytest==8.3.5 pytest-cov==7.1.0 pytest-timeout==2.4.0 \
+        flask==3.1.3 flask-socketio==5.6.1 eventlet==0.41.2 \
+        pyyaml==5.4.1 jsonschema==4.26.0 \
+    && pip3 install --no-cache-dir --no-deps --force-reinstall \
+        opencv-contrib-python-headless==4.11.0.86
+# 마지막 줄 = 도킹용 ArUco (명세 4.8). contrib 모듈(aruco) + headless(rviz/rqt 의 시스템 Qt 와
+# 번들 Qt 충돌 방지). opencv-python 과 같은 cv2/ 디렉토리에 풀리므로 반드시 마지막에
+# --force-reinstall 로 설치해 contrib-headless 의 cv2.abi3.so 가 결정적으로 이기게 한다.
+# --no-deps: 위에서 고정한 numpy 등을 건드리지 않는다.
+# 주의: 두 배포판이 같은 cv2/ 를 소유한다. 이후 어떤 이유로든 opencv-python 이 다시 설치되면
+# (--force-reinstall 등 — 제약 파일은 버전 이탈만 막고 같은 버전 재설치는 못 막는다) 마지막 줄의
+# contrib-headless 설치를 다시 실행해야 aruco 가 돌아온다. `pip uninstall opencv-python` 은 공유 파일을 지운다.
 
 # --- 비루트 사용자 ----------------------------------------------------------
 RUN groupadd -g ${GID} ${USERNAME} 2>/dev/null || true \
@@ -106,6 +139,13 @@ RUN groupadd -g ${GID} ${USERNAME} 2>/dev/null || true \
 ENV ROS_WS=/ros2_ws
 RUN mkdir -p ${ROS_WS}/src && chown -R ${UID}:${GID} ${ROS_WS}
 WORKDIR ${ROS_WS}
+
+# Gazebo Fortress 리소스 경로 기본값 — 프로젝트 월드/모델. ENV 라서 엔트리포인트를 거치지 않는
+# 비대화형 exec(docker compose exec dev ros2 ...)에서도 보인다. 런타임에 -e / compose environment / .env 로
+# 다른 값을 주면 이 기본값이 통째로 대체되므로, /etc/amr/ros_env.sh(아래)가 프로젝트 경로를 다시 앞에
+# 붙이고 GZ_SIM_RESOURCE_PATH 를 같은 값으로 맞춘다. (런치 파일은 install/share 경로를 덧붙인다)
+ENV IGN_GAZEBO_RESOURCE_PATH=${ROS_WS}/src/amr_simulation/worlds:${ROS_WS}/src/amr_simulation/models
+ENV GZ_SIM_RESOURCE_PATH=${IGN_GAZEBO_RESOURCE_PATH}
 
 # --- GPU 렌더링 (headless EGL) ----------------------------------------------
 # nvidia-container-toolkit 은 libEGL_nvidia.so 는 주입하지만 이를 가리키는
@@ -128,9 +168,22 @@ ENV QT_X11_NO_MITSHM=1
 ENV __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json
 ENV MESA_LOADER_DRIVER_OVERRIDE=""
 
-# --- 엔트리포인트 -----------------------------------------------------------
+# --- 엔트리포인트 / 셸 환경 --------------------------------------------------
+# ros_env.sh: ROS 소싱 + install/ 오버레이 + Gazebo 리소스 경로 앞붙이기(멱등). 엔트리포인트와
+# 대화형 bash 가 같은 파일을 소싱하므로 두 경로의 환경이 갈라지지 않는다.
+COPY docker/ros_env.sh /etc/amr/ros_env.sh
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# 대화형 셸(docker compose exec dev bash)은 엔트리포인트를 타지 않으므로 /etc/bash.bashrc 에서 소싱한다.
+# /etc/bash.bashrc 는 모든 사용자의 *대화형* bash 만 읽는다 (bash -c / exec dev ros2 ... 는 해당 없음 —
+# 그런 경우는 `bash -ic` 나 `docker compose run`). install/ 은 빌드 후에만 존재한다.
+RUN printf '%s\n' \
+        '' \
+        '# ROS2 + 워크스페이스 오버레이 + Gazebo 리소스 경로 (amr-fleet-system) — 엔트리포인트와 같은 파일' \
+        'source /etc/amr/ros_env.sh' \
+        '[ -f ${ROS_WS}/install/setup.bash ] || echo "[amr] ${ROS_WS}/install 이 아직 없다 — builder 가 끝난 뒤 새 셸을 열거나 source install/setup.bash"' \
+        >> /etc/bash.bashrc
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["bash"]

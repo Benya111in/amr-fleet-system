@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  /dev/shm 가 작은 환경용 변형 (docker 기본 64 MB — compose 는 ipc: host 라 해당 없음): 참가자 수 설정만 두고 전송은
+  Fast DDS 기본(SHM 0.5 MB 세그먼트 + UDP, ROS_LOCALHOST_ONLY 는 rmw 가 처리)을 쓴다.
+
+  16 MB SHM 세그먼트를 참가자마다 만들면(fastdds_multi_robot.xml) 전체 스택 1대(참가자 ≈ 40)만으로 64 MB 를 다 채워
+  세그먼트 생성이 실패하고("Failed to create Shared Memory Manager", /dev/shm 100 %) 일부 통신이 멎었다 (통합 실측
+  2026-09-22). launch_utils.dds_profile_name 이 /dev/shm 용량(< 2 GiB)을 보고 이 파일을 고른다. 이때 카메라 영상은
+  UDP 조각 전송으로 떨어져 YOLO 처리율이 낮아진다 (perception.md §8.2) — 컨테이너를 ipc: host 또는
+  shm_size ≥ 2 GB 로 띄우는 것을 권장한다.
+
+  1) 참가자 수 (multi_robot.md §9): builtin.mutation_tries 400 — 머리말은 fastdds_multi_robot.xml.
+-->
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <participant profile_name="amr_system_noshm" is_default_profile="true">
+    <rtps>
+      <builtin>
+        <mutation_tries>400</mutation_tries>
+      </builtin>
+    </rtps>
+  </participant>
+</profiles>

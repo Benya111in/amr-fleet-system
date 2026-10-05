@@ -1,0 +1,297 @@
+
+### 제어이론·안전집합·ICS
+
+- [**본문확인**] T. Kim, A. D. Menon, A. Trivedi, D. Panagou, "Backup-Based Safety Filters: A Comparative Review of Backup CBF, Model Predictive Shielding, and gatekeeper", arXiv:2604.02401v2, CDC 2026 <https://arxiv.org/html/2604.02401>
+  - 세 방법을 하나의 안전 필터 추상으로 통일. Backup CBF 는 백업 롤아웃으로 암묵 안전집합을 만들어 QP 로 입력을 수정, MPS 는 고정 전환 시각 Δt 에서 이진 수락/거부, gatekeeper 는 전환 시각을 탐색한다. 정리 2: I_MPS ⊆ I_GK. 정리 3: Backup CBF 의 비활성 집합 상대내부 ⊆ gatekeeper 의 비활성 집합. 표 II 계산 시간: 병렬 gatekeeper ≈ 1.3 ms, 순차 gatekeeper ≈ 10.86 ms, MPS ≈ 1.3 ms, Backup CBF ≈ 10.33–2
+- [초록만] T. Kim, H. K. Park, R. Wada, N. Atanasov, S. Koga, D. Panagou, "OcclusionCBF: Backup Control Barrier Functions for Safe Navigation Among Hidden Dynamic Obstacles", arXiv:2609.06342, 2026-09-06 <https://arxiv.org/abs/2609.06342>
+  - 핵심 문제 제기가 우리와 같다 — 로봇이 '동적 장애물이 보이는 순간 어떤 허용 입력으로도 회피할 수 없는 상태' 에 도달할 수 있다. 수동적 정지 대신 **능동 기동 백업**을 쓰고, 도달 가능 점유 예측 위에서 safety filter 의 recursive feasibility 와 예측이 포괄하는 모든 장애물 운동에 대한 무충돌을 증명한다. 안전 조건을 아핀 제약으로 만들어 최소 침습 QP 필터로 실시간 수행.
+- [초록만] P. Ong, D. E. J. van Wijk, M. de Sa, J. W. Burdick, A. D. Ames, "SafeSpace: Aggregating Safe Sets from Backup Control Barrier Functions under Input Constraints", arXiv:2604.03536, 2026-04-04 <https://arxiv.org/abs/2604.03536>
+  - 여러 백업 CBF 가 만드는 암묵 안전집합들을 논리 합성(combinatorial CBF + 보조 변수)으로 **합집합**처럼 묶어 하나의 연속 안전 필터를 만든다. conjunctive compatibility 조건 아래 일반화 combinatorial CBF 가 된다. 우주선 자세·궤도 유지로 검증.
+- [초록만] H. Hu, C. Siu, M. Chen, "A Hamilton-Jacobi Reachability-Guided Search Framework for Efficient and Safe Indoor Planar Robot Navigation", arXiv:2604.17679, 2026-04-20 <https://arxiv.org/abs/2604.17679>
+  - HJ 도달성 값함수를 오프라인으로 계산해 그래프 탐색의 휴리스틱 겸 선제적 안전 제약으로 쓴다. HJ 도달성이 환경 전체를 알아야 한다는 오랜 제약을 온라인 탐색과 결합해 우회한다.
+- [초록만] Taekyung Kim, "Is Your Safe Controller Actually Safe? A Critical Review of CBF Tautologies and Hidden Assumptions", arXiv:2603.06954, 2026-03-07 (개정 2026-07-22) <https://arxiv.org/abs/2603.06954>
+  - 안전 제어기의 '존재' 라는 수학적 가정과 입력 제약이 있는 실제 시스템에서의 '구성적 실현' 사이에 반복되는 간극을 지적한다. 많은 CBF 시연이 단일 적분기나 기구학 매니퓰레이터처럼 **물리 자체가 이미 안전을 물려주는** 수동적으로 안전한 시스템에서만 성립한다. 후보 CBF 와 유효 CBF 의 구분을 강조.
+- [초록만] Counterfactual Closing-Acceleration Risk 외, "An Anticipatory Surrogate Safety Measure for the Blind Region of Car-Following", arXiv:2609.00370, 2026; 관련 "Beyond 1D and oversimplified kinematics: A generic analytical framework for surrogate safety measures", arXiv:2312.07019 <https://arxiv.org/abs/2609.00370>
+  - TTC 류는 등속 운동을 가정하고 접근 속도가 양이 아닐 때 정의되지 않아, 차간 추종 프레임의 51 %가 위험 값이 없는 blind region 으로 남는다고 보고한다.
+- [초록만] X. Tan, D. V. Dimarogonas 외, "Compatibility checking of multiple control barrier functions for input constrained systems", arXiv:2209.02284 (CDC 2022); 및 "Feasibility of multiple robust control barrier functions for bounding box constraints", arXiv:2503.18524, 2025 <https://arxiv.org/abs/2209.02284>
+  - CBF 기반 제어기는 CBF 조건들이 **양립 가능(compatible)** 할 때만 잘 정의된다. 입력 제약이 있으면 여러 CBF 가 동시에 만족 가능한지 검사해야 하고, 2025년 후속은 경계 상자 제약 아래 여러 로버스트 CBF 의 상호 실현 가능성을 보장하는 파라미터 조건을 유도한다.
+- [초록만] "Zero-Order Control Barrier Functions for Sampled-Data Systems with State and Input Dependent Safety Constraints", arXiv:2411.17079, 2024–2025; "Sampling-Aware Control Barrier Functions", arXiv:2511.11897, 2025 <https://arxiv.org/abs/2411.17079>
+  - 영차 유지(ZOH)로 제어하는 실제 시스템에서 표본 시각 사이의 안전까지 보장하려면 배리어 조건을 다음 표본 시점의 **예측값** 위에 걸거나(ZOCBF), 테일러 상계로 표본 간 효과를 명시적으로 포착해 로버스트 여유를 두어야 한다(SACBF).
+- [2차인용] D. R. Agrawal, R. Chen, D. Panagou, "gatekeeper: Online Safety Verification and Control for Nonlinear Systems in Dynamic Environments", IEEE Transactions on Robotics, vol. 40, pp. 4358–4375, 2024 (arXiv:2211.14361) <https://arxiv.org/abs/2211.14361>
+  - 공칭 계획기 뒤에 검증 단계를 덧붙인다. 매 주기 '공칭 궤적 접두부 + 백업 정책 접미부' 를 짧은 유한 지평으로 수치 전방 적분해 검증하고, 검증된 커밋 궤적을 추종하면 **유한 지평 너머 모든 미래**에 대해 안전이 보장됨을 증명한다. 검증 실패 시 직전 커밋 궤적을 계속 실행 → recursive feasibility.
+- [초록만] H. Parwana, M. Black, B. Hoxha, H. Okamoto, G. Fainekos, D. Prokhorov, D. Panagou, "Feasible Space Monitoring for Multiple Control Barrier Functions with Application to Large Scale Indoor Navigation", arXiv:2312.07803, 2023 (ICRA 2024) <https://arxiv.org/abs/2312.07803>
+  - 여러 CBF 제약이 동시에 걸리면 허용 입력 공간의 **부피가 0 으로 수축**해 QP 가 infeasible 해진다. 그 부피의 변화율 자체에 배리어를 걸어(FS-CBF) 부피가 0 이 되지 않도록 한다. AWS Hospital gazebo 에서 동적 에이전트들 사이 항법으로 검증.
+- [초록만] A. Thirugnanam, J. Zeng, K. Sreenath, "Safety-Critical Control and Planning for Obstacle Avoidance between Polytopes with Control Barrier Functions", ICRA 2022 (arXiv:2109.12313); 관련 arXiv:2107.08360 <https://arxiv.org/abs/2109.12313>
+  - 두 다면체 사이 최소 거리를 쌍대(dual) 최적화로 표현하고 그 라그랑지안으로 비평활 CBF 를 구성해 실시간 QP 로 푼다. L 자(소파형) 로봇이 좁은 복도를 통과하는 것으로 검증 — 즉 **배리어가 자세(yaw)에 의존**한다.
+- [2차인용] M. F. Reis, A. P. Aguiar, P. Tabuada, "Control Barrier Function-Based Quadratic Programs Introduce Undesirable Asymptotically Stable Equilibria", IEEE Control Systems Letters (L-CSS), vol. 5, no. 2, 2021 (arXiv:2003.07819) <https://arxiv.org/abs/2003.07819>
+  - CLF-CBF-QP 가 안전집합 **경계 위에** 리아푸노프 최소점이 아닌 평형점을 만들 수 있고, 그 평형이 점근 안정이 되는 명시적 조건을 유도한다. 경계 평형을 명시적으로 회피하는 QP 확장을 제안한다.
+- [2차인용] T. Gurriet, M. Mote, A. Singletary, E. Feron, A. D. Ames, "A Scalable Controlled Set Invariance Framework with Practical Safety Guarantees", CDC 2019; Y. Chen, A. Singletary, A. D. Ames, "Backup Control Barrier Functions: Formulation and Comparative Study", CDC 2021 (arXiv:2104.11332) <https://arxiv.org/abs/2104.11332>
+  - 큰 제어 불변 집합을 직접 합성하는 대신, 작고 확실한 백업 집합을 백업 정책으로 전방 적분해 **암묵적** 불변 집합을 키운다. 구성상 제어 불변이며 입력 한계를 존중하고, 안전 조건의 상대 차수를 1 로 낮춘다.
+- [2차인용] C. Pek, M. Althoff, "Fail-Safe Motion Planning for Online Verification of Autonomous Vehicles Using Convex Optimization", IEEE Transactions on Robotics, 2021; 관련 Nature Machine Intelligence, "Using online verification to prevent autonomous vehicles from causing accidents", 2020 <https://mediatum.ub.tum.de/doc/1636797/vr86dh5t8uw2fj92w8kq913o9.Pek-2021-TRO.pdf>
+  - invariably safe set = 무한 지평에 걸쳐 또 다른 안전 상태로의 안전한 전이를 보장하는 상태만 담는 부분집합. 계획기가 낸 의도 궤적을 온라인 검증하고, 안전 임계 상황에서는 실시간으로 fail-safe 궤적(볼록 최적화, 저크 최소화)을 낸다.
+- [초록만] S. Mitsch, K. Ghorbal, A. Platzer, "On Provably Safe Obstacle Avoidance for Autonomous Robotic Ground Vehicles", Robotics: Science and Systems (RSS) IX, 2013 (확장판: Mitsch, Ghorbal, Vogelbacher, Platzer, IJRR 2017; FMSD 2017) <https://www.roboticsproceedings.org/rss09/p14.html>
+  - 세 수준의 안전을 형식적으로 구분: static safety, passive safety, **passive friendly safety** — 후자는 로봇이 정지한 뒤에도 장애물이 스스로 제동해 충돌을 피할 여지를 남길 것을 요구한다. PDF 본문 추출 실패로 부등식 원문은 확인 못 했다.
+- [초록만] S. Bouraine, T. Fraichard, H. Salhi, "Provably safe navigation for mobile robots with limited field-of-views in dynamic environments", Autonomous Robots, vol. 32, no. 3, pp. 267–283, 2012 <https://link.springer.com/article/10.1007/s10514-011-9258-8>
+  - 미지의 동적 환경에서 절대적 motion safety 는 일반적으로 보장 불가. 대신 passive motion safety — '충돌이 나더라도 로봇은 정지해 있다' — 로 약화하고, 그에 대응하는 **braking ICS**(어떤 제동 궤적을 따라도 정지 전에 충돌하는 상태)를 정의한다.
+- [2차인용] K. E. Bekris, L. E. Kavraki, "Avoiding Inevitable Collision States: Safety and Computational Efficiency in Replanning with Sampling-based Algorithms", ICRA Workshop on Guaranteeing Safe Navigation in Dynamic Environments, 2010 <http://emotion.inrialpes.fr/fraichard/safety2010/10-bekris-icraw.pdf>
+  - ICS 판정의 계산 비용과 보수성의 트레이드오프를 다룬다. E 를 줄이면 판정은 싸지지만 ICS(E) 가 커져 로봇이 과도하게 보수적이 된다.
+- [2차인용] T. Fraichard, H. Asama, "Inevitable Collision States — A Step Towards Safer Robots?", Advanced Robotics (RSJ), vol. 18, no. 10, 2004 (초기본 IROS 2003) <http://emotion.inrialpes.fr/fraichard/publications/journals/04-rsjar-fraichard-asama.pdf>
+  - ICS = 미래에 어떤 궤적을 따르더라도 결국 충돌하는 상태. 시스템 동역학과 **움직이는** 장애물의 미래 거동을 함께 고려한다. 실무적으로는 회피 궤적 부분집합 E 에 대한 보수적 근사 ICS(E) 로 계산한다.
+- [2차인용] D. Fox, W. Burgard, S. Thrun, "The Dynamic Window Approach to Collision Avoidance", IEEE Robotics & Automation Magazine, vol. 4, no. 1, pp. 23–33, 1997 <https://dl.acm.org/doi/abs/10.5555/895623>
+  - 동적 창은 현재 속도에서 한 제어 주기에 도달 가능한 (v, ω) 로 탐색을 제한하고, 각 후보를 **등속 원호**로 전개해 평가한다. 정지 거리 이내에 장애물이 없는 후보만 허용한다.
+
+### 계산기하·구성공간
+
+- [초록만] "Path Planning with Motion Primitives in Dynamic Environments: SIPP on Lattices," arXiv:2609.31803 (Int. Conf. on Interactive Collaborative Robotics, ICR 2026) <https://arxiv.org/abs/2609.31803>
+  - SIPP 를 상태 격자 + 운동 프리미티브 위로 올린다. 움직이는 장애물의 **시공간 스윕 볼륨을 격자에 직접 래스터화**해 동적 환경을 처리한다.
+- [초록만] Y.-H. Chen, S. Liu, W. Xiao, C. Belta, M. Otte, "Exact Signed-Distance Control Barrier Functions via Minkowski Operations for Safe Navigation among Polytopes," arXiv:2608.02886 <https://arxiv.org/abs/2608.02886>
+  - 다면체 로봇/장애물 쌍의 **정확** SDF 를 Minkowski 연산의 동반 볼록계획으로 구하고, 민감도 해석으로 SDF 기울기의 통일된 해석식을 유도한다. 명시적으로 "기하와 비홀로노믹 운동학의 결합이 만드는, 지금까지 가려져 있던(previously masked) 국소 최소 부류를 발견했다"고 보고한다.
+- [초록만] C. Peng, Z. Ge, W. Lu, H. Gao, S. Vougioukas, P. Wei, "EXACT-MPPI: Exact Signed-Distance Navigation for Arbitrary-Footprint Robots from Point Clouds via Path Integral Control," arXiv:2605.29663 <https://arxiv.org/abs/2605.29663>
+  - 임의(볼록·오목) 단순 다각형 발자국에 대한 **해석적 정확 SDF 평가기**를 MPPI 롤아웃 안에 넣는다. 직사각형 계열에는 rectangle-cover 특수화를 쓴다. 롤아웃 중 예측 body frame 변환으로 방위를 본질적으로 다루며, 조밀한 정적·이동 장애물에서 견고하다고 보고한다. 차동구동/애커만/전방향을 발자국과 운동모델 교체만으로 지원.
+- [초록만] T. Ga, J. Choi, "GPU-Accelerated Polygonal Signed Distance Functions for Real-Time Collision Avoidance," arXiv:2607.04310 <https://arxiv.org/abs/2607.04310>
+  - 볼록 다각형 발자국과 경계 에지로 표현된 장애물 사이의 **기하 정확(geometry-exact)** SDF 를, 가중치 없고 분기 없는 텐서화 파이프라인으로 배치 계산한다.
+- [2차인용] J. Wang, D. E. Chang, "Velocity-Obstacle Based MPC for Shape-Aware Mobile Robot Motion Planning," SSRN preprint 6506802 <https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6506802>
+  - 다각형 로봇에 대한 최적화 기반 계획의 보수성 문제를 지적하고, 로봇 최고 속도와 적절한 시간 지평을 명시적으로 넣은 **시간 인식(time-aware) VO 재정식화**를 제안한다. 안전을 유지하면서 가용 속도 집합을 넓히고, 제약을 속도 공간에 표현해 변수 수를 줄인다(ADMM).
+- [초록만] Y.-H. Chen, S. Liu, W. Xiao, C. Belta, M. Otte, "Control Barrier Functions via Minkowski Operations for Safe Navigation among Polytopic Sets," arXiv:2504.00364 <https://arxiv.org/abs/2504.00364>
+  - 최소 거리와 침투 깊이를 Minkowski 차 공간의 볼록계획으로 정식화하고, 미분가능 최적화로 암시적 SDF 의 도함수를 얻는다. 실험은 정적 다면체 장애물(병진, 초기 충돌 회복, 다중 장애물)이다.
+- [2차인용] P. Rousseas, D. Panagou, K. J. Kyriakopoulos, "Robust and topology-aware motion planning with moving obstacles," International Journal of Robotics Research, DOI 10.1177/02783649251324554 <https://journals.sagepub.com/doi/10.1177/02783649251324554>
+  - 움직이는 장애물 하의 계획을 로봇 상태 추정 불확실성과 사전 미지의 장애물 운동 추정 불확실성을 함께 다루며 **위상(topology) 인식**으로 푼다.
+- [초록만] J. Huang, J. Zeng, X. Chi, K. Sreenath, Z. Liu, H. Su, "Velocity Obstacle for Polytopic Collision Avoidance for Distributed Multi-robot Systems," IEEE Robotics and Automation Letters (arXiv:2304.07954) <https://arxiv.org/abs/2304.07954>
+  - VO 를 **다면체(polytope)** 사이에서 꼭짓점 좌표의 함수로 직접 구성한다. 최적화 없이(optimization-free) 닫힌 형태로 구성되며, 기존 거리 제약 최적화 기반 방법보다 계산이 훨씬 싸다고 주장한다. 저자 공개 구현 존재(HybridRobotics/vo-polytope).
+- [2차인용] F. Vesentini, R. Muradore, P. Fiorini, "A survey on Velocity Obstacle paradigm," Robotics and Autonomous Systems, art. 104645 <https://www.sciencedirect.com/science/article/abs/pii/S0921889024000289>
+  - VO 20여 년의 확장 분류. 비원형 형상·비홀로노믹 확장이 별도 가지로 정리되어 있다고 검색 스니펫이 밝힌다 (ScienceDirect 본문 403 으로 미확인).
+- [초록만] J. Wang, T. Zhang, Q. Zhang, C. Zeng, J. Yu, C. Xu, L. Xu, F. Gao, "Implicit Swept Volume SDF: Enabling Continuous Collision-Free Trajectory Generation for Arbitrary Shapes," ACM Transactions on Graphics 43 (SIGGRAPH 2024), arXiv:2405.00362 <https://arxiv.org/abs/2405.00362>
+  - 스윕 볼륨 SDF 를 일반화 준무한계획(GSIP)으로 정식화하고 질의점에서 암시적으로 수치 계산한다 — 표면을 명시적으로 복원하지 않는다. 명시 동기가 "기존 방법은 형상을 과단순화하거나 이산 샘플링에 의존해 **터널 효과**를 겪는다" 이다.
+- [초록만] J. Alonso-Mora, A. Breitenmoser, M. Rufli, P. Beardsley, R. Siegwart, "Optimal Reciprocal Collision Avoidance for Multiple Non-Holonomic Robots" (NH-ORCA), DARS 2010 / Springer STAR 83, pp. 203-216 <https://autonomousrobots.nl/assets/files/publications/10-alonsomora.pdf>
+  - 차동구동이 홀로노믹 속도 벡터를 추종할 때의 추종 오차 ε 를 로봇 반경에 **더해** ORCA 를 그대로 쓴다.
+- [2차인용] M. Phillips, M. Likhachev, "SIPP: Safe Interval Path Planning for Dynamic Environments," IEEE ICRA, pp. 5628-5635 <https://ieeexplore.ieee.org/document/5980306>
+  - 각 격자 셀에 대해 충돌 없는 '안전 구간'을 명시 계산해 시공간 탐색의 상태 수를 폭발시키지 않고 시간 최적 경로를 찾는다. 시간 이산화 대신 구간을 쓰므로 완전성·시간 최적성을 유지한다.
+- [초록만] P. Trautman, A. Krause, "Unfreezing the Robot: Navigation in Dense, Interacting Crowds," IEEE/RSJ IROS, pp. 797-803, DOI 10.1109/IROS.2010.5654369 <https://las.inf.ethz.ch/files/trautman10unfreezing.pdf>
+  - 'freezing robot problem' 의 정본: 환경 복잡도가 어떤 수준을 넘으면 계획기가 모든 전진 경로를 위험하다고 판정해 제자리에 얼어붙거나 불필요한 기동을 하며, 실제로는 실행 가능한 경로가 존재하는데도 그렇다.
+- [초록만] D. Wilkie, J. van den Berg, D. Manocha, "Generalized Velocity Obstacles," IEEE/RSJ IROS, pp. 5573-5578 <http://gamma-web.iacs.umd.edu/NHRVO/WilkieIROS09.pdf>
+  - VO 를 홀로노믹 가정에서 떼어내 제어 입력 집합 위에서 정의한다. 충돌로 이어지는 '제어'를 직접 식별한다.
+- [초록만] M. Tang, Y. J. Kim, D. Manocha, "C²A: Controlled Conservative Advancement for Continuous Collision Detection of Polygonal Models," IEEE ICRA <https://graphics.ewha.ac.kr/C2A/C2A.pdf>
+  - 등속 병진+회전 강체 운동에 대해 **운동 상한(motion bound)** — 물체 점들의 궤적 길이를 최근접 방향으로 투영한 상한 — 을 계산하고, 그만큼씩만 시간을 전진시켜 충돌 시각에 수렴한다. 놓치는 충돌이 없다.
+- [2차인용] C. Ericson, "Real-Time Collision Detection," Morgan Kaufmann (OBB 최근접점: p.133) <https://www.sciencedirect.com/book/9781558607323/real-time-collision-detection>
+  - OBB-점 최근접점·거리의 표준 폐형식과 그 분기 없는 구현. 우리 d_box 식의 교과서 출처.
+- [2차인용] P. Fiorini, Z. Shiller, "Motion Planning in Dynamic Environments Using Velocity Obstacles," International Journal of Robotics Research 17(7): 760-772 <https://journals.sagepub.com/doi/10.1177/027836499801700706>
+  - VO 의 정본. 원판-원판 기하에서 상대속도 공간의 원뿔로 충돌 집합을 닫힌 형태로 쓴다. 우리 velocity_obstacle.cpp 가 시간 절단형으로 정확히 이 형태를 구현하고 있다.
+- [2차인용] D. Fox, W. Burgard, S. Thrun, "The Dynamic Window Approach to Collision Avoidance," IEEE Robotics & Automation Magazine 4(1): 23-33 <https://www.ri.cmu.edu/pub_files/pub1/fox_dieter_1997_1/fox_dieter_1997_1.pdf>
+  - DWA 정본. 동적 창을 측정 속도 중심으로 잡고 원호 롤아웃을 평가한다. 원 논문도 로봇을 원으로 근사한다.
+- [2차인용] E. G. Gilbert, D. W. Johnson, S. S. Keerthi, "A fast procedure for computing the distance between complex objects in three-dimensional space" (GJK), IEEE Journal of Robotics and Automation 4(2): 193-203 <https://ieeexplore.ieee.org/document/2083>
+  - 지지함수만으로 볼록체 간 거리를 구하는 정본 알고리즘. 침투 깊이는 EPA 로 확장한다.
+- [초록만] M. Erdmann, T. Lozano-Pérez, "On Multiple Moving Objects," Algorithmica 2: 477-521 (MIT AI Memo AIM-883, 1986) <https://people.csail.mit.edu/tlp/publications/01087401.pdf>
+  - 구성공간-시간(configuration space-time) 의 정본. 움직이는 장애물이 만드는 시변 제약을 2차원 시간 슬라이스로 근사 표현하고 그 안에서 충돌 없는 경로를 탐색한다.
+
+### 속도장애물·상호회피
+
+- [초록만] Taekyung Kim, Hun Kuk Park, Renya Wada, Nikolay Atanasov, Shumon Koga, Dimitra Panagou, "OcclusionCBF: Backup Control Barrier Functions for Safe Navigation Among Hidden Dynamic Obstacles", arXiv:2609.06342v1 <https://arxiv.org/html/2609.06342>
+  - 백업 정책이 유도하는 **회복 가능 집합**(유한 지평 T 롤아웃이 안전 집합 안에 머물고 검증된 종단 집합에 도달하는 상태들)을 암묵적 안전 집합으로 쓴다. 구동 포화를 표준 CBF 가 보장 못 하는 부분을 이 방식이 메운다. 계산: 이중적분기 1.6~3.9 ms/주기, unicycle 4.1~4.5 ms/주기. 장애물 50 개에서 unicycle 성공률 86 %.
+- [초록만] Lei Shi, Haosong Wen, Qichao Liu, "Escape-Aware Control Barrier Functions for Quadrotor Safety under Body-Rate Limits", arXiv:2609.17292v1 <https://arxiv.org/html/2609.17292v1>
+  - 상태만 보는 배리어는 구동(자세각속도) 한계 아래 **탈출이 불가능한 상태를 안전하다고 인증하는 간극**을 만들고, 그 간극 폭이 접근 속도에 비례하고 각속도 한계에 반비례함을 증명한다. 해법은 배리어에 직전 입력 u⁻ 를 넣어 "1 제어구간 도달 가능 추력 집합"으로 재정의하고, 재정렬 동안 소모되는 여유를 미리 청구하는 것. 닫힌 형태 해가 있어 온라인 계산이 가능하다.
+- [초록만] Junfeng Wu, Jiaqi Chen, Hongkun Lyu, Kevin Zheng, Andy Li, "Cooperative-ORCA*: Real-Time Proactive Deadlock Avoidance for Continuous-Space Multi-Agent Navigation", arXiv:2606.22757v1 <https://arxiv.org/html/2606.22757>
+  - ORCA* 가 순수 반응형이라 현재 시각의 속도가 미래 교착을 낳는다는 점을 지적하고, MAPF 유도 경로 + 통로 의존관계 + drift 모드로 선제적으로 교착을 피한다. Gap 맵에서 ORCA* 는 40 에이전트에서 성공률 50 % 이하로 떨어지는 반면 C-ORCA* 는 ~100 % 유지.
+- [초록만] Alejandro Sánchez Roncero, Rafael I. Cabral Muchacho, Petter Ögren, "Multi-Agent Obstacle Avoidance using Velocity Obstacles and Control Barrier Functions", arXiv:2409.10117v3 <https://arxiv.org/html/2409.10117v3>
+  - VO 를 하드 제약으로 쓰는 것이 과보수·실행불가능의 원인이라고 지목하고, VO 제약에 슬랙 λ 를 붙여 목적함수로 옮기고(min k_u‖u−u_ref‖² + k_vo Σ w λ²), 별도의 덜 제한적인 CBF 를 하드 제약으로 남긴다. 12 에이전트 원형 대치에서 하드 VO(hVO)는 **성공률 0 %**(실행불가능), 제안 방식은 성공률 100 %·충돌 0.00±0.00·계산 6.18 ms. 다만 모든 에이전트가 회피한다고 가정하며 비협조/적대 상대는 다루지 않는다. (WebFetch 가 본문 HTML 에서 식과 표를 요약해 준
+- [초록만] Asher Stern, Zvi Shiller, "From NLVO to NAO: Reactive Robot Navigation using Velocity and Acceleration Obstacles", arXiv:2506.06255 (관련: arXiv:2504.13637, "Robot Navigation in Dynamic Environments using Acceleration Obstacles") <https://arxiv.org/abs/2506.06255>
+  - VO/NLVO 를 Acceleration Obstacle (AO) 과 Nonlinear AO (NAO) 로 확장해 속도·가속 제약을 함께 담는다. 비선형 궤적을 가는 장애물에 대해 충돌을 일으키는 **등가속도 집합**의 경계를 해석적으로 유도한다. 초록 수준에서는 공집합 처리나 교착에 대한 언급을 찾지 못했다.
+- [초록만] Diego Martinez-Baselga, Eduardo Sebastián, Eduardo Montijano, Luis Riazuelo, Carlos Sagüés, Luis Montano, "AVOCADO: Adaptive Optimal Collision Avoidance driven by Opinion", IEEE Transactions on Robotics, DOI 10.1109/TRO.2025.3552350 <https://arxiv.org/abs/2407.00507>
+  - ORCA 류 VO 정식화에서 출발하되 **상호성 가정을 버리고**, 센서 관측만으로 상대의 협조 수준을 추정해 책임 분담 α 를 비선형 opinion dynamics 로 온라인 적응시킨다. 혼합 협조/비협조 환경에서 성공률·도달시간·계산시간이 기존 계획기보다 낫고, VO 계열이 걸리는 기하 대칭 교착을 자연히 피한다고 보고한다.
+- [초록만] Rohan Chandra, Shubham Singh, Wenhao Luo, Katia Sycara, "Multi-Robot Navigation in Social Mini-Games: Definitions, Taxonomy, and Algorithms", arXiv:2508.13459 <https://arxiv.org/pdf/2508.13459>
+  - 사회적 미니게임(좁은 통로, 교차로, 마주보기 등)의 정의·분류·알고리즘 서베이. 상호 회피(ORCA 등) 계열이 "협조 에이전트를 가정"하며 "에이전트가 예측된 궤적을 따르지 않으면 실패"한다고 명시한다. 교착 해소 알고리즘군을 충돌 회피형 / 분산 조정형 / 게임이론형 / 학습형으로 나눈다.
+- [초록만] Ryusei Shigemoto, Shohei Saida, Ryosuke Tasaki, "Human-Inspired Flow-Crossing Navigation for Nonholonomic Mobile Robots in Dynamic Pedestrian Environments", Journal of Robotics and Mechatronics, 37(6):1499-1507 <https://www.fujipress.jp/jrm/rb/robot003700061499/>
+  - 사람의 관측된 행동에 기반해, **보행자 뒤쪽에 위치를 잡아** 흐름 속 간격(gap)을 통과하는 횡단 항법. 멈춰서 기다리지 않고 통과 지점을 골라 포텐셜 필드로 궤적을 만들고 pure pursuit 으로 추종한다. 사회력 기반 방법 대비 도달시간·경로길이가 유의하게 줄고 보행자 교란도 감소. 6 m x 6 m 실환경 실험.
+- [2차인용] Fabio Vesentini, Riccardo Muradore, Paolo Fiorini, "A survey on velocity obstacle paradigm", Robotics and Autonomous Systems <https://www.sciencedirect.com/science/article/abs/pii/S0921889024000289>
+  - 20여 년의 VO 확장을 분류 체계로 정리한 최신 서베이. VO 계열의 알려진 약점으로 (1) 에이전트 수에 따른 계산 부담, (2) 주변 상태(위치·반경·속도)를 완벽히 안다는 비현실적 가정, (3) **교착** 을 명시한다.
+- [초록만] Jihao Huang, Jun Zeng, Xuemin Chi, Koushil Sreenath, Zhitao Liu, Hongye Su, "Velocity Obstacle for Polytopic Collision Avoidance for Distributed Multi-robot Systems", IEEE Robotics and Automation Letters (RA-L) <https://arxiv.org/abs/2304.07954>
+  - 다면체 형상 로봇에 대해 VO 를 꼭짓점 좌표와 상대 상태의 함수로 구성한다. 최적화가 필요 없는(optimization-free) 구성이라 충돌 회피를 볼록/비볼록 최적화로 푸는 기존 방식보다 훨씬 싸다고 주장한다. 오픈소스 공개.
+- [**본문확인**] Andrew Best, Sahil Narang, Dinesh Manocha, "Real-time Reciprocal Collision Avoidance with Elliptical Agents", IEEE ICRA 2016 <http://gamma-web.iacs.umd.edu/EORCA/files/EORCA_ICRA16.pdf>
+  - "원판은 방위에 영향받지 않으므로 VO 모양·접선·최근접점 계산이 단순하지만, 타원 에이전트에서는 이 연산들이 에이전트와 장애물의 방위에 지배된다." VO 를 −X ⊕ Y 민코프스키 합의 τ 배율 절단 원뿔로 짓고, 방위를 결정 변수로 올린다(ERVO-F: 현재 방위로 필요 여유 MC(o) 를 못 내면 낼 수 있는 가장 가까운 방위 o^E 로 튼다). 회전 중 충돌은 δt·α_max 로 쓸린 스윕면의 볼록껍질로 보수화한다. **ERVO 집합이 비면(밀집 조건) 먼저 방위를 바꿔 해를 찾고, 그래도 없으면 3D LP 로 "제약을 최소
+- [2차인용] Javier Alonso-Mora, Andreas Breitenmoser, Martin Rufli, Paul Beardsley, Roland Siegwart, "Optimal Reciprocal Collision Avoidance for Multiple Non-Holonomic Robots" (NH-ORCA), DARS 2010 / Springer STAR 83, 2013 <https://la.disneyresearch.com/wp-content/uploads/alonsomora10dars_paper1.pdf>
+  - 차동구동 로봇이 원하는 홀로노믹 속도 명령을 오차 ε 안에서 따라갈 수 있게 하고, 그 ε 만큼만 유효 반경을 키워 VO 를 쓴다. 선행 ORCA-DD(Snape 외, IROS 2010)는 유효 반경을 **두 배**로 키워 같은 문제를 풀었는데, 그 때문에 좁은 통로·비정형 환경에서 성능이 나빴다.
+- [2차인용] Luis Martinez-Gomez, Thierry Fraichard 계열 / Sara Bouraine, Thierry Fraichard, Hassen Salhi, "Provably safe navigation for mobile robots with limited field-of-views in dynamic environments", Autonomous Robots <https://link.springer.com/article/10.1007/s10514-011-9258-8>
+  - 제한 시야·미지 동적 환경에서 **절대 운동 안전(어떤 경우에도 충돌 없음)은 일반적으로 보장 불가능**하다. 달성 가능한 것은 passive motion safety — Braking ICS(어떤 제동 궤적을 따르든 정지 전에 충돌하는 상태)를 항상 피하는 것 — 이며, 이는 "충돌이 나면 로봇은 정지 상태였다"만 보장한다. passive friendly safety 는 장애물의 제동력과 반응 지연을 알아야 성립한다.
+- [2차인용] Jur van den Berg, Jamie Snape, Stephen J. Guy, Dinesh Manocha, "Reciprocal collision avoidance with acceleration-velocity obstacles", IEEE ICRA 2011 <https://ieeexplore.ieee.org/document/5980408/>
+  - VO 의 "속도를 즉시 바꿀 수 있다"는 가정을 버리고, 가속 한계 아래 **비례 제어로 실제 안전하게 도달·유지할 수 있는 새 속도 집합**을 특성화한다. 후속 일반화(Bareiss & van den Berg, "Generalized reciprocal collision avoidance", IJRR 2015)는 VO / AVO / continuous control obstacles / LQR-obstacles 를 control obstacle 이라는 한 틀의 특수 경우로 묶는다.
+- [**본문확인**] Zvi Shiller, Oren Gal, Thierry Fraichard, "The Nonlinear Velocity Obstacle Revisited: the Optimal Time Horizon", ICRA 2010 Workshop on Safe Navigation in Open and Dynamic Environments <http://emotion.inrialpes.fr/fraichard/safety2010/10-shiller-etal-icraw.pdf>
+  - VO 의 절단 시간지평은 고정 상수가 아니라 상태·장애물별로 계산해야 한다. 올바른 값은 "제어 제약 아래 VO 를 빠져나가는 최소 시간"이며, 그 지평으로 절단한 VO 는 정확히 ICS 에 해당하는 속도만 포함한다. 해는 제어 제약 경계의 bang-bang extremal 위에 있고(점질량이면 extremal 4 개), 해석적으로 적분해 탄젠트 시각을 찾으면 된다. 저자들은 또 "ACV(t) = {v(t)+u·Δt : u∈U}"(= 동적 창)가 모든 속도를 시각 t 에 도달한다고 가정하는 오차를 명시하고, 그 편차를 e = (Δt
+- [2차인용] Peter Trautman, Andreas Krause, "Unfreezing the Robot: Navigation in Dense, Interacting Crowds", IEEE/RSJ IROS 2010, pp. 797-803, DOI 10.1109/IROS.2010.5654369 <https://las.inf.ethz.ch/files/trautman10unfreezing.pdf>
+  - freezing robot problem 의 정본. 환경 복잡도가 어느 선을 넘으면 계획기가 모든 전방 경로를 위험으로 판정해 로봇이 정지하거나 불필요한 기동을 한다. 원인은 불확실성 폭발이며, **완벽한 개별 예측만으로도 FRP 는 사라지지 않는다** — 협조의 수학적 모형이 없으면 안 된다.
+- [2차인용] David Wilkie, Jur van den Berg, Dinesh Manocha, "Generalized Velocity Obstacles", IEEE/RSJ IROS 2009, pp. 5573-5578 <http://gamma-web.iacs.umd.edu/NHRVO/WilkieIROS09.pdf>
+  - VO 를 홀로노믹 가정에서 풀어, car-like/비홀로노믹 로봇의 **제어**가 만드는 실제 궤적이 미래에 장애물과 충돌하는지를 직접 판정한다. 즉 VO 를 속도 공간이 아니라 제어 공간에서 정의한다.
+- [**본문확인**] Thierry Fraichard, Hajime Asama, "Inevitable Collision States. A Step Towards Safer Robots?", Advanced Robotics, 18(10):1001-1024 <http://emotion.inrialpes.fr/fraichard/publications/journals/04-rsjar-fraichard-asama.pdf>
+  - ICS = 미래에 어떤 궤적을 따르든 결국 충돌이 일어나는 상태. 시스템 동역학과 (고정·이동) 장애물을 모두 고려한다. 정의상 "로봇은 자신의 안전을 위해 절대 ICS 에 들어가면 안 된다". 핵심 실무 성질: ICS 를 전체 제어 집합 대신 **부분집합(회피 기동 몇 개)** 으로 계산하면 참 ICS 의 상위집합이 나오므로 보수적(안전 쪽)이다. 저자들은 braking prism / 회피 기동 집합 계열 선행 연구를 모두 이 틀의 특수 경우로 포섭한다.
+- [2차인용] Zvi Shiller, Frédéric Large, Sepanta Sekhavat, "Motion planning in dynamic environments: Obstacles moving along arbitrary trajectories", IEEE ICRA 2001 <https://www.researchgate.net/publication/3902680_Motion_planning_in_dynamic_environments_Obstacles_moving_along_arbitrary_trajectories>
+  - NLVO 의 원전. 장애물의 모양·속도·경로 곡률을 반영해 VO 를 임의 궤적으로 일반화한다. NLVO 는 시각별 순간 VO 의 합집합(비틀린 원뿔)이고, t=t₀ 에 NLVO 밖의 속도를 **하나** 고르면 장애물이 그 궤적을 유지하는 한 모든 시각에 충돌이 없음이 보장된다.
+- [2차인용] Paolo Fiorini, Zvi Shiller, "Motion Planning in Dynamic Environments Using Velocity Obstacles", International Journal of Robotics Research, 17(7):760-772 <https://journals.sagepub.com/doi/10.1177/027836499801700706>
+  - VO 의 정본. 현재 위치·속도만으로 속도 공간에서 회피 기동을 고른다. VO = 장애물과 언젠가 충돌하는 로봇 속도들의 집합 (상대 속도가 충돌 원뿔에 드는 속도).
+
+### 군중 내비·freezing
+
+- [**본문확인**] M. Agranovskiy, "Path Planning with Motion Primitives in Dynamic Environments: SIPP on Lattices", Int. Conf. on Interactive Collaborative Robotics (ICR), 2026 <https://arxiv.org/html/2609.31803>
+  - SIPP 를 상태 격자(x, y, heading) + 사전 계산된 차동 구동 운동 프리미티브와 결합하고, 움직이는 장애물의 시공간 스웹트 볼륨을 격자에 직접 래스터화한다. 3D 상태공간 때문에 4-연결 격자 대비 탐색 시간이 늘어난다는 점을 한계로 명시하고 실시간성은 주장하지 않는다.
+- [초록만] J. Shi, H. Zhang, Y. Yan 외, "Optimal-Horizon Social Robot Navigation in Heterogeneous Crowds", arXiv:2603.00507, 2026-02-28 <https://arxiv.org/abs/2603.00507>
+  - 보행자의 '협조 속성'을 시공간 Transformer 로 추론하고 MPC 예측 지평 자체를 사회적 조건부 결정 변수로 삼는다. 협조적 보행자에겐 짧은 지평, **비협조적 보행자에겐 긴 지평과 보수적 여유**. 성공률 +6.8 %, 충돌 −50 %, 주행시간 −19 % 보고.
+- [초록만] J. Zhang, Y. Xu, V. Aggarwal, "Don't Freeze, Don't Crash: Extending the Safe Operating Range of Neural Navigation in Dense Crowds", arXiv:2603.06729, 2026-03-06 <https://arxiv.org/abs/2603.06729>
+  - 고밀도에서 충돌 없는 속도 집합이 소멸해 solver 가 전진을 포기하는 것이 FRP 라고 규정하고, 밀도 불변 인코딩·밀도 무작위 학습·물리 기반 근접학 보상으로 얼어붙음과 충돌을 동시에 억제. 목표 도달 >99 %, 무충돌 86 %.
+- [**본문확인**] M. Asselmeier, D. Ahuja, A. Zaro, A. Abuaish, Y. Zhao, P. A. Vela, "Dynamic Gap: Safe Gap-based Navigation in Dynamic Environments", arXiv:2210.05022; ICRA 2025 <https://arxiv.org/abs/2210.05022>
+  - 자유공간을 gap 으로 표현하고 gap 끝점을 회전 자기 좌표계에서 등속(2차) 모형 + EKF 로 전파. 'crossing'(각폭 → 0, 틈이 닫힘) 과 'overlapping'(각폭 → 2π) 조건을 유도해 통과 가능성을 판정. 충돌 무발생 증명은 1차 점질량·홀로노믹·**등속 gap 점(장애물이 로봇에 반응하지 않음)**·고립 gap 가정 아래. 계획 루프 ≈50 Hz (i9-12900K), MPC 추종기 6.7 ms/해.
+- [초록만] M. Asselmeier, A. Zaro, D. Ahuja, Y. Zhao, P. A. Vela, "Safe Gap-based Planning in Dynamic Settings", Algorithms for Machine Vision in Navigation and Control (Springer), arXiv:2509.07239, 2025 <https://arxiv.org/abs/2509.07239>
+  - gap 추적 + 동역학 추정 + gap 전파에 추격 유도(pursuit guidance) 이론을 얹어 '이상적 조건에서 증명 가능하게 충돌 없는' 지역 궤적을 만든다. TurtleBot2 실기 검증.
+- [초록만] D. Martinez-Baselga, O. de Groot, L. Knoedler, L. Riazuelo, J. Alonso-Mora, L. Montano, "SHINE: Social Homology Identification for Navigation in Crowded Environments", Int. J. Robotics Research, 2025 (arXiv:2404.16705) <https://arxiv.org/abs/2404.16705>
+  - 통과 위상(왼쪽/오른쪽/양보 등 homology class)을 신경망으로 먼저 **이산 선택**하고, 선택된 위상 안에서만 최적화 기반 지역 계획기가 실시간 정련한다.
+- [초록만] C. Mavrogiannis, K. Balasubramanian, S. Poddar, A. Gandra, S. S. Srinivasa, "Winding Through: Crowd Navigation via Topological Invariance", IEEE RA-L, 2023 <https://arxiv.org/abs/2109.05084>
+  - 사람 옆을 지나는 행위를 회전으로 형식화한 위상 불변량을 만들고, 통과 진행도를 보상하며 **사람의 좌우를 바꾸는 것에 벌점**을 주는 비용 범함수를 설계. 최신 기법 대비 통계적으로 유의하게 큰 여유(clearance) 를 얻으면서 효율은 유지.
+- [초록만] Z. A. Ali, K. Yakovlev, "Safe Interval Path Planning With Kinodynamic Constraints", arXiv:2302.00776, 2023 <https://arxiv.org/abs/2302.00776>
+  - SIPP 를 가감속 제약(정지·출발에 시간이 걸림)까지 확장하고 완전성·최적성을 유지하면서 A* 대비 계산 효율 개선.
+- [2차인용] A. Rasouli 외 계열, "Intend-Wait-Cross: Towards Modeling Realistic Pedestrian Crossing Behavior", arXiv:2203.07324, 2022 / "Deconstructing Pedestrian Crossing Decision-making in Interactions with Continuous Traffic: an Anthropomorphic Model", arXiv:2301.10419, 2023 <https://arxiv.org/abs/2301.10419>
+  - 연속 흐름을 건너는 결정은 '의도 → 대기 → 진입'의 이산 상태기이며, 진입 판정은 임계 간격(critical gap) / 도달 시간(TTA) 임계로 모형화된다. 대기 중에도 주변 여러 틈의 위험을 비교한다.
+- [2차인용] N. Tsoi 외, "SocNavBench: A Grounded Simulation Testing Framework for Evaluating Social Navigation", ACM THRI, 2022 (arXiv:2103.00047) <https://arxiv.org/pdf/2103.00047>
+  - 사전 기록 궤적을 재생하며 로봇에 **반응하지 않는** 보행자로 사회적 내비게이션을 평가하는 벤치마크. 보행자 모형을 비반응/반응형/애니메이션으로 분류.
+- [2차인용] P. Trautman, J. Ma, R. M. Murray, A. Krause, "Robot navigation in dense human crowds: Statistical models and experimental studies of human–robot cooperation", Int. J. Robotics Research 34(3), 2015 <https://journals.sagepub.com/doi/abs/10.1177/0278364914557874>
+  - IGP 의 실기 검증. 사람의 협조가 안전 여유의 상당 부분을 만든다는 것을 실측으로 보인다.
+- [초록만] S. Bouraine, T. Fraichard, H. Salhi, "Provably safe navigation for mobile robots with limited field-of-views in dynamic environments", Autonomous Robots 32(3), 2012 <https://link.springer.com/article/10.1007/s10514-011-9258-8>
+  - Braking ICS = 어떤 제동 궤적을 따라도 정지 전에 충돌하는 상태. Braking ICS 를 항상 피하면 passive motion safety(충돌 시 로봇은 정지해 있음)를 얻는다.
+- [2차인용] M. Phillips, M. Likhachev, "SIPP: Safe Interval Path Planning for Dynamic Environments", IEEE ICRA 2011 <https://www.cs.cmu.edu/~maxim/files/sipp_icra11.pdf>
+  - 동적 장애물의 예측 궤적으로 각 셀의 안전 시간 구간을 만들고 (셀, 구간) 그래프에서 A*. 대기 동작이 자연스럽게 나오되 **안전 구간이 있는 곳에서만** 나온다.
+- [2차인용] J. van den Berg, S. J. Guy, M. Lin, D. Manocha, "Reciprocal n-body collision avoidance" (ORCA), Robotics Research (ISRR 2009), Springer STAR 70, 2011 <https://gamma.cs.unc.edu/ORCA/>
+  - 각 에이전트가 회피 부담의 절반을 진다는 상호성 가정 위에서 선형 제약으로 안전 속도 집합을 만든다.
+- [2차인용] P. Trautman, A. Krause, "Unfreezing the Robot: Navigation in Dense, Interacting Crowds", IEEE/RSJ IROS 2010, pp. 797–803 <https://las.inf.ethz.ch/files/trautman10unfreezing.pdf>
+  - FRP 를 최초로 명명·정식화. 원인은 예측 불확실성 폭발이며, 개별 예측이 완벽해도 **협조 모형이 없으면** 계획기는 과격 회피 또는 정지를 고른다고 논증한다.
+- [2차인용] K. Macek, D. Vasquez, T. Fraichard, R. Siegwart, "Towards Safe Vehicle Navigation in Dynamic Urban Scenarios", 2009 <https://www.researchgate.net/publication/29621345_Towards_Safe_Vehicle_Navigation_in_Dynamic_Urban_Scenarios>
+  - Passive friendly safety 도입: 로봇이 충분히 일찍 멈춰 **상대가 회피할 여지**를 남기는 것까지 요구한다.
+- [2차인용] P. Ögren, N. E. Leonard, "A convergent dynamic window approach to obstacle avoidance", IEEE Trans. Robotics 21(2), 2005 <https://ieeexplore.ieee.org/document/1435481>
+  - 원판 DWA 의 1-step 동적 창 + 등속 롤아웃은 서로 불일치하며, 이 때문에 수렴성·최적성 보장이 깨진다. 지평 일관(receding-horizon) 정식화로 수렴성을 회복한다.
+- [2차인용] T. Fraichard, H. Asama, "Inevitable Collision States — A Step Towards Safer Robots", Advanced Robotics 18(10), 2004 <https://www.semanticscholar.org/paper/64be486150521eddcf83ef356a0719d1ef65ceb8>
+  - 어떤 미래 제어를 써도 충돌이 불가피한 상태(ICS) 개념. 로봇 동역학과 장애물 운동을 함께 본다.
+- [2차인용] P. Fiorini, Z. Shiller, "Motion planning in dynamic environments using velocity obstacles", Int. J. Robotics Research 17(7), 1998 <https://journals.sagepub.com/doi/10.1177/027836499801700706>
+  - 상대 속도 공간에서 충돌로 이어지는 속도 집합(VO). 상호성 가정이 없다 — 상대는 등속으로 간다고만 본다.
+- [2차인용] D. Fox, W. Burgard, S. Thrun, "The dynamic window approach to collision avoidance", IEEE Robotics & Automation Magazine 4(1), 1997 <https://ieeexplore.ieee.org/document/580977>
+  - DWA 원판. 허용 속도 = (한 주기 가감속 도달 가능) ∩ (정지거리 안에 설 수 있음). 안전 판정이 **제동 가능성**으로 정의된다.
+
+### 시공간 계획
+
+- [초록만] Marat Agranovskiy, "Path Planning with Motion Primitives in Dynamic Environments: SIPP on Lattices", arXiv:2609.31803v1, 2026-09-25 (International Conference on Interactive Collaborative Robotics, ICR 2026 채택 표기) <https://arxiv.org/abs/2609.31803>
+  - 2^k-연결 격자의 stop-and-turn 궤적이 차동구속 로봇에게 운동학적으로 매우 준최적임을 지적하고, SIPP 를 state lattice + 사전계산 모션 프리미티브 위에서 돌린다. 핵심 구현 문장: "we rasterize the spatiotemporal swept volumes of moving obstacles directly onto the grid, treating grid cells as atomic units of space, **whose resolution is typically dictated by in
+- [**본문확인**] Franz Queißner, Andreas Orthey, Wolfgang Hönig, "DynoFluxBench: Benchmarking Kinodynamic Space-Time Planners in Dynamic Environments", arXiv:2609.18549v1, 2026-09-16 (TU Berlin) <https://arxiv.org/abs/2609.18549>
+  - 동역학 제약 + 동적 장애물을 함께 다루는 전용 벤치마크가 없었다며 프레임워크와 세 플래너(ST-Db-RRT, ST-GBRRT, KIST)를 낸다. 시스템에 **2차 unicycle**(우리 차동구동 로봇과 같은 급)이 포함된다. 가장 우리에게 직접적인 결과: 시간축이 그 자체로 이득은 아니다 — "Outside the Wait environments the success rates of the two planners are close, and the time dimension is not by itself an advantage"
+- [**본문확인**] Zongyuan Shen, Yaming Ou, Shalabh Gupta, Shancheng Zhao, Dehua Zhou, Gao Wang, Zhongqiang Ren, Junfeng Fan, Long Cheng, "Motion Planning in Dynamic Environments: A Survey from Classical to Modern Methods", arXiv:2606.02677v1, 2026-06-03 <https://arxiv.org/abs/2606.02677>
+  - §B Spatiotemporal Search-based Methods 에서 SIPP 를 중심축으로 두고 변종을 정리한다: sub-optimal SIPP, anytime SIPP [Narayanan 2012], generalized SIPP [Gonzalez, Dornbush, Likhachev, ICRA 2012], multi-objective SIPP [Ren et al., RA-L 7(3):8154–8161, 2022]. 최신 사례로 Cao·Trautman·Iba 의 Dynamic Channel(들로네 삼각분할 + 시변 게이트 
+- [초록만] Ajith Kemisetti, Shahaf S. Shperberg, Yoonchang Sung, "StochSIPP: Safe Interval Path Planning in Stochastic Dynamic Environments", arXiv:2608.00792, 2026-08-01 <https://arxiv.org/abs/2608.00792>
+  - 간선·정점 상태가 불확실하고 실행 중 국소적으로 밝혀지는 시간 로드맵에서의 정확(exact) 조건부 계획기. SIPP 로 매크로 행동을 만들고 유계 AND/OR 탐색으로 관측 결과에 따라 행동을 고른다. 조건이 맞으면 무충돌 정책을, 확률이 맞으면 기대 도착시각 최소화를 보장. 동시 관측 불확실 상태 수가 늘면 확장성이 급격히 나빠진다는 확장성 연구를 싣는다. 보수적 고정경로 계획기가 해를 못 내는 '게이트' 시나리오를 푼다.
+- [초록만] Kaier Liang et al., "Time-aware Motion Planning in Dynamic Environments with Conformal Prediction", arXiv:2511.18170, 2025-11-22 (Lehigh Univ. / UC Riverside) <https://arxiv.org/abs/2511.18170>
+  - CP-SIPP: 컨포멀 예측의 이산 신뢰수준을 SIPP 상태에 실어 안전구간을 **신뢰수준 인덱스 구간**으로 만들고, 적응 분위수로 분포 무관(distribution-free) 유한표본 안전 보장을 준다. 전역(CP-SIPP)과 지역(시간 인지 ACP-RRT) 두 층으로 구성.
+- [초록만] J. Chae, H. Seo, S. Lee, K.-J. Park, "Time-aware Costmap for Smoother and Less Disruptive AMR Navigation With ROS 2", International Journal of Control, Automation, and Systems, 2025. DOI 10.1007/s12555-025-0558-8 <https://link.springer.com/article/10.1007/s12555-025-0558-8>
+  - 동적 장애물이 자주 점유하는 영역 정보를 전역 코스트맵에 통합해 더 매끄럽고 덜 교란적인 ROS 2 주행을 얻는다는 시간 인지 코스트맵 프레임워크. (전문은 접근하지 못했다 — Springer 인증 리다이렉트. 제목·저자·저널·연도와 랜딩 페이지 수준 요약만 확인.)
+- [**본문확인**] Devin Wild Thomas, Wheeler Ruml, Solomon Eyal Shimony, "Real-time Safe Interval Path Planning", Proceedings of the International Symposium on Combinatorial Search (SoCS) 17(1), pp. 161–169, 2024. DOI 10.1609/socs.v17i1.31554 <https://www.cs.unh.edu/~ruml/papers/rtsipp-socs-24.pdf>
+  - RTSIPP 문제 정의: 에이전트가 온라인으로 계획하고 **엄격한 시간 한도 b 안에 다음 행동을 내야 한다**. 핵심 문장 — "the cost-to-go in Real-time Safe Interval Path Planning is a function of time rather than a scalar". 도착시각함수 ATF A[ζ,α,β,Δ](t) 를 g 대신 전파하는 ASIPP 와, 확장 예산을 받는 NLASIPP(Algorithm 1)를 준다. β 를 "the latest departure time before one of
+- [**본문확인**] Yiyuan Zou, Clark Borst, "Zeta*-SIPP: Improved Time-Optimal Any-Angle Safe-Interval Path Planning", Proceedings of IJCAI-24, pp. 6823–6829, 2024 <https://www.ijcai.org/proceedings/2024/0754.pdf>
+  - 시간축 처리의 두 갈래를 명시적으로 대비한다: 등간격 시간 슬롯 space-time grid(Silver 2005)는 "may aggravate the curse of dimensionality problem because obstacle grids could be quite sparse, especially when there are only few dynamic obstacles", 그래서 SIPP 가 "merge consecutive obstacle-free time slots into safe intervals, creati
+- [초록만] Zain Alabedeen Ali, Konstantin Yakovlev, "Safe Interval Path Planning With Kinodynamic Constraints", AAAI-23, vol. 37 no. 10, pp. 12330–12337, 2023 (arXiv:2302.00776). DOI 10.1609/aaai.v37i10.26453 <https://arxiv.org/abs/2302.00776>
+  - 고전 SIPP 는 순간 정지·출발을 가정해서 가감속이 있는 실제 로봇에서는 **불완전(incomplete)** 해진다. SIPP-IP 는 탐색 노드를 '대기 구간(waiting intervals)'을 실은 형태로 재정의해 선행자에서 오는 모든 wait-and-move 행동을 포괄하고, 가감속 하에서 완결·최적임을 증명한다. A* 대비 확장 수가 훨씬 적다고 보고. (공개 구현 github.com/PathPlanning/SIPP-IP — 라이선스 확인 전이며 우리는 코드를 가져오지 않는다.)
+- [초록만] O. de Groot, L. Ferranti, D. Gavrila, J. Alonso-Mora, "Globally Guided Trajectory Planning in Dynamic Environments", IEEE ICRA 2023 (arXiv:2303.07751) <https://arxiv.org/abs/2303.07751>
+  - 사람이 동적 장애물일 때 충돌 없는 공간은 비볼록이고 국소최적이 여럿(좌로 지나감/우로 지나감)이라는 관찰에서 출발한다. 여러 국소최적 주행 행동의 궤적을 위상(topology)으로 구분해 찾고, **연속 계획 반복 사이에 위상 정보를 전파(propagating the topology information)** 해 통과 방향에 커밋하고 진동을 막는다.
+- [초록만] Jiaoyang Li, Zhe Chen, Daniel Harabor, Peter J. Stuckey, Sven Koenig, "MAPF-LNS2: Fast Repairing for Multi-Agent Path Finding via Large Neighborhood Search", AAAI-22, pp. 10256–10265. DOI 10.1609/aaai.v36i9.21266 (SIPPS 원출처) <https://cdn.aaai.org/ojs/21266/21266-13-25279-1-2-20220628.pdf>
+  - SIPPS(Safe Interval Path Planning with Soft constraints)는 하드 제약을 하나도 어기지 않으면서 소프트 제약 위반 수를 최소화하는 경로를 낸다. CBS/PBS/PrP/LNS2 의 저수준 계획기로 널리 쓰인다.
+- [**본문확인**] Venkatraman Narayanan, Mike Phillips, Maxim Likhachev, "Anytime Safe Interval Path Planning for Dynamic Environments", IEEE/RSJ IROS, pp. 4708–4715, 2012 <https://publications.ri.cmu.edu/storage/publications/pub_files/2012/10/asipp_iros12.pdf>
+  - ARA* 의 휴리스틱 팽창 ε>1 을 SIPP 에 결합한 anytime 판. **UAV 가 동적 장애물 50개 사이에서 향후 15초분 안전 경로를 0.05 s 안에** 낸다. Time-Bounded Lattice 의 유한 지평을 얹어 "지평 이후 상태는 시간 없이 공간만으로" 계획하고, SIPP 에서는 이 구현이 "예측 궤적의 길이를 지평으로 자르는 것"뿐임을 명시한다. **"a different time horizon can be applied to different dynamic obstacles depending on cert
+- [2차인용] Maxim Phillips, Maxim Likhachev, "SIPP: Safe interval path planning for dynamic environments", IEEE ICRA, pp. 5628–5635, 2011 <https://ieeexplore.ieee.org/document/5980306/>
+  - 정본. 어떤 배치에서 안전한 타임스텝 수는 무한할 수 있어도 **안전 시간구간의 수는 유한하고 대개 매우 작다**는 관찰에서 출발한다. 안전구간은 '충돌이 없는 연속 구간으로서 직전 타임스텝과 직후 타임스텝에서는 충돌인 것'으로 정의된다(극대성).
+- [2차인용] Peter Trautman, Andreas Krause, "Unfreezing the Robot: Navigation in Dense, Interacting Crowds", IEEE/RSJ IROS, pp. 797–803, 2010. DOI 10.1109/IROS.2010.5654369 <https://las.inf.ethz.ch/files/trautman10unfreezing.pdf>
+  - 환경 복잡도가 어떤 수준을 넘으면 기존 알고리즘이 모든 전진 경로를 위험으로 판정해 로봇이 제자리에 얼어붙는다(freezing robot problem). 원인 중 하나는 '불확실성 폭발' — 주변 이동 장애물들의 과보수적 예측의 합집합이 모든 이동을 막는다. 각 에이전트를 독립으로 모델링하는 것이 충분히 조밀한 군중에서 freezing 을 낳는다.
+- [2차인용] Ariel Orda, Raphael Rom, "Shortest-Path and Minimum-Delay Algorithms in Networks with Time-Dependent Edge-Length", Journal of the ACM 37(3), 607–625, 1990 (및 S. E. Dreyfus, "An Appraisal of Some Shortest-Path Algorithms", Operations Research 17(3), 1969) <https://sites.cs.ucsb.edu/~suri/cs231/Rlist/ordaRom.pdf>
+  - Dreyfus(1969)는 출발시각이 주어지면 Dijkstra 로 시간의존 최단경로를 풀 수 있다고 했으나 노드에서의 무제한 대기를 암묵 가정했다. Halpern 이 이 일반화가 **FIFO 망에서만** 참임을 증명했다. Orda·Rom 은 **노드 대기가 허용되면** 임의 사례를 FIFO 등가 사례로 다항시간 변환할 수 있음을 보였다(따라서 대기가 필요 없어진다).
+
+### 최적화·MPC
+
+- [**본문확인**] T. Kim, A. D. Menon, A. Trivedi, D. Panagou, "Backup-Based Safety Filters: A Comparative Review of Backup CBF, Model Predictive Shielding, and gatekeeper", arXiv:2604.02401v2, 2026 <https://arxiv.org/html/2604.02401>
+  - 세 방법의 공통 구조는 (명목 정책, 백업 정책 π_b, 종단 제어불변 집합 S₀)이고 π_b는 두 성질을 만족해야 한다 — (i) T_B 지평 recoverable set이 S₀의 근방을 포함, (ii) S₀가 π_b 아래 전방불변. 실측 비교(Table II): 계산시간 Backup CBF ≈ 10 ms, MPS ≈ 1.3 ms, gatekeeper ≈ 10.9 ms(순차)/1.3 ms(병렬). 명목 정책 보존율은 Backup CBF 28.8 %, MPS ≈ 55 %, gatekeeper 87.5~100 %.
+- [초록만] T. Kim, H. K. Park, R. Wada, N. Atanasov, S. Koga, D. Panagou, "OcclusionCBF: Backup Control Barrier Functions for Safe Navigation Among Hidden Dynamic Obstacles", arXiv:2609.06342, 2026 <https://arxiv.org/abs/2609.06342>
+  - 백업 롤아웃을 '충돌 팽창 점유(collision-inflated occupancy)'와 검증된 종단 집합에 대해 인증하고, 그 결과를 아핀 제약으로 바꿔 최소 침습 QP 필터로 쓴다. 이동 예측 지평에서의 재귀 실현가능성과, 점유 예측이 덮는 모든 은닉 장애물 운동에 대한 충돌 회피를 증명. 밀리초 수준 계산.
+- [초록만] L. Zheng, L. Zhang, P. Yu, Y. Sun, S. Grammatico, J. Ma, C. Liu, "Contingency Planning for Safety-Critical Autonomous Vehicles: A Review and Perspectives", arXiv:2601.14880, 2026 <https://arxiv.org/abs/2601.14880>
+  - 두 패러다임으로 분류: **reactive safety**(실현된 위험에 대해 제약 강제 또는 fail-safe 기동)와 **proactive safety**(모드 전이에 대해 분기해 미래 recourse를 최적화). 물리적 위험은 형식적 보증으로, 의미론적 이상은 경험적 검증으로 다뤄지는 구조적 분열을 지적.
+- [초록만] Z. Liu, K. Chang, X. Chen, "Clustering-Embedded MPPI: Avoiding Averaging-Induced Failure and Enabling Efficient Cluster Selection for Dynamic Obstacles", arXiv:2607.06499, 2026 <https://arxiv.org/abs/2607.06499>
+  - 중요도 가중 갱신이 **서로 양립 불가능한 롤아웃을 평균**해 장애물이 정면에 있을 때 망설임 또는 충돌을 낳는다. DBSCAN + 충돌점 기하 방향 특징으로 모드를 분리하고, 동적 환경에서는 '장애물 운동의 반대쪽으로' 선택. UR5e 실기에서 목표 도달시간 48 % 단축.
+- [**본문확인**] X. Fan, F. Kong, X. Xie, Y. Guo, "Enhanced dynamic window approach for autonomous obstacle avoidance in unmanned underwater vehicles", Scientific Reports, 2026 <https://pmc.ncbi.nlm.nih.gov/articles/PMC13357604/>
+  - 종래 DWA는 속도공간 샘플링(예: Δv 0.1 m/s, Δω 0.05 rad/s)을 유지한 채 퍼지 가중치 조정과 각속도 변화 벌점을 더한다. 실기 비교에서 회피 성공률 50 %→90 %, 에너지 −27.9 %.
+- [초록만] B. Derajić, M.-K. Bouzidi, S. Bernhard, W. Hönig, "Residual Neural Terminal Constraint for MPC-based Collision Avoidance in Dynamic Environments", arXiv:2508.03428, 2025 <https://arxiv.org/abs/2508.03428>
+  - 시변 안전집합(HJ value function의 0-superlevel set)을 신경망으로 근사해 MPC의 **terminal constraint**로 쓴다. 표현은 SDF − 비음수 신경 residual, hypernetwork로 실시간화. 보행자가 로봇 경로를 가로지르는 하드웨어 실험 포함, 최고 베이스라인 대비 성공률 최대 **30 % 향상**, 계산량은 비슷.
+- [초록만] M.-K. Bouzidi, B. Derajić, D. Goehring, J. Reichardt, "Reachability-Based Contingency Planning against Multi-Modal Predictions with Branch MPC", arXiv:2502.02550, 2025 <https://arxiv.org/abs/2502.02550>
+  - 다모드 예측을 주행 통로(driving corridor)로 묶어 시나리오 트리 분기로 만들고, **도달성 해석으로 '결정을 미룰 수 있는 최대 시각'** 을 계산해 분기 결정이 실행가능하도록 보장한다. 가지치기·군집화로 계산량을 크게 줄이되 모든 예측 모드는 보존.
+- [초록만] E. Trevisan, K. A. Mustafa, G. Notten, X. Wang, J. Alonso-Mora, "Dynamic Risk-Aware MPPI for Mobile Robots in Crowds via Efficient Monte Carlo Approximations" (DRA-MPPI), IEEE/RSJ IROS 2025 (arXiv:2506.21205) <https://arxiv.org/abs/2506.21205>
+  - 비가우시안 예측 하에서 다수 동적 장애물에 대한 **결합 충돌확률**을 수백 개 샘플 궤적에 대해 몬테카를로로 실시간 근사하고, 임계 초과 샘플을 기각하거나 CP를 가중 목적항으로 쓴다. Scenario MPC / Frenet / vanilla MPPI 대비 우수.
+- [초록만] D. R. Agrawal, R. Chen, D. Panagou, "gatekeeper: Online Safety Verification and Control for Nonlinear Systems in Dynamic Environments", IEEE Transactions on Robotics, 2024 (arXiv:2211.14361) <https://arxiv.org/abs/2211.14361>
+  - 명목 궤적을 유한 시간 T_H 만 따르고 그 뒤 백업 정책으로 전환하는 '후보 궤적'을 만들어, 전환 시각이라는 **스칼라 하나만** 최적화한다. 커밋된 궤적이 무한 지평 안전을 보장함을 증명(재귀 실현가능·정확).
+- [초록만] K. Pfeiffer, A. Kheddar, "Efficient Lexicographic Optimization for Prioritized Robot Control and Planning", arXiv:2403.09160, 2024 <https://arxiv.org/abs/2403.09160>
+  - S-HLSP(Sequential Hierarchical Least-Squares Programming)으로 비선형 계층 최소자승을 푼다. 가중합 스칼라화 대비 장점: 실현불가 제약의 최적성 보장, 정규화된 국소최소 회피로 하위 우선순위의 최적성 향상, **가중치 튜닝 불필요**.
+- [초록만] J. Huang, J. Zeng, X. Chi, K. Sreenath, Z. Liu, H. Su, "Velocity Obstacle for Polytopic Collision Avoidance", IEEE Robotics and Automation Letters (RA-L), 2023 (arXiv:2304.07954) <https://arxiv.org/abs/2304.07954>
+  - VO를 다면체 로봇에 대해 **꼭짓점 좌표와 상태의 함수**로 직접 구성한다. optimization-free 라서 기존 다면체 회피보다 가볍고, 완주율·교착률·평균 주행거리에서 개선.
+- [2차인용] S. Macenski et al., "On Use of Nav2 MPPI Controller", ROSCon 2023 / nav2_mppi_controller 문서 (ros-navigation/navigation2) <https://roscon.ros.org/2023/talks/On_Use_of_Nav2_MPPI_Controller.pdf>
+  - AVX2/FMA 벡터화로 **CPU 전용** 구현. 경험적으로 1000 샘플 @ 50 Hz 또는 2000 샘플 @ 30 Hz가 4세대 Intel i5 급에서 무난하고, 50+ Hz로 측정됨.
+- [2차인용] K. P. Wabersich, M. N. Zeilinger, "A predictive safety filter for learning-based control of constrained nonlinear dynamical systems", Automatica 129, 2021 (arXiv:1812.05506) <https://arxiv.org/abs/1812.05506>
+  - 명목 제어를 그대로 통과시키되, 매 주기 '알려진 안전 상태로 가는 백업 궤적'의 존재를 실시간으로 탐색해 안전을 강제한다.
+- [2차인용] X. Zhang, A. Liniger, F. Borrelli, "Optimization-Based Collision Avoidance", IEEE Transactions on Control Systems Technology 29(3):972–983, 2021 (arXiv:1711.03449) <https://arxiv.org/abs/1711.03449>
+  - 볼록집합 간 거리함수를 강쌍대성으로 재정식화해, 미분불가능한 충돌 회피 제약을 **근사 없이(비보수적으로)** 매끄러운 비볼록 제약으로 바꾼다. 다면체/타원체(또는 그 유한 합집합)에 적용되고 부호거리 개념과 연결된다.
+- [2차인용] J. P. Alsterda, M. Brown, J. C. Gerdes, "Contingency Model Predictive Control for Automated Vehicles", American Control Conference (ACC) 2019, pp. 717–722 (arXiv:1903.08818) <https://arxiv.org/abs/1903.08818>
+  - 고전 MPC 지평과 **병렬로** contingency 지평을 하나 더 두고, contingency 지평은 '회피 해가 실현가능하게 유지될 것'으로 제약한다. 두 지평은 첫 입력을 공유한다.
+- [2차인용] G. Williams, A. Aldrich, E. A. Theodorou, "Model Predictive Path Integral Control: From Theory to Parallel Computation", AIAA Journal of Guidance, Control, and Dynamics 40(2):344–357, 2017 <https://arc.aiaa.org/doi/pdf/10.2514/1.G001921>
+  - 확률적 최적제어의 자유에너지 관계로 비볼록·비미분 비용에 대해 샘플 롤아웃의 지수가중 평균으로 제어열을 갱신한다. 등속 단일 입력이 아니라 **시변 입력열**을 샘플링한다.
+- [2차인용] M. N. Zeilinger, C. N. Jones, M. Morari, "Soft Constrained Model Predictive Control With Robust Stability Guarantees", IEEE TAC 59(5), 2014 <https://www.researchgate.net/publication/263144598_Soft_Constrained_Model_Predictive_Control_With_Robust_Stability_Guarantees>
+  - 큰 slack 벌점 + 제약 조임(constraint tightening)을 결합하면 실현불가 상태에서도 재귀 실현가능성을 유지하고 원래 실현가능 집합으로 **복귀**한다.
+- [2차인용] S. Bouraine, T. Fraichard, H. Salhi, "Provably safe navigation for mobile robots with limited field-of-views in dynamic environments", Autonomous Robots 32(3), 2012 (Braking ICS · PassAvoid) <https://link.springer.com/article/10.1007/s10514-011-9258-8>
+  - 절대 안전은 일반적으로 보장 불가. 대신 **passive motion safety** = '충돌이 나면 로봇은 정지 상태' 를 braking ICS 로 보장한다.
+- [2차인용] J. van den Berg, S. J. Guy, M. Lin, D. Manocha, "Reciprocal n-Body Collision Avoidance" (ORCA), International Symposium on Robotics Research (ISRR), 2011 <https://gamma.cs.unc.edu/ORCA/>
+  - 각 에이전트가 상호 책임을 절반씩 나눠 속도 공간의 절반평면 제약을 만들고, 그 교집합에서 선호 속도에 가장 가까운 속도를 LP로 고른다.
+- [2차인용] P. Trautman, A. Krause, "Unfreezing the Robot: Navigation in Dense, Interacting Crowds", IEEE/RSJ IROS 2010, pp. 797–803 <https://las.inf.ethz.ch/files/trautman10unfreezing.pdf>
+  - 환경 복잡도가 어느 선을 넘으면 계획기가 '모든 전진 경로가 위험'으로 판정해 얼어붙는다(freezing robot problem). 원인은 예측 불확실성 합집합이 모든 운동을 막는 것.
+- [2차인용] T. Fraichard, H. Asama, "Inevitable Collision States — A Step Towards Safer Robots?", IEEE/RSJ IROS 2003 / Advanced Robotics 18(10), 2004 <https://www.semanticscholar.org/paper/64be486150521eddcf83ef356a0719d1ef65ceb8>
+  - ICS = 로봇이 무슨 짓을 해도 결국 충돌하는 상태. 안전은 '지금 충돌 안 함'이 아니라 '충돌이 불가피한 상태 집합 밖에 머무름'으로 정의해야 한다.
+- [2차인용] D. Q. Mayne, J. B. Rawlings, C. V. Rao, P. O. M. Scokaert, "Constrained model predictive control: Stability and optimality", Automatica 36(6):789–814, 2000 <https://doi.org/10.1016/S0005-1098(99)00214-9>
+  - 유한 지평 MPC의 안정성·재귀 실현가능성은 terminal cost + terminal constraint set(제어불변)에서 나온다. 종단 요소가 없으면 '지금 실현가능, 다음 주기 실현불가'가 원리적으로 가능하다.
+- [2차인용] E. C. Kerrigan, J. M. Maciejowski, "Soft constraints and exact penalty functions in model predictive control", Control 2000 Conference, Cambridge, 2000 <https://www.researchgate.net/publication/2461090_Soft_Constraints_And_Exact_Penalty_Functions_In_Model_Predictive_Control>
+  - slack으로 완화한 제약이 hard 제약과 **같은 해**를 주려면 벌점이 exact해야 한다(경계 기울기가 나머지 목적함수를 이겨야 함). 유계 벌점은 제약을 못 만든다.
+- [2차인용] D. Fox, W. Burgard, S. Thrun, "The Dynamic Window Approach to Collision Avoidance", IEEE Robotics & Automation Magazine 4(1):23–33, 1997 <https://www.researchgate.net/publication/3344494_The_Dynamic_Window_Approach_to_Collision_Avoidance>
+  - 동적 창 V_d = 한 제어 주기 가속도 한계 안의 속도 집합, 허용 속도 V_a = 충돌 전 정지 가능한 속도. 등속 원호 롤아웃.
+
+### 예측·도달가능성
+
+- [초록만] C. Guo, M. Ni, Z. Liang, Y. Ling, Y. Hu, M. Caprio, D. Pucci, W. Pan, "CoCoNav: Conformal Control for Safe Robot Navigation in Crowds", arXiv:2608.07751, 2026-08 <https://arxiv.org/abs/2608.07751>
+  - 지평 단계별(horizon-specific) 적합 PI 제어기로 예측 오차 한계를 온라인 조절하고, soft-constrained MPC 로 만든 공칭 궤적과 **비상 기동(contingency)** 을 보정된 한계에 대해 독립 검증한 뒤에야 실행한다('relax-then-verify').
+- [초록만] H. Hu, C. Siu, M. Chen, "A Hamilton-Jacobi Reachability-Guided Search Framework for Efficient and Safe Indoor Planar Robot Navigation", arXiv:2604.17679, 2026-04 <https://arxiv.org/abs/2604.17679>
+  - 오프라인 HJ 값함수를 (a) 탐색 휴리스틱, (b) 선제적 안전 제약 둘로 쓰면서 온라인 그래프 탐색과 결합해 온라인 계산을 상각한다. 사람이 있는 실내 환경에서 실기 실험.
+- [초록만] R. H. Srirangam, L. Jung, R. Poola, M. Everett, "SCRAMPPI: Efficient Contingency Planning for Mobile Robot Navigation via Hamilton-Jacobi Reachability", arXiv:2603.26995, 2026-03 (rev. 2026-09) <https://arxiv.org/abs/2603.26995>
+  - 공칭 계획의 각 검사 지점에서 '허용 가능한 비상 기동이 존재할 것' 을 제약으로 강제하고, 그 실행가능성 판정을 중첩 샘플링 대신 HJ reach-avoid 로 한다. **15–20 Hz 로 동작**한다고 보고.
+- [2차인용] StochSIPP: Safe Interval Path Planning in Stochastic Dynamic Environments, arXiv:2608.00792, 2026-08 <https://arxiv.org/abs/2608.00792>
+  - SIPP 의 safe interval 을 확률적 장애물 예측으로 확장한다(제목·초록 수준에서 확인).
+- [초록만] Z. Huang, T. Ji, H. Zhang, F. Cheraghi Pouria, K. Driggs-Campbell, R. Dong, "Interaction-aware Conformal Prediction for Crowd Navigation", WAFR 2024 (arXiv:2502.06221) <https://arxiv.org/abs/2502.06221>
+  - 인간 운동 불확실성이 **로봇의 계획에 의존**한다는 점을 반영해, 계획된 로봇 궤적에 조건부인 보정 데이터로 적합예측 영역을 만든다. MPC 와 CP 를 교대로 돌린다.
+- [초록만] J. Yao, X. Zhang, Y. Xia, Z. Wang, A. K. Roy-Chowdhury, J. Li, "Towards Generalizable Safety in Crowd Navigation via Conformal Uncertainty Handling", CoRL 2025 (arXiv:2508.05634) <https://arxiv.org/abs/2508.05634>
+  - 적응형 적합추론이 낸 예측 불확실성 추정치를 관측에 덧붙여 정책을 학습. 분포 이동(속도 변화, 정책 변화, 개인→군집)에 강인. 분포 내에서 충돌 3.72배 감소, 사람 미래 궤적 침범 2.43배 감소 보고.
+- [2차인용] Z. Xie, P. Dames, "SCOPE: Stochastic Cartographic Occupancy Prediction Engine for Uncertainty-Aware Dynamic Navigation", arXiv:2407.00144, 2024 <https://arxiv.org/pdf/2407.00144>
+  - 확률적 점유 격자의 미래 상태를 불확실성과 함께 예측하고, 예측 지도 + 불확실성 지도로 더 안전한 코스트맵을 만드는 계획기와 결합한다.
+- [2차인용] L. Lindemann, M. Cleaveland, G. Shim, G. J. Pappas, "Safe Planning in Dynamic Environments Using Conformal Prediction", IEEE RA-L 8(8), 2023, DOI 10.1109/LRA.2023.3292071 <https://par.nsf.gov/biblio/10441188-safe-planning-dynamic-environments-using-conformal-prediction>
+  - 궤적 예측기 + 적합예측으로 예측 영역을 만들고 그것을 MPC 제약으로 넣어 확률적 안전을 보장한다. 오프라인 궤적 데이터가 전제.
+- [2차인용] A. Muthali, H. Shen, S. Deglurkar, M. H. Lim, R. Roelofs, A. Faust, C. Tomlin, "Multi-Agent Reachability Calibration with Conformal Prediction", IEEE CDC 2023 (arXiv:2304.00432) <https://arxiv.org/abs/2304.00432>
+  - 분위수 회귀 + 적합예측 + HJ 도달가능성을 결합해 **동역학적으로 타당한** 확률 보장 예측 집합('safety bubble')을 만든다. 순수 통계 영역과 달리 물리적으로 불가능한 영역을 제외한다.
+- [2차인용] I. Gibbs, E. Candès, "Adaptive Conformal Inference Under Distribution Shift", NeurIPS 2021 (arXiv:2106.00170) <https://arxiv.org/abs/2106.00170>
+  - 교환가능성 없이도 장기 커버리지를 달성하는 온라인 적응(ACI). 임계를 한 개 파라미터의 온라인 학습으로 본다.
+- [2차인용] C. Schöller, V. Aravantinos, F. Lay, A. Knoll, "What the Constant Velocity Model Can Teach Us About Pedestrian Motion Prediction", IEEE RA-L 5(2):1696–1703, 2020 <https://arxiv.org/abs/1903.07933>
+  - 단순 등속 모델이 최신 신경망 예측기를 능가한다. 상호작용/이력이 짧은 지평에서는 거의 기여하지 않는다.
+- [2차인용] S. Kousik, S. Vaskov, F. Bu, M. Johnson-Roberson, R. Vasudevan, "Bridging the gap between safety and real-time performance in receding-horizon trajectory design for mobile robots", IJRR 39(12), 2020 <https://journals.sagepub.com/doi/10.1177/0278364920943266>
+  - 파라미터화된 궤적족(각 궤적은 **비상 정지 기동으로 끝난다**)의 FRS 를 오프라인 계산하고, 온라인에서는 장애물을 궤적 파라미터 공간의 제약으로 사상한다. FRS 가 추적 오차까지 포함한다.
+- [2차인용] M. Li, Y.-X. Wang, D. Ramanan, "Towards Streaming Perception", ECCV 2020 <https://www.ecva.net/papers/eccv_2020/papers_ECCV/papers/123470460.pdf>
+  - 출력이 나온 **그 순간의 세계 상태**에 대해 평가해야 한다는 스트리밍 지표를 정의하고, 예측(forecasting)으로 지연을 보상하면 정확도가 회복됨을 보인다.
+- [초록만] S. Mitsch, K. Ghorbal, D. Vogelbacher, A. Platzer, "Formal Verification of Obstacle Avoidance and Navigation of Ground Robots", IJRR 36(12):1312–1340, 2017 <https://arxiv.org/abs/1605.00604>
+  - DWA 계열 지상로봇 제어기에 대해 static safety / passive safety / passive friendly safety / passive orientation safety 를 KeYmaera X 로 증명한다. 목록에 '동적 장애물에 대한 무조건 충돌 없음'은 없다.
+- [2차인용] M. Althoff, J. M. Dolan, "Online Verification of Automated Road Vehicles Using Reachability Analysis", IEEE T-RO 30(4):903–918, 2014 <https://www.ri.cmu.edu/publications/online-verification-of-automated-road-vehicles-using-reachability-analysis/>
+  - 자차와 타 참여자의 가능 점유 집합을 온라인으로 예측하고 교차가 없을 때만 공칭 계획을 실행, 아니면 검증된 비상 궤적으로 전환한다.
+- [2차인용] S. Bouraine, T. Fraichard, H. Salhi, "Provably safe navigation for mobile robots with limited field-of-views in dynamic environments", Autonomous Robots 32(3):267–283, 2012 <https://link.springer.com/article/10.1007/s10514-011-9258-8>
+  - Braking-ICS 회피 = passive motion safety. 즉 '충돌이 나더라도 로봇은 정지해 있다'만 보장한다.
+- [2차인용] M. Phillips, M. Likhachev, "SIPP: Safe Interval Path Planning for Dynamic Environments", IEEE ICRA 2011, pp. 5628–5635 <https://www.semanticscholar.org/paper/7dba986bfff6cb4c7bffed3675a8cfbf0d08c1f9>
+  - 각 구성에 대해 충돌 없는 연속 시간 구간(safe interval)들을 묶어 (구성, 구간) 쌍을 상태로 하는 A*. 간선이 '기다렸다 이동' 을 한 번에 표현해 시간 격자 폭발을 피한다. 완전·최적.
+- [2차인용] P. Songchitruksa, A. P. Tarko, "The extreme value theory approach to safety estimation", Accident Analysis & Prevention 38(4):811–822, 2006 <https://www.researchgate.net/publication/7232990_The_extreme_value_theory_approach_to_safety_estimation>
+  - 관측 가능한 빈번한 상충(surrogate)의 꼬리를 GEV/GPD 로 모형화해 관측 불가능한 희귀 사고율을 외삽한다. 이후 POT/Block-Maxima 비교 연구들이 이어졌다.
+- [2차인용] T. Fraichard, H. Asama, "Inevitable Collision States — A Step Towards Safer Robots?", Advanced Robotics 18(10):1001–1024, 2004 <http://emotion.inrialpes.fr/fraichard/publications/journals/04-rsjar-fraichard-asama.pdf>
+  - 미래 제어가 무엇이든 충돌하는 상태 집합(ICS)을 형식화하고, 로봇은 결코 ICS 에 들어가면 안 된다고 못박는다. ICS 는 로봇 동역학과 장애물 운동을 **함께** 본다.
+- [2차인용] K. Kant, S. W. Zucker, "Toward Efficient Trajectory Planning: The Path-Velocity Decomposition", IJRR 5(3):72–89, 1986 <https://journals.sagepub.com/doi/10.1177/027836498600500304>
+  - TPP ⇒ PPP + VPP. 정적 장애물은 경로로, 동적 장애물은 **그 경로 위 속도 프로파일**로 푼다. VPP 는 경로-시간 공간의 그래프 탐색으로 환원된다. Apollo/Autoware 의 ST-graph 가 이 계보다.

@@ -1,0 +1,9 @@
+fs=50 Butterworth-2 5 Hz: max|j| 2.073, P99|j| (moving samples) 2.067, share of moving samples with |j|>2.0: 6.43 %
+fs=50 Gaussian 26.5 ms  : max|j| 2.000, P99|j| (moving samples) 2.000, share of moving samples with |j|>2.0: 3.21 %
+fs=100 Butterworth-2 5 Hz: max|j| 2.069, P99|j| (moving samples) 2.065, share of moving samples with |j|>2.0: 5.96 %
+fs=100 Gaussian 26.5 ms  : max|j| 2.000, P99|j| (moving samples) 2.000, share of moving samples with |j|>2.0: 3.21 %
+IMU noise floor Butterworth-2 5 Hz: sigma_j 0.087, P99 0.226 m/s^3
+IMU noise floor Gaussian 26.5 ms  : sigma_j 0.146, P99 0.378 m/s^3
+Gaussian sigma_t = 26.5 ms
+start-up step a0=0.3, fs=50, Gaussian metric: peak |j| 5.22 m/s^3
+start-up step a0=0.3, fs=100, Gaussian metric: peak |j| 5.37 m/s^3

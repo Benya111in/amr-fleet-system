@@ -1,0 +1,132 @@
+{
+ "slug": "local-planning",
+ "math_errors": [
+  {
+   "location": "§5.3 line 145 (ORCA half-plane for fleet AMRs)",
+   "error": "Sign/space inconsistency. VO membership is tested with w = u_j − v_eff (obstacle-minus-robot relative velocity) and r_0 = p_j − p_R, but the ORCA update u = argmin_{v∈∂VO_j^τ}‖v − w^opt‖ − w^opt mixes a set of robot velocities (∂VO_j^τ as defined on line 144) with a relative velocity w^opt, and w^opt has the opposite sign to van den Berg et al.'s v_A^opt − v_B^opt. With u,n computed in w-space, the half-plane {v : (v − (v_R^opt + ½u))·n ≥ 0} pushes the robot INTO the velocity obstacle.",
+   "correction": "State the convention once: v_rel = v_R − u_j, VO^τ = {v_rel : ∃t∈[0,τ], t·v_rel ∈ D(p_j − p_R, R_j)}, u = (argmin_{x∈∂VO^τ}‖x − v_rel^opt‖) − v_rel^opt, n = u/‖u‖, ORCA = {v : (v − (v_R^opt + ½u))·n ≥ 0}. Add a gtest with a symmetric head-on pair verifying mirrored half-planes."
+  },
+  {
+   "location": "§5.3 lines 140–145 (chord-velocity mapping described as a 'necessary-condition approximation')",
+   "error": "The chord mapping is exact only at the arc endpoint. Sagitta (v/ω)(1−cos(ωτ/2)) at v=1 m/s, τ=2 s equals 0.24/0.46/0.62 m for ω=0.5/1.0/1.5 rad/s, i.e. larger than R_j for a person, so the straight-line relative-motion test over [0,τ] is neither necessary nor sufficient for arc collision: it can prune collision-free samples (false prune) and pass colliding ones. Also σ_j(τ/2) is used as a scalar although Σ_j is 2×2 (undefined).",
+   "correction": "Either test VO per rollout pose (as Coissac 2023 / Missura 2019 do), restrict Stage A to |ω|τ/2 ≤ 0.3 rad, or use Generalized VO (Wilkie et al. IROS 2009) which samples the actual trajectory. Define σ_j := sqrt(λ_max(Σ_j(τ/2))) or the projection along r_0. Quantify the false-prune rate in unit tests."
+  },
+  {
+   "location": "§5.4 lines 149–151 and §7.4 test 5 ('MC 대비 상계 성립·차이 < 0.03'); §5.4 δ_hard = 0.10",
+   "error": "The supporting-half-plane bound is valid but loose. At the brief's own 2 s example (‖μ‖=1.0 m, R=0.6 m, σ=0.66 m) a 2×10^5-sample MC gives P=0.132 while the bound gives 0.272, so the '<0.03 gap' test fails. Applying δ_hard=0.10 to the bound forbids any sample whose pose at time t passes within R_j + 1.28·σ(t): person (q=0.2) 1.62 m at 2 s, forklift 2.34 m, fleet AMR 1.36 m. In S2 (3 m aisle, forklift R_j=1.5 m) no forward sample can satisfy 2.34 m lateral clearance, so every sample is hard-rejected, the brake candidate is chosen and PlannerException fires after 0.25 s: freezing is guaranteed by the defaults, not a tuning risk.",
+   "correction": "Tighten the bound by minimising over the half-plane normal a (or use the exact disc integral / Park–Park–Manocha T-RO 2018 bound for anisotropic Σ); cap σ(t) (σ_max or smaller q); make δ_hard time-dependent (e.g. hard check only for t ≤ 1 s, cost-only afterwards). Rewrite test 5 as 'bound ≥ MC in all cases' plus a tabulated gap, and recompute the S1/S2/S6 clearance numbers in the brief."
+  },
+  {
+   "location": "§5.4 line 153 (J_risk = 1 − ∏_{k,j}(1 − P̄_kj))",
+   "error": "Product over 25 poses × 2 circles × ≤10 tracks (≤500 terms) saturates: P̄=0.02 on 250 terms gives 0.994, P̄=0.005 on 500 terms gives 0.92. Consecutive poses at Δt_s=0.1 s are almost perfectly correlated, so the independence product is not a meaningful bound; with w_r=2.0 it dominates the five normalised DWA terms (sum ≤ 3.9) and biases towards stopping. The claim that this discretises Safe Horizon MPC (L18) is not accurate: L18 bounds the joint probability via the scenario approach, not a product of marginals.",
+   "correction": "Use J_risk = 1 − ∏_j (1 − max_k P̄_kj) (union over tracks of each track's worst pose) or a first-passage bound; re-tune w_r; drop the L18 attribution or describe it as loose inspiration."
+  },
+  {
+   "location": "§5.4 line 154 (T_ttc,min = 2.5 s) with §3.3 line 58 (T_sim = clip(v/a_v + 0.5, 1.5, 3.0))",
+   "error": "TTC_δ ≤ T_sim(v) ≤ 2.5 s for every v ≤ 2 m/s, so 'TTC_δ < T_ttc,min' is true whenever TTC_δ is finite: the threshold is vacuous. Worse, the predictive horizon collapses to 1.5 s at v ≤ 1 m/s, so a 1.5 m/s forklift is only 'seen' when its predicted collision point lies within ~2.25 m, undermining the 'earlier avoidance' claim versus costmap-only DWB/MPPI.",
+   "correction": "Decouple the prediction horizon (T_pred ≥ 3 s) from the rollout horizon by appending a braking tail to each rollout for Stage B; set T_ttc,min < T_pred; document both horizons."
+  },
+  {
+   "location": "§3.3 line 58 and §5.5 line 158 (brake candidate (v_a − a_vΔt_c, ω_a→0) and in-place spin candidate)",
+   "error": "Both fixed candidates lie outside V_d: ω can change by at most α_ωΔt_c = 0.10 rad/s per cycle, so ω_a→0 is kinematically infeasible for |ω_a| > 0.1, and v=0 (spin) is unreachable unless |v_a| ≤ 0.05 m/s. The brief acknowledges the v issue but still includes the spin and ignores the ω limit.",
+   "correction": "brake = (max(v_a − 0.05, 0), ω_a − sign(ω_a)·min(|ω_a|, 0.10)); include the spin candidate only when |v_a| ≤ 0.05; apply the α_ω constraint in every cycle."
+  },
+  {
+   "location": "§3.3 line 58 vs §3.6 line 75 vs §5.9 line 202 / §7.4 test 7",
+   "error": "T_sim = clip(v/a_v + 0.5, 1.5, 3.0) never exceeds 2.5 s at v_max = 2 m/s, so N_t ≤ 25, not 30; the brief uses ≤30 in §3.3/§3.6 and 25 in §5.9/§7.4.",
+   "correction": "Use N_t ≤ 25 consistently (or lower the clip upper bound to 2.5 s) and correct the 4.1×10^5 cell-access estimate to 3.4×10^5."
+  },
+  {
+   "location": "§5.1 line 130 ('σ ≈ 0.6 m at 2 s') vs §5.2 line 135 class table (person q = 0.2)",
+   "error": "The 0.66 m example uses q = 0.1, but the person class uses q = 0.2, which gives σ(2 s) = sqrt(0.0025 + 0.16 + 0.533) = 0.83 m.",
+   "correction": "State σ(2 s) = 0.83 m for persons (0.66 m only for forklifts) and propagate this into the δ_hard clearance discussion."
+  },
+  {
+   "location": "§5.5 line 159 ('1 m 측방 오프셋에서 … 2–3 s 내 복귀')",
+   "error": "With α_ω = 2 rad/s², a bang-bang 45° heading change takes 1.25 s each way (peak ω = 1.25 rad/s); traversing 0.8 m laterally at v = 1 m/s and 45° takes ≈1.1 s; total ≈3.6 s, plus the 1 s sustained e⊥<0.10 m in §6.1 gives ≈4.6 s, marginal against the 5 s spec. The weight schedule lasts only 2 s, shorter than the manoeuvre.",
+   "correction": "Correct the estimate to ≈3.5–4.5 s, lengthen the schedule to cover the manoeuvre, and add a return-time test at the deviation-band boundary."
+  },
+  {
+   "location": "§6.3 line 224 (paired Wilcoxon per scenario, α = 0.05, 5 seeds)",
+   "error": "With n = 5 paired differences the smallest attainable two-sided exact p-value of the Wilcoxon signed-rank test is 2/2^5 = 0.0625 > 0.05; the per-scenario test can never be significant.",
+   "correction": "Pool the 30 paired runs across scenarios (n = 30) or use ≥8 seeds per scenario (n = 8 gives min p = 0.0078); specify two-sided exact test, report effect sizes and CIs."
+  },
+  {
+   "location": "§3.5 line 69 (J_vel = (v_max − v)/v_max)",
+   "error": "For reverse samples v ∈ [−0.5, 0) the term exceeds 1 (up to 1.25), breaking the stated [0,1] normalisation.",
+   "correction": "J_vel = (v_max − v)/(v_max − v_min) or clamp to [0,1]."
+  },
+  {
+   "location": "§5.2 / §5.4 / §7.2 (tracks in map frame, Stage B evaluated in the odom costmap frame)",
+   "error": "Only the translation of T_map→odom is discussed; the 2×2 covariances must be rotated (Σ' = RΣRᵀ), otherwise anisotropic Σ_pp/Σ_vv are evaluated in the wrong frame.",
+   "correction": "Transform mean, velocity and both covariance blocks with the rotation of T_map→odom before Stage A/B."
+  }
+ ],
+ "proposal_verdicts": [
+  {
+   "proposal": "PVT-DWA (Probabilistic Velocity-obstacle & Time-to-collision DWA) — full plugin",
+   "verdict": "flawed",
+   "reasoning": "The classical derivation (§3) is largely correct and the half-plane bound is a valid upper bound, but the design as parameterised fails its own scenarios: δ_hard=0.10 on a bound that is ~2× loose plus CV covariance growth (σ = 0.83 m at 2 s for persons, 0.66 m for forklifts) rejects every forward sample in S2 (needs 2.34 m lateral clearance in a 3 m aisle) and will freeze; the product-form J_risk saturates at ~1 for any nearby track; T_ttc,min = 2.5 s is vacuous because T_sim ≤ 2.5 s; the ORCA half-plane has a sign/space error; brake/spin candidates violate V_d; and the 'exception → immediate replanning' path is wrong for Humble (abort + ClearLocalCostmap → Spin 1.57 rad → Wait 5 s → BackUp). The 'new combination' claim also omits the closest prior work: SPAN (Zhi et al. 2020/ICRA 2021) already implements probabilistic TTC with the same Zhu–Alonso-Mora bound under constant (v,ω) controls, and DWA+VO/ORCA pruning is patented (Locus Robotics, 2019) and implemented as a DWB critic (KTH 2023). What remains genuinely new is modest engineering: Nav2-Humble plugin, 2-circle footprint, class-based (r_j, q) table, deviation band, and the ablation study. Feasible in 6 weeks only if the TEB build decision moves to W2 and the freezing defaults are fixed before W3.",
+   "evidence": "Numeric checks: Φ^{-1}(0.10) = −1.28 → clearance R_j + 1.28σ(t): forklift 2.34 m at t=2 s; MC vs bound 0.132 vs 0.272 at (‖μ‖=1.0, R=0.6, σ=0.66); 1−0.98^250 = 0.994. Humble controller_server.cpp (humble branch): failure_tolerance default 0.0 → PlannerException rethrown → publishZeroVelocity(); terminate_current(); navigate_to_pose_w_replanning_and_recovery.xml: FollowPath RecoveryNode retries=1 with ClearEntireCostmap(local), then RoundRobin ClearCostmaps / Spin 1.57 / Wait 5 / BackUp 0.30. Prior art: arXiv 2011.06235 §V.B eq. (13)–(14) ('take the first time probability upper-bound exceeds ε as the time-to-collision', unicycle with −1≤v≤1, constant controls over T=4 s); US 10,429,847 B2 'Dynamic Window Approach using ORCA Cost-Critic' (Locus, granted 2019-10-01, claims non-holonomic→holonomic conversion with radius inflation); Coissac, 'Velocity Obstacle method adapted for Dynamic Window Approach', KTH 2023 (AdaptedVO DWB critic, ROS/Gazebo, github FloCoicoi/fc_thesis)."
+  },
+  {
+   "proposal": "Analytic probabilistic-TTC critic (Stage B alone)",
+   "verdict": "already_published",
+   "reasoning": "The construction — Gaussian obstacle position with time-varying covariance, robot on a constant-(v,ω) rollout, collision probability upper-bounded by the Zhu & Alonso-Mora supporting-half-plane formula with a = d/‖d‖, TTC defined as the first time the bound exceeds a threshold ε, and a TTC-based cost in the objective — is exactly SPAN (Zhi, Lai, Ott, Ramos, arXiv 2011.06235, ICRA 2021) for nonholonomic unicycle robots. The brief's deltas (CV+white-acceleration covariance instead of a learned stochastic process, 2-circle footprint, hard chance check, product joint-risk term, DWB-critic packaging) are incremental, and two of them (product J_risk, δ_hard on a loose bound) are defects. Earlier predictive-DWA work with time-parameterised collision checks (Seder & Petrović ICRA 2007 TVDW; Molinos et al. RAS 2019 DW4DO/DW4DOT) and a probabilistic DWA (Yasuda et al. RA-L 2023) are also uncited. The 'novelty_claim: variant_of_prior' label is honest but names the wrong prior (Missura 2019 instead of SPAN).",
+   "evidence": "arXiv 2011.06235 (SPAN) §V.A: 'we define time-to-collision as the first time a collision occurs under constant controls over the time horizon'; §V.B eq. (13): p ≤ ½[1+erf((r_x̂+r_o − aᵀd)/sqrt(2 aᵀΣ(t)a))], a = d/‖d‖; 'take the first time probability upper-bound exceeds ε as the time-to-collision'; robot: 'velocity-controlled nonholonomic unicycle dynamics… linear velocity v and angular velocity ω', control limits −1 ≤ v ≤ 1. Seder & Petrović, ICRA 2007 (TVDW, cell-wise time-varying collision check); Molinos, Llamazares, Ocaña, RAS 118:112–130 (2019); Yasuda, Kumagai, Yoshida, RA-L 8(5):2614–2621 (2023)."
+  },
+  {
+   "proposal": "Chord-velocity VO/ORCA pruning of the dynamic window (Stage A alone)",
+   "verdict": "already_published",
+   "reasoning": "Pre-filtering/scoring DWA velocity samples with VO/ORCA after mapping the non-holonomic sample to a holonomic velocity is claimed in US patent 10,429,847 B2 (Locus Robotics, 2019: DWA preferred velocity → ORCA velocity obstacles → combined ORCA/DWA objective, with explicit non-holonomic-to-holonomic conversion and radius inflation), implemented as a ROS DWB critic in the KTH thesis (2023), and the general non-holonomic VO is Wilkie et al.'s Generalized VO (IROS 2009). Only the specific chord formula v·sinc(ωτ/2) is the brief's own, and it is a poor proxy for the arc (sagitta up to 0.62 m). The expected gain is also overclaimed: within a ±0.05 m/s × ±0.10 rad/s window the chord directions span only ±0.1 rad (±5.7°), comparable to a VO half-angle of 10.6° for a person at 3 m, so pruning is mostly all-or-nothing and the all-pruned case falls back to the full set — the '20–60% of rollouts removed' figure has no basis. The team's own label 'engineering_adaptation' is fair, but the prior art must be cited and the number dropped.",
+   "evidence": "patents.google.com/patent/US10429847B2 (title 'Dynamic Window Approach using Optimal Reciprocal Collision Avoidance Cost-Critic', assignee Locus Robotics, filed 2017-09-22, granted 2019-10-01; claims include converting non-holonomic velocities to holonomic space with radius inflation). Coissac, KTH DiVA diva2:1836829 (2023), §4.3.2 'AdaptedVO critic' solving f(t)=‖p_obst(t)‖²−R² per rollout pose. Wilkie, van den Berg, Manocha, 'Generalized Velocity Obstacles', IROS 2009, DOI 10.1109/IROS.2009.5354175. Sagitta computed: (v/ω)(1−cos(ωτ/2)) = 0.24/0.46/0.62 m for ω = 0.5/1.0/1.5 rad/s at v=1, τ=2."
+  }
+ ],
+ "citation_problems": [
+  "MISSING closest prior art for Stage B: Zhi, Lai, Ott, Ramos, 'Anticipatory Navigation in Crowds by Probabilistic Prediction of Pedestrian Future Movements' (arXiv 2011.06235, ICRA 2021) — probabilistic TTC = first time the Zhu–Alonso-Mora half-plane bound exceeds ε, unicycle under constant (v,ω); must be cited in §4, §5.4 and §5.8.",
+  "MISSING prior art for Stage A: US Patent 10,429,847 B2, Locus Robotics, 'Dynamic Window Approach using Optimal Reciprocal Collision Avoidance Cost-Critic' (granted 2019-10-01) — DWA+ORCA with non-holonomic→holonomic mapping and radius inflation; also a potential IP concern for a warehouse-AMR product that the brief should note.",
+  "MISSING: F. Coissac, 'Velocity Obstacle method adapted for Dynamic Window Approach', KTH MSc thesis, Nov 2023 (DiVA diva2:1836829) — VO-scoring DWB critic in ROS/Gazebo with public code; directly relevant to §4 gap statement (ii) which is therefore false ('DWA에는 적용 사례가 없음').",
+  "MISSING predictive-DWA predecessors of L5: Seder & Petrović, 'Dynamic window based approach to mobile robot motion control in the presence of moving obstacles', ICRA 2007 (TVDW); Molinos, Llamazares, Ocaña, 'Dynamic window based approaches for avoiding obstacles in moving', RAS 118 (2019) 112–130 (DW4DO/DW4DOT).",
+  "MISSING: Wilkie, van den Berg, Manocha, 'Generalized Velocity Obstacles', IROS 2009 (VO for non-holonomic robots by trajectory sampling) — the principled alternative to the chord mapping; and Yasuda, Kumagai, Yoshida, 'Safe and efficient DWA for differential mobile robots with stochastic dynamics using deterministic sampling', RA-L 2023 — an existing probabilistic DWA.",
+  "§4 gap statement (i) 'Nav2 플러그인 수준에서 … DWA는 없음' is only true in the narrow Nav2-plugin sense; SPAN + KTH thesis + Locus patent cover the algorithmic content. Rephrase.",
+  "L5 (Missura & Bennewitz ICRA 2019): the URL https://www.hrl.uni-bonn.de/papers/icra19missura.pdf currently returns an HTML directory-listing page, not the PDF (verified 2026-09-22); cite DOI 10.1109/ICRA.2019.8794386. Abstract (Semantic Scholar) confirms the 'dynamic collision model' claim; the exact obstacle model must still be read before the peer-review write-up as the brief itself notes.",
+  "L24 (arXiv 2606.02677, Shen et al.): paper exists (138 works), but the specific claim 'VO/DWA가 여전히 하이브리드의 로컬/폴백 모듈로 쓰인다는 정리' is not supported by the abstract; quote the section or mark as interpretation.",
+  "L4 (arXiv 2603.02291, Liu/Deng/Wymeersch, IEEE TWC 2026): exists and is a UAV Kalman + Mahalanobis-distance DWA as claimed, but '정적 회피' (static obstacles) is not verifiable from the abstract; label unverified.",
+  "L18 (arXiv 2307.01070): confirmed published in IJRR 2025 (DOI 10.1177/02783649251315203); the arXiv comment says 'submitted to T-RO' — add the IJRR DOI. Note the J_risk attribution to L18 is inaccurate (scenario approach, not product of marginals).",
+  "§5.6/§2 stack claim 'velocity_smoother(가감속·저크 제한)': nav2_velocity_smoother in Humble exposes only max_velocity/min_velocity/max_accel/max_decel/deadband/velocity_timeout (README, humble branch) — there is NO jerk limit; the spec 4.5 jerk requirement is therefore unenforced by this chain.",
+  "§5.6 '예외 기반 즉시 재계획' misstates Humble semantics: controller_server.cpp (humble) with failure_tolerance default 0.0 rethrows PlannerException → publishZeroVelocity() + terminate_current() (FollowPath aborted); the default BT then runs ClearEntireCostmap(local) → retry → RoundRobin{ClearCostmaps, Spin 1.57 rad, Wait 5 s, BackUp 0.30 m}. Cite the file and describe the real behaviour.",
+  "§2 'DWB도 No valid trajectories 시 이 예외를 던짐': dwb_core/exceptions.hpp (humble) defines IllegalTrajectoryException and PlannerTFException deriving from nav2_core::PlannerException — correct in substance, but name the actual classes.",
+  "Verified as stated (13 VERIFIED entries fetched): L1 (RA-L 2023), L2 (IROS 2025), L6 (IROS 2022, quote 'superior to an improved version of the Dynamic Window Approach with predictive collision avoidance'), L9 (ICRA 2026, conservativeness claim present), L14 (VO ablation present), L15 (IROS 2025, MC joint CP), L16 (IROS 2025, probabilistic ORCA+MPPI, Gazebo, diff-drive), L20, L22 (AIM 2026), L25 (entity-aware margins), C4 URL resolves to the NH-ORCA PDF, C6 formula c = erf^{-1}(1−2δ)·sqrt(2aᵀΣa) matches. Also verified: nav2_core/exceptions.hpp (humble) defines only PlannerException and controller_exceptions.hpp is absent (404); teb_local_planner has no Humble release on index.ros.org; gz-sim issue #1364 is open (title 'Actor Collision Plugin for ignition gazebo'); MPPI README states 50+ Hz on a 4th-gen i5; collision monitor supports stop/slowdown/approach."
+ ],
+ "spec_gaps": [
+  "Spec 4.10 '통합 테스트 시나리오 최소 10개 작성·자동화': the brief plans 6 evaluation scenarios × 5 seeds but never maps them to ≥10 automated integration tests (none for sensor-failure fallback, E-stop, speed_limit, PlannerException path). Add the mapping in §1/§7.4.",
+  "Spec 4.1/4.7 '동적 장애물 최소 5개, 0.3–1.5 m/s, 직선/곡선/무작위 동시': all six scenarios are isolated set-pieces with 1–2 obstacles; no run in the full 60×40 m warehouse with ≥5 concurrent dynamic obstacles plus fleet robots (which is where the K≤10-track cap, ORCA and CPU ≤80 % claims are actually exercised). Add at least one full-world scenario to the 30-run set.",
+  "Spec 4.5 'Pure Pursuit 또는 Stanley 직접 구현' + CTE 5/10 cm: the brief assigns the CTE target to the DWA (§1 row '9장') but never states how the required PP/Stanley controller and PvtDwaController coexist in controller_server (controller_id switching? PP for docking only?). Define the controller assignment and which one the CTE report measures.",
+  "Spec 4.5 '최대 저크 제한': the chain relies on velocity_smoother jerk limiting that does not exist in Humble; the 2.0 m/s³ limit from robot_params.yaml is enforced nowhere. Implement it (in-plugin acceleration slew or a custom smoother) and add a jerk-RMS acceptance threshold to §6.1.",
+  "Spec 4.7 '센서 고장 감지 로직 … 안전 정지 또는 저속 운행': only the planner's reaction (30 % speed, dynamic terms off) is specified; the detection logic, its owner, the '안전 정지' branch and its test are undefined (open question 6 hints at it but §1 marks 4.7 safety as covered).",
+  "Spec 4.7 'Safety Zone(Warning/Critical) 단계별 대응': Critical-zone response is delegated to collision-monitor slowdown ×0.3 at 0.5 m and 'approach' 1.5 s, but no arbitration between the DWA hard check, the approach action and the progress checker is defined, and no scenario tests the Warning→Critical→E-stop ladder end-to-end.",
+  "Spec 4.4 'TEB와 성능 비교·장단점 분석': comparison criteria beyond the metric table (compute-time distribution, homotopy/local-minimum behaviour, tuning effort, dynamic-obstacle mode) are not enumerated, and the TEB build gate is scheduled in W5 — too late to fall back. Move the build to a W2 Dockerfile stage with a documented go/no-go.",
+  "Spec 4.7 '이탈 ≤ 1 m / 복귀 ≤ 5 s' measurement: §6.1 defines the avoidance window and t_clear from the planner-internal TTC_δ, which DWB/MPPI/TEB do not have; baselines cannot be measured with the same definition. Define both from ground-truth geometry (e.g., t_clear = first time no obstacle GT disc intersects the 1 m corridor over the next 3 s).",
+  "Spec 4.7 '1.0 m/s 장애물 인식 후 재계획': the exception path triggers recoveries (ClearLocalCostmap, Spin, Wait), not replanning, and the 1 Hz RateController replanning depends on the GLOBAL costmap's obstacle layer, whose observation_keep_time/update rate are not specified anywhere in the brief.",
+  "Spec 4.4 '경로 재계획 500 ms 이내': deferred to the global planner, but the latency from PlannerException (or brake) to the first new valid cmd_vel is never measured; add it to §6.1 alongside response time.",
+  "Spec 4.10 '5대 동시 CPU ≤ 80 %': the budget (§5.9) is per-plugin only; no measurement plan includes tracker, costmaps, collision monitor and Gazebo on the same host, and the timing test (§7.4 item 7, p99 < 15 ms) is looser than the 5–8 ms claim in §5.9 without explanation."
+ ],
+ "required_revisions": [
+  "Reposition novelty (§0 item 3, §4 gap statement, §5.8): cite SPAN (arXiv 2011.06235/ICRA 2021), Locus patent US 10,429,847 B2, Coissac KTH 2023, Seder & Petrović ICRA 2007, Molinos et al. RAS 2019, Wilkie et al. IROS 2009 and Yasuda et al. RA-L 2023; restate PVT-DWA as a Nav2-Humble engineering integration of SPAN-style probabilistic TTC with a patent-style VO/ORCA pre-filter, and list the honest delta (2-circle footprint, class (r_j,q) table, deviation band, safety-chain integration, ablations). Delete 'DWA에는 적용 사례가 없음'.",
+  "Fix the ORCA half-plane (§5.3): express VO in v_rel = v_R − u_j space, u = nearest boundary point − v_rel^opt, half-plane (v − (v_R^opt + ½u))·n ≥ 0; add the symmetric head-on gtest; define σ_j := sqrt(λ_max Σ_j(τ/2)).",
+  "Replace the Stage A 'necessary-condition' claim: either evaluate VO per rollout pose, limit Stage A to |ω|τ/2 ≤ 0.3 rad, or adopt Generalized VO; drop the unsupported '20–60 % pruning' figure or measure it in S1/S4 and report it.",
+  "Repair Stage B defaults so S2/S6 do not freeze: tighten the bound (min over a or exact disc integral), cap σ(t) (σ_max ≈ 0.5 m or lower q), make δ_hard time-dependent (hard for t ≤ 1 s, cost-only beyond), replace J_risk by 1 − ∏_j(1 − max_k P̄_kj); recompute and print the clearance radii (R_j + 1.28σ(t)) table in the brief.",
+  "Decouple horizons: T_pred = 3 s via a braking-tail extension of each rollout; set T_ttc,min (e.g., 2.0 s) strictly below T_pred; remove the vacuous 2.5 s threshold.",
+  "Make the fixed candidates kinematically feasible: brake = (max(v_a−0.05,0), ω_a − sign(ω_a)·min(|ω_a|,0.10)); spin only if |v_a| ≤ 0.05 m/s; enforce α_ω every cycle; fix N_t ≤ 25, J_vel normalisation, σ(2 s)=0.83 m for persons, covariance rotation map→odom.",
+  "Redesign S2: a 1.2 m-radius forklift (2.4 m diameter) in a 3 m aisle leaves 0.6 m; the robot (0.4 m + 2×0.05 margin) cannot pass under any δ_hard > 0. Use a ≥4.5 m aisle, model the forklift as a 2-circle/box (half-width ≈0.6 m), or declare S2 a yield/stop scenario with its own pass criterion (stop distance ≥ 0.5 m, no collision), and say which of '이탈 ≤ 1 m / 복귀 ≤ 5 s' applies.",
+  "Replace the PlannerException-based replanning (§5.6): set controller_server failure_tolerance (e.g., 1.0 s) so zero velocity is held without aborting; ship a custom BT without Spin/Wait (or a short Wait) for aisles; never ClearLocalCostmap in front of moving obstacles; describe the verified Humble behaviour (abort → ClearLocalCostmap → Spin 1.57 → Wait 5 → BackUp) and measure exception-to-new-cmd latency.",
+  "Correct the velocity_smoother claim (no jerk limit in Humble) and implement jerk limiting (in-plugin slew or custom node); add a jerk-RMS acceptance threshold to §6.1.",
+  "Rewrite §6.1 avoidance-window/return-time definitions from ground-truth geometry so DWB/MPPI/TEB are measured identically; keep the planner's TTC_δ only as a debug signal.",
+  "Fix the statistics (§6.3): pool the 30 paired runs (n = 30) or use ≥8 seeds per scenario; specify the two-sided exact Wilcoxon, report effect sizes/CIs; pre-register the minimum-distance and near-miss thresholds.",
+  "Rewrite unit test 5 (§7.4): 'bound ≥ MC for isotropic and anisotropic Σ' plus a tabulated gap (expect 0.1+ at σ ≈ R), and test that the tightened bound ≤ the μ-direction bound; add a Stage A false-prune-rate test against per-pose ground truth.",
+  "Close the spec gaps: map ≥10 automated integration tests, add a full-world ≥5-dynamic-obstacle scenario, define the PP/Stanley vs PVT-DWA controller assignment, specify global-costmap obstacle-layer settings for the 1 Hz replanning, add the safety-ladder (Warning→Critical→E-stop) scenario and whole-host CPU measurement.",
+  "Move the TEB source-build go/no-go to W2 (separate Dockerfile stage); if it fails, state in W2 that MPPI replaces TEB and what 4.4 evidence will be missing.",
+  "L5: replace the dead PDF link with DOI 10.1109/ICRA.2019.8794386 and read the paper before claiming 'Σ = 0 reproduces Missura 2019' (their model may be polygon-based, not circle-based); qualify the L24 and L4 claims; add the IJRR DOI for L18 and drop the J_risk attribution to L18."
+ ],
+ "score": 5
+}

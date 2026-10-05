@@ -1,0 +1,16 @@
+brake_dist(2.0,0.0->1.1): closed 2.1700 m, filter-simulated 2.1711 m
+brake_dist(1.5,0.8->1.1): closed 2.1055 m, filter-simulated 2.1066 m
+brake_dist(1.8,-0.5->1.0): closed 1.4897 m, filter-simulated 1.4902 m
+brake_dist(1.2,1.0->0.3): closed 2.1271 m, filter-simulated 2.1274 m
+A rest->3 m straight->R1.5 arc: |A_localmin|=4; doc-anchor env max(v_prof-v_cap)=+0.000
+   local-min anchors + filter : max(v - v_cap) = +0.455 m/s at s=3.01
+   exact envelope + filter    : max(v - v_cap) = +0.455 m/s at s=3.01
+   exact env + brake trigger  : max(v - v_cap) = +0.001 m/s at s=3.01;  T_filt=11.00 s vs T_pred=9.89 s (+11.2 %)
+B cruise 20 m->R1.5 arc: |A_localmin|=4; doc-anchor env max(v_prof-v_cap)=+0.000
+   local-min anchors + filter : max(v - v_cap) = +0.296 m/s at s=30.00
+   exact envelope + filter    : max(v - v_cap) = +0.296 m/s at s=30.00
+   exact env + brake trigger  : max(v - v_cap) = +0.000 m/s at s=2.50;  T_filt=20.06 s vs T_pred=18.89 s (+6.2 %)
+C step down to slowly decreasing cap: |A_localmin|=3; doc-anchor env max(v_prof-v_cap)=+0.000
+   local-min anchors + filter : max(v - v_cap) = +1.000 m/s at s=10.02
+   exact envelope + filter    : max(v - v_cap) = +0.311 m/s at s=30.00
+   exact env + brake trigger  : max(v - v_cap) = +0.000 m/s at s=10.01;  T_filt=24.42 s vs T_pred=23.45 s (+4.1 %)
