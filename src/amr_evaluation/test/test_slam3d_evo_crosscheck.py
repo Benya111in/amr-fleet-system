@@ -20,11 +20,20 @@ from amr_evaluation.slam3d import se2
 import numpy as np
 import pytest
 
-evo = pytest.importorskip('evo')
-from evo.core import geometry, metrics  # noqa: E402
-from evo.core.trajectory import PoseTrajectory3D  # noqa: E402
-from evo.main_ape import ape as _ape  # noqa: E402
-from evo.main_rpe import rpe as _rpe  # noqa: E402
+# 모듈 수준 pytest.importorskip 은 쓰지 않는다: launch_testing pytest 플러그인이 같은 디렉토리의 모듈을
+# 수집 밖에서 import 하므로, 거기서 난 Skipped 가 test/ 디렉토리 **전체**를 건너뛰게 만든다
+# (colcon test 에서 amr_evaluation_pytest 가 "collected 0 items / 1 skipped", rc 5 로 실패했다).
+try:
+    from evo.core import geometry, metrics
+    from evo.core.trajectory import PoseTrajectory3D
+    from evo.main_ape import ape as _ape
+    from evo.main_rpe import rpe as _rpe
+    HAVE_EVO = True
+except ImportError:
+    HAVE_EVO = False
+
+pytestmark = pytest.mark.skipif(not HAVE_EVO,
+                                reason='evo 가 없다 (amr-ai/slam:0.1 의 /opt/evo 에서 돌린다)')
 
 
 def ape(r, e, *a, **k):
