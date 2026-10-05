@@ -12,7 +12,9 @@
 GRANTED 를 받아야 실행을 시작한다. 실행 중인 작업은 announce_commits 이면 LOCKED 입찰로 방송해
 다른 로봇이 그 작업을 놓게 한다 (비선점).
 
-시간 단위는 호출자가 정한다 (시뮬레이터는 라운드 번호, ROS 노드는 sim-time 초). heartbeat_timeout 도 같은 단위.
+시간 단위는 호출자가 정한다 (시뮬레이터는 라운드 번호). heartbeat_timeout 도 같은 단위.
+계약: 전원 직접 수신 판정은 last_direct == now **정확 일치**다. 한 라운드의 receive·finish_round 에는 같은
+라운드 식별자(라운드 번호 또는 라운드 시작 스탬프)를 넘긴다 — 수신 시각(sim-time 초)을 넘기면 확정이 나지 않는다.
 """
 
 from __future__ import annotations
