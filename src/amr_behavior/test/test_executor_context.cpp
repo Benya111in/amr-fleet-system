@@ -227,6 +227,71 @@ TEST_F(ContextTest, MarkerAgeAndYieldPose)
   EXPECT_FALSE(ctx_->yieldPose().has_value());
 }
 
+TEST_F(ContextTest, TrafficHoldWaitsForFirstValueOnlyWhenManaged)
+{
+  using amr_behavior::TrafficHoldState;
+  // 기본 = 교통 관리 없음: 받은 값이 없어도 통과 (traffic_manager 가 없는 구성의 기존 동작)
+  EXPECT_EQ(ctx_->trafficHoldState(), TrafficHoldState::kUnmanaged);
+  EXPECT_FALSE(ctx_->trafficHold());
+  EXPECT_FALSE(ctx_->trafficHoldReceived());
+  // 교통 관리 중 + 받은 값 없음 → 허가 없음 = 대기 (포켓 없음 → 제자리)
+  ctx_->setTrafficManaged(true);
+  EXPECT_EQ(ctx_->trafficHoldState(), TrafficHoldState::kAwaiting);
+  EXPECT_TRUE(ctx_->trafficHold());
+  ctx_->updateYieldPose(makePose("map", 1.0, 2.0, 0.0));
+  EXPECT_FALSE(ctx_->yieldPose().has_value());
+  // 첫 값 false → 통과
+  ctx_->updateTrafficHold(false);
+  EXPECT_TRUE(ctx_->trafficHoldReceived());
+  EXPECT_EQ(ctx_->trafficHoldState(), TrafficHoldState::kClear);
+  EXPECT_FALSE(ctx_->trafficHold());
+  // 받은 뒤에는 교통 관리 여부를 보지 않는다 (발행자가 사라지거나 다시 보여도 마지막 값)
+  ctx_->setTrafficManaged(true);
+  EXPECT_FALSE(ctx_->trafficHold());
+  ctx_->updateTrafficHold(true);
+  EXPECT_EQ(ctx_->trafficHoldState(), TrafficHoldState::kHold);
+  ctx_->setTrafficManaged(false);
+  EXPECT_TRUE(ctx_->trafficHold());
+  EXPECT_EQ(ctx_->trafficHoldState(), TrafficHoldState::kHold);
+}
+
+TEST_F(ContextTest, LatchedHoldWithPocketAfterAwaiting)
+{
+  // 늦게 뜬 실행기: latched 포켓과 hold=true 가 같은 순간에 도착 (토픽 간 순서 보장 없음)
+  ctx_->setTrafficManaged(true);
+  ctx_->updateYieldPose(makePose("map", 18.0, 8.0, 0.0));
+  now_ += 0.01;
+  ctx_->updateTrafficHold(true);
+  EXPECT_EQ(ctx_->trafficHoldState(), amr_behavior::TrafficHoldState::kHold);
+  ASSERT_TRUE(ctx_->yieldPose().has_value());
+  EXPECT_DOUBLE_EQ(ctx_->yieldPose()->pose.position.x, 18.0);
+}
+
+TEST(TrafficHoldPolicy, ParseAndManagedRule)
+{
+  using amr_behavior::TrafficHoldPolicy;
+  using amr_behavior::trafficManaged;
+  TrafficHoldPolicy p = TrafficHoldPolicy::kRequired;
+  EXPECT_TRUE(amr_behavior::parseTrafficHoldPolicy("auto", p));
+  EXPECT_EQ(p, TrafficHoldPolicy::kAuto);
+  EXPECT_TRUE(amr_behavior::parseTrafficHoldPolicy("REQUIRED", p));
+  EXPECT_EQ(p, TrafficHoldPolicy::kRequired);
+  EXPECT_FALSE(amr_behavior::parseTrafficHoldPolicy("off", p));
+  EXPECT_EQ(p, TrafficHoldPolicy::kRequired);   // 실패하면 그대로
+  // auto: 발견 유예 안이면 발행자가 안 보여도 관리, 유예 뒤에는 발행자가 보일 때만
+  EXPECT_TRUE(trafficManaged(TrafficHoldPolicy::kAuto, 0.0, 2.0, 0U));
+  EXPECT_TRUE(trafficManaged(TrafficHoldPolicy::kAuto, 1.99, 2.0, 0U));
+  EXPECT_FALSE(trafficManaged(TrafficHoldPolicy::kAuto, 2.0, 2.0, 0U));
+  EXPECT_TRUE(trafficManaged(TrafficHoldPolicy::kAuto, 100.0, 2.0, 1U));
+  EXPECT_FALSE(trafficManaged(TrafficHoldPolicy::kAuto, 0.0, 0.0, 0U));
+  // required: 발행자·시간과 무관하게 관리
+  EXPECT_TRUE(trafficManaged(TrafficHoldPolicy::kRequired, 100.0, 0.0, 0U));
+  EXPECT_STREQ(amr_behavior::toString(amr_behavior::TrafficHoldState::kUnmanaged), "unmanaged");
+  EXPECT_STREQ(amr_behavior::toString(amr_behavior::TrafficHoldState::kAwaiting), "awaiting");
+  EXPECT_STREQ(amr_behavior::toString(amr_behavior::TrafficHoldState::kHold), "hold");
+  EXPECT_STREQ(amr_behavior::toString(amr_behavior::TrafficHoldState::kClear), "clear");
+}
+
 TEST_F(ContextTest, OutputsPublishOnChange)
 {
   ASSERT_EQ(rec_.phases.size(), 1U);

@@ -180,6 +180,43 @@ bool ExecutorContext::estopActive() const
   return estop_;
 }
 
+const char * toString(TrafficHoldState state)
+{
+  switch (state) {
+    case TrafficHoldState::kUnmanaged: return "unmanaged";
+    case TrafficHoldState::kAwaiting: return "awaiting";
+    case TrafficHoldState::kHold: return "hold";
+    case TrafficHoldState::kClear: return "clear";
+  }
+  return "unknown";
+}
+
+bool parseTrafficHoldPolicy(const std::string & text, TrafficHoldPolicy & out)
+{
+  const std::string t = toLower(text);
+  if (t == "auto") {
+    out = TrafficHoldPolicy::kAuto;
+    return true;
+  }
+  if (t == "required") {
+    out = TrafficHoldPolicy::kRequired;
+    return true;
+  }
+  return false;
+}
+
+bool trafficManaged(
+  TrafficHoldPolicy policy, double since_start_s, double grace_s,
+  size_t publishers)
+{
+  if (policy == TrafficHoldPolicy::kRequired) {
+    return true;
+  }
+  // auto: 발행자가 보이면 관리. 시작 직후 발견(DDS discovery)이 끝나기 전에는 발행자가 안 보여도
+  // 관리로 본다 — 재기동한 실행기가 매칭 전에 "발행자 없음 = 통과" 로 움직이지 않게
+  return publishers > 0U || since_start_s < grace_s;
+}
+
 void ExecutorContext::updateTrafficHold(bool hold)
 {
   const double t = now();
@@ -191,12 +228,35 @@ void ExecutorContext::updateTrafficHold(bool hold)
     yield_pose_.reset();   // 해제되면 양보 자세도 무효
   }
   traffic_hold_ = hold;
+  traffic_hold_received_ = true;
+}
+
+void ExecutorContext::setTrafficManaged(bool managed)
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  traffic_managed_ = managed;
 }
 
 bool ExecutorContext::trafficHold() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
-  return traffic_hold_;
+  // 받은 값이 없으면: 교통 관리 중이면 허가 없음 = 대기, 아니면 통과 (교통 관리자가 없는 구성)
+  return traffic_hold_received_ ? traffic_hold_ : traffic_managed_;
+}
+
+bool ExecutorContext::trafficHoldReceived() const
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  return traffic_hold_received_;
+}
+
+TrafficHoldState ExecutorContext::trafficHoldState() const
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (traffic_hold_received_) {
+    return traffic_hold_ ? TrafficHoldState::kHold : TrafficHoldState::kClear;
+  }
+  return traffic_managed_ ? TrafficHoldState::kAwaiting : TrafficHoldState::kUnmanaged;
 }
 
 void ExecutorContext::updateYieldPose(const geometry_msgs::msg::PoseStamped & pose)

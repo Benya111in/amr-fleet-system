@@ -97,6 +97,7 @@ TaskExecutorNode::TaskExecutorNode(const rclcpp::NodeOptions & options)
   ctx_ = std::make_shared<ExecutorContext>([this]() {return now().seconds();});
   declareAndLoadParameters();
   createInterfaces();
+  refreshTrafficManagement();   // 첫 tick 전에도 정책대로 (기본 auto: 발견 유예 동안 대기)
 }
 
 TaskExecutorNode::~TaskExecutorNode()
@@ -131,6 +132,17 @@ void TaskExecutorNode::declareAndLoadParameters()
   publish_payload_mass_ = declare_parameter<bool>("publish_payload_mass", true);
   server_wait_timeout_ms_ = declare_parameter<int>("server_wait_timeout_ms", 5000);
   goal_response_timeout_ms_ = declare_parameter<int>("goal_response_timeout_ms", 2000);
+
+  // traffic/hold 첫 값을 받기 전 규칙 (hold_failsafe.md)
+  const std::string hold_policy = declare_parameter<std::string>("traffic_hold.policy", "auto");
+  if (!parseTrafficHoldPolicy(hold_policy, traffic_hold_policy_)) {
+    RCLCPP_WARN(
+      get_logger(), "traffic_hold.policy '%s' 는 auto | required 여야 한다 → auto",
+      hold_policy.c_str());
+    traffic_hold_policy_ = TrafficHoldPolicy::kAuto;
+  }
+  traffic_hold_grace_s_ = std::max(
+    0.0, declare_parameter<double>("traffic_hold.discovery_grace_s", traffic_hold_grace_s_));
 
   // 작업 수락 정책
   AcceptPolicy policy;
@@ -324,13 +336,17 @@ void TaskExecutorNode::createInterfaces()
     "localization/lost", latchedQos(), [this](const std_msgs::msg::Bool::SharedPtr msg) {
       ctx_->updateLocalizationLost(msg->data);
     });
-  // traffic/hold 는 QoS 미정 → volatile 구독 (latched/volatile 발행자 모두와 호환)
+  // traffic/hold · traffic/yield_pose 는 traffic_manager_node 가 latched
+  // (reliable + transient_local, depth 1)로 바뀔 때만 낸다 → 같은 QoS 로 구독해야
+  // 늦게 뜬(재기동한) 실행기도 현재 값을 받는다. volatile 구독은 매칭은 되지만 지난 표본을
+  // 받지 못해 hold=true 를 놓친다 (hold_failsafe.md §1). volatile 발행자와는 짝이 맺어지지
+  // 않는다 → 발행자는 보이고 값은 없으므로 auto 정책이 대기를 유지하고 경고한다 (fail-closed).
   traffic_hold_sub_ = create_subscription<std_msgs::msg::Bool>(
-    "traffic/hold", rclcpp::QoS(10), [this](const std_msgs::msg::Bool::SharedPtr msg) {
+    "traffic/hold", latchedQos(), [this](const std_msgs::msg::Bool::SharedPtr msg) {
       ctx_->updateTrafficHold(msg->data);
     });
   yield_pose_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
-    "traffic/yield_pose", rclcpp::QoS(10),
+    "traffic/yield_pose", latchedQos(),
     [this](const geometry_msgs::msg::PoseStamped::SharedPtr msg) {ctx_->updateYieldPose(*msg);});
   objects_sub_ = create_subscription<amr_msgs::msg::DetectedObjectArray>(
     "perception/detected_objects", rclcpp::SensorDataQoS(),
@@ -442,8 +458,60 @@ void TaskExecutorNode::init()
     std::chrono::duration_cast<std::chrono::nanoseconds>(period), [this]() {tickOnce();});
 }
 
+void TaskExecutorNode::refreshTrafficManagement()
+{
+  if (!traffic_hold_sub_) {
+    return;
+  }
+  const auto wall = std::chrono::steady_clock::now();
+  if (!ctx_->trafficHoldReceived()) {
+    const double since = std::chrono::duration<double>(wall - started_).count();
+    const size_t publishers = count_publishers(traffic_hold_sub_->get_topic_name());
+    ctx_->setTrafficManaged(
+      trafficManaged(traffic_hold_policy_, since, traffic_hold_grace_s_, publishers));
+  }
+  const TrafficHoldState state = ctx_->trafficHoldState();
+  const TrafficHoldState prev = traffic_state_;
+  traffic_state_ = state;
+  if (state == TrafficHoldState::kAwaiting) {
+    if (prev != state) {
+      awaiting_since_ = wall;
+    }
+    const double waited = std::chrono::duration<double>(wall - awaiting_since_).count();
+    if (waited > traffic_hold_grace_s_ + 5.0) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), steady_clock_, 10000,
+        "traffic/hold 첫 값을 %.0f s 째 못 받았다 (발행자 %zu, QoS 맞는 것 %zu) → 정지 유지. "
+        "traffic_manager 가 이 로봇을 관측하는지(odometry/filtered_map), "
+        "발행 QoS 가 latched 인지 확인",
+        waited, count_publishers(traffic_hold_sub_->get_topic_name()),
+        traffic_hold_sub_->get_publisher_count());
+    }
+  }
+  // 첫 값을 받기 전의 전이만 기록한다 (받은 뒤의 hold ↔ clear 는 traffic_manager 가 기록한다)
+  if (state == prev || prev == TrafficHoldState::kHold || prev == TrafficHoldState::kClear) {
+    return;
+  }
+  if (state == TrafficHoldState::kAwaiting) {
+    RCLCPP_INFO(
+      get_logger(),
+      "traffic/hold: 첫 값을 받을 때까지 정지 (정책 %s, 발견 유예 %.1f s, 발행자 %zu)",
+      traffic_hold_policy_ == TrafficHoldPolicy::kRequired ? "required" : "auto",
+      traffic_hold_grace_s_, count_publishers(traffic_hold_sub_->get_topic_name()));
+  } else if (state == TrafficHoldState::kUnmanaged) {
+    RCLCPP_INFO(
+      get_logger(),
+      "traffic/hold: 발행자 없음 (발견 유예 %.1f s 경과) → 교통 관리 없는 구성으로 진행",
+      traffic_hold_grace_s_);
+  } else {
+    RCLCPP_INFO(
+      get_logger(), "traffic/hold: 첫 값 수신 %s (이전 %s)", toString(state), toString(prev));
+  }
+}
+
 void TaskExecutorNode::tickOnce()
 {
+  refreshTrafficManagement();   // 트리가 게이트를 읽기 직전에 교통 관리 여부를 갱신한다
   if (!tree_) {
     return;
   }

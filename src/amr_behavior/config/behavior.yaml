@@ -84,6 +84,14 @@
     charge_retry_delay_ms: 10000    # 충전 실패 후 재시도 간격
     error_hold_ms: 1500             # 실패 보고 뒤 ERROR 유지 — fleet_adapter 2 Hz 샘플(0.5 s) + 지연 100 ms 보다 길게
 
+    # 교통 hold (traffic/hold, latched 구독). 첫 값을 받은 뒤에는 받은 값만 따른다.
+    # 첫 값을 받기 전: 교통 관리 중이면 "허가 없음 = 대기", 아니면 통과 (traffic_manager 가 없는 단일 로봇 구성).
+    # 근거·검증: docs/research/fleet-traffic-deadlock/hold_failsafe.md
+    traffic_hold:
+      policy: auto                  # auto: 발행자가 보이거나 시작 뒤 discovery_grace_s 안이면 교통 관리 중으로 본다
+                                    # required: 항상 (교통 관리자가 있다고 아는 구성 — 못 받으면 계속 대기)
+      discovery_grace_s: 2.0        # [s] 벽시계. 재기동한 실행기가 DDS 발견 전에 "발행자 없음 = 통과" 로 움직이지 않게
+
     # 인식 조건 (IsObjectDetected)
     perception_class: box           # YOLO 클래스 이름 (perception.yaml 과 같은 표기)
     perception_max_distance: 2.0    # [m] base_link 기준 (sequences.md: distance ≤ 2 m)

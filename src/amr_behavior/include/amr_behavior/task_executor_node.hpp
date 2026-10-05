@@ -9,8 +9,11 @@
 // Pub/Sub /fleet/charger_claims (String JSON {"robot","charger","since"}, 1 Hz 심장박동)
 //       충전소 점유
 // Sub   battery_state, safety/estop_active(latched: 버튼·센서 고장 E-stop 만, 계약 C1),
-//       traffic/hold, traffic/yield_pose, localization/lost(latched), perception/detected_objects,
-//       perception/dock_marker_pose
+//       traffic/hold(latched), traffic/yield_pose(latched), localization/lost(latched),
+//       perception/detected_objects, perception/dock_marker_pose
+//       traffic/hold 첫 값을 받기 전에는 traffic_hold.policy 로 정한다: 교통 관리 중
+//       (발행자가 보이거나 시작 뒤 발견 유예 안, 또는 required)이면 허가 없음 = 대기,
+//       아니면 통과 (hold_failsafe.md)
 // ActC  navigate_to_pose, dock, spin, backup, wait
 // SrvC  {global,local}_costmap/clear_entirely_{global,local}_costmap
 // Groot BT::PublisherZMQ (groot.publisher_port / groot.server_port, 다중 로봇은 bringup 이
@@ -20,6 +23,7 @@
 #ifndef AMR_BEHAVIOR__TASK_EXECUTOR_NODE_HPP_
 #define AMR_BEHAVIOR__TASK_EXECUTOR_NODE_HPP_
 
+#include <chrono>
 #include <memory>
 #include <string>
 
@@ -66,6 +70,8 @@ private:
     std::shared_ptr<amr_msgs::srv::AssignTask::Response> response);
   void publishChargerClaim(const std::string & charger, double since);
   void onChargerClaim(const std::string & json);
+  /// 첫 traffic/hold 를 받기 전: 정책·발행자 수로 교통 관리 여부를 갱신하고 상태 전이를 기록한다.
+  void refreshTrafficManagement();
 
   std::shared_ptr<ExecutorContext> ctx_;
   TaskTreeConfig tree_config_;
@@ -80,6 +86,12 @@ private:
   bool publish_payload_mass_{true};
   int server_wait_timeout_ms_{5000};
   int goal_response_timeout_ms_{2000};
+  TrafficHoldPolicy traffic_hold_policy_{TrafficHoldPolicy::kAuto};
+  double traffic_hold_grace_s_{2.0};   ///< [s] 벽시계 발견 유예 (auto)
+  std::chrono::steady_clock::time_point started_{std::chrono::steady_clock::now()};
+  std::chrono::steady_clock::time_point awaiting_since_{};
+  TrafficHoldState traffic_state_{TrafficHoldState::kUnmanaged};   ///< 마지막으로 기록한 상태
+  rclcpp::Clock steady_clock_{RCL_STEADY_TIME};                     ///< 경고 간격 제한용
 
   BT::BehaviorTreeFactory factory_;
   std::unique_ptr<BT::Tree> tree_;

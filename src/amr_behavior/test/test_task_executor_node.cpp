@@ -1,6 +1,7 @@
 // task_executor_node 통합 시험: 실제 트리 XML + 프로세스 안 모의 Nav2/도킹 서버로 assign_task →
 // 대기-이동-인식-작업-복귀 → task_status COMPLETED, 실행 중 재할당 거절, Groot 퍼블리셔 기동
-// (여는 데 실패해도 실행기는 계속), clear_payload, 도크 없는 작업 거절, 충전소 점유 메시지.
+// (여는 데 실패해도 실행기는 계속), clear_payload, 도크 없는 작업 거절, 충전소 점유 메시지,
+// traffic/hold latched 구독과 첫 값 전 규칙 (hold_failsafe.md).
 #include <gtest/gtest.h>
 
 #include <atomic>
@@ -16,6 +17,7 @@
 #include "amr_msgs/msg/detected_object_array.hpp"
 #include "amr_msgs/msg/task.hpp"
 #include "amr_msgs/srv/assign_task.hpp"
+#include "geometry_msgs/msg/pose_stamped.hpp"
 #include "nav2_msgs/action/back_up.hpp"
 #include "nav2_msgs/action/navigate_to_pose.hpp"
 #include "nav2_msgs/action/spin.hpp"
@@ -411,4 +413,126 @@ TEST_F(ExecutorNodeTest, EstopAndBatteryGateAcceptance)
   ASSERT_TRUE(res);
   EXPECT_EQ(res->message, "battery_low");
   EXPECT_NE(executor_->tree(), nullptr);
+}
+
+namespace
+{
+
+/// traffic/hold 시험용 실행기 (네임스페이스 /<ns>, Groot·점유 공유 끔).
+/// init() 로 tick 타이머까지 띄운다.
+std::shared_ptr<amr_behavior::TaskExecutorNode> makeTrafficExecutor(
+  const std::string & ns, double grace_s, const std::string & policy = "auto")
+{
+  const std::vector<rclcpp::Parameter> overrides = {
+    rclcpp::Parameter(
+      "bt_xml", std::string(AMR_BEHAVIOR_SOURCE_DIR) + "/behavior_trees/task_executor.xml"),
+    rclcpp::Parameter("groot.enabled", false),
+    rclcpp::Parameter("charger_claims_topic", ""),
+    rclcpp::Parameter("traffic_hold.policy", policy),
+    rclcpp::Parameter("traffic_hold.discovery_grace_s", grace_s),
+  };
+  auto node = std::make_shared<amr_behavior::TaskExecutorNode>(
+    rclcpp::NodeOptions().parameter_overrides(overrides).arguments(
+      {"--ros-args", "-r", "__ns:=/" + ns}));
+  node->init();
+  return node;
+}
+
+/// traffic_manager_node 의 LATCHED_QOS 와 같다 (reliable + transient_local, depth 1).
+rclcpp::QoS tmLatchedQos()
+{
+  return rclcpp::QoS(1).reliable().transient_local();
+}
+
+}  // namespace
+
+TEST_F(ExecutorNodeTest, LateExecutorReceivesLatchedHoldAndPocket)
+{
+  using amr_behavior::TrafficHoldState;
+  // 교통 관리자가 hold=true 와 포켓을 먼저 낸다 (바뀔 때만 발행 — 다시 내지 않는다)
+  auto tm = std::make_shared<rclcpp::Node>("fake_traffic_manager");
+  auto hold_pub = tm->create_publisher<std_msgs::msg::Bool>("/amr_11/traffic/hold", tmLatchedQos());
+  auto pose_pub = tm->create_publisher<geometry_msgs::msg::PoseStamped>(
+    "/amr_11/traffic/yield_pose", tmLatchedQos());
+  geometry_msgs::msg::PoseStamped pocket;
+  pocket.header.frame_id = "map";
+  pocket.pose.position.x = 18.0;
+  pocket.pose.position.y = 8.0;
+  pocket.pose.orientation.w = 1.0;
+  pose_pub->publish(pocket);
+  std_msgs::msg::Bool on;
+  on.data = true;
+  hold_pub->publish(on);
+  // 그 뒤에 뜬 실행기 (재기동 · 늦은 매칭). 대조: 같은 때 만든 volatile 구독(수정 전 QoS)
+  auto late = makeTrafficExecutor("amr_11", 0.0);
+  std::atomic<int> volatile_got{0};
+  auto probe = tm->create_subscription<std_msgs::msg::Bool>(
+    "/amr_11/traffic/hold", rclcpp::QoS(10),
+    [&volatile_got](const std_msgs::msg::Bool::SharedPtr) {++volatile_got;});
+  rclcpp::executors::SingleThreadedExecutor exec;
+  exec.add_node(tm);
+  exec.add_node(late);
+  amr_behavior_test::SpinThread spinner(exec);
+  ASSERT_TRUE(
+    waitFor(
+      [&late]() {return late->context()->trafficHoldState() == TrafficHoldState::kHold;}, 5s));
+  EXPECT_TRUE(late->context()->trafficHold());
+  ASSERT_TRUE(waitFor([&late]() {return late->context()->yieldPose().has_value();}, 5s));
+  EXPECT_DOUBLE_EQ(late->context()->yieldPose()->pose.position.x, 18.0);
+  // volatile 구독은 짝이 맺어져도 지난 표본을 받지 못한다 → 수정 전에는 hold=true 를 놓쳤다
+  ASSERT_TRUE(waitFor([&probe]() {return probe->get_publisher_count() == 1U;}, 5s));
+  std::this_thread::sleep_for(300ms);
+  EXPECT_EQ(volatile_got.load(), 0);
+}
+
+TEST_F(ExecutorNodeTest, AwaitsFirstValueWhileTrafficPublisherExists)
+{
+  using amr_behavior::TrafficHoldState;
+  // 교통 관리자는 떠 있지만 이 로봇에 대해 아직 아무것도 내지 않았다 → 허가 없음 = 대기
+  auto tm = std::make_shared<rclcpp::Node>("fake_traffic_manager_silent");
+  auto hold_pub = tm->create_publisher<std_msgs::msg::Bool>("/amr_12/traffic/hold", tmLatchedQos());
+  auto ex = makeTrafficExecutor("amr_12", 0.0);   // 발견 유예 없음: 발행자로만 판정
+  rclcpp::executors::SingleThreadedExecutor exec;
+  exec.add_node(tm);
+  exec.add_node(ex);
+  amr_behavior_test::SpinThread spinner(exec);
+  ASSERT_TRUE(
+    waitFor(
+      [&ex]() {return ex->context()->trafficHoldState() == TrafficHoldState::kAwaiting;}, 5s));
+  std::this_thread::sleep_for(300ms);
+  EXPECT_EQ(ex->context()->trafficHoldState(), TrafficHoldState::kAwaiting);
+  EXPECT_TRUE(ex->context()->trafficHold());
+  std_msgs::msg::Bool off;
+  hold_pub->publish(off);
+  ASSERT_TRUE(
+    waitFor([&ex]() {return ex->context()->trafficHoldState() == TrafficHoldState::kClear;}, 5s));
+  EXPECT_FALSE(ex->context()->trafficHold());
+}
+
+TEST_F(ExecutorNodeTest, WithoutTrafficManagerProceedsAfterDiscoveryGrace)
+{
+  using amr_behavior::TrafficHoldState;
+  // traffic_manager 가 없는 구성 (단일 로봇 시나리오): 발견 유예 동안만 대기,
+  // 그 뒤 기존 동작(통과). 모르는 정책 문자열은 auto 로 본다
+  auto ex = makeTrafficExecutor("amr_13", 1.0, "bogus");
+  EXPECT_EQ(ex->context()->trafficHoldState(), TrafficHoldState::kAwaiting);
+  rclcpp::executors::SingleThreadedExecutor exec;
+  exec.add_node(ex);
+  amr_behavior_test::SpinThread spinner(exec);
+  ASSERT_TRUE(
+    waitFor(
+      [&ex]() {return ex->context()->trafficHoldState() == TrafficHoldState::kUnmanaged;}, 5s));
+  EXPECT_FALSE(ex->context()->trafficHold());
+}
+
+TEST_F(ExecutorNodeTest, RequiredPolicyWaitsWithoutPublisher)
+{
+  using amr_behavior::TrafficHoldState;
+  auto ex = makeTrafficExecutor("amr_14", 0.0, "required");
+  rclcpp::executors::SingleThreadedExecutor exec;
+  exec.add_node(ex);
+  amr_behavior_test::SpinThread spinner(exec);
+  std::this_thread::sleep_for(500ms);
+  EXPECT_EQ(ex->context()->trafficHoldState(), TrafficHoldState::kAwaiting);
+  EXPECT_TRUE(ex->context()->trafficHold());
 }

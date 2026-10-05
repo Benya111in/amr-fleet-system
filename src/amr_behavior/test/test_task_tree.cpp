@@ -434,6 +434,31 @@ TEST_F(TaskTreeTest, TrafficHoldYieldsThenResumes)
   EXPECT_EQ(stub("NavigateToPose").starts[2], "goal=map:-28.290000,17.000000");
 }
 
+TEST_F(TaskTreeTest, AwaitingFirstTrafficValueBlocksMotion)
+{
+  // 교통 관리 중인데 traffic/hold 를 아직 못 받았다 (늦게 뜬 실행기)
+  // → 허가 없음 = 작업 목표로 주행하지 않고 Yield 의 빈 포켓(제자리 대기)만 시작한다
+  ctx_->setTrafficManaged(true);
+  stub("NavigateToPose").running_ticks = 1;
+  tick();
+  assign();
+  for (int i = 0; i < 40; ++i) {
+    tick();
+  }
+  auto to_map_goal = [this]() {
+      const auto & s = stub("NavigateToPose").starts;
+      return std::count_if(
+        s.begin(), s.end(), [](const std::string & x) {return x.rfind("goal=map:", 0) == 0;});
+    };
+  EXPECT_EQ(to_map_goal(), 0);
+  EXPECT_LE(stub("NavigateToPose").calls, 1);   // Yield 의 빈 포켓 (skip_if_empty) 한 번
+  // 첫 값 false → 주행 시작, 작업 완료
+  ctx_->updateTrafficHold(false);
+  ASSERT_TRUE(runUntil([this]() {return finishedTask();}));
+  EXPECT_EQ(statuses_.back(), Task::STATUS_COMPLETED);
+  EXPECT_GE(to_map_goal(), 1);
+}
+
 TEST_F(TaskTreeTest, LocalizationLostWaitsThenRecovers)
 {
   stub("NavigateToPose").running_ticks = 30;

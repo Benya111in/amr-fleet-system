@@ -8,6 +8,7 @@
 #ifndef AMR_BEHAVIOR__EXECUTOR_CONTEXT_HPP_
 #define AMR_BEHAVIOR__EXECUTOR_CONTEXT_HPP_
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -96,6 +97,31 @@ struct AcceptPolicy
   bool allow_undocked_tasks{false};
 };
 
+/// traffic/hold 게이트 상태. 첫 값을 받기 전에는 교통 관리 여부로 정한다
+/// (docs/research/fleet-traffic-deadlock/hold_failsafe.md).
+enum class TrafficHoldState
+{
+  kUnmanaged,   ///< 받은 값 없음 · 교통 관리 없음 → 통과 (traffic_manager 가 없는 구성)
+  kAwaiting,    ///< 받은 값 없음 · 교통 관리 있음 → 허가 없음 = 대기
+  kHold,        ///< 받은 값 true → 대기
+  kClear,       ///< 받은 값 false → 통과
+};
+const char * toString(TrafficHoldState state);
+
+/// traffic_hold.policy — 첫 값을 받기 전 교통 관리로 볼지 정하는 규칙.
+enum class TrafficHoldPolicy
+{
+  kAuto,       ///< 시작 뒤 발견 유예 안이거나 traffic/hold 발행자가 보이면 관리
+  kRequired,   ///< 항상 관리 (교통 관리자가 있다고 아는 구성)
+};
+/// "auto" / "required" → 정책. 모르는 문자열이면 false (out 은 그대로).
+bool parseTrafficHoldPolicy(const std::string & text, TrafficHoldPolicy & out);
+/// 첫 값을 받기 전 교통 관리로 볼지. since_start_s = 노드 시작 뒤 경과 [s](벽시계),
+/// grace_s = 발견 유예 [s], publishers = 그래프에 보이는 traffic/hold 발행자 수.
+bool trafficManaged(
+  TrafficHoldPolicy policy, double since_start_s, double grace_s,
+  size_t publishers);
+
 /// 작업 수락 결과.
 struct AcceptDecision
 {
@@ -150,8 +176,15 @@ public:
   std::optional<double> battery() const;  ///< 미수신/미측정이면 nullopt
   void updateEstop(bool active);
   bool estopActive() const;
+  /// traffic/hold 수신값. 한 번 받으면 그 뒤로는 받은 값만 따른다 (교통 관리 여부 무시).
   void updateTrafficHold(bool hold);
+  /// 첫 값을 받기 전 교통 관리로 볼지 (노드가 정책·발행자 수로 정한다, 기본 false = 기존 동작).
+  /// true 이고 받은 값이 없으면 trafficHold() 가 true (허가 없음 = 대기).
+  void setTrafficManaged(bool managed);
+  /// 대기해야 하는지 (kAwaiting · kHold).
   bool trafficHold() const;
+  bool trafficHoldReceived() const;
+  TrafficHoldState trafficHoldState() const;
   void updateYieldPose(const geometry_msgs::msg::PoseStamped & pose);
   /// hold 가 걸린 뒤 받은 양보 자세. 없으면 nullopt.
   std::optional<geometry_msgs::msg::PoseStamped> yieldPose() const;
@@ -228,7 +261,9 @@ private:
 
   std::optional<double> battery_;
   bool estop_{false};
-  bool traffic_hold_{false};
+  bool traffic_hold_{false};           ///< 마지막 수신값 (traffic_hold_received_ 일 때만 유효)
+  bool traffic_hold_received_{false};
+  bool traffic_managed_{false};
   double hold_since_{0.0};
   std::optional<geometry_msgs::msg::PoseStamped> yield_pose_;
   double yield_stamp_{0.0};
