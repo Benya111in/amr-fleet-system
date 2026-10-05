@@ -663,6 +663,7 @@ class ZoneAgent:
         a.votes.add(msg.src)
         a.contended.discard(msg.src)
         a.hard_nacks.discard(msg.src)
+        a.enter_nacks.discard(msg.src)        # 대기열에서 다시 표를 줬다 — ENTER 를 다시 보낸다
         if a.phase == VOTING and len(a.votes) >= self.q:
             a.phase = ENTERING
             self._dirty = True                      # ENTERING 영속화 뒤에 ENTER
