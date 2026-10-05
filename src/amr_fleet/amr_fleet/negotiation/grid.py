@@ -2,7 +2,8 @@
 점유 격자와 8-이웃 A* — 입찰 비용용 경로 길이 추정 (Nav2 를 부르지 않는다, 보고서 54행).
 
 지도(maps/warehouse.yaml + .pgm, 0.05 m)를 cell_m 칸으로 줄이고(칸 안에 점유 화소가 하나라도 있거나
-미지 화소가 절반을 넘으면 막힘) inflate_m 만큼 팽창한다. 그 위에서 옥타일 휴리스틱 A* 로 칸 중심 사이
+미지 화소가 절반을 넘으면 막힘) inflate_m 만큼 팽창한다. 지도 크기가 칸의 배수가 아니면 위쪽 행·오른쪽 열
+칸이 지도 밖까지 걸치고, 그 바깥 화소는 미지로 센다 (화소를 하나도 버리지 않는다). 그 위에서 옥타일 휴리스틱 A* 로 칸 중심 사이
 경로 길이를 구하고, 시작·목표 점이 막힌 칸이면 가장 가까운 빈 칸으로 옮기며 옮긴 거리를 더한다.
 결과는 (시작 칸, 목표 칸) 쌍으로 기억한다.
 
@@ -61,24 +62,27 @@ class OccupancyGrid:
         occ_t = float(meta.get('occupied_thresh', 0.65))
         free_t = float(meta.get('free_thresh', 0.196))
         factor = max(1, int(round(cell_m / res)))
-        cw, ch = width // factor, height // factor
+        # 올림: 위쪽 나머지 행·오른쪽 나머지 열도 칸에 넣는다 (창고 둘레 벽이 그 띠에 있다)
+        cw, ch = -(-width // factor), -(-height // factor)
         occ = [[0] * cw for _ in range(ch)]
         unk = [[0] * cw for _ in range(ch)]
         for row in range(height):                 # PGM 첫 행 = 지도 위쪽(+y 끝)
             gy = (height - 1 - row) // factor     # 맨 아래 행이 칸 행 0 (origin 이 왼쪽 아래)
-            if gy >= ch:
-                continue                          # 위쪽 나머지 행: 칸을 다 채우지 못해 격자 밖
             base = row * width
             o_row, u_row = occ[gy], unk[gy]
-            for col in range(cw * factor):
+            for col in range(width):
                 v = pixels[base + col]
                 p = v / 255.0 if negate else (255 - v) / 255.0
                 if p > occ_t:
                     o_row[col // factor] += 1
                 elif p >= free_t:
                     u_row[col // factor] += 1
-        half = factor * factor / 2.0
-        blocked = [[occ[r][c] > 0 or unk[r][c] > half for c in range(cw)] for r in range(ch)]
+        # 지도 밖에 걸친 화소(위 행·오른쪽 열 칸)는 미지로 센다
+        rows_in = [min(factor, height - gy * factor) for gy in range(ch)]
+        cols_in = [min(factor, width - cx * factor) for cx in range(cw)]
+        full = factor * factor
+        blocked = [[occ[r][c] > 0 or unk[r][c] + full - rows_in[r] * cols_in[c] > full / 2.0
+                    for c in range(cw)] for r in range(ch)]
         grid = cls(blocked, res * factor, origin)
         return grid.inflated(inflate_m)
 

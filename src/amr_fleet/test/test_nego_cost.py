@@ -137,12 +137,38 @@ def test_map_bottom_rows_are_read_when_height_is_not_a_multiple_of_cell(tmp_path
     assert g.is_free((0, 1)) and g.is_free((1, 1))
 
 
+def test_map_top_row_and_right_column_remainders_become_edge_cells(tmp_path):
+    """위쪽 나머지 행·오른쪽 나머지 열도 칸이 된다 — 둘레 벽이 그 띠에 있어도 사라지지 않는다."""
+    w, h = 5, 5                                    # 0.5 m → 1.0 m 칸: 3×3, 위 행·오른 열 칸은 반쪽
+    px = bytearray([254] * (w * h))
+    px[0] = px[1] = 0                              # PGM 첫 행(y 2.0–2.5 m) 왼쪽에 벽
+    px[2 * w + 4] = 0                              # 오른쪽 끝 열(x 2.0–2.5 m), y 1.0–1.5 m 에 벽
+    g = OccupancyGrid.from_map_yaml(_write_map(tmp_path, w, h, px, 0.5),
+                                    cell_m=1.0, inflate_m=0.0)
+    assert (g.width, g.height) == (3, 3)
+    assert g.cell_of(2.2, 2.2) == (2, 2)
+    assert not g.is_free((0, 2))                   # 위쪽 나머지 행의 벽
+    assert not g.is_free((2, 1))                   # 오른쪽 나머지 열의 벽
+    assert g.is_free((1, 2))                       # 빈 화소 2 + 지도 밖 2 (= 절반) → 빈칸
+    assert g.is_free((2, 0))                       # 빈 화소 2 + 지도 밖 2
+    assert not g.is_free((2, 2))                   # 빈 화소 1 + 지도 밖 3 (> 절반) → 막힘
+    assert all(g.is_free((x, y)) for x in range(2) for y in range(2))
+    inf = g.inflated(1.0)                          # 가장자리 벽도 안쪽으로 팽창한다
+    assert not inf.is_free((0, 1)) and not inf.is_free((1, 1))
+    assert inf.is_free((0, 0)) and inf.is_free((1, 0))
+
+
 @pytest.mark.skipif(not MAP_YAML.is_file(), reason='maps/warehouse.yaml 없음')
 def test_real_map_grid_cost_is_finite_and_not_shorter_than_euclid():
     grid = OccupancyGrid.from_map_yaml(str(MAP_YAML), cell_m=0.5, inflate_m=0.25)
     assert 0.3 < grid.free_fraction() < 0.95
-    # 창고 아래쪽 벽(PGM 800–803 행, 높이 806 = 10 × 80 + 6 의 나머지 행)이 칸 행 0 에 들어간다
-    assert not any(grid.is_free((x, 0)) for x in range(grid.width))
+    # 둘레 벽이 네 변 모두 칸에 들어가고 팽창된다: 아래쪽 벽(PGM 800–803 행)은 높이 806 = 10 × 80 + 6
+    # 의 아래 나머지 행에, 위쪽 벽(0–3 행)과 오른쪽 벽(1201–1205 열, 너비 1207)은 위·오른쪽 나머지 띠에 있다
+    w, h = grid.width, grid.height
+    assert (w, h) == (121, 81)
+    ring = ([(x, y) for x in range(w) for y in (0, 1, h - 2, h - 1)]
+            + [(x, y) for y in range(h) for x in (0, 1, w - 2, w - 1)])
+    assert not any(grid.is_free(c) for c in ring)
     model = GridAstarCost(grid, 1.0)
     case = scenario.make_case(4, random.Random(5), 'spawn', free_xy=grid.is_free_xy)
     euclid = EuclideanCost(1.0).matrix(case.robots, case.tasks)
