@@ -28,7 +28,7 @@ def sim_time(v):
 
 
 def d_goal_for_rollout(state):
-    """dwa.cpp:451-458: max(남은 호길이, 목표까지 직선거리)."""
+    """dwa.cpp:449-459: max(남은 호길이, 목표까지 직선거리)."""
     x, y, _ = state.pose
     s0 = G.project_onto_path(state.path, (x, y))[0]
     rem = max(0.0, G.path_length(state.path) - s0)
