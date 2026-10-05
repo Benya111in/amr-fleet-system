@@ -489,3 +489,31 @@ def test_stale_enter_ack_of_old_request_is_not_counted():
     assert c.agents['d'].authorized() == {'z'}
     assert not c.agents['a'].authorized()
     assert c.check() == []
+
+
+def test_restart_reuse_of_request_id_cannot_be_freed_by_old_cleanup():
+    """
+    재시작한 요청자는 새 incarnation 으로 요청 ID 를 새로 만든다.
+
+    b 가 z 를 허가받고 들어가기 전에 죽는다. 재시작 때 옛 요청을 RELEASE 하는데, 그 RELEASE 가 늦는 사이 b 가 z 를
+    다시 요청한다. incarnation 이 그대로면 새 요청 ID 가 옛 것과 같아져(seq 는 휘발) 투표자가 옛 확정 표를
+    "중복 요청" 으로 보고 곧바로 허가하고, 늦게 온 옛 RELEASE 가 그 표를 푼다 → 확정 표 0 개로 허가 (I4).
+    깊은 상태기계 탐색(3000 × 100)이 incarnation 고정 변이(M15)에서 찾은 꼴을 손으로 옮겼다.
+    """
+    c = Cluster(CFG)
+    c.request('b', ['z'])
+    c.settle(3)
+    assert c.agents['b'].authorized() == {'z'}
+    old = next(iter(c.agents['b'].held))
+    c.crash('b')
+    c.restart('b')                                            # 몸체는 밖 → 옛 요청 RELEASE (늦게 도착)
+    late = _pop(c, lambda x: x.kind == m.RELEASE and x.req == old)
+    assert len(late) == 5
+    c.request('b', ['z'])
+    assert c.agents['b'].attempt.req != old
+    c.deliver_all()
+    c.send(late)
+    c.settle(5)
+    assert c.check() == []
+    assert c.agents['b'].authorized() == {'z'}
+    assert all(c.agents[v].votes['z'].req != old for v in MEMBERS)
