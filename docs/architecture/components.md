@@ -191,7 +191,7 @@ BT 노드 목록 (≥15, 명세 8장): Control `Sequence` `Fallback` `ReactiveSe
 | --- | --- | --- | --- | --- |
 | `fleet_manager_node` (중앙, 1개) | Python | own | JSON Task 수신·검증(스키마 draft-07 + 의미 규칙, 위반은 알림 후 버림) → 우선순위/마감 큐 → **할당(최소 거리 / 부하 균형 / Hungarian, `allocation_strategy` 파라미터)** → 로봇 `assign_task` 호출. 결과가 불확실한 호출은 보류·조정(중복 실행 방지), 작업 소유권 검사, 로봇 생존 감시. 작업 상태 이벤트, KPI(`FleetStatus`), 작업 로그(`logs/`) | scipy `linear_sum_assignment`, 저주기 |
 | `traffic_manager_node` (중앙, 1개) | Python | own | 로봇별 `plan`/자세로 경로 충돌 예측, 교차로 우선순위, **교착 탐지(wait-for 그래프 사이클)**, 해소 전략 ① 우선순위 양보(`traffic/hold`, `traffic/yield_pose`) ② 대체 경로(`keepout_mask`) | networkx, 2 Hz |
-| `fleet_adapter_node` (로봇별) | Python | own | 로봇 상태 취합 → `robot_state` 2 Hz (E-stop 변화 시 즉시). 통신 지연(0~100 ms) 시뮬레이션 지연 큐. 모의 `assign_task` 서버·모의 완료는 실행기 없는 시험 전용(기본 꺼짐) | 경량 취합 |
+| `fleet_adapter_node` (로봇별) | Python | own | 로봇 상태 취합 → `robot_state` 2 Hz (E-stop·측위 상실 변화 시 즉시). 통신 지연(0~100 ms) 시뮬레이션 지연 큐. 모의 `assign_task` 서버·모의 완료는 실행기 없는 시험 전용(기본 꺼짐) | 경량 취합 |
 
 ### 3.7 amr_dashboard
 
@@ -607,8 +607,9 @@ Nav2 서버 (ext, 액션·토픽 이름은 Nav2 Humble 기본값)
 | --- | --- | --- | --- |
 | Sub | `odometry/filtered_map`, `battery_state`, `task_status`, `executor/phase` | `nav_msgs/msg/Odometry`, `sensor_msgs/msg/BatteryState`, `amr_msgs/msg/Task`, `std_msgs/msg/String` | reliable |
 | Sub | `safety/estop_active` | `std_msgs/msg/Bool` | latched (transient_local 구독 — 어댑터가 나중에 떠도 래치된 E-stop 을 받는다. 발행자도 latched 여야 짝이 맺어진다) |
+| Sub | `localization/lost` | `std_msgs/msg/Bool` | latched. `kidnap_monitor_node`(§5.4) 발행. **왜 어댑터가 이것을 보는가**: 실행기는 lost 동안 작업을 `lost` 로 거절하는데 그 사실을 `executor/phase` 로 알리지 않는다(phase 상수에 LOST 가 없다). 그러면 fleet 가 IDLE 로 보고 계속 배정해 공회전한다 ([performance.md](../reports/performance.md) §4.6) |
 | Sub | `safety/zone` | `std_msgs/msg/UInt8` | 변화 시 (로그용) |
-| Pub | `robot_state` | `amr_msgs/msg/RobotState` | 2 Hz + E-stop 변화 시 즉시. `status` 매핑: estop→ESTOP, phase→MOVING/DOCKING/LOADING/CHARGING, lost/error→ERROR, 그 외 IDLE. 송신 지연 큐: `comm_latency_ms: [0, 100]` 균등 분포에서 메시지마다 추출 ([multi_robot.md](multi_robot.md) §6) |
+| Pub | `robot_state` | `amr_msgs/msg/RobotState` | 2 Hz + E-stop·`localization/lost` 변화 시 즉시. `status` 매핑(우선순위 순): estop→ESTOP, `localization/lost`→ERROR, phase→MOVING/DOCKING/LOADING/CHARGING, phase `error`→ERROR, 그 외 IDLE. lost 는 들러붙지 않는다 — 해제되면 phase 로 돌아간다. 송신 지연 큐: `comm_latency_ms: [0, 100]` 균등 분포에서 메시지마다 추출 ([multi_robot.md](multi_robot.md) §6) |
 | SrvS | `assign_task` | `amr_msgs/srv/AssignTask` | **모의 전용, 기본 꺼짐**(`serve_assign_task: false`). 실제 서버는 `task_executor_node`(§5.5). 실행기 없는 시험에서 `auto_complete_after_s > 0` 과 함께 켠다 (런치가 자동으로 켠다). IDLE 이고 작업이 없을 때만 수락 |
 | Pub | `task_status` | `amr_msgs/msg/Task` | 모의 완료(`auto_complete_after_s > 0`) 때만: 수락 시 IN_PROGRESS, N s 뒤 COMPLETED |
 | 로그 | `logs/comm_latency_<robot>_YYYYmmdd.csv` | — | `[cmd_time, response_time, latency_ms]` — 요청 stamp → 어댑터 수신 (모의 서버일 때) |

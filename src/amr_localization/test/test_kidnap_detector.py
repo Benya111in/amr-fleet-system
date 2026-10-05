@@ -391,3 +391,449 @@ def test_marker_fix_is_ignored_when_scan_registration_agrees():
     det2.on_marker_fix(3.0, (9.76, 9.60, 1.17))
     det2.on_marker_fix(3.5, (9.76, 9.60, 1.17))
     assert det2.lost
+
+
+def test_external_pose_reset_lets_recovery_converge_in_an_alias_spot():
+    """
+    주기 별칭 자리에서 바깥이 자세를 잡아 주면 여백 게이트가 복구를 막지 않는다.
+
+    회귀 근거: 지도에 ρ 차가 converge_margin 미만인 자리가 실제로 있다 —
+    docs/research/state-estimation/checks/alias_margin.py 가 test_12 피해 로봇 자리
+    (0.8, 5, 0) 에서 0.034 를 낸다. 그 자리에서는 참 자세를 알려 줘도 영원히 lost 였다
+    (test_20_forced_deadlock: "배치 뒤 위치 추정이 안정되지 않음").
+    """
+    p = KidnapParams(suspect_time=0.5, converge_count=2, converge_margin=0.05)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 30.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 2.0, 0.1)
+    det.tick(1.6)
+    assert det.state == State.RECOVERING and det.lost
+
+    # 여백 0.034 (실측값) — 바깥이 잡아 주기 전에는 몇 번을 줘도 수렴하지 않는다
+    det.on_amcl(5.0, (0.8, 5.0, 0.0), 0.02, 0.01)
+    for k in range(6):
+        assert det.on_match(5.1 + 0.5 * k, 0.93, 150, alias_margin=0.034) == []
+    assert det.lost and det.alias_rejections >= 6
+    assert det.external_trust_uses == 0
+
+    # 바깥(운영자/상위 시스템)이 initialpose 로 자세를 잡아 준다 → 같은 여백에서 수렴한다.
+    # on_amcl 도 _evaluate 를 부르므로 수렴 카운트는 on_amcl 1 + on_match 1 로 채워진다.
+    det.on_external_pose_reset(8.5)
+    actions = det.on_amcl(9.0, (0.8, 5.0, 0.0), 0.02, 0.01) \
+        + det.on_match(9.1, 0.93, 150, alias_margin=0.034)
+    assert ActionType.SET_EKF_POSE in kinds(actions)
+    assert det.state == State.TRACKING and not det.lost
+    assert det.external_trust_uses >= 2
+    # 수렴했으면 유예는 닫힌다 — 다음 복구는 다시 여백을 요구한다
+    # (복구 직후 cooldown 3 s 를 지나서 경보를 올린다)
+    det.on_amcl(16.0, (0.0, 0.0, 0.0), 2.0, 0.1)
+    det.tick(16.6)
+    assert det.state == State.RECOVERING
+    rejections = det.alias_rejections
+    det.on_amcl(17.0, (0.8, 5.0, 0.0), 0.02, 0.01)
+    for k in range(4):
+        det.on_match(17.1 + 0.5 * k, 0.93, 150, alias_margin=0.034)
+    assert det.lost and det.alias_rejections > rejections
+
+
+def test_external_trust_does_not_waive_the_other_convergence_conditions():
+    """유예는 **별칭 여백**만 건너뛴다 — ρ 하한과 공분산 조건은 그대로 요구한다."""
+    p = KidnapParams(suspect_time=0.5, converge_count=2, converge_margin=0.05)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 30.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 2.0, 0.1)
+    det.tick(1.6)
+    det.on_external_pose_reset(2.0)
+
+    # ρ 가 converge_match(0.7) 미만이면 유예가 있어도 수렴하지 않는다
+    det.on_amcl(5.0, (0.8, 5.0, 0.0), 0.02, 0.01)
+    for k in range(4):
+        assert det.on_match(5.1 + 0.5 * k, 0.60, 150, alias_margin=0.034) == []
+    assert det.lost
+    # 공분산이 크면(여기서는 trace 2.0) 역시 수렴하지 않는다
+    det.on_amcl(7.5, (0.8, 5.0, 0.0), 2.0, 0.01)
+    for k in range(4):
+        assert det.on_match(7.6 + 0.5 * k, 0.93, 150, alias_margin=0.034) == []
+    assert det.lost
+
+
+def test_external_trust_expires_and_closes_on_a_new_kidnap():
+    """유예는 창이 지나면 닫히고, 새 LOST 선언에서도 닫힌다 (잡아 준 자세가 더는 유효하지 않다)."""
+    p = KidnapParams(suspect_time=0.5, converge_count=2, converge_margin=0.05,
+                     external_trust_window=5.0)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 60.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 2.0, 0.1)
+    det.tick(1.6)
+    det.on_external_pose_reset(2.0)          # 창 = 2.0 ~ 7.0 s
+
+    # 창 밖(t ≥ 7.0)에서는 여백 게이트가 그대로 산다
+    det.on_amcl(20.0, (0.8, 5.0, 0.0), 0.02, 0.01)
+    before = det.alias_rejections
+    for k in range(4):
+        assert det.on_match(20.1 + 0.5 * k, 0.93, 150, alias_margin=0.034) == []
+    assert det.lost and det.alias_rejections > before
+    assert det.external_trust_uses == 0
+
+    # 새 LOST 선언이 유예를 닫는다
+    det.on_external_pose_reset(25.0)
+    det._declare_lost(25.5, '새 납치')
+    det.on_amcl(26.0, (0.8, 5.0, 0.0), 0.02, 0.01)
+    rejections = det.alias_rejections
+    for k in range(4):
+        det.on_match(26.1 + 0.5 * k, 0.93, 150, alias_margin=0.034)
+    assert det.lost and det.alias_rejections > rejections
+
+
+def test_alias_gate_still_blocks_self_recovery_without_external_help():
+    """회귀 방어: 바깥 도움이 없으면 여백 게이트는 예전 그대로 막는다 (이 수정의 안전 속성)."""
+    p = KidnapParams(suspect_time=0.5, converge_count=2, converge_margin=0.05)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 30.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 2.0, 0.1)
+    det.tick(1.6)
+    det.on_amcl(5.0, (3.0, 4.0, 0.5), 0.02, 0.01)
+    for k in range(10):
+        assert det.on_match(5.1 + 0.5 * k, 0.93, 150, alias_margin=0.02) == []
+    assert det.state == State.RECOVERING and det.lost
+    assert det.alias_rejections >= 10 and det.external_trust_uses == 0
+
+
+def test_backend_down_does_not_burn_recovery_attempts():
+    """
+    측위 백엔드(AMCL)가 inactive 인 동안에는 시도를 소진하지 않는다.
+
+    회귀 근거 (logs/X12): lifecycle_manager 가 change_state 응답을 유실해 amcl 이 ~90 s 동안
+    inactive 였다. 그 동안 이 상태기가 심은 initialpose 는 amcl 이 전부 버렸는데
+    ("not yet in the active state") 시도는 그대로 소진돼 amr_02·03·05 가 셋 다
+    global re-init #4 까지 태우고 FAILED 로 떨어졌고, 그 뒤 작업 배정에서 영구 제외됐다.
+    """
+    p = KidnapParams(suspect_time=0.5, converge_count=2, reinit_retry=4, recovery_timeout=120.0)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 400.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 2.0, 0.1)
+    det.tick(1.6)
+    assert det.state == State.RECOVERING
+    assert det._reinits_done == 1          # LOST 선언이 1 회 쓴다
+
+    det.set_backend_ready(2.0, False)
+    assert not det.backend_ready
+    # 백엔드가 죽은 동안 회전이 끝나도 시도를 쓰지 않는다
+    for k in range(6):
+        assert det.on_spin_done(3.0 + k, True) == []
+    assert det._reinits_done == 1 and det.state == State.RECOVERING
+    # 복구 시한도 흐르지 않는다 (120 s 를 훌쩍 넘겨도 FAILED 가 아니다)
+    det.tick(300.0)
+    assert det.state == State.RECOVERING, 'FAILED 로 떨어졌다 — 시한이 멈추지 않았다'
+
+
+def test_backend_coming_back_rewinds_attempts_and_trusts_its_pose():
+    """백엔드가 돌아오면 시도를 되돌리고, 그 자세를 외부 증거로 믿어 여백을 묻지 않는다."""
+    p = KidnapParams(suspect_time=0.5, converge_count=2, converge_margin=0.05, reinit_retry=4)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 400.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 2.0, 0.1)
+    det.tick(1.6)
+    det.set_backend_ready(2.0, False)
+    det.tick(200.0)                         # 시한이 멈춰 있다
+    assert det.state == State.RECOVERING
+
+    actions = det.set_backend_ready(210.0, True)
+    assert det.backend_ready and det.backend_down_time == pytest.approx(208.0)
+    # **복구를 반드시 다시 시작해야 한다.** 백엔드가 죽은 동안 on_spin_done 이 아무 동작도 내지
+    # 않았으므로 돌고 있는 회전이 없다 — 여기서 깨우지 않으면 상태기가 영원히 멈춰 선다.
+    # (logs/Y12 실측으로 드러난 회귀: amr_04 가 재시도 1 회에서 멈춘 채 20 분간 조용했다.
+    #  이 시험의 앞선 판은 FAILED 경로만 덮고 RECOVERING 경로를 비워 둬서 그것을 놓쳤다.)
+    assert ActionType.REINITIALIZE in kinds(actions), '백엔드 복귀가 복구를 재시작하지 않았다'
+    assert ActionType.SPIN in kinds(actions)
+    assert det.state == State.RECOVERING and det._reinits_done == 1
+
+    # 대기 구역 스폰 자세의 실측 여백 0.034 (< converge_margin 0.05) 에서도 수렴한다 —
+    # 백엔드가 올라오며 적용한 설정 자세는 우리 스캔 정합 바깥의 증거다
+    # on_amcl 시점에는 아직 이번 lost 구간의 match 가 없어 수렴 카운트가 오르지 않는다
+    det.on_amcl(211.0, (20.0, -16.0, 1.5708), 0.02, 0.01)
+    assert det.on_match(211.1, 0.93, 150, alias_margin=0.034) == []
+    actions = det.on_match(211.6, 0.93, 150, alias_margin=0.034)
+    assert ActionType.SET_EKF_POSE in kinds(actions)
+    assert det.external_trust_uses >= 2
+    assert det.state == State.TRACKING and not det.lost
+
+
+def test_backend_recovery_from_failed_restarts_and_does_not_fire_when_backend_is_fine():
+    """FAILED 에서도 백엔드 복귀로 다시 시도하고, 백엔드가 멀쩡하면 아무것도 바뀌지 않는다."""
+    p = KidnapParams(suspect_time=0.5, converge_count=2, reinit_retry=1, recovery_timeout=120.0)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 400.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 2.0, 0.1)
+    det.tick(1.6)
+    det.on_spin_done(3.0, True)             # reinit_retry 1 소진 → FAILED
+    assert det.state == State.FAILED
+
+    actions = det.set_backend_ready(10.0, True)   # 이미 ready 였다 → 변화 없음
+    assert actions == [] and det.state == State.FAILED
+
+    det.set_backend_ready(11.0, False)
+    actions = det.set_backend_ready(20.0, True)
+    assert det.state == State.RECOVERING
+    assert ActionType.REINITIALIZE in kinds(actions)
+    assert det._reinits_done == 1
+
+
+def test_backend_ready_flag_does_not_change_the_normal_path():
+    """회귀 방어: 백엔드가 계속 active 면 예전과 똑같이 시도를 쓰고 시한도 흐른다."""
+    p = KidnapParams(suspect_time=0.5, converge_count=2, reinit_retry=2, recovery_timeout=50.0)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 400.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 2.0, 0.1)
+    det.tick(1.6)
+    assert det._reinits_done == 1
+    det.on_spin_done(3.0, True)
+    assert det._reinits_done == 2
+    det.on_spin_done(4.0, True)             # 소진
+    assert det.state == State.FAILED
+    assert det.backend_ready and det.backend_down_time == 0.0
+
+
+def test_alias_gate_decisions_are_logged_with_the_margin_and_throttled():
+    """
+    여백 게이트의 판정이 이벤트로 남아야 한다 — 안 남으면 로그만으로 진단할 수 없다.
+
+    왜 있는가: 이 판정은 match 주기(10 Hz)로 일어나고 결과가 카운터로만 쌓였다. 그 카운터는
+    상태 토픽 JSON 으로만 나가고 launch.log·CSV 어디에도 남지 않아, `R12a`·`R12b`·`E12` 의
+    "배치 뒤 위치 추정이 안정되지 않음" 을 로그로 가릴 수 없었다. 신뢰 창이 열렸는지조차
+    SUSPECT 였을 때만 기록돼 확인이 불가능했다.
+    """
+    p = KidnapParams(suspect_time=0.5, converge_count=2, converge_margin=0.05,
+                     gate_log_period=5.0)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 400.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 2.0, 0.1)
+    det.tick(1.6)
+    assert det.state == State.RECOVERING
+
+    def gate_events():
+        return [e for e in det.events if 'alias margin' in e.reason]
+
+    # 여백 부족으로 보류되는 판정 — 첫 건은 반드시 남고, 여백 값이 메시지에 있어야 한다
+    det.on_amcl(5.0, (3.0, 4.0, 0.5), 0.02, 0.01)
+    det.on_match(5.1, 0.93, 150, alias_margin=0.034)
+    assert len(gate_events()) == 1, '첫 보류가 기록되지 않았다'
+    assert '0.034' in gate_events()[0].reason, f'여백 값이 없다: {gate_events()[0].reason}'
+    assert 'blocks convergence' in gate_events()[0].reason
+
+    # 10 Hz 로 쏟아져도 간격 안에서는 한 건으로 묶는다 (로그 범람 방지)
+    for k in range(40):
+        det.on_match(5.2 + 0.1 * k, 0.93, 150, alias_margin=0.034)
+    assert len(gate_events()) <= 2, f'간격 제한이 걸리지 않았다: {len(gate_events())} 건'
+    # 간격이 지나면 다시 적는다 (현황을 알 수 있어야 한다)
+    det.on_match(30.0, 0.93, 150, alias_margin=0.034)
+    n = len(gate_events())
+    assert n >= 2, '간격이 지났는데도 더 적지 않았다'
+
+    # 외부 자세로 우회될 때도 남아야 한다 — 종류가 바뀌면 간격을 기다리지 않는다
+    det.on_external_pose_reset(30.5)
+    assert any('alias margin trusted' in e.reason for e in det.events), \
+        '신뢰 창이 열린 기록이 없다 (SUSPECT 가 아니어도 남아야 한다)'
+    det.on_match(30.6, 0.93, 150, alias_margin=0.034)
+    assert any('bypassed by external trust' in e.reason for e in gate_events()), \
+        '우회 판정이 기록되지 않았다'
+
+
+def test_no_rotation_mechanism_does_not_burn_recovery_attempts():
+    """
+    회전 수단(spin 액션 / fallback cmd_vel)이 없는 동안에는 시도를 소진하지 않는다.
+
+    회귀 근거 (logs/S12a): behavior_server 가 아직 활성이 아니라 회전 수단이 없었는데,
+    kidnap_monitor_node 는 "회전 없이 대기" 라고 적고도 곧바로 on_spin_done(False) 를 불렀다.
+    회전·재관측이 한 번도 없이 re-init #1~#4 가 **4.7 ms** 에 소진되고 FAILED 로 떨어졌다
+    (1791194587.9375 → .9422). 51.6 s 뒤 behavior_server 가 활성이 되어서야 되살아났다.
+    """
+    p = KidnapParams(suspect_time=0.5, converge_count=2, reinit_retry=4, recovery_timeout=120.0)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 400.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 2.0, 0.1)
+    det.tick(1.6)
+    assert det.state == State.RECOVERING and det._reinits_done == 1
+
+    assert det.set_spin_ready(2.0, False) == []
+    assert not det.spin_ready
+    # 수단이 없는 동안 회전 종료가 들어와도 (두 겹 방어) 시도를 쓰지 않는다
+    for k in range(6):
+        assert det.on_spin_done(3.0 + k, False) == []
+    assert det._reinits_done == 1 and det.state == State.RECOVERING
+    # 복구 시한도 흐르지 않는다 — 돌 수 없던 시간으로 실패를 선언하면 가드의 뜻이 없다
+    det.tick(300.0)
+    assert det.state == State.RECOVERING, 'FAILED 로 떨어졌다 — 시한이 멈추지 않았다'
+
+
+def test_rotation_coming_back_resumes_without_spending_budget_and_shifts_the_deadline():
+    """수단이 돌아오면 예산을 쓰지 않고 회전을 재개하고, 기다린 만큼만 시한을 민다."""
+    p = KidnapParams(suspect_time=0.5, converge_count=2, reinit_retry=4, recovery_timeout=120.0)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 400.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 2.0, 0.1)
+    det.tick(1.6)
+    lost_since = det._lost_since
+    det.set_spin_ready(2.0, False)
+    det.tick(300.0)                          # 시한이 멈춰 있다
+    assert det.state == State.RECOVERING
+
+    actions = det.set_spin_ready(310.0, True)
+    assert det.spin_ready and det.spin_unavailable_time == pytest.approx(308.0)
+    # 예산은 그대로, 회전만 다시 시작한다 (REINITIALIZE 는 내지 않는다 — 시드는 이미 섰다)
+    assert kinds(actions) == [ActionType.SPIN], kinds(actions)
+    assert det._reinits_done == 1 and det.state == State.RECOVERING
+    # 시한 기준점은 기다린 만큼만 밀린다 (통째로 되돌리지 않는다)
+    assert det._lost_since == pytest.approx(lost_since + 308.0)
+    # 따라서 수단이 돌아온 직후에 시한이 즉시 터지지 않는다
+    det.tick(311.0)
+    assert det.state == State.RECOVERING
+    # 그래도 시한 자체는 살아 있다 — 돌 수 있게 된 뒤 120 s 가 지나면 실패한다
+    det.tick(lost_since + 308.0 + 121.0)
+    assert det.state == State.FAILED, '가드가 시한을 영구히 없애 버렸다'
+
+
+def test_spin_ready_flag_does_not_change_the_normal_path():
+    """회귀 방어: 회전 수단이 계속 있으면 예전과 똑같이 시도를 쓰고 시한도 흐른다."""
+    p = KidnapParams(suspect_time=0.5, converge_count=2, reinit_retry=2, recovery_timeout=50.0)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 400.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 2.0, 0.1)
+    det.tick(1.6)
+    assert det._reinits_done == 1
+    det.on_spin_done(3.0, True)
+    assert det._reinits_done == 2
+    det.on_spin_done(4.0, True)             # 소진
+    assert det.state == State.FAILED
+    assert det.spin_ready and det.spin_unavailable_time == 0.0
+
+
+def test_rotation_return_does_not_revive_a_failed_robot():
+    """수단 복귀는 FAILED 를 되돌리지 않는다 — 다른 원인으로 실패한 로봇을 가리면 안 된다."""
+    p = KidnapParams(suspect_time=0.5, converge_count=2, reinit_retry=1, recovery_timeout=120.0)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 400.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 2.0, 0.1)
+    det.tick(1.6)
+    det.on_spin_done(3.0, True)             # reinit_retry 1 소진 → FAILED (수단은 멀쩡했다)
+    assert det.state == State.FAILED
+
+    det.set_spin_ready(4.0, False)
+    actions = det.set_spin_ready(5.0, True)
+    assert actions == [] and det.state == State.FAILED, 'FAILED 를 되살렸다'
+
+
+def test_note_spin_available_marks_without_emitting_actions():
+    """start_spin 안에서 쓰는 경로: 깃발만 맞추고 동작을 내지 않는다 (재귀 방지)."""
+    p = KidnapParams(suspect_time=0.5, converge_count=2, reinit_retry=4)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 400.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 2.0, 0.1)
+    det.tick(1.6)
+    det.set_spin_ready(2.0, False)
+    assert det.note_spin_available(12.0) is None
+    assert det.spin_ready and det.spin_unavailable_time == pytest.approx(10.0)
+
+    def n_available_events() -> int:
+        return sum(1 for e in det.events if e.reason == 'rotation mechanism available')
+
+    assert n_available_events() == 1
+    det.note_spin_available(13.0)           # 두 번째는 아무 일도 하지 않는다
+    assert det.spin_unavailable_time == pytest.approx(10.0)
+    assert n_available_events() == 1, '같은 사건을 두 번 기록했다 (이벤트 로그가 부풀어 오른다)'
+
+
+def test_external_pose_reset_clears_scan_history_from_the_old_pose():
+    """
+    순간 이동 **전** 스캔이 이동 **뒤** 판정에 섞이면 안 된다.
+
+    회귀 근거 (logs/R12b): amr_05 가 (3, 6, 0) 에 올바르게 배치되고 전역 탐색이 참 자세를
+    inlier 0.914 로 1 순위에 올린 상태였는데, 배치 2.48 s 만에
+    "scan registration rejected 17/20" 으로 lost 가 됐다. 하네스는 set_pose 뒤 2 s 기다렸다가
+    seed_pose 하므로, 등록 창(20 스캔 @ 10 Hz = 2 s)에는 **옛 자세 기준의 거부**가 차 있다.
+    그것이 시드 뒤에도 남아 문턱을 넘겼다. 그리고 _declare_lost 가 여백 유예까지 닫아
+    그 뒤 자가 복구가 별칭 자리에서 영원히 실패했다.
+
+    개수로 판정한다 (시간 의존을 피한다): reg_min_samples 미만씩 두 번 — 창을 비우지 않으면
+    합이 문턱을 넘고, 비우면 넘지 않는다.
+    """
+    p = KidnapParams(reg_window=20, reg_min_samples=10, reg_reject_ratio=0.8,
+                     match_window=99, suspect_time=99.0)      # 다른 신호는 재우고 정합기만 본다
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 30.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 0.01, 0.001)
+
+    for k in range(9):                                  # 창을 채우기 직전까지 (옛 자세 기준 거부)
+        det.on_scan_match(2.0 + 0.1 * k, False)
+    assert len(det._reg_hist) == 9 and not det._reg_alarm
+
+    det.on_external_pose_reset(3.0)                     # 바깥이 자세를 잡아 줬다
+    assert not det._reg_hist, '등록 창이 비워지지 않았다'
+    assert det._low_match == 0 and not det._match_alarm
+
+    for k in range(9):                                  # 이동 뒤 거부 9 건 — 창이 비었으면 아직 문턱 미만
+        det.on_scan_match(4.0 + 0.1 * k, False)
+    assert not det._reg_alarm, '옛 자세의 거부가 새 판정에 섞였다'
+    assert not det.lost and det.state == State.TRACKING
+
+
+def test_external_pose_reset_clears_the_scan_match_streak_too():
+    """
+    등록 창뿐 아니라 **스캔 일치도 연속 카운터**도 비운다.
+
+    회귀 근거 (logs/R12a): amr_04 의 LOST 사유가 "scan-map inlier 0.14 < 0.50 for 6 scans" 였다.
+    이 신호도 옛 자세 기준으로 쌓인다. 개수로 판정한다 — match_window 미만씩 두 번.
+    """
+    p = KidnapParams(match_window=5, match_thresh=0.5, reg_min_samples=99, suspect_time=99.0)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 30.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 0.01, 0.001)
+
+    for k in range(4):                       # 창을 채우기 직전까지 (옛 자세 기준)
+        det.on_match(2.0 + 0.1 * k, 0.1, 150)
+    assert det._low_match == 4 and not det._match_alarm
+
+    det.on_external_pose_reset(3.0)
+    assert det._low_match == 0, '일치도 연속 카운터가 비워지지 않았다'
+
+    for k in range(4):                       # 이동 뒤 4 회 — 비웠으면 아직 문턱 미만
+        det.on_match(4.0 + 0.1 * k, 0.1, 150)
+    assert not det._match_alarm, '옛 자세의 불일치가 새 판정에 섞였다'
+    assert not det.lost and det.state == State.TRACKING
+
+
+def test_external_pose_reset_cancels_an_in_flight_suspicion():
+    """
+    진행 중인 의심도 거둔다 — 쿨다운만으로는 못 막는다.
+
+    tick 의 SUSPECT → LOST 승격은 쿨다운을 보지 않는다. 그래서 순간 이동과 시드 사이에 이미
+    SUSPECT 로 들어갔으면 시드가 와도 suspect_time 뒤에 LOST 가 선언된다.
+    """
+    p = KidnapParams(match_window=3, match_thresh=0.5, suspect_time=5.0, cooldown=3.0)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 30.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 0.01, 0.001)
+    for k in range(4):
+        det.on_match(2.0 + 0.1 * k, 0.1, 150)
+    assert det.state == State.SUSPECT, '전제: 시드 전에 의심 상태다'
+
+    det.on_external_pose_reset(2.5)
+    assert det.state == State.TRACKING, '의심이 거둬지지 않았다'
+    assert det.tick(10.0) == [] and not det.lost, 'suspect_time 뒤에도 LOST 가 되면 안 된다'
+
+
+def test_external_pose_reset_does_not_hide_a_real_problem_afterwards():
+    """회귀 방어: 이력을 비우되, 이동 **뒤** 스캔이 계속 나쁘면 예전대로 LOST 를 선언한다."""
+    p = KidnapParams(reg_window=20, reg_min_samples=10, reg_reject_ratio=0.8,
+                     match_window=5, match_thresh=0.5, suspect_time=0.5, cooldown=1.0)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 60.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 0.01, 0.001)
+    det.on_external_pose_reset(2.0)
+
+    # 쿨다운(1 s)이 지난 뒤 이동 뒤 스캔만으로 창을 채운다 → LOST
+    for k in range(20):
+        det.on_scan_match(4.0 + 0.1 * k, False)
+        det.on_match(4.0 + 0.1 * k, 0.1, 150)
+    det.tick(7.0)
+    assert det.lost, '이동 뒤에도 나쁘면 LOST 를 선언해야 한다'

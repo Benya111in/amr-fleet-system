@@ -63,6 +63,11 @@ FORCED_VICTIM = (NAMES[-2], (0.8, 5.0, 0.0))           # 구역 서쪽 입구 1.
 FORCED_TASK = ('dock_b', 'dock_a')                     # 동쪽 도크 — 경로가 x_ab_4 를 지난다
 FORCED = (FORCED_VICTIM, FORCED_BLOCKER)
 FORCED_MAX_S = 180.0      # t_deadlock_max 120 s + 탐지·통과 여유
+# 배치 전 정지 확인 (판정 아님, 준비 단계 조건). 참값 odom 기준 — 복구 회전이 돌고 있으면
+# 시드한 헤딩이 곧 낡는다 (logs/R12a: 배치 뒤 참 헤딩이 126° 어긋났다).
+STILL_V_TOL = 0.02        # [m/s]
+STILL_W_TOL = 0.05        # [rad/s]
+STILL_WAIT_S = 30.0       # [s] 이 안에 안 멈추면 그대로 진행하고 측정에 남긴다
 SETTLE_S = 4.0
 SETTLE_TOL_M = 0.10
 LIFECYCLE = ['/lifecycle_manager_map'] + [f'/{n}/lifecycle_manager_{s}' for n in NAMES
@@ -356,8 +361,26 @@ class TestMultiRobotDeadlock(cases.ProbeCase):
             ok, out = gz.set_pose(world, name, *start)
             self.assertTrue(ok, f'{name}: set_pose 실패 {out}')
         # 배치 = 운영자가 로봇을 놓고 자세를 알려 주는 단계 (판정 대상 아님): 통로 AB 는 랙이 되풀이돼
-        # kidnap 전역 재초기화가 옆 통로로 오수렴할 수 있다 (11 스모크 실측) → 옮긴 자세를 AMCL·map EKF 에 준다
-        self.probe.sleep_ros(2.0, self.timeout(30.0))
+        # kidnap 전역 재초기화가 옆 통로로 오수렴할 수 있다 (11 스모크 실측) → 옮긴 자세를 AMCL·map EKF 에 준다.
+        #
+        # **자세를 주기 전에 로봇이 실제로 멈췄는지 본다.** 예전에는 sleep_ros(2.0) 으로 기다리기만
+        # 하고 확인하지 않았는데, 복구 회전(kidnap_monitor 의 spin 360°)이 진행 중이면 순간 이동
+        # 뒤에도 계속 돌아 시드한 헤딩이 곧 낡는다 — logs/R12a 실측: amr_04 가 배치 0.3 s 전에
+        # 회전 취소를 받았는데도 돌아가, 22 s 뒤 참 헤딩이 126° 어긋난 채 LOST 가 됐다.
+        # 판정 대상이 아닌 준비 단계이므로 여기서 조건을 맞춘다.
+        still = {}
+        for name, _ in FORCED:
+            g = gts[name]
+
+            def stopped(g=g) -> bool:
+                m = g.last()
+                if m is None:
+                    return False
+                v, w = actions.odom_speed(m)
+                return v <= STILL_V_TOL and abs(w) <= STILL_W_TOL
+            still[name] = self.probe.wait_until(stopped, self.timeout(STILL_WAIT_S), 0.1)
+        self.measure('forced_placement_still', still)
+        self.probe.sleep_ros(1.0, self.timeout(30.0))     # 관성·EKF 가 가라앉을 여유
         seeded = {name: actions.seed_pose(self.probe, name, *start, timeout=self.timeout(10.0))
                   for name, start in FORCED}
         self.measure('forced_placement', seeded)

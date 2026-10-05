@@ -49,6 +49,9 @@ from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, String
 from std_srvs.srv import Empty
 
+#: lifecycle_msgs/State PRIMARY_STATE_ACTIVE — 백엔드가 준비됐는지 판정에 쓴다
+_LIFECYCLE_ACTIVE = 3
+
 
 def yaw_of(q) -> float:
     """쿼터니언 → yaw."""
@@ -101,6 +104,11 @@ class KidnapMonitorNode(Node):
         self.declare_parameter('nomotion_updates_on_stop', 3)        # 정지당 AMCL 무이동 갱신 수
         self.declare_parameter('nomotion_period', 1.0)               # [s]
         self.declare_parameter('nomotion_service', 'request_nomotion_update')
+        # 측위 백엔드의 lifecycle 상태를 볼 노드 ('' = 끔). amcl 이 inactive 인 동안 복구를 쉬게 한다
+        # — 그 동안 심는 initialpose 는 전부 버려지므로 시도만 소진된다 (kidnap_detector
+        # .set_backend_ready 머리말, logs/X12 실측).
+        self.declare_parameter('backend_node', 'amcl')
+        self.declare_parameter('backend_poll_period', 2.0)      # [s] lost 인 동안에만 본다
 
         params = kd.KidnapParams(**{
             name: type(value)(self.get_parameter(name).value)
@@ -179,6 +187,16 @@ class KidnapMonitorNode(Node):
         self.create_subscription(
             PoseWithCovarianceStamped, self.get_parameter('marker_fix_topic').value,
             self.on_marker_fix, 10)
+
+        self.backend_state_client = None
+        backend = str(self.get_parameter('backend_node').value or '').strip()
+        if backend:
+            from lifecycle_msgs.srv import GetState as _GetState
+            self._GetState = _GetState
+            self.backend_state_client = self.create_client(_GetState, f'{backend}/get_state')
+            self._backend_future = None
+            self.create_timer(max(float(self.get_parameter('backend_poll_period').value), 0.2),
+                              self.on_backend_poll)
 
         self.event_log = self.get_parameter('event_log').value
         self.create_timer(1.0 / max(float(self.get_parameter('match_rate').value), 0.1),
@@ -274,11 +292,41 @@ class KidnapMonitorNode(Node):
                                        scan.range_max, self.max_beams, self.lidar_offset)
         return global_seed.alias_margin(self.field, beams, pose, alternatives, self.inlier_dist)
 
+    def on_backend_poll(self) -> None:
+        """
+        측위 백엔드(amcl)의 lifecycle 상태를 본다 — **lost 인 동안에만**.
+
+        정상 추적 중에는 부르지 않는다 (서비스 호출 비용). 응답이 없으면 상태를 바꾸지 않는다 —
+        "모른다" 를 "내려갔다" 로 읽으면 멀쩡한 복구를 멈춘다.
+        """
+        if self.backend_state_client is None or not self.detector.lost:
+            return
+        if self._backend_future is not None:
+            if not self._backend_future.done():
+                return
+            res = self._backend_future.result()
+            self._backend_future = None
+            if res is not None:
+                ready = int(res.current_state.id) == _LIFECYCLE_ACTIVE
+                self.execute(self.detector.set_backend_ready(self.now_sec(), ready))
+            return
+        if not self.backend_state_client.service_is_ready():
+            return
+        self._backend_future = self.backend_state_client.call_async(self._GetState.Request())
+
     def on_tick(self) -> None:
         now = self.now_sec()
         if self.fallback_until is not None:
             self.fallback_step(now)
+        if not self.detector.spin_ready and self.rotation_available():
+            # 회전 수단이 생겼다 (보통 behavior_server 가 활성이 됐다) — 예산을 쓰지 않고 재개한다
+            self.get_logger().info('회전 수단이 생겼다: 복구를 재개한다')
+            self.execute(self.detector.set_spin_ready(now, True))
         self.execute(self.detector.tick(now))
+
+    def rotation_available(self) -> bool:
+        """회전 수단이 하나라도 있는가 (start_spin 이 고르는 둘과 같은 판정)."""
+        return self.spin_client.server_is_ready() or self.cmd_pub is not None
 
     # --------------------------------------------------------------- 동작
     def execute(self, actions: List[kd.Action]) -> None:
@@ -393,6 +441,8 @@ class KidnapMonitorNode(Node):
             f'marker fix seed: initialpose ({x:.2f}, {y:.2f}, {math.degrees(yaw):.0f} deg)')
 
     def start_spin(self, angle: float) -> None:
+        if self.rotation_available():
+            self.detector.note_spin_available(self.now_sec())   # 동작을 내지 않는다 (재귀 방지)
         if self.spin_client.server_is_ready():
             goal = Spin.Goal()
             goal.target_yaw = float(angle)
@@ -408,8 +458,11 @@ class KidnapMonitorNode(Node):
                 f'spin server unavailable: rotating via {self.cmd_pub.topic_name} '
                 f'at {self.fallback_speed:.2f} rad/s')
         else:
-            self.get_logger().error('spin 액션 서버도 fallback cmd_vel 도 없다: 회전 없이 대기')
-            self.execute(self.detector.on_spin_done(self.now_sec(), False))
+            # 예전에는 여기서 on_spin_done(False) 를 불렀다 — 로그는 "대기" 라고 적는데 실제로는
+            # 회전 한 번 없이 재시도 예산을 즉시 태워 FAILED 로 떨어뜨렸다 (logs/S12a: 4.7 ms).
+            # 이제는 수단이 없다고 알리고 쉰다. on_tick 이 수단이 생기면 다시 깨운다.
+            self.get_logger().error('spin 액션 서버도 fallback cmd_vel 도 없다: 회전 수단을 기다린다')
+            self.execute(self.detector.set_spin_ready(self.now_sec(), False))
 
     def on_spin_accepted(self, future) -> None:
         handle = future.result()

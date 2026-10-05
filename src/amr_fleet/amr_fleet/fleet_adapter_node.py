@@ -3,9 +3,10 @@ fleet_adapter_node — 로봇별 상태 취합기 (components.md §3.6 / §5.6).
 
 - Sub  odometry/filtered_map (Odometry), battery_state (BatteryState), task_status (Task),
        executor/phase (String), safety/estop_active (Bool, latched = reliable·transient_local·1),
+       localization/lost (Bool, latched — kidnap_monitor_node 가 발행),
        safety/zone (UInt8, 0 CLEAR · 1 WARNING · 2 CRITICAL · 3 STOP — 로그용)
 - Pub  robot_state (RobotState, 2 Hz; 송신 지연 큐 U(comm_latency_ms) ms, drop_rate 유실, 링크 FIFO).
-       E-stop 이 바뀌면 주기를 기다리지 않고 한 번 더 보낸다.
+       E-stop 이나 localization/lost 가 바뀌면 주기를 기다리지 않고 한 번 더 보낸다.
 - SrvS assign_task (AssignTask) — serve_assign_task=true 일 때만 (기본 false). 실제 서버는 amr_behavior 의
        task_executor_node 다 (components.md §5.5). 둘 다 켜면 한 네임스페이스에 서버가 둘이 되어
        먼저 온 응답이 이기므로, 실행기 없이 모의 시험할 때(auto_complete_after_s > 0)만 켠다.
@@ -88,6 +89,7 @@ class FleetAdapterNode(Node):
         self._battery = float(p('initial_battery'))
         self._phase = ''
         self._estop = False
+        self._lost = False
         self._zone = 0
         self._current: Optional[Task] = None
         self._state_queue = TimerQueue(self, self._pub_state_now)       # robot_state 송신 지연
@@ -103,6 +105,7 @@ class FleetAdapterNode(Node):
         self.create_subscription(Task, 'task_status', self._on_task_status, 10)
         self.create_subscription(String, 'executor/phase', self._on_phase, 10)
         self.create_subscription(Bool, 'safety/estop_active', self._on_estop, LATCHED_QOS)
+        self.create_subscription(Bool, 'localization/lost', self._on_lost, LATCHED_QOS)
         # volatile 구독은 volatile·transient_local 발행자 모두와 맞는다 (zone 은 변화 시 발행)
         self.create_subscription(UInt8, 'safety/zone', self._on_zone, 10)
         self._serving = bool(p('serve_assign_task'))
@@ -141,6 +144,16 @@ class FleetAdapterNode(Node):
             self.get_logger().warn(f'{self.robot_id}: estop {"활성" if msg.data else "해제"}')
             self._on_publish_timer()    # 2 Hz 주기를 기다리지 않고 바로 알린다 (지연 큐는 그대로 거친다)
 
+    def _on_lost(self, msg: Bool) -> None:
+        changed = bool(msg.data) != self._lost
+        self._lost = bool(msg.data)
+        if changed:
+            # lost 중에는 실행기가 작업을 거절하므로(executor_context.cpp:287) ERROR 로 알린다.
+            # 알리지 않으면 fleet_manager 가 IDLE 로 보고 계속 배정해 공회전한다 (§4.6).
+            self.get_logger().warn(
+                f'{self.robot_id}: localization/lost {"활성 → ERROR" if msg.data else "해제"}')
+            self._on_publish_timer()    # E-stop 과 같이 즉시 알린다 (지연 큐는 그대로 거친다)
+
     def _on_zone(self, msg: UInt8) -> None:
         if int(msg.data) != self._zone:
             self.get_logger().info(f'{self.robot_id}: safety zone {self._zone} → {int(msg.data)}')
@@ -172,7 +185,7 @@ class FleetAdapterNode(Node):
             self._append_csv(f'comm_latency_{self.robot_id}', LATENCY_LOG_HEADER,
                              [f'{cmd_time:.6f}', f'{now:.6f}', f'{(now - cmd_time) * 1e3:.3f}'])
         resp.robot_id = self.robot_id
-        status = map_status(self._estop, self._phase)
+        status = map_status(self._estop, self._phase, self._lost)
         if status in (STATUS_ESTOP, STATUS_ERROR):
             resp.success, resp.message = False, STATUS_NAMES[status].lower()
             return resp
@@ -226,7 +239,7 @@ class FleetAdapterNode(Node):
             msg.pose.header.frame_id = 'map'
         msg.battery_level = float(self._battery)
         msg.current_task_id = self._current.task_id if self._current is not None else ''
-        msg.status = map_status(self._estop, self._phase)
+        msg.status = map_status(self._estop, self._phase, self._lost)
         return msg
 
     def _on_publish_timer(self) -> None:

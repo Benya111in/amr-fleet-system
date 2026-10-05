@@ -255,7 +255,8 @@ class ProbeCase(unittest.TestCase):
         return int(res.current_state.id) if res is not None else 0
 
     def wait_lifecycle_active(self, managers: Sequence[str], seconds: float,
-                              name: str = 'lifecycle managers active') -> None:
+                              name: str = 'lifecycle managers active',
+                              wedge_grace: float = 120.0, wedge_period: float = 10.0) -> None:
         """
         nav2_lifecycle_manager 들의 <이름>/is_active 가 true 가 될 때까지 기다린다 (판정 기록).
 
@@ -267,11 +268,25 @@ class ProbeCase(unittest.TestCase):
         전이 응답이 한 번 유실되면 영원히 멈춘다 — 그때 amr_bringup 의 lifecycle_watchdog 이 노드를 직접
         올려 스택은 정상 동작한다. 시나리오가 재려는 것은 스택 동작이므로 측정은 진행하고, 멈춘 관리자는
         measure('lifecycle_manager_wedged') 로 따로 남긴다 (bond 감시가 없는 상태라 결함은 결함이다).
+
+        **그 폴백은 대기 중에도 본다.** 예전에는 타임아웃이 **다 지난 뒤에만** 검사해서, 멈춘 관리자가
+        하나라도 있으면 상한을 통째로 태웠다 — 시나리오 12 는 `--timeout-scale 3` 에서 600 × 3 = 1800 s 다.
+        그런데 lifecycle_watchdog 은 기동 +90 s 부터 5 s 마다 돌고, 실측(logs/X12)에서 **기동 +95 s 에
+        "감시 대상이 모두 active"** 를 선언했다. 즉 29 분을 이미 아는 답을 기다리는 데 썼다
+        (regG 의 시나리오 12 소요 4 012 s 안에도 이 30 분이 들어 있다).
+
+        wedge_grace [s, 벽시계] 이후부터 wedge_period 간격으로만 폴백을 본다 — 관리자가 정상적으로
+        노드를 올리는 중에 조기 통과하지 않도록 유예를 두고(watchdog 자체가 90 s 부터 돈다), 노드 상태
+        조회가 매 초 들어가 부하를 더하지 않게 간격을 둔다.
         """
         from std_srvs.srv import Trigger
+        import time as _time
         state = {}
+        wedged_seen: dict = {}
+        t0 = _time.monotonic()
+        last_probe = [0.0]
 
-        def active() -> bool:
+        def managers_report_active() -> bool:
             for m in managers:
                 if state.get(m):
                     continue
@@ -279,22 +294,41 @@ class ProbeCase(unittest.TestCase):
                 state[m] = bool(res is not None and res.success)
             return all(state.get(m) for m in managers)
 
-        ok = self.probe.wait_until(active, self.timeout(seconds), 1.0)
+        def wedged_but_nodes_up() -> bool:
+            """멈춘 관리자가 맡는 노드가 **모두** active 인가 (하나라도 아니면 False)."""
+            pending = [m for m in managers if not state.get(m)]
+            if not pending:
+                return False
+            found = {}
+            for m in pending:
+                nodes = self.managed_nodes(m)
+                if not nodes:
+                    return False
+                states = {n: self.lifecycle_state(n) for n in nodes}
+                if any(st != LIFECYCLE_ACTIVE for st in states.values()):
+                    return False
+                found[m] = states
+            wedged_seen.clear()
+            wedged_seen.update(found)
+            return True
+
+        def ready() -> bool:
+            if managers_report_active():
+                return True
+            now = _time.monotonic()
+            if now - t0 < wedge_grace or now - last_probe[0] < wedge_period:
+                return False
+            last_probe[0] = now
+            return wedged_but_nodes_up()
+
+        ok = self.probe.wait_until(ready, self.timeout(seconds), 1.0)
         inactive = [m for m in managers if not state.get(m)]
         note = f'{seconds * self.settings.timeout_scale:.0f} s 안에 비활성: {inactive}'
-        if not ok:
-            wedged = {}
-            for m in inactive:
-                nodes = self.managed_nodes(m)
-                wedged[m] = {n: self.lifecycle_state(n) for n in nodes}
-            all_active = bool(wedged) and all(
-                nodes and all(s == LIFECYCLE_ACTIVE for s in nodes.values())
-                for nodes in wedged.values())
-            if all_active:
-                self.measure('lifecycle_manager_wedged', wedged)
-                ok = True
-                note = (f'관리자 {inactive} 가 응답하지 않지만 그 노드는 모두 active '
-                        f'(lifecycle_watchdog 이 직접 전이) — 관리자 결함은 measure 에 기록')
+        if ok and wedged_seen:
+            self.measure('lifecycle_manager_wedged', dict(wedged_seen))
+            note = (f'관리자 {inactive} 가 응답하지 않지만 그 노드는 모두 active '
+                    f'(lifecycle_watchdog 이 직접 전이, 대기 {_time.monotonic() - t0:.0f} s) '
+                    f'— 관리자 결함은 measure 에 기록')
         self.check(name, inactive or 'all active', [], ok, '', note)
 
     def check_map_registration(self, seconds: float = 120.0, topic: str = '/map', grid=None):

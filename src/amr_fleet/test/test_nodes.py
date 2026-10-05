@@ -17,6 +17,7 @@ import pytest
 try:
     from amr_fleet.fleet_adapter_node import FleetAdapterNode
     from amr_fleet.fleet_manager_node import FleetManagerNode
+    from amr_fleet.kpi import STATUS_ERROR
     from amr_fleet.timer_queue import TimerQueue
     from amr_msgs.msg import FleetStatus, Task
     from amr_msgs.srv import AssignTask
@@ -66,6 +67,8 @@ def fleet(tmp_path_factory):
         'request': client.create_publisher(String, '/fleet/task_request', qos),
         # safety_node 와 같은 latched 발행자 (어댑터 구독은 transient_local)
         'estop': client.create_publisher(Bool, f'/{ROBOTS[0]}/safety/estop_active', latched),
+        # kidnap_monitor_node 와 같은 latched 발행자 (어댑터 구독은 transient_local)
+        'lost': client.create_publisher(Bool, f'/{ROBOTS[0]}/localization/lost', latched),
         'status_t1': client.create_publisher(Task, f'/{ROBOTS[0]}/task_status', 10),
         'status_t2': client.create_publisher(Task, f'/{ROBOTS[1]}/task_status', 10),
     }
@@ -229,6 +232,36 @@ def test_estop_and_invalid_json_alerts(fleet):
     assert fleet['spin'](lambda: any(a.level == DiagnosticStatus.OK
                                      for a in _alerts(got, 'fleet/ESTOP')))
     assert fleet['spin'](lambda: fleet['manager']._robots[ROBOTS[0]].state.status == 0)
+
+
+def test_localization_lost_makes_the_robot_unavailable_to_the_fleet(fleet):
+    """
+    측위 상실 중에는 fleet 가 ERROR 로 보고 후보에서 빼야 한다 (performance.md §4.6 의 공회전).
+
+    고치기 전에는 실행기가 'lost' 로 거절하는데 어댑터는 IDLE 로 보고해서, fleet_manager 가
+    같은 로봇을 1 Hz 로 다시 골랐다 (실측 공회전 regG 361 회 · X12 2,093 회).
+    """
+    got, manager = fleet['got'], fleet['manager']
+    rid = ROBOTS[0]
+
+    def is_candidate() -> bool:
+        return rid in [r.robot_id for r in manager._candidates(manager._now())]
+
+    # 전제를 명시한다 — 원래 후보였어야 "빠졌다"가 의미를 갖는다 (앞 시험이 IDLE 로 되돌려 놓는다)
+    assert fleet['spin'](is_candidate), '전제 불성립: 시작부터 배정 후보가 아니다'
+
+    fleet['pubs']['lost'].publish(Bool(data=True))
+    assert fleet['spin'](lambda: manager._robots[rid].state.status == STATUS_ERROR), \
+        'lost 인데 RobotState.status 가 ERROR 가 아니다'
+    # 후보에서 빠졌는지는 _candidates 로 직접 본다 (상태만 바뀌고 배정이 그대로면 고친 게 아니다)
+    assert not is_candidate(), 'lost 로봇이 아직 배정 후보다'
+    assert fleet['spin'](lambda: _alerts(got, 'fleet/ROBOT_ERROR')), 'ROBOT_ERROR 경보가 없다'
+
+    # 해제되면 되돌아와야 한다 — ERROR 가 들러붙으면 한 번 lost 된 로봇을 영구히 잃는다
+    fleet['pubs']['lost'].publish(Bool(data=False))
+    assert fleet['spin'](lambda: manager._robots[rid].state.status == 0), \
+        'lost 해제 뒤에도 ERROR 가 들러붙어 있다'
+    assert fleet['spin'](is_candidate), 'lost 해제 뒤에도 배정 후보로 돌아오지 않았다'
 
 
 HOSTILE_PAYLOADS = [

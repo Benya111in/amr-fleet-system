@@ -84,6 +84,14 @@ class KidnapParams:
     converge_match: float = 0.7        # 수렴 판정 인라이어 비율 하한
     converge_margin: float = 0.05      # 수렴 판정: ρ(현재) − max ρ(별칭 가설) 하한 (국소 정밀화 후)
     converge_count: int = 5            # 연속 만족 횟수
+    # [s] 바깥(운영자·상위 시스템)이 initialpose 로 자세를 잡아 준 뒤 이 시간 동안은 별칭 여백을
+    # 요구하지 않는다. 여백 게이트는 **스스로** 고른 가설이 틀릴 수 있어서 두는 것인데, 외부 자세는
+    # 스캔 정합 바깥에서 온 독립 증거라 그 애매함의 대상이 아니다 (마커 보정을 믿는 것과 같은 이유).
+    # 이게 없으면 주기 별칭 자리에서는 참 자세를 알려 줘도 영원히 lost 다 — 지도에 ρ 차가
+    # converge_margin 미만인 자리가 실제로 있다 (docs/research/state-estimation/checks/alias_margin.py:
+    # test_12 피해 로봇 자리 0.034 < 0.05). 창은 LOST 재선언과 수렴 성공에서 닫힌다.
+    external_trust_window: float = 30.0
+    gate_log_period: float = 5.0          # 여백 게이트 판정을 로그에 남기는 최소 간격 [s]
     spin_angle: float = 2.0 * math.pi  # [rad] 복구 회전량
     spin_retry: int = 1                # 재초기화(시도) 한 번당 회전 횟수
     reinit_retry: int = 4              # 재초기화 시도 횟수 (노드: 앞 시도는 가설 시드, 마지막은 AMCL 전역)
@@ -234,6 +242,16 @@ class KidnapDetector:
         self._last_match: Optional[float] = None
         self._last_margin: Optional[float] = None    # ρ(현재) − max ρ(별칭)
         self.alias_rejections = 0                     # 여백 부족으로 수렴을 보류한 판정 수
+        self.external_trust_uses = 0                  # 외부 자세를 믿고 여백 요구를 건너뛴 판정 수
+        self._external_trust_until = -math.inf        # 바깥이 자세를 잡아 준 뒤 여백 유예 끝 시각
+        self.backend_ready = True                     # 측위 백엔드(AMCL)가 active 인가
+        self._backend_down_since: Optional[float] = None
+        self.backend_down_time = 0.0                  # 백엔드가 내려가 있던 누적 시간 [s]
+        self._gate_logged_at = -math.inf              # 여백 게이트 판정을 마지막으로 적은 시각
+        self._gate_logged_kind: Optional[bool] = None  # 그때 적은 것이 우회였나(True)/보류였나(False)
+        self.spin_ready = True                        # 회전 수단(spin 액션 또는 cmd_vel)이 있는가
+        self._spin_down_since: Optional[float] = None
+        self.spin_unavailable_time = 0.0              # 회전 수단이 없던 누적 시간 [s]
         self._amcl_alarm = False      # 지속 경보: 공분산
         self._amcl_reason = ''
         self._match_alarm = False     # 지속 경보: 스캔-맵 불일치
@@ -315,6 +333,125 @@ class KidnapDetector:
         """
         self._cooldown_until = max(self._cooldown_until, t + self.params.cooldown)
         self._marker_mismatch_since = None
+        # 스캔에서 유래한 이력은 **이전 자세**에 대한 것이다 — 자세가 바뀌었으니 비운다.
+        # 이것이 없으면 순간 이동 직후 등록 창(reg_window 20 스캔 @ 10 Hz = 2 s)에 이동 전 스캔이
+        # 남아 거부가 쌓이고, 쿨다운(3 s)이 끝나기도 전에 "scan registration rejected 17/20" 으로
+        # LOST 가 선언된다 (logs/R12b 실측: amr_05 이 배치 2.48 s 만에, 전역 탐색이 참 자세를
+        # inlier 0.914 로 1 순위에 올린 상태에서 lost 가 됐다). 그리고 _declare_lost 가 아래
+        # 여백 유예까지 닫아 버려, 그 뒤 자가 복구가 별칭 자리에서 영원히 실패한다.
+        self._reset_reg()
+        self._low_match = 0
+        self._match_alarm = False
+        self._match_reason = ''
+        self._alarm_active = self._amcl_alarm
+        # 진행 중인 의심도 **이전 자세**에 대한 것이다 — 거둬들인다. 쿨다운만으로는 못 막는다:
+        # tick 의 SUSPECT → LOST 승격은 쿨다운을 보지 않으므로, 순간 이동과 시드 사이에 이미
+        # SUSPECT 로 들어갔으면 시드가 와도 suspect_time 뒤 LOST 가 선언된다 (logs/R12b 의 2.48 s).
+        if self.state == State.SUSPECT:
+            self._set_state(t, State.TRACKING,
+                            'external pose reset: suspicion was about the old pose')
+        # 별칭 여백 유예를 연다. 쿨다운만으로는 **재선언**만 막을 뿐, 이미 lost 인 상태에서
+        # 수렴을 가로막는 여백 게이트는 그대로라 주기 별칭 자리에서는 영원히 복구하지 못한다.
+        self._external_trust_until = t + self.params.external_trust_window
+        # **항상** 적는다. 예전에는 위 SUSPECT 분기에서만 기록이 남아, 창이 열렸는지를
+        # 로그로 확인할 수 없었다 (R12a·R12b 진단이 여기서 막혔다).
+        self.events.append(Event(
+            t, self.state.value,
+            f'external pose reset: alias margin trusted for '
+            f'{self.params.external_trust_window:.0f} s'))
+
+    def set_backend_ready(self, t: float, ready: bool) -> List[Action]:
+        """
+        측위 백엔드(AMCL)가 active 인지 알린다. inactive 동안 복구는 **쉰다**.
+
+        왜: lifecycle_manager 가 change_state 응답을 유실하면 amcl 이 inactive 에 머문다
+        (amr_bringup/lifecycle_watchdog 머리말). 그 동안 이 상태기는 복구를 정상적으로 돌리는데,
+        심는 initialpose 는 amcl 이 "not yet in the active state" 로 **전부 버린다** — 즉 성공할 수
+        없는 시도로 reinit_retry 를 소진하고 FAILED 로 떨어진다 (logs/X12: amr_02·03·05 가 셋 다
+        global re-init #4 까지 태우고 recovery exhausted, 그 뒤 작업 배정에서 영구 제외됐다).
+
+        백엔드가 돌아오면 (a) 쉰 시간을 복구 시한에서 빼고, (b) 시도 횟수를 되돌리고,
+        (c) **별칭 여백 유예를 연다** — 백엔드가 active 로 올라올 때 적용하는 자세는 설정
+        (initial_pose.*) 이나 보관된 initialpose 에서 온 것이라 우리 스캔 정합 바깥의 증거다
+        (watchdog 이 올린 amcl 이 "Setting pose: 20.000 -16.000 1.571" 로 정답을 넣은 것이 실측이다).
+        그것이 없으면 점대칭 창고의 대기 구역처럼 여백이 임계 미만인 자리에서는 AMCL 이 맞게
+        있는데도 게이트가 증명하지 못해 lost 가 영원히 풀리지 않는다.
+        """
+        if ready == self.backend_ready:
+            return []
+        self.backend_ready = ready
+        if not ready:
+            self._backend_down_since = t
+            self.events.append(Event(t, self.state.value, 'localization backend inactive'))
+            return []
+        if self._backend_down_since is not None:
+            self.backend_down_time += t - self._backend_down_since
+            self._backend_down_since = None
+        self.events.append(Event(t, self.state.value, 'localization backend active'))
+        self._external_trust_until = t + self.params.external_trust_window
+        if self.state in (State.RECOVERING, State.FAILED):
+            # 백엔드가 죽어 있는 동안 태운 시도는 성공할 수 없었다 — 되돌리고 시한도 다시 센다
+            self._reinits_done = 0
+            self._lost_since = t
+            if self.state == State.FAILED:
+                self._set_state(t, State.RECOVERING, 'backend active: retry recovery')
+            # **반드시 복구를 다시 시작한다.** 백엔드가 죽은 동안 on_spin_done 이 아무 동작도
+            # 내지 않았으므로 이 시점에 돌고 있는 회전이 없다 — 여기서 깨우지 않으면 상태기가
+            # 영원히 멈춰 선다 (logs/Y12 실측: amr_04 가 재시도 1 회에서 멈춘 채 조용했다).
+            return self._reinitialize(t, 'localization backend came back')
+        return []
+
+    def set_spin_ready(self, t: float, ready: bool) -> List[Action]:
+        """
+        회전 수단(Nav2 spin 액션 또는 fallback cmd_vel)이 있는지 알린다. 없는 동안 복구는 **쉰다**.
+
+        왜: 수단이 없을 때 kidnap_monitor_node 는 "회전 없이 대기" 라고 적고도 곧바로
+        on_spin_done(False) 를 불렀다. 그래서 회전·재관측이 한 번도 일어나지 않은 채 재시도
+        예산(spin + re-init)이 **밀리초 단위로** 소진되고 FAILED 로 떨어졌다
+        (logs/S12a: amr_04 가 4.7 ms 에 re-init #1~#4 를 태우고 recovery exhausted,
+        51.6 s 뒤 behavior_server 가 활성이 되어서야 backend 폴링이 되살렸다).
+
+        성질은 set_backend_ready 와 같다 — **재시도가 성공할 전제가 없을 때 유한한 예산을
+        깎아서는 안 된다**. 다만 여기서는 FAILED 를 되돌리지 않는다: 이 가드가 있으면 이 경로로
+        FAILED 에 도달하지 않고, "회전이 생겼다" 를 일반적인 복구 방아쇠로 만들면 다른 원인으로
+        실패한 로봇까지 되살려 진짜 고장을 가린다.
+        """
+        if ready == self.spin_ready:
+            return []
+        if not ready:
+            self.spin_ready = False
+            self._spin_down_since = t
+            # 돌고 있는 회전이 없다고 기록해 둔다 — 없는 목표에 CANCEL_SPIN 을 내지 않도록
+            self._spin_active = False
+            self.events.append(Event(t, self.state.value, 'rotation mechanism unavailable'))
+            return []
+        self.note_spin_available(t)
+        if self.state == State.RECOVERING and self.backend_ready:
+            # 예산을 쓰지 않고 멈춰 있던 회전을 **다시 시작한다** (여기서 깨우지 않으면
+            # on_spin_done 이 올 일이 없어 상태기가 멈춘다 — 77cbcf1 에서 낸 회귀와 같은 모양).
+            return self._spin(t, 'rotation mechanism came back')
+        return []
+
+    def note_spin_available(self, t: float) -> None:
+        """
+        회전을 지금 시작하므로 가용 표시만 한다 — **동작은 내지 않는다**.
+
+        start_spin 안에서 set_spin_ready 를 부르면 SPIN 동작이 또 나와 재귀한다. 지금 시작하는
+        회전이 곧 그 동작이므로 깃발과 누적 시간만 맞춘다.
+        """
+        if self.spin_ready:
+            return
+        self.spin_ready = True
+        if self._spin_down_since is not None:
+            waited = t - self._spin_down_since
+            self.spin_unavailable_time += waited
+            # 복구 시한은 **복구가 가능했던 시간**만 세야 한다. 기다린 만큼 기준점을 밀지 않으면
+            # 수단이 돌아온 그 tick 에 recovery_timeout 이 즉시 터져 가드를 넣은 뜻이 없어진다.
+            # (set_backend_ready 는 _lost_since = t 로 통째로 되돌리는데, 그러면 오르내림이
+            #  반복될 때 시한이 무한정 미뤄진다 — 여기서는 기다린 만큼만 민다)
+            self._lost_since += waited
+            self._spin_down_since = None
+        self.events.append(Event(t, self.state.value, 'rotation mechanism available'))
 
     def on_marker_fix(self, t: float, pose: Pose) -> List[Action]:
         """
@@ -431,6 +568,14 @@ class KidnapDetector:
         if self.state != State.RECOVERING:
             return []  # FAILED 이후에는 더 시도하지 않는다 (수렴하면 on_match/on_amcl 로 복귀)
         actions: List[Action] = []
+        if not self.backend_ready:
+            # 백엔드가 inactive 면 어떤 시드도 적용되지 않는다 — 시도를 쓰지 않고 기다린다
+            # (set_backend_ready 가 돌아올 때 다시 시작한다)
+            return []
+        if not self.spin_ready:
+            # 회전 수단이 없으면 재관측이 없다 — 같은 이유로 시도를 쓰지 않는다.
+            # (monitor 는 이 경우 on_spin_done 을 부르지 않지만, 두 겹으로 막는다)
+            return []
         if self._spins_left > 0:
             self._spins_left -= 1
             actions += self._spin(t, 'spin finished without convergence' if succeeded
@@ -449,8 +594,12 @@ class KidnapDetector:
                 actions += self._declare_lost(t, self._alarm_reason)
             else:
                 self._set_state(t, State.TRACKING, 'alarm cleared')
-        elif (self.state == State.RECOVERING
+        elif (self.state == State.RECOVERING and self.backend_ready and self.spin_ready
               and t - self._lost_since > self.params.recovery_timeout):
+            # spin_ready 도 본다: 회전 수단이 없는 동안 흐른 시간으로 실패를 선언하면 예산 가드를
+            # 넣은 뜻이 없어진다. 대가는 수단이 영구히 없으면 RECOVERING 에 머문다는 것인데,
+            # 그래도 lost 가 서 있으니 fleet 는 그 로봇을 배정에서 뺀다(robot_status.py 의 lost→ERROR)
+            # 그리고 AMCL 단독 수렴 경로(_evaluate 의 _converged)는 회전 없이도 계속 열려 있다.
             actions += self._fail(t, f'recovery timeout {self.params.recovery_timeout:.0f} s')
         return actions
 
@@ -470,7 +619,7 @@ class KidnapDetector:
         if self.state == State.SUSPECT:
             return self.tick(t)
         # RECOVERING / FAILED: 수렴 확인
-        if self._converged():
+        if self._converged(t):
             self._converged_count += 1
         else:
             self._converged_count = 0
@@ -478,22 +627,54 @@ class KidnapDetector:
             return self._recover(t)
         return []
 
-    def _converged(self) -> bool:
+    def _converged(self, t: float) -> bool:
         cov_ok = (self._last_amcl is not None and self._last_amcl.t >= self._lost_since
                   and self._amcl_cov[0] < self.params.converge_cov
                   and self._amcl_cov[1] < self.params.yaw_cov_thresh)
         match_ok = self._last_match is not None and self._last_match >= self.params.converge_match
         if cov_ok and match_ok and self._last_margin is not None and (
                 self._last_margin < self.params.converge_margin):
+            if t < self._external_trust_until:
+                # 바깥이 자세를 잡아 줬다 — 여백은 "내가 고른 가설이 맞는가" 를 묻는 것이라
+                # 이 경우에는 묻지 않는다. ρ·공분산 조건은 그대로 요구한다.
+                self.external_trust_uses += 1
+                self._note_gate(t, 'alias margin bypassed by external trust', True)
+                return True
             self.alias_rejections += 1        # 별칭과 가를 수 없다 → 수렴 보류
+            self._note_gate(t, 'alias margin blocks convergence', False)
             return False
         return cov_ok and match_ok
+
+    def _note_gate(self, t: float, what: str, bypassed: bool) -> None:
+        """
+        여백 게이트의 판정을 이벤트로 남긴다 (간격 제한).
+
+        왜 필요한가: 이 판정은 match 주기(10 Hz)로 일어나고 결과가 `alias_rejections` ·
+        `external_trust_uses` **카운터**로만 쌓인다. 그 카운터는 상태 토픽의 JSON 으로만 나가고
+        `launch.log` 에도 CSV 에도 남지 않아서, 실측 실패(`R12a`·`R12b`·`E12` 의 "배치 뒤 위치
+        추정이 안정되지 않음")를 로그만으로는 **진단할 수 없었다**. 신뢰 창이 열렸는지조차
+        알 수 없었다 — 그 기록은 SUSPECT 였을 때만 남았기 때문이다.
+
+        매 판정을 적으면 10 Hz 로 로그가 넘치므로, 구간의 **첫 판정**과 그 뒤
+        `gate_log_period` 간격만 적고 여백 값을 함께 남긴다.
+        """
+        stale = t - self._gate_logged_at >= self.params.gate_log_period
+        if self._gate_logged_kind != bypassed or stale:
+            self._gate_logged_kind = bypassed
+            self._gate_logged_at = t
+            margin = '—' if self._last_margin is None else f'{self._last_margin:.3f}'
+            self.events.append(Event(
+                t, self.state.value,
+                f'{what}: margin {margin} < {self.params.converge_margin:.3f} '
+                f'(rejections {self.alias_rejections}, trust uses {self.external_trust_uses})'))
 
     def _set_state(self, t: float, state: State, reason: str) -> None:
         self.state = state
         self.events.append(Event(t, state.value, reason))
 
     def _declare_lost(self, t: float, reason: str) -> List[Action]:
+        # 새로 LOST 를 선언했다는 것은 바깥이 잡아 준 자세가 더는 유효하지 않다는 뜻이다 — 유예를 닫는다.
+        self._external_trust_until = -math.inf
         self.lost = True
         self.detect_time = t
         self._lost_since = t
@@ -537,6 +718,7 @@ class KidnapDetector:
             self._spin_active = False
         self.recovery_times.append(t - self._lost_since)
         self.lost = False
+        self._external_trust_until = -math.inf      # 수렴했으니 유예는 끝난다
         self._cooldown_until = t + self.params.cooldown
         self._low_match = 0
         self._reset_reg()

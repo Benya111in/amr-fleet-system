@@ -256,11 +256,60 @@ LOST 선언 시 `localization/lost = true` (latched, BT `IsLocalized` 가 구독
    현재 추정으로 두어도 여백 < 0.05; 비대칭 방에서는 여백 ≥ 0.05).
 5. 회전이 끝나도 수렴하지 않으면 다음 시도, 모두 실패하거나 120 s 초과면 FAILED (lost 유지, 수렴하면 언제든 복귀).
 
+**전제 가드 — 시도가 성공할 수 없는 동안에는 예산을 깎지 않는다.** 위 시도 횟수(`seed_attempts`,
+`reinit_retry`)와 120 s 시한은 유한한데, 복구가 **구조적으로 불가능한** 구간에서 그것이 흘러가면
+로봇은 한 번도 제대로 시도하지 못한 채 FAILED 로 떨어진다. 둘 다 실측에서 나왔다:
+
+| 전제 | 없을 때 무슨 일이 났나 | 가드 |
+| --- | --- | --- |
+| AMCL 이 `active` | `lifecycle_manager` 가 `change_state` 응답을 유실해 `amcl` 이 inactive 로 머물면 심는 `initialpose` 를 전부 버린다("not yet in the active state"). `logs/X12`: `amr_02·03·05` 가 셋 다 re-init #4 까지 태우고 `recovery exhausted` | `set_backend_ready(False)` — 시도·시한을 멈추고, 돌아오면 시도를 되돌리고 복구를 **다시 시작**한다 (깨우지 않으면 상태기가 멈춘다) |
+| 회전 수단이 있다 | `behavior_server` 가 아직 활성이 아니면 `spin` 액션도 fallback `cmd_vel` 도 없다. 예전 코드는 "회전 없이 대기" 라고 적고도 곧바로 `on_spin_done(False)` 를 불러 **4.7 ms 에** re-init #1~#4 를 태웠다 (`logs/S12a`: `amr_04`, 1791194587.9375 → .9422) | `set_spin_ready(False)` — 시도·시한을 멈춘다. 시한 기준점은 돌아올 때 **기다린 만큼만** 민다(통째로 되돌리면 오르내림이 반복될 때 시한이 무한정 미뤄진다) |
+
+**관측성**: 여백 게이트의 판정은 `match` 주기(10 Hz)로 일어나고 결과가 `alias_rejections` ·
+`external_trust_uses` 카운터로만 쌓인다. 그 카운터는 `status_topic` 의 JSON 으로만 나가
+`launch.log` 에도 CSV 에도 남지 않았다 — 실측 실패(`logs/R12a`·`R12b`·`E12` 의 "배치 뒤 위치
+추정이 안정되지 않음")를 로그로 가릴 수 없었던 까닭이다. 외부 신뢰 창이 열린 기록도
+`SUSPECT` 분기에만 있어서 `grep` 으로는 확인이 불가능했다. 이제 둘 다 `detector.events` 로
+나가고(`gate_log_period` 5 s 간격 제한, 구간의 첫 판정과 종류가 바뀌는 순간은 예외) 여백 값과
+누적 카운터가 메시지에 들어간다.
+
+둘 다 FAILED 를 자동으로 되돌리지는 않는다 — 단, 백엔드 복귀는 되돌린다(`logs/S12a` 에서
+`amr_04` 를 51.6 s 만에 되살렸다). 회전 복귀는 되돌리지 않는다: 가드가 있으면 이 경로로 FAILED 에
+도달하지 않고, "회전이 생겼다" 를 일반 복구 방아쇠로 만들면 다른 원인의 고장을 가린다.
+회전 수단이 영구히 없으면 RECOVERING 에 머문다 — 그래도 `localization/lost` 가 서 있어 fleet 는
+그 로봇을 배정에서 뺀다([components.md](../architecture/components.md) §5.6 의 lost→ERROR)
+그리고 AMCL 단독 수렴 경로는 회전 없이도 계속 열려 있다.
+
 AMCL 균일 재초기화만으로는 60 × 40 m 창고에서 σ_hit 분지에 파티클이 떨어질 확률이 낮다 (research brief
 §2.4: N = 5000, σ_hit 0.05 → 기대 적중 0.003 개). 시드 단계가 이를 결정적 탐색으로 바꾼다.
 한계: 완전한 대칭 별칭은 스캔만으로 가를 수 없고 제자리 회전도 가르지 못한다(360° LiDAR) — 게이트가 틀린 수렴은 막지만
 복구하지는 못하므로 lost 가 유지된다. 이동으로 가르는 DISAMBIGUATE 단계(brief §4.C)는 확장점이다 (`KidnapDetector` 의 시도
 루프에 행동 추가; 별칭 여백이 오를 때까지 짧게 주행).
+
+**예외 — 바깥이 자세를 잡아 준 경우 (`external_trust_window` 30 s)**: `initialpose` 를 우리가 아닌 쪽(운영자·상위 시스템·
+시험 하네스)이 발행하면 그 뒤 창 동안 **여백만** 묻지 않는다 (`converge_cov`·`converge_match` 는 그대로 요구한다).
+여백 게이트는 "**내가 고른** 가설이 맞는가" 를 묻는 장치인데, 외부 자세는 스캔 정합 바깥에서 온 독립 증거라 그 물음의
+대상이 아니다 — 마커 보정(`on_marker_fix`)을 믿는 것과 같은 이유다. 창은 수렴 성공과 LOST 재선언에서 닫힌다.
+
+이 예외가 필요한 이유는 위 4항의 근거("점대칭·주기 별칭은 정답 대비 ρ 차 0.07 이상")가 **지도 전체에서 성립하지 않기**
+때문이다. 지도만으로 결정적으로 잴 수 있다 (`docs/research/state-estimation/checks/alias_margin.py`, Gazebo 불필요):
+
+| 자리 | 출처 | 2 순위 후보 거리 | 여백 |
+| --- | --- | --- | --- |
+| `test_12` 피해 로봇 (0.8, 5, 0) | `test_12_multi_robot_deadlock.py:62` | **6.00 m** | **0.034** ← `converge_margin` 0.05 미만 |
+| `test_12` 차단 로봇 (3, 6, 0) | `test_12_multi_robot_deadlock.py:61` | 6.00 m | 0.070 |
+| 시나리오 05 목표 5 곳 | `test_05_kidnapped_robot.py:32-33` | 6~42 m | 0.057 ~ 0.200 |
+
+통로가 6 m 주기라 ±6 m·±12 m 가 거의 같은 점수를 낸다. 예외가 없으면 그런 자리에서는 **참 자세를 알려 줘도** 영원히
+lost 이고, 실제로 `test_20_forced_deadlock` 이 그 자리에서 "배치 뒤 위치 추정이 안정되지 않음" 으로 떨어졌다
+(`logs/E12`). 시나리오 05 가 5/5 통과하는 것은 그 목표점들의 여백이 넉넉하기 때문이다.
+
+**안전 측 비용**: 외부가 **틀린** 자세를 줘도 받아들인다. 그 대가로 "알려 줘도 복구 못 함" 을 없앴다. `initialpose` 는
+본래 운영자가 "여기다" 라고 말하는 통로이므로 그 의미와 맞고, 창이 지나거나 새 LOST 가 선언되면 다시 게이트가 산다.
+시험: `test_external_pose_reset_lets_recovery_converge_in_an_alias_spot`,
+`test_external_trust_does_not_waive_the_other_convergence_conditions`,
+`test_external_trust_expires_and_closes_on_a_new_kidnap`,
+`test_alias_gate_still_blocks_self_recovery_without_external_help` (안전 속성 회귀).
 
 ## 6. 측정 결과
 

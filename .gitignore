@@ -24,6 +24,9 @@ lcov.info
 # 런타임 로그 (디렉토리 구조는 .gitkeep 으로 유지)
 logs/*
 !logs/.gitkeep
+# run_integration.sh 의 표준출력을 저장소 루트로 돌려받을 때 생기는 찌꺼기.
+# 실제 산출물은 logs/<태그>/ 아래에 있고 그건 위에서 이미 제외한다 — 루트 사본만 막는다.
+/run_*.log
 
 # 생성된 맵 (성과물 맵은 별도 커밋)
 maps/*.pgm

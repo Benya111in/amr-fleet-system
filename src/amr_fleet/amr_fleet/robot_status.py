@@ -1,8 +1,8 @@
 """
 fleet_adapter 의 RobotState.status 매핑 (components.md §5.6).
 
-    estop → ESTOP, executor/phase → MOVING/DOCKING/LOADING/CHARGING
-    (perceiving·recovering = MOVING), lost/error → ERROR, 그 외 IDLE
+    estop → ESTOP, localization/lost → ERROR, executor/phase → MOVING/DOCKING/LOADING/CHARGING
+    (perceiving·recovering = MOVING), phase error → ERROR, 그 외 IDLE
 """
 
 from __future__ import annotations
@@ -34,10 +34,23 @@ PHASE_TO_STATUS: Dict[str, int] = {
 }
 
 
-def map_status(estop: bool, phase: Optional[str]) -> int:
-    """E-stop 이 최우선, 다음 phase 문자열(대소문자 무시), 모르는 phase 는 IDLE."""
+def map_status(estop: bool, phase: Optional[str], lost: bool = False) -> int:
+    """
+    E-stop 최우선 → localization/lost → phase 문자열(대소문자 무시), 모르는 phase 는 IDLE.
+
+    lost 를 phase 와 따로 받는 까닭: 실행기는 localization/lost 동안 작업을 'lost' 로 거절하지만
+    (executor_context.cpp:287) 그 사실을 executor/phase 로 알리지 않는다 — phase 상수에 LOST 가
+    없다(executor_context.hpp). 그래서 lost 로 굳은 로봇이 IDLE 로 보이고, fleet_manager 는
+    계속 후보로 골라(fleet_manager_node.py:625) 1 Hz 로 거절당하며 공회전한다
+    (실측: 통과한 regG 도 361 회, X12 는 2,093 회 — performance.md §4.6).
+
+    phase_ 에 'LOST' 를 겹쳐 쓰지 않는 까닭은 그 값이 실행기 작업 상태기계의 입력이라
+    (evaluateTask 의 idle 판정, BT) 오염되기 때문이다. lost 는 별도 신호로 둔다.
+    """
     if estop:
         return STATUS_ESTOP
+    if lost:
+        return STATUS_ERROR
     key = (phase or '').strip().lower()
     return PHASE_TO_STATUS.get(key, STATUS_IDLE)
 
