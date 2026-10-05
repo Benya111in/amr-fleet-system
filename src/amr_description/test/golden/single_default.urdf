@@ -1,0 +1,589 @@
+<?xml version="1.0" ?>
+<!--
+  차동 구동 AMR 최상위 xacro (명세 4장 1절 "로봇 모델링"/"센서 시스템 구성", 4장 2절 TF)
+
+  모든 치수/질량/관성/동역학 제한/구동계/센서 사양/토픽·프레임 이름은 최상위 config/*.yaml 에서 읽는다
+  (xacro.load_yaml). 여기에 숫자를 중복 기재하지 않는다 — YAML 을 고치면 재빌드 없이 재런치만으로
+  반영된다 (런치 시점에 xacro 가 다시 평가됨).
+
+  xacro 인자
+    robot_name   Gazebo 모델 이름 + gz 토픽 접두어 (/<robot_name>/...)            기본 amr_01
+    prefix       모든 link/joint/frame 이름과 <ignition_frame_id> 의 접두어      기본 ""
+                 (다중 로봇: "amr_02/" — docs/architecture/multi_robot.md §2)
+    config_dir   robot_params.yaml / sensors.yaml 이 있는 디렉토리
+                 기본 "" → $ROS_WS/config (ROS_WS 미설정 시 /ros2_ws/config)
+    payload      적재물 종류 none | small | medium | large                       기본 none
+                 크기·질량은 robot_params.yaml payload.<종류>.{size, mass} — 데크 위 실제 크기 박스
+    payload_mass 적재 질량 [kg] 덮어쓰기. 음수(기본 -1)면 payload 종류의 질량.
+                 payload 없이 질량만 주면 그 질량을 담을 수 있는 가장 작은 종류의 박스로 모델링한다
+                 (예 payload_mass:=25 → large 박스). 0 이면 적재물 없음.
+                 payload / payload_mass 는 스폰 시점에 고정되는 적재물이다 (정적 시험용)
+    runtime_payload
+                 true(기본)면 주행 중 적재/하역용 DetachableJoint 를 넣는다 (amr_gazebo.xacro "런타임 적재물").
+                 화물 모델 <robot_name>_cargo 를 amr_simulation payload_manager_node 가 데크 위에 만들고 붙인다
+    self_visibility_bit
+                 자기 차체 시각체의 가시성 비트 번호 (0~27). 기본 "" → robot_name 끝 숫자 n 에서
+                 4 + (n − 1) mod 20 (amr_01 → 4, amr_05 → 8). amr_gazebo.xacro "자기 차체 제외" 참조
+
+  모듈
+    amr_inertial.xacro   관성 텐서 매크로 (YAML 대각 성분 / 박스 해석식)
+    amr_materials.xacro  RViz/Gazebo 재질
+    amr_base.xacro       base_footprint, base_link, 구동 바퀴, 캐스터, cargo_link(+스폰 시점 적재 박스)
+    amr_sensors.xacro    lidar_link, camera_link(+optical 프레임 2개), imu_link
+    amr_gazebo.xacro     Gazebo Fortress 시스템 플러그인(런타임 적재 DetachableJoint 포함) + 센서 정의
+                         + 자기 차체 가시성 비트
+
+  단독 실행 예
+    xacro amr.urdf.xacro config_dir:=/ros2_ws/config robot_name:=amr_02 prefix:=amr_02/ payload:=large | check_urdf /dev/stdin
+-->
+<robot name="amr">
+  <!-- 데크(차체 상면), base_link 기준 -->
+  <material name="amr_body">
+    <color rgba="0.20 0.32 0.55 1.0"/>
+  </material>
+  <material name="amr_wheel">
+    <color rgba="0.10 0.10 0.10 1.0"/>
+  </material>
+  <material name="amr_caster">
+    <color rgba="0.45 0.45 0.45 1.0"/>
+  </material>
+  <material name="amr_sensor">
+    <color rgba="0.85 0.35 0.10 1.0"/>
+  </material>
+  <material name="amr_sensor_window">
+    <color rgba="0.06 0.06 0.08 1.0"/>
+  </material>
+  <material name="amr_cargo">
+    <color rgba="0.72 0.55 0.30 1.0"/>
+  </material>
+  <link name="base_footprint"/>
+  <joint name="base_footprint_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin rpy="0 0 0" xyz="0 0 0.18"/>
+  </joint>
+  <!-- 차체: 박스 중심 = base_link 원점. 질량 base_mass 는 차체만 (총 공차 = base + 바퀴 2 + 캐스터 2) -->
+  <link name="base_link">
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <box size="0.6 0.4 0.3"/>
+      </geometry>
+      <material name="amr_body"/>
+    </visual>
+    <!--
+        LiDAR 창(슬롯) 띠: 스캔 평면 ±3 cm 높이로 차체를 두르는 어두운 창 (외관 표시). 차체보다 2 mm 크게 둬
+        면이 겹쳐 깜박이지 않게 한다. 다른 로봇의 LiDAR 에는 차체 외곽으로 보인다 (자기 LiDAR 는 가시성 비트로 제외).
+      -->
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0.02"/>
+      <geometry>
+        <box size="0.602 0.402 0.06"/>
+      </geometry>
+      <material name="amr_sensor_window"/>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <box size="0.6 0.4 0.3"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <mass value="45.0"/>
+      <inertia ixx="0.9375" ixy="0.0" ixz="0.0" iyy="1.6875" iyz="0.0" izz="1.95"/>
+    </inertial>
+  </link>
+  <joint name="left_wheel_joint" type="continuous">
+    <parent link="base_link"/>
+    <child link="left_wheel_link"/>
+    <origin rpy="0 0 0" xyz="0 0.18 -0.09749999999999999"/>
+    <axis xyz="0 1 0"/>
+    <!-- 모터·감속기 한계 (robot_params.yaml drive). DiffDrive 의 바퀴 속도 서보가 이 토크 이상을 못 낸다 -->
+    <limit effort="3.0" velocity="28.0"/>
+  </joint>
+  <link name="left_wheel_link">
+    <visual>
+      <origin rpy="1.5707963267948966 0 0" xyz="0 0 0"/>
+      <geometry>
+        <cylinder length="0.035" radius="0.0825"/>
+      </geometry>
+      <material name="amr_wheel"/>
+    </visual>
+    <!-- 충돌은 얇은 원판 (wheel_contact_width, amr.urdf.xacro 주석) — 접지점을 바퀴 중심면에 고정 -->
+    <collision>
+      <origin rpy="1.5707963267948966 0 0" xyz="0 0 0"/>
+      <geometry>
+        <cylinder length="0.002" radius="0.0825"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <mass value="1.0"/>
+      <inertia ixx="0.0018" ixy="0.0" ixz="0.0" iyy="0.0034" iyz="0.0" izz="0.0018"/>
+    </inertial>
+  </link>
+  <joint name="right_wheel_joint" type="continuous">
+    <parent link="base_link"/>
+    <child link="right_wheel_link"/>
+    <origin rpy="0 0 0" xyz="0 -0.18 -0.09749999999999999"/>
+    <axis xyz="0 1 0"/>
+    <!-- 모터·감속기 한계 (robot_params.yaml drive). DiffDrive 의 바퀴 속도 서보가 이 토크 이상을 못 낸다 -->
+    <limit effort="3.0" velocity="28.0"/>
+  </joint>
+  <link name="right_wheel_link">
+    <visual>
+      <origin rpy="1.5707963267948966 0 0" xyz="0 0 0"/>
+      <geometry>
+        <cylinder length="0.035" radius="0.0825"/>
+      </geometry>
+      <material name="amr_wheel"/>
+    </visual>
+    <!-- 충돌은 얇은 원판 (wheel_contact_width, amr.urdf.xacro 주석) — 접지점을 바퀴 중심면에 고정 -->
+    <collision>
+      <origin rpy="1.5707963267948966 0 0" xyz="0 0 0"/>
+      <geometry>
+        <cylinder length="0.002" radius="0.0825"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <mass value="1.0"/>
+      <inertia ixx="0.0018" ixy="0.0" ixz="0.0" iyy="0.0034" iyz="0.0" izz="0.0018"/>
+    </inertial>
+  </link>
+  <joint name="front_caster_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="front_caster_link"/>
+    <origin rpy="0 0 0" xyz="0.24 0 -0.15"/>
+  </joint>
+  <link name="front_caster_link">
+    <visual>
+      <geometry>
+        <sphere radius="0.03"/>
+      </geometry>
+      <material name="amr_caster"/>
+    </visual>
+    <collision>
+      <geometry>
+        <sphere radius="0.03"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <mass value="0.3"/>
+      <inertia ixx="0.000108" ixy="0.0" ixz="0.0" iyy="0.000108" iyz="0.0" izz="0.000108"/>
+    </inertial>
+  </link>
+  <joint name="rear_caster_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="rear_caster_link"/>
+    <origin rpy="0 0 0" xyz="-0.24 0 -0.15"/>
+  </joint>
+  <link name="rear_caster_link">
+    <visual>
+      <geometry>
+        <sphere radius="0.03"/>
+      </geometry>
+      <material name="amr_caster"/>
+    </visual>
+    <collision>
+      <geometry>
+        <sphere radius="0.03"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <mass value="0.3"/>
+      <inertia ixx="0.000108" ixy="0.0" ixz="0.0" iyy="0.000108" iyz="0.0" izz="0.000108"/>
+    </inertial>
+  </link>
+  <!--
+      적재물. 스폰 시점의 xacro 인자(payload / payload_mass)로 정해진다 — 크기·질량은 robot_params.yaml payload.<종류>.
+      명세 8장 물품 표의 실제 크기 박스를 데크 중앙(x = 0, 구동축 위)에 올리고 균질 박스 관성을 준다. fixed 조인트라
+      sdformat 이 URDF 루트 링크(base_footprint)에 질량·관성·무게중심을 합산해 Gazebo 동역학에 그대로 들어간다.
+      바퀴 토크 한계(drive.wheel_effort_limit)가 있으므로 합산 질량이 가속·제동 응답을 바꾼다 (robot_params.yaml drive 실측).
+      적재물이 없으면 형상·관성 없는 빈 프레임만 남는다 (TF 의 cargo_link 는 항상 있다).
+      이것은 스폰 시점에 고정되는 적재물이다. 주행 중 적재/하역(재스폰 없이)은 이 링크가 아니라 별도 화물 모델
+      <robot_name>_cargo 를 DetachableJoint 로 붙였다 떼는 방식이다 (amr_gazebo.xacro "런타임 적재물",
+      amr_simulation payload_manager_node). 둘을 함께 쓰면 질량이 더해지므로 런타임 적재를 쓸 때는 payload 를 비운다.
+    -->
+  <joint name="cargo_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="cargo_link"/>
+    <origin rpy="0 0 0" xyz="0 0 0.15"/>
+  </joint>
+  <link name="cargo_link">
+  </link>
+  <!-- 2D LiDAR -->
+  <joint name="lidar_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="lidar_link"/>
+    <origin rpy="0.0 0.0 0.0" xyz="0.15 0.0 0.02"/>
+  </joint>
+  <link name="lidar_link">
+    <visual>
+      <geometry>
+        <cylinder length="0.04" radius="0.035"/>
+      </geometry>
+      <material name="amr_sensor"/>
+    </visual>
+  </link>
+  <!-- RGB + Depth 카메라 모듈 본체 프레임 -->
+  <joint name="camera_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="camera_link"/>
+    <origin rpy="0.0 0.0 0.0" xyz="0.29 0.0 0.07"/>
+  </joint>
+  <link name="camera_link">
+    <visual>
+      <geometry>
+        <box size="0.025 0.09 0.025"/>
+      </geometry>
+      <material name="amr_sensor"/>
+    </visual>
+  </link>
+  <!-- optical 프레임: rgb/depth 블록의 link_frame_id(= camera_link) 의 고정 자식 -->
+  <joint name="camera_optical_joint" type="fixed">
+    <parent link="camera_link"/>
+    <child link="camera_optical_frame"/>
+    <origin rpy="-1.5707963 0.0 -1.5707963" xyz="0 0 0"/>
+  </joint>
+  <link name="camera_optical_frame"/>
+  <joint name="camera_depth_optical_joint" type="fixed">
+    <parent link="camera_link"/>
+    <child link="camera_depth_optical_frame"/>
+    <origin rpy="-1.5707963 0.0 -1.5707963" xyz="0 0 0"/>
+  </joint>
+  <link name="camera_depth_optical_frame"/>
+  <!-- IMU -->
+  <joint name="imu_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="imu_link"/>
+    <origin rpy="0.0 0.0 0.0" xyz="0.0 0.0 0.1"/>
+  </joint>
+  <link name="imu_link">
+    <visual>
+      <geometry>
+        <box size="0.02 0.02 0.008"/>
+      </geometry>
+      <material name="amr_sensor"/>
+    </visual>
+  </link>
+  <gazebo reference="base_link">
+    <visual>
+      <visibility_flags>16</visibility_flags>
+    </visual>
+  </gazebo>
+  <gazebo reference="left_wheel_link">
+    <visual>
+      <visibility_flags>16</visibility_flags>
+    </visual>
+  </gazebo>
+  <gazebo reference="right_wheel_link">
+    <visual>
+      <visibility_flags>16</visibility_flags>
+    </visual>
+  </gazebo>
+  <gazebo reference="front_caster_link">
+    <visual>
+      <visibility_flags>16</visibility_flags>
+    </visual>
+  </gazebo>
+  <gazebo reference="rear_caster_link">
+    <visual>
+      <visibility_flags>16</visibility_flags>
+    </visual>
+  </gazebo>
+  <gazebo reference="lidar_link">
+    <visual>
+      <visibility_flags>16</visibility_flags>
+    </visual>
+  </gazebo>
+  <gazebo reference="camera_link">
+    <visual>
+      <visibility_flags>16</visibility_flags>
+    </visual>
+  </gazebo>
+  <gazebo reference="imu_link">
+    <visual>
+      <visibility_flags>16</visibility_flags>
+    </visual>
+  </gazebo>
+  <!-- ===== 접촉 마찰 (robot_params.yaml robot.*_friction_coeff). 캐스터는 낮은 mu 로 미끄러지는 구 근사 ===== -->
+  <gazebo reference="left_wheel_link">
+    <mu1>1.0</mu1>
+    <mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="right_wheel_link">
+    <mu1>1.0</mu1>
+    <mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="front_caster_link">
+    <mu1>0.05</mu1>
+    <mu2>0.05</mu2>
+  </gazebo>
+  <gazebo reference="rear_caster_link">
+    <mu1>0.05</mu1>
+    <mu2>0.05</mu2>
+  </gazebo>
+  <gazebo>
+    <!--
+        차동 구동 (모터 드라이버 = 컨트롤러 한계). 속도/가속도 제한은 robot_params.yaml limits (Fortress DiffDrive 의
+        min/max_linear|angular_velocity|acceleration). 물리 한계는 바퀴 조인트 토크/속도 한계(drive.*, amr_base.xacro)가
+        따로 걸어 적재 질량이 크면 이 한계보다 늦게 가속·제동한다.
+        감속 한계(min_linear_acceleration)는 정상 감속 1.0 이 아니라 비상 감속 limits.emergency_deceleration 이다 (결정):
+        정상 감속 프로파일은 velocity_profiler_node 가 지키고, E-Stop 은 safety_node 가 프로파일을 우회해 0 을 내므로
+        여기서 1.0 으로 묶으면 E-Stop 도 2.0 m/s 에서 2 m 를 미끄러진다. 한계가 부호 기준이라 후진 가속에도 적용된다.
+        odom 은 /<robot_name>/odom_gz 로만 내보내며(비교용), 이 플러그인의 tf(gz /<robot_name>/odom_gz/tf)는
+        기본으로 ROS 에 브리지하지 않는다 — odom→base_footprint TF 는 EKF 가 발행한다. EKF 가 생기기 전 초기 매핑에만
+        spawn.launch.py bridge_odom_tf:=true 로 /tf 에 넘긴다 (EKF 와 동시 사용 금지).
+
+        저크 제한(max_linear_jerk)은 여기 넣지 않는다 (결정). Fortress DiffDrive 의 SpeedLimiter 는 목표를
+        내다보지 않고 저크만 자르기 때문에 목표 속도 근처에서 감속을 늦게 시작해 ±a²/(2j) 로 계속 진동한다
+        (a = 1.0, j = 2.0 → ±0.25 m/s, 주기 ≈ 2 s). 실측(지면 진실): 0.5 m/s 지령에 0.257 ~ 0.745 m/s 로 계속
+        진동, 0 지령에서도 |v| 최대 0.245 m/s 로 앞뒤로 흔들려 멈추지 않음. 저크 제한을 빼면 0.500 m/s 정확히
+        유지, 정지 잔속 0. 저크 제한 S-curve 는 명세 5장 구현 대상인 amr_navigation velocity_profiler_node
+        (cmd_vel_nav → cmd_vel_smoothed)가 담당한다.
+        재현하려면 아래에 <max_linear_jerk>/<min_linear_jerk> 를 limits.max_linear_jerk 로 다시 넣으면 된다.
+      -->
+    <plugin filename="ignition-gazebo-diff-drive-system" name="ignition::gazebo::systems::DiffDrive">
+      <left_joint>left_wheel_joint</left_joint>
+      <right_joint>right_wheel_joint</right_joint>
+      <wheel_separation>0.36</wheel_separation>
+      <wheel_radius>0.0825</wheel_radius>
+      <topic>/amr_01/cmd_vel</topic>
+      <odom_topic>/amr_01/odom_gz</odom_topic>
+      <tf_topic>/amr_01/odom_gz/tf</tf_topic>
+      <frame_id>odom</frame_id>
+      <child_frame_id>base_footprint</child_frame_id>
+      <odom_publish_frequency>50.0</odom_publish_frequency>
+      <max_linear_velocity>2.0</max_linear_velocity>
+      <min_linear_velocity>-0.5</min_linear_velocity>
+      <max_angular_velocity>1.5</max_angular_velocity>
+      <min_angular_velocity>-1.5</min_angular_velocity>
+      <max_linear_acceleration>1.0</max_linear_acceleration>
+      <min_linear_acceleration>-3.0</min_linear_acceleration>
+      <max_angular_acceleration>2.0</max_angular_acceleration>
+      <min_angular_acceleration>-2.0</min_angular_acceleration>
+    </plugin>
+    <!-- 바퀴 관절 상태 → /<robot_name>/joint_states (robot_state_publisher 바퀴 TF + 팀 엔코더 노드 입력) -->
+    <plugin filename="ignition-gazebo-joint-state-publisher-system" name="ignition::gazebo::systems::JointStatePublisher">
+      <topic>/amr_01/joint_states</topic>
+      <joint_name>left_wheel_joint</joint_name>
+      <joint_name>right_wheel_joint</joint_name>
+    </plugin>
+    <!-- 지면 진실(ground truth) 오도메트리 — 위치 추정 평가 전용 (header.frame_id = world, child = base_footprint) -->
+    <plugin filename="ignition-gazebo-odometry-publisher-system" name="ignition::gazebo::systems::OdometryPublisher">
+      <odom_frame>world</odom_frame>
+      <robot_base_frame>base_footprint</robot_base_frame>
+      <odom_topic>/amr_01/ground_truth/odom</odom_topic>
+      <tf_topic>/amr_01/ground_truth/tf_unused</tf_topic>
+      <odom_publish_frequency>50.0</odom_publish_frequency>
+      <dimensions>3</dimensions>
+    </plugin>
+  </gazebo>
+  <gazebo>
+    <plugin filename="ignition-gazebo-detachable-joint-system" name="ignition::gazebo::systems::DetachableJoint">
+      <parent_link>base_footprint</parent_link>
+      <child_model>amr_01_cargo</child_model>
+      <child_link>link</child_link>
+      <attach_topic>/amr_01/cargo/attach</attach_topic>
+      <detach_topic>/amr_01/cargo/detach</detach_topic>
+      <output_topic>/amr_01/cargo/state</output_topic>
+      <suppress_child_warning>true</suppress_child_warning>
+    </plugin>
+  </gazebo>
+  <!-- ===== 2D LiDAR (gpu_lidar) ===== -->
+  <!-- angle_max 는 YAML 값을 그대로 쓴다: samples 개 빔이 [angle_min, angle_max] 를 등분한다
+         (증분 = (max-min)/(samples-1)). 0.5° 정확 증분은 YAML 쪽에서 angle_max = π - 2π/720 로 맞춘다 -->
+  <gazebo reference="lidar_link">
+    <sensor name="lidar" type="gpu_lidar">
+      <pose>0 0 0 0 0 0</pose>
+      <topic>/amr_01/scan</topic>
+      <update_rate>10.0</update_rate>
+      <always_on>true</always_on>
+      <visualize>false</visualize>
+      <ignition_frame_id>lidar_link</ignition_frame_id>
+      <lidar>
+        <scan>
+          <horizontal>
+            <samples>720</samples>
+            <resolution>1</resolution>
+            <min_angle>-3.14159265</min_angle>
+            <max_angle>3.13286601</max_angle>
+          </horizontal>
+        </scan>
+        <range>
+          <min>0.1</min>
+          <max>25.0</max>
+        </range>
+        <!-- SDF 1.9: lidar/camera 의 noise 는 <type> 자식 요소 (IMU 의 noise 만 type 속성) -->
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.03</stddev>
+        </noise>
+        <!-- 자기 차체 제외 (머리말). 차체 안 슬롯에 있으므로 이것이 없으면 모든 빔이 차체 안쪽 면에 맞는다 -->
+        <visibility_mask>4294967279</visibility_mask>
+      </lidar>
+    </sensor>
+  </gazebo>
+  <!-- ===== 카메라 (RGB + Depth, 같은 camera_link 에 센서 2개) ===== -->
+  <!--
+      ignition_frame_id 는 optical 프레임 → 이미지/camera_info header 가 REP-103 광학 규약과 일치.
+      Fortress 함정(실측): depth_camera 의 점군(<topic>/points)은 header.frame_id 가 optical 인데 좌표는 센서
+      본체 규약(x 전방, y 좌, z 상)으로 채워진다 — 전방 5 m 벽이 점군에서 x≈4.8 로 나온다. 그대로 TF 변환하면
+      90° 돌아간다. 점군은 깊이 이미지 + camera_info 로 프로젝트가 직접 만들고(명세 2장), 시뮬레이터 점군을
+      쓰려면 소비 측에서 frame_id 를 camera_link 로 바꿔 읽는다 (sensors.yaml depth_camera 주석 참조).
+    -->
+  <gazebo reference="camera_link">
+    <sensor name="rgb_camera" type="camera">
+      <pose>0 0 0 0 0 0</pose>
+      <topic>/amr_01/camera/image_raw</topic>
+      <update_rate>30.0</update_rate>
+      <always_on>true</always_on>
+      <visualize>false</visualize>
+      <ignition_frame_id>camera_optical_frame</ignition_frame_id>
+      <camera name="rgb_camera">
+        <horizontal_fov>1.518436</horizontal_fov>
+        <image>
+          <width>640</width>
+          <height>480</height>
+          <format>R8G8B8</format>
+        </image>
+        <clip>
+          <near>0.05</near>
+          <far>100.0</far>
+        </clip>
+        <!-- 렌즈가 전면 창 1 cm 안쪽이라 차체 전면이 near clip 안에 들지만, 자기 차체는 규칙대로 뺀다 -->
+        <visibility_mask>4294967279</visibility_mask>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.062</stddev>
+        </noise>
+      </camera>
+    </sensor>
+    <!-- 깊이 노이즈: Fortress 는 거리 무관 가우시안만 지원 → noise_base 만 센서에 적용하고,
+           거리 제곱 항(noise_quadratic_coeff)은 amr_perception 깊이 전처리 노드가 더한다 (sensors.yaml 결정) -->
+    <sensor name="depth_camera" type="depth_camera">
+      <pose>0 0 0 0 0 0</pose>
+      <topic>/amr_01/camera/depth/image_raw</topic>
+      <update_rate>15.0</update_rate>
+      <always_on>true</always_on>
+      <visualize>false</visualize>
+      <ignition_frame_id>camera_depth_optical_frame</ignition_frame_id>
+      <camera name="depth_camera">
+        <horizontal_fov>1.518436</horizontal_fov>
+        <image>
+          <width>640</width>
+          <height>480</height>
+          <format>R_FLOAT32</format>
+        </image>
+        <clip>
+          <near>0.2</near>
+          <far>10.0</far>
+        </clip>
+        <visibility_mask>4294967279</visibility_mask>
+        <depth_camera>
+          <clip>
+            <near>0.2</near>
+            <far>10.0</far>
+          </clip>
+        </depth_camera>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.005</stddev>
+        </noise>
+      </camera>
+    </sensor>
+  </gazebo>
+  <!-- ===== IMU ===== -->
+  <!--
+      enable_orientation=true 로 둔다(결정): Fortress IMU 의 orientation 은 노이즈/드리프트 없는 지면 진실이며,
+      기준은 월드가 아니라 센서의 "스폰 시점 자세"다 (yaw=1.57 로 스폰한 로봇도 초기 yaw 0 으로 나온다 — 실측).
+      false 로 끄면 브리지가 w=0 인 무효 쿼터니언을 내보내 소비 노드가 깨질 수 있어 켜 둔다.
+      따라서 EKF(config/ekf.yaml) 는 imu 의 roll/pitch/yaw 를 융합하면 안 되고 angular_velocity /
+      linear_acceleration 만 써야 한다. 노이즈+바이어스 모델은 그 두 값에만 적용된다.
+      참고: SDF 월드 기본 중력은 9.8 m/s² (9.80665 아님) — 정지 시 accel z 평균 ≈ 9.8 + bias.
+    -->
+  <gazebo reference="imu_link">
+    <sensor name="imu" type="imu">
+      <pose>0 0 0 0 0 0</pose>
+      <topic>/amr_01/imu/data_raw</topic>
+      <update_rate>100.0</update_rate>
+      <always_on>true</always_on>
+      <visualize>false</visualize>
+      <ignition_frame_id>imu_link</ignition_frame_id>
+      <imu>
+        <enable_orientation>true</enable_orientation>
+        <angular_velocity>
+          <x>
+            <noise type="gaussian">
+              <mean>0.0</mean>
+              <stddev>0.0002</stddev>
+              <bias_mean>0.01</bias_mean>
+              <bias_stddev>7.5e-06</bias_stddev>
+              <dynamic_bias_stddev>0.0</dynamic_bias_stddev>
+              <dynamic_bias_correlation_time>300.0</dynamic_bias_correlation_time>
+            </noise>
+          </x>
+          <y>
+            <noise type="gaussian">
+              <mean>0.0</mean>
+              <stddev>0.0002</stddev>
+              <bias_mean>0.01</bias_mean>
+              <bias_stddev>7.5e-06</bias_stddev>
+              <dynamic_bias_stddev>0.0</dynamic_bias_stddev>
+              <dynamic_bias_correlation_time>300.0</dynamic_bias_correlation_time>
+            </noise>
+          </y>
+          <z>
+            <noise type="gaussian">
+              <mean>0.0</mean>
+              <stddev>0.0002</stddev>
+              <bias_mean>0.01</bias_mean>
+              <bias_stddev>7.5e-06</bias_stddev>
+              <dynamic_bias_stddev>0.0</dynamic_bias_stddev>
+              <dynamic_bias_correlation_time>300.0</dynamic_bias_correlation_time>
+            </noise>
+          </z>
+        </angular_velocity>
+        <linear_acceleration>
+          <x>
+            <noise type="gaussian">
+              <mean>0.0</mean>
+              <stddev>0.017</stddev>
+              <bias_mean>0.1</bias_mean>
+              <bias_stddev>0.001</bias_stddev>
+              <dynamic_bias_stddev>0.0</dynamic_bias_stddev>
+              <dynamic_bias_correlation_time>300.0</dynamic_bias_correlation_time>
+            </noise>
+          </x>
+          <y>
+            <noise type="gaussian">
+              <mean>0.0</mean>
+              <stddev>0.017</stddev>
+              <bias_mean>0.1</bias_mean>
+              <bias_stddev>0.001</bias_stddev>
+              <dynamic_bias_stddev>0.0</dynamic_bias_stddev>
+              <dynamic_bias_correlation_time>300.0</dynamic_bias_correlation_time>
+            </noise>
+          </y>
+          <z>
+            <noise type="gaussian">
+              <mean>0.0</mean>
+              <stddev>0.017</stddev>
+              <bias_mean>0.1</bias_mean>
+              <bias_stddev>0.001</bias_stddev>
+              <dynamic_bias_stddev>0.0</dynamic_bias_stddev>
+              <dynamic_bias_correlation_time>300.0</dynamic_bias_correlation_time>
+            </noise>
+          </z>
+        </linear_acceleration>
+      </imu>
+    </sensor>
+  </gazebo>
+</robot>

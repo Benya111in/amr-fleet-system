@@ -6,6 +6,9 @@ spawn.launch.py / description.launch.py 구성 테스트 (Gazebo 없이, 런치 
 - 로봇마다 payload_manager_node 를 그 네임스페이스에 띄운다 (bringup 변경 없이 스폰 경로에서). amr_simulation 이
   없으면 로그만 남긴다. payload_manager:=false 면 띄우지 않는다.
 - description.launch.py 가 runtime_payload 인자를 xacro 로 넘긴다.
+- 3D LiDAR (보너스 2): lidar3d 가 true 거나 auto + 스폰 목록의 로봇별 키가 true 일 때만 점군 브리지(lazy)와
+  amr_lidar3d 전처리 노드가 붙는다. 기본(키 없음)은 브리지·노드 구성이 그대로다. description.launch.py 의 xacro
+  lidar3d 값도 같은 규칙으로 정해진다.
 """
 
 import importlib.util
@@ -76,7 +79,8 @@ def _context(**overrides):
     ctx = LaunchContext()
     values = {"robot_name": "amr_04", "world": "warehouse", "x": "1.0", "y": "2.0", "z": "0.02",
               "yaw": "0.5", "use_sim_time": "true", "config_dir": str(CONFIG), "bridge_config": "",
-              "bridge_odom_tf": "false", "spawn_timeout": "60", "payload_manager": "true"}
+              "bridge_odom_tf": "false", "spawn_timeout": "60", "payload_manager": "true",
+              "lidar3d": "auto", "lidar3d_config": "", "lidar3d_preprocessor": "true"}
     values.update(overrides)
     ctx.launch_configurations.update(values)
     return ctx
@@ -148,3 +152,100 @@ def test_launch_arguments():
         == "true"
     assert spawn._gz_camera_info_topic("camera/image_raw") == "camera/camera_info"
     assert description._default_config_dir().endswith("config")
+
+
+def _robots_file(tmp_path, flag_robot="amr_04"):
+    path = tmp_path / "spawn.yaml"
+    robots = [{"name": "amr_04", "x": 0.0, "y": 0.0, "yaw": 0.0},
+              {"name": "amr_05", "x": 2.0, "y": 0.0, "yaw": 0.0}]
+    for r in robots:
+        if r["name"] == flag_robot:
+            r["lidar3d"] = True
+    path.write_text(yaml.safe_dump({"robots": robots}), encoding="utf-8")
+    return str(path)
+
+
+def _bridge_from_setup(ctx):
+    actions = spawn._setup(ctx)
+    path = _generated_bridge_file(actions, ctx)
+    try:
+        return actions, yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    finally:
+        os.remove(path)
+
+
+def _l3_nodes(actions):
+    return [n for n in _nodes(actions) if n.node_package == "amr_lidar3d"]
+
+
+def _l3_logged(actions, ctx):
+    return any("lidar3d" in "".join(s.perform(ctx) for s in a.msg)
+               for a in actions if isinstance(a, LogInfo))
+
+
+def test_lidar3d_auto_without_key_keeps_bridge_and_nodes(tmp_path):
+    """스폰 목록에 키가 없거나(기본) 다른 로봇에만 있으면 브리지·노드가 이전과 같다."""
+    for robots_file in ("", _robots_file(tmp_path, flag_robot="amr_05")):
+        ctx = _context(payload_manager="false", robots_file=robots_file)
+        actions, entries = _bridge_from_setup(ctx)
+        assert entries == spawn._bridge_entries(SENSORS)
+        assert not [e for e in entries if "lidar3d" in e["ros_topic_name"]]
+        assert not _l3_nodes(actions) and not _l3_logged(actions, ctx)
+        assert {n.node_executable for n in _nodes(actions)} == {
+            "gz_world.py", "parameter_bridge", "image_bridge"}
+
+
+@pytest.mark.parametrize("how", ["auto_key", "explicit"])
+def test_lidar3d_robot_gets_points_bridge_and_preprocessor(tmp_path, how):
+    ctx = (_context(payload_manager="false", robots_file=_robots_file(tmp_path))
+           if how == "auto_key" else _context(payload_manager="false", lidar3d="true"))
+    actions, entries = _bridge_from_setup(ctx)
+    base = spawn._bridge_entries(SENSORS)
+    assert entries[:len(base)] == base                       # 기존 항목은 그대로, 뒤에 더한다
+    extra = entries[len(base):]
+    assert extra == [{"ros_topic_name": "lidar3d/points_raw", "gz_topic_name": "lidar3d/points",
+                      "ros_type_name": "sensor_msgs/msg/PointCloud2",
+                      "gz_type_name": "ignition.msgs.PointCloudPacked",
+                      "direction": "GZ_TO_ROS", "lazy": True}]
+    try:
+        from ament_index_python.packages import get_package_share_directory
+        get_package_share_directory("amr_lidar3d")
+    except Exception:
+        assert _l3_logged(actions, ctx)                      # 없으면 이유를 남긴다
+        return
+    nodes = _l3_nodes(actions)
+    assert len(nodes) == 1 and nodes[0].node_executable == "cloud_preprocessor_node"
+    assert getattr(nodes[0], "_Node__node_namespace") == "amr_04"
+
+
+def test_lidar3d_explicit_false_wins_and_preprocessor_can_be_disabled(tmp_path):
+    ctx = _context(payload_manager="false", robots_file=_robots_file(tmp_path), lidar3d="false")
+    actions, entries = _bridge_from_setup(ctx)
+    assert entries == spawn._bridge_entries(SENSORS)
+    ctx = _context(payload_manager="false", lidar3d="true", lidar3d_preprocessor="false")
+    actions, entries = _bridge_from_setup(ctx)
+    assert entries[-1]["ros_topic_name"] == "lidar3d/points_raw"
+    assert not _l3_nodes(actions)
+
+
+def test_description_lidar3d_flag_substitution(tmp_path):
+    from launch.substitutions import LaunchConfiguration
+    sub = description.Lidar3dFlag(LaunchConfiguration("robot_name"),
+                                  LaunchConfiguration("lidar3d"))
+    robots_file = _robots_file(tmp_path)
+    cases = [({"robot_name": "amr_04", "lidar3d": "auto", "robots_file": robots_file}, "true"),
+             ({"robot_name": "amr_05", "lidar3d": "auto", "robots_file": robots_file}, "false"),
+             ({"robot_name": "amr_04", "lidar3d": "auto"}, "false"),
+             ({"robot_name": "amr_04", "lidar3d": "false", "robots_file": robots_file}, "false"),
+             ({"robot_name": "amr_05", "lidar3d": "true"}, "true")]
+    for values, expected in cases:
+        ctx = LaunchContext()
+        ctx.launch_configurations.update(values)
+        assert sub.perform(ctx) == expected, values
+    desc = {a.name: a for a in description.generate_launch_description().entities
+            if isinstance(a, DeclareLaunchArgument)}
+    assert "".join(s.perform(LaunchContext()) for s in desc["lidar3d"].default_value) == "auto"
+    cfg = description.Lidar3dConfig(LaunchConfiguration("lidar3d_config"))
+    ctx = LaunchContext()
+    ctx.launch_configurations["lidar3d_config"] = ""
+    assert cfg.perform(ctx).endswith("config/lidar3d.yaml")

@@ -1,0 +1,111 @@
+<?xml version="1.0"?>
+<!--
+  가상 16채널 3D LiDAR + 마스트 (명세 보너스 2 "3D LiDAR SLAM"). xacro 인자 lidar3d:=true 일 때만 들어간다.
+
+  기본(lidar3d:=false)에서는 이 파일이 URDF 에 아무것도 내지 않는다: 프로퍼티는 출력이 없고, 매크로는 호출되지 않으며,
+  IMU 프로퍼티는 sensors.yaml 값을 그대로 돌려준다 → 기본 5대·기존 시나리오의 URDF 가 바이트 단위로 그대로다
+  (test/test_urdf_golden.py). 이 머리 주석은 루트 밖이라 출력되지 않는다.
+  설정: config/lidar3d.yaml (xacro 인자 lidar3d_config 로 바꿀 수 있다). 계약: docs/research/slam3d/sensor.md.
+
+  base_link
+   └─ lidar3d_link   lidar3d.extrinsic (지면 +0.90 m, 데크 앞끝), rpy 0, 본체 규약 (x 전방, y 좌, z 상)
+                     시각체 2개: 센서 본체 원통 + 데크 상면에서 본체 아래까지 마스트 원통 (충돌체·관성 없음)
+
+  gpu_lidar (Fortress ign-sensors 6, 실측은 docs/research/slam3d/sensor.md):
+    gz /<robot_name>/lidar3d         다층 LaserScan — ros_gz_bridge 가 가운데 행만 넘기므로 브리지하지 않는다
+    gz /<robot_name>/lidar3d/points  PointCloudPacked (xyz·intensity FLOAT32, ring UINT16, 점별 time 없음,
+                                     범위 밖 빔은 ±inf) → spawn.launch.py 가 lazy 로 lidar3d/points_raw 에 브리지
+    header.frame_id = <prefix>lidar3d_link (ignition_frame_id)
+    자기 차체 제외: 다른 센서와 같은 visibility_mask (자기 비트만 뺀다) — 마스트·차체·화물은 안 보이고 다른 로봇은 보인다
+
+  IMU (3D 로봇만): update_rate = lidar3d.imu_update_rate, 가속도·자이로 이산 σ 는 sqrt(새 주기 / 기본 주기) 배.
+  센서 정의 자체는 amr_gazebo.xacro 의 IMU 블록이 imu_rate / imu_gyro_sigma / imu_accel_sigma 로 읽는다.
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:property name="lidar3d" value="${'$(arg lidar3d)'.strip().lower() in ('true', '1', 'yes')}"/>
+  <xacro:property name="lidar3d_yaml" value="${xacro.load_yaml('$(arg lidar3d_config)')}"/>
+  <xacro:property name="l3cfg" value="${lidar3d_yaml['/**']['ros__parameters']}"/>
+  <xacro:property name="l3" value="${l3cfg['lidar3d']}"/>
+
+  <!-- IMU 주기·이산 σ (amr_gazebo.xacro IMU 블록이 쓴다). lidar3d:=false 면 sensors.yaml 값 그대로 -->
+  <xacro:property name="imu_rate"
+                  value="${l3cfg['imu_update_rate'] if lidar3d else imu['update_rate']}"/>
+  <xacro:property name="imu_sigma_scale"
+                  value="${(float(imu_rate) / float(imu['update_rate'])) ** 0.5}"/>
+  <xacro:property name="imu_gyro_sigma"
+                  value="${imu['gyro_noise_stddev'] * imu_sigma_scale if lidar3d else imu['gyro_noise_stddev']}"/>
+  <xacro:property name="imu_accel_sigma"
+                  value="${imu['accel_noise_stddev'] * imu_sigma_scale if lidar3d else imu['accel_noise_stddev']}"/>
+
+  <xacro:macro name="amr_lidar3d" params="prefix robot_name">
+
+    <!-- ===== 3D LiDAR 링크 (마스트 위, 지면 +0.90 m) ===== -->
+    <joint name="${prefix}lidar3d_joint" type="fixed">
+      <parent link="${prefix}base_link"/>
+      <child link="${prefix}${l3['frame_id']}"/>
+      <xacro:extrinsic_origin ext="${l3['extrinsic']}"/>
+    </joint>
+    <link name="${prefix}${l3['frame_id']}">
+      <!-- 센서 본체 (VLP-16 급 원통) -->
+      <visual>
+        <geometry>
+          <cylinder radius="${l3['head_radius']}" length="${l3['head_length']}"/>
+        </geometry>
+        <material name="amr_sensor"/>
+      </visual>
+      <!-- 마스트: 데크 상면(base_link z = body_top_z)에서 본체 아래까지 -->
+      <visual>
+        <origin xyz="0 0 ${round((body_top_z - l3['extrinsic']['z'] - l3['head_length'] / 2.0) / 2.0, 6)}"
+                rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="${l3['mast_radius']}"
+                    length="${round(l3['extrinsic']['z'] - l3['head_length'] / 2.0 - body_top_z, 6)}"/>
+        </geometry>
+        <material name="amr_sensor"/>
+      </visual>
+    </link>
+    <xacro:self_visibility link="${prefix}${l3['frame_id']}"/>
+
+    <!-- ===== gpu_lidar 16 ch (config/lidar3d.yaml) ===== -->
+    <gazebo reference="${prefix}${l3['frame_id']}">
+      <sensor name="${prefix}lidar3d" type="gpu_lidar">
+        <pose>0 0 0 0 0 0</pose>
+        <topic>/${robot_name}/${l3['topic']}</topic>
+        <update_rate>${l3['update_rate']}</update_rate>
+        <always_on>true</always_on>
+        <visualize>false</visualize>
+        <ignition_frame_id>${prefix}${l3['frame_id']}</ignition_frame_id>
+        <lidar>
+          <scan>
+            <!-- resolution 1: Fortress 는 resolution != 1 보간을 하지 않는다 (보고서 표) -->
+            <horizontal>
+              <samples>${l3['samples']}</samples>
+              <resolution>1</resolution>
+              <min_angle>${l3['angle_min']}</min_angle>
+              <max_angle>${l3['angle_max']}</max_angle>
+            </horizontal>
+            <vertical>
+              <samples>${l3['channels']}</samples>
+              <resolution>1</resolution>
+              <min_angle>${l3['vertical_min']}</min_angle>
+              <max_angle>${l3['vertical_max']}</max_angle>
+            </vertical>
+          </scan>
+          <range>
+            <min>${l3['range_min']}</min>
+            <max>${l3['range_max']}</max>
+          </range>
+          <noise>
+            <type>gaussian</type>
+            <mean>0.0</mean>
+            <stddev>${l3['noise_stddev']}</stddev>
+          </noise>
+          <visibility_mask>${self_blind_mask}</visibility_mask>
+        </lidar>
+      </sensor>
+    </gazebo>
+
+  </xacro:macro>
+
+</robot>

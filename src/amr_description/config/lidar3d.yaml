@@ -1,0 +1,49 @@
+# 가상 16채널 3D LiDAR (명세 보너스 2 — 3D LiDAR SLAM). 로봇 1대에만 단다: xacro 인자 lidar3d:=true (기본 false).
+# 최상위 config/sensors.yaml 과 같은 형식이지만 따로 둔다: 기본 5대·기존 시나리오가 읽는 파일을 건드리지 않으려는 것이다
+# (lidar3d:=false 면 이 파일의 어떤 값도 URDF 에 들어가지 않는다 — test/test_urdf_golden.py 가 바이트 대조).
+# 토픽·프레임·QoS·필드 계약: docs/research/slam3d/sensor.md (s3 RTAB-Map·LIO-SAM 이 그대로 쓴다).
+#
+# 근거: 보고서 「3D LiDAR SLAM 도입 방안」 "가상 16채널 라이다를 0.90 m 마스트에 단다" 표.
+#  - 실기 대응 표기: "16채널 회전형(단종 VLP-16 급)". 비반복 패턴(Mid-360)은 표준 gpu_lidar 로 재현 불가.
+#  - Fortress(ign-sensors 6) gpu_lidar 는 점별 time 필드가 없는 순간 스캔이고, 범위 밖 빔은 ±inf 점으로 남는다.
+#    → amr_lidar3d 전처리 노드가 비유한 점을 지우고 is_dense=true 로 다시 낸다. 점별 time 은 지어내지 않는다
+#      (순간 스캔에 시간을 합성하면 deskew 가 없는 왜곡을 "보정"한다 — 보고서 같은 절).
+
+/**:
+  ros__parameters:
+
+    lidar3d:
+      # gz 센서 <topic>. Fortress gpu_lidar 는 이 이름으로 다층 LaserScan(가운데 행만 브리지됨 — 쓰지 않는다)을,
+      # <topic>/points 로 PointCloudPacked 를 낸다. 둘 다 /<robot_name>/ 아래.
+      topic: lidar3d
+      points_raw_topic: lidar3d/points_raw   # ROS (브리지 출력, 전처리 전, lazy). gz /<robot>/lidar3d/points
+      points_topic: lidar3d/points           # ROS (전처리 출력 — 소비자는 이것을 구독한다)
+      frame_id: lidar3d_link                 # 본체 규약(x 전방, y 좌, z 상), rpy 0. 접두어는 다중 로봇 규약대로 붙는다
+      # 스캔 패턴: 16 ch, 수직 ±15° (2° 간격), 수평 1800 열 (0.2°), 10 Hz → 스캔당 28 800 빔
+      channels: 16
+      vertical_min: -0.261799          # [rad] -15°. ring 0 = 가장 아래 빔 (보고서 표)
+      vertical_max: 0.261799           # [rad] +15°
+      samples: 1800
+      # 첫·끝 열 겹침 제거 (2D lidar 와 같은 규칙): angle_max = π − 2π/1800 → 증분 정확히 0.2°
+      angle_min: -3.14159265           # [rad]
+      angle_max: 3.13810199            # [rad]
+      range_min: 0.10                  # [m] Gazebo 컷. SLAM 쪽 최소거리는 0.2 m 로 따로 거른다 (통로 랙 면 횡 0.30 m)
+      range_max: 30.0                  # [m] 창고 60 x 40 m
+      noise_stddev: 0.03               # [m] 빔별 거리 가우시안 σ — 2D LiDAR(명세 지정값)와 같다. Fortress 는 이것만 지원
+      update_rate: 10.0                # [Hz]
+      # 장착 (보고서 "장착 높이"): 광학 중심 지면 +0.90 m = base_link_height 0.18 + z 0.72.
+      #  - 대형 화물(상단 +0.73 m, 데크 전체 0.60 m 길이)을 −15° 빔이 넘으려면 H ≥ 0.73 + 0.6·tan15° ≈ 0.89 m.
+      #  - 마스트는 데크 앞끝(차체 전면 x = +0.30 에서 3 cm 안쪽). 카메라(+0.25, 데크 아래)·2D LiDAR(+0.20)를 가리지 않는다.
+      #  - 바닥 사각 반경 0.90 / tan15° ≈ 3.4 m — 근거리 저상 장애물은 2D LiDAR 와 깊이 카메라가 맡는다.
+      extrinsic: {x: 0.27, y: 0.0, z: 0.72, roll: 0.0, pitch: 0.0, yaw: 0.0}   # base_link 기준
+      # 시각체 (충돌체·관성 없음 — 다른 센서 링크와 같다. 동역학·적재 동작을 바꾸지 않는다).
+      # 자기 차체 가시성 비트를 받아 자기 센서에는 안 보이고 다른 로봇 센서에는 보인다.
+      head_radius: 0.0515              # [m] VLP-16 급 본체 103 mm
+      head_length: 0.072               # [m]
+      mast_radius: 0.02                # [m] 데크 상면에서 센서 본체 아래까지
+
+    # 3D 로봇만 IMU 를 올린다 (LIO-SAM 권장 ≥ 200 Hz). 같은 센서 품질(연속 잡음 밀도)을 지키려고 이산 σ 는
+    # sqrt(imu_update_rate / sensors.yaml imu.update_rate) 배로 키운다 (100 → 200 Hz: √2, gyro 2.83e-4 rad/s,
+    # accel 0.024 m/s²). 바이어스(상수 오프셋)는 주기와 무관해 그대로 둔다. 방위(orientation)는 Gazebo 가 잡음 없는
+    # 정답으로 내므로 소비자는 쓰지 않는다 (amr_gazebo.xacro IMU 주석, sensor.md "IMU 방위 오라클").
+    imu_update_rate: 200.0             # [Hz]

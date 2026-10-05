@@ -33,6 +33,12 @@ robot_state_publisher 를 네임스페이스 /<robot_name> 에서 띄운다.
     self_visibility_bit
                   자기 차체 가시성 비트 (기본 "" = robot_name 끝 숫자로 자동, urdf/amr.urdf.xacro). 동시에 뜨는
                   로봇끼리 달라야 한다 — 같으면 서로의 LiDAR 에 안 보인다
+    lidar3d       3D LiDAR(보너스 2) 장착 — true | false | auto (기본 auto). auto 는 런치 범위의 robots_file
+                  (multi_robot/system.launch.py 의 스폰 목록)에서 이 로봇의 lidar3d 키, 없으면 false
+                  (amr_description/lidar3d.py). true 면 0.90 m 마스트 + 16 ch gpu_lidar + IMU 200 Hz
+                  (urdf/amr_lidar3d.xacro). false 의 URDF 는 이 인자가 생기기 전과 바이트 단위로 같다
+    lidar3d_config
+                  3D LiDAR 설정 YAML (기본 '' = share/amr_description/config/lidar3d.yaml)
     use_joint_state_publisher
                   Gazebo 없이 모델만 볼 때 true (기본 false). 시뮬레이션에서는
                   joint_states 가 Gazebo JointStatePublisher → 브리지(spawn.launch.py)로 들어온다
@@ -48,9 +54,12 @@ robot_state_publisher 를 네임스페이스 /<robot_name> 에서 띄운다.
 
 import os
 
+from ament_index_python.packages import get_package_share_directory
+from amr_description import lidar3d as l3d
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
+from launch.substitution import Substitution
 from launch.substitutions import Command, FindExecutable, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
@@ -61,6 +70,39 @@ def _default_config_dir() -> str:
     """최상위 config 디렉토리 기본값: $ROS_WS/config, 없으면 컨테이너 규약 경로."""
     ros_ws = os.environ.get("ROS_WS", "")
     return os.path.join(ros_ws, "config") if ros_ws else "/ros2_ws/config"
+
+
+class Lidar3dFlag(Substitution):
+    """lidar3d 인자(true|false|auto) + 런치 범위의 robots_file → 'true'/'false' (spawn 과 같은 규칙)."""
+
+    def __init__(self, robot_name, value):
+        super().__init__()
+        self._robot_name = robot_name
+        self._value = value
+
+    def describe(self) -> str:
+        return "Lidar3dFlag(lidar3d, robots_file)"
+
+    def perform(self, context) -> str:
+        robot = self._robot_name.perform(context)
+        value = self._value.perform(context)
+        robots_file = context.launch_configurations.get("robots_file", "")
+        return "true" if l3d.resolve(value, robot, robots_file) else "false"
+
+
+class Lidar3dConfig(Substitution):
+    """lidar3d_config 인자 ('' = 패키지 기본 config/lidar3d.yaml)."""
+
+    def __init__(self, value):
+        super().__init__()
+        self._value = value
+
+    def describe(self) -> str:
+        return "Lidar3dConfig(lidar3d_config)"
+
+    def perform(self, context) -> str:
+        path = self._value.perform(context).strip()
+        return path or l3d.default_config_path(get_package_share_directory("amr_description"))
 
 
 def generate_launch_description() -> LaunchDescription:
@@ -99,6 +141,13 @@ def generate_launch_description() -> LaunchDescription:
             "self_visibility_bit", default_value="",
             description="자기 차체 가시성 비트 (빈 값 = robot_name 끝 숫자로 자동)"),
         DeclareLaunchArgument(
+            "lidar3d", default_value=l3d.AUTO,
+            description="3D LiDAR 장착 true|false|auto "
+                        "(auto = robots_file 의 로봇별 lidar3d 키, 없으면 false)"),
+        DeclareLaunchArgument(
+            "lidar3d_config", default_value="",
+            description="3D LiDAR 설정 YAML ('' = share/amr_description/config/lidar3d.yaml)"),
+        DeclareLaunchArgument(
             "use_joint_state_publisher", default_value="false",
             description="Gazebo 없이 모델만 볼 때 joint_state_publisher 기동"),
     ]
@@ -116,6 +165,8 @@ def generate_launch_description() -> LaunchDescription:
             " payload_mass:=", payload_mass,
             " runtime_payload:=", runtime_payload,
             " self_visibility_bit:=", self_visibility_bit,
+            " lidar3d:=", Lidar3dFlag(robot_name, LaunchConfiguration("lidar3d")),
+            " lidar3d_config:=", Lidar3dConfig(LaunchConfiguration("lidar3d_config")),
         ]),
         value_type=str)
 

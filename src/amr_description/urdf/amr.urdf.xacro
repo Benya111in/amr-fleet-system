@@ -45,6 +45,10 @@
   <xacro:arg name="payload_mass" default="-1"/>
   <xacro:arg name="runtime_payload" default="true"/>
   <xacro:arg name="self_visibility_bit" default=""/>
+  <!-- 3D LiDAR 1대용 (보너스 2): lidar3d true 면 마스트 + 16 ch gpu_lidar + IMU 200 Hz. 기본 false 는 URDF 무변화.
+       설명: amr_lidar3d.xacro 머리말 (이 주석은 xacro 요소 바로 앞이라 출력에서 빠진다) -->
+  <xacro:arg name="lidar3d" default="false"/>
+  <xacro:arg name="lidar3d_config" default="$(find amr_description)/config/lidar3d.yaml"/>
 
   <xacro:property name="robot_name" value="$(arg robot_name)"/>
   <xacro:property name="prefix" value="$(arg prefix)"/>
@@ -154,9 +158,13 @@
   <xacro:include filename="$(find amr_description)/urdf/amr_base.xacro"/>
   <xacro:include filename="$(find amr_description)/urdf/amr_sensors.xacro"/>
   <xacro:include filename="$(find amr_description)/urdf/amr_gazebo.xacro"/>
+  <xacro:include filename="$(find amr_description)/urdf/amr_lidar3d.xacro"/>
 
   <xacro:amr_base prefix="${prefix}"/>
   <xacro:amr_sensors prefix="${prefix}"/>
   <xacro:amr_gazebo prefix="${prefix}" robot_name="${robot_name}"/>
+  <xacro:if value="${lidar3d}">
+    <xacro:amr_lidar3d prefix="${prefix}" robot_name="${robot_name}"/>
+  </xacro:if>
 
 </robot>

@@ -77,12 +77,12 @@
     </noise>
   </xacro:macro>
   <xacro:macro name="gyro_noise">
-    <xacro:imu_noise stddev="${imu['gyro_noise_stddev']}" bias_mean="${imu['gyro_bias_mean']}"
+    <xacro:imu_noise stddev="${imu_gyro_sigma}" bias_mean="${imu['gyro_bias_mean']}"
                      bias_stddev="${imu['gyro_bias_stddev']}" dyn_stddev="${imu['gyro_dynamic_bias_stddev']}"
                      dyn_tau="${imu['gyro_dynamic_bias_correlation_time']}"/>
   </xacro:macro>
   <xacro:macro name="accel_noise">
-    <xacro:imu_noise stddev="${imu['accel_noise_stddev']}" bias_mean="${imu['accel_bias_mean']}"
+    <xacro:imu_noise stddev="${imu_accel_sigma}" bias_mean="${imu['accel_bias_mean']}"
                      bias_stddev="${imu['accel_bias_stddev']}" dyn_stddev="${imu['accel_dynamic_bias_stddev']}"
                      dyn_tau="${imu['accel_dynamic_bias_correlation_time']}"/>
   </xacro:macro>
@@ -330,7 +330,7 @@
       <sensor name="${prefix}imu" type="imu">
         <pose>0 0 0 0 0 0</pose>
         <topic>/${robot_name}/${imu['topic']}</topic>
-        <update_rate>${imu['update_rate']}</update_rate>
+        <update_rate>${imu_rate}</update_rate>
         <always_on>true</always_on>
         <visualize>false</visualize>
         <ignition_frame_id>${prefix}${imu['frame_id']}</ignition_frame_id>

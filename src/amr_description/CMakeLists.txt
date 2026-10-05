@@ -6,8 +6,11 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 find_package(ament_cmake REQUIRED)
+find_package(ament_cmake_python REQUIRED)
 
-# 이 패키지는 launch/config/urdf 리소스와 스폰 도구 스크립트(scripts/gz_world.py)를 제공한다 (파이썬 모듈 없음).
+# 이 패키지는 launch/config/urdf 리소스와 스폰 도구 스크립트(scripts/gz_world.py)를 제공한다.
+# 파이썬 모듈 amr_description 은 런치 보조 순수 로직뿐이다 (lidar3d.py: 3D LiDAR 장착 여부·브리지 항목).
+ament_python_install_package(${PROJECT_NAME})
 
 # --- 리소스 디렉토리 설치 ---
 install(DIRECTORY

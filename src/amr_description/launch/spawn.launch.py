@@ -26,6 +26,18 @@ description.launch.py 가 먼저 떠서 /<robot_name>/robot_description 을 발�
                   (주행 중 적재/하역의 질량을 Gazebo 동역학에 반영 — urdf/amr_gazebo.xacro "런타임 적재물").
                   amr_simulation 이 ament index 에 없으면 로그 한 줄 남기고 건너뛴다
                   (amr_simulation 이 이 패키지에 의존하므로 package.xml 의존성은 두지 않는다 — 순환 방지)
+    lidar3d       3D LiDAR(보너스 2) 브리지·전처리 — true | false | auto (기본 auto: 런치 범위의 robots_file 에서
+                  이 로봇의 lidar3d 키, 없으면 false). description.launch.py 와 같은 규칙
+                  (amr_description/lidar3d.py)이어야 URDF 의 센서와 브리지가 짝이 맞는다.
+                  false 면 브리지·노드 구성이 이 인자 이전과 같다
+    lidar3d_config
+                  3D LiDAR 설정 YAML (기본 '' = share/amr_description/config/lidar3d.yaml)
+    lidar3d_preprocessor
+                  true(기본)면 lidar3d 로봇에 amr_lidar3d cloud_preprocessor_node 를 띄운다
+                  (lidar3d/points_raw → lidar3d/points: 비유한 점 제거, is_dense=true, ring 유지).
+                  출력 구독자가 있을 때만 입력을 구독하므로
+                  (lazy) 아무도 3D 점군을 보지 않으면 브리지도 gz 구독을 열지 않고 센서도 렌더하지 않는다.
+                  amr_lidar3d 가 ament index 에 없으면 로그 한 줄 남기고 건너뛴다
 
 스폰 (결정: ros_gz_sim create 대신 scripts/gz_world.py spawn)
     create 서비스를 기다리고, 같은 이름이 없는지 확인한 뒤 생성하고, scene/info 에서 모델이 실제로 생겼는지 확인한다.
@@ -46,6 +58,10 @@ description.launch.py 가 먼저 떠서 /<robot_name>/robot_description 을 발�
     QoS: parameter_bridge 의 발행자는 reliable (depth 10), image_bridge 는 image_transport 기본(reliable).
          구독 측은 best-effort(sensor data)로 받아도 된다.
     브리지하지 않음(기본): DiffDrive/OdometryPublisher 의 tf — odom→base_footprint 는 EKF 가 발행
+    3D LiDAR 로봇만 (lidar3d true, docs/research/slam3d/sensor.md)
+            GZ→ROS lidar3d/points_raw (gz: lidar3d/points, PointCloud2, lazy).
+                   다층 LaserScan(gz lidar3d)은 ros_gz_bridge 가 가운데 행만 넘기므로 브리지하지 않는다.
+                   imu/data_raw 는 같은 토픽에 200 Hz
 
 브리지 구성 (결정)
     - parameter_bridge 는 config_file(생성한 YAML, 상대 이름) + expand_gz_topic_names=true 로 네임스페이스
@@ -87,6 +103,7 @@ import os
 import tempfile
 
 from ament_index_python.packages import get_package_share_directory, PackageNotFoundError
+from amr_description import lidar3d as l3d
 import yaml
 from launch import LaunchDescription
 from launch.actions import (DeclareLaunchArgument, EmitEvent, LogInfo, OpaqueFunction,
@@ -109,8 +126,13 @@ def _gz_camera_info_topic(image_topic: str) -> str:
     return head + sep + "camera_info"
 
 
-def _bridge_entries(sensors: dict, bridge_odom_tf: bool = False) -> list:
-    """parameter_bridge YAML 항목. 상대 이름 → 브리지 노드의 네임스페이스로 확장된다."""
+def _bridge_entries(sensors: dict, bridge_odom_tf: bool = False, lidar3d=None) -> list:
+    """
+    parameter_bridge YAML 항목. 상대 이름 → 브리지 노드의 네임스페이스로 확장된다.
+
+    lidar3d: 3D LiDAR 설정(config/lidar3d.yaml 의 ros__parameters)이면 그 점군 항목을 맨 뒤에 더한다
+    (None 이면 이 인자 이전과 같은 목록).
+    """
     lidar, rgb, depth, imu = (sensors["lidar"], sensors["rgb_camera"],
                               sensors["depth_camera"], sensors["imu"])
 
@@ -149,7 +171,21 @@ def _bridge_entries(sensors: dict, bridge_odom_tf: bool = False) -> list:
         # 초기 매핑용 임시 TF (인자 설명 참조). ROS 이름은 절대 이름 /tf (네임스페이스를 붙이지 않는다)
         entries.append(gz_to_ros("/tf", "odom_gz/tf", "tf2_msgs/msg/TFMessage",
                                  "ignition.msgs.Pose_V"))
+    if lidar3d is not None:
+        entries += l3d.bridge_entries(lidar3d)
     return entries
+
+
+def _lidar3d_params(context, robot_name: str):
+    """이 로봇이 3D LiDAR 로봇이면 설정 사전, 아니면 None (description.launch.py 와 같은 규칙)."""
+    value = LaunchConfiguration("lidar3d").perform(context)
+    robots_file = context.launch_configurations.get("robots_file", "")
+    if not l3d.resolve(value, robot_name, robots_file):
+        return None
+    path = LaunchConfiguration("lidar3d_config").perform(context).strip()
+    if not path:
+        path = l3d.default_config_path(get_package_share_directory("amr_description"))
+    return l3d.load_config(path)
 
 
 def _setup(context, *args, **kwargs):
@@ -163,6 +199,7 @@ def _setup(context, *args, **kwargs):
     config_dir = arg("config_dir")
     bridge_config = arg("bridge_config")
     bridge_odom_tf = arg("bridge_odom_tf").lower() in ("true", "1")
+    lidar3d = _lidar3d_params(context, robot_name)
 
     sensors_yaml = os.path.join(config_dir, "sensors.yaml")
     if not os.path.isfile(sensors_yaml):
@@ -176,7 +213,7 @@ def _setup(context, *args, **kwargs):
         with tempfile.NamedTemporaryFile(
                 "w", prefix=f"amr_bridge_{robot_name}_", suffix=".yaml",
                 delete=False, encoding="utf-8") as f:
-            yaml.safe_dump(_bridge_entries(sensors, bridge_odom_tf), f, sort_keys=False)
+            yaml.safe_dump(_bridge_entries(sensors, bridge_odom_tf, lidar3d), f, sort_keys=False)
             generated = f.name
         bridge_config = generated
 
@@ -190,6 +227,9 @@ def _setup(context, *args, **kwargs):
             LogInfo(msg=f"[{robot_name}] bridge config generated: {generated}"),
             RegisterEventHandler(OnShutdown(on_shutdown=_cleanup)),
         ]
+    elif lidar3d is not None:
+        actions.append(LogInfo(msg=f"[{robot_name}] WARNING: lidar3d 로봇인데 bridge_config 를 직접 줬다 — "
+                                   f"그 파일에 {lidar3d['lidar3d']['points_raw_topic']} 항목이 있어야 한다"))
     if bridge_odom_tf:
         actions.append(LogInfo(msg=f"[{robot_name}] bridge_odom_tf: DiffDrive odom→base_footprint "
                                    "TF 를 /tf 로 브리지 (EKF 와 동시 사용 금지)"))
@@ -251,7 +291,31 @@ def _setup(context, *args, **kwargs):
     actions += [spawn, spawn_check, bridge, image_bridge]
     if arg("payload_manager").lower() in ("true", "1"):
         actions.append(payload_manager_action(robot_name, world, config_dir, use_sim_time))
+    if lidar3d is not None:
+        actions.append(LogInfo(msg=f"[{robot_name}] lidar3d: 16 ch 점군 "
+                                   f"{lidar3d['lidar3d']['points_raw_topic']} (lazy 브리지)"))
+        if arg("lidar3d_preprocessor").lower() in ("true", "1"):
+            actions.append(lidar3d_preprocessor_action(robot_name, lidar3d, use_sim_time))
     return actions
+
+
+def lidar3d_preprocessor_action(robot_name: str, params: dict, use_sim_time: bool):
+    """amr_lidar3d cloud_preprocessor_node (설치돼 있을 때만). 없으면 이유를 로그로 남긴다."""
+    try:
+        get_package_share_directory("amr_lidar3d")
+    except PackageNotFoundError:
+        return LogInfo(msg=(f"[{robot_name}] lidar3d 전처리 건너뜀: amr_lidar3d 가 ament index 에 없다"
+                            " (lidar3d/points 가 나오지 않는다 — points_raw 만 있다)"))
+    l3 = params["lidar3d"]
+    return Node(
+        package="amr_lidar3d",
+        executable="cloud_preprocessor_node",
+        name="lidar3d_preprocessor",
+        namespace=robot_name,
+        output="screen",
+        parameters=[{"input_topic": l3["points_raw_topic"], "output_topic": l3["points_topic"],
+                     "frame_id": "", "lazy": True, "use_sim_time": use_sim_time}],
+    )
 
 
 def payload_manager_action(robot_name: str, world: str, config_dir: str, use_sim_time: bool):
@@ -294,5 +358,13 @@ def generate_launch_description() -> LaunchDescription:
                               description="월드 create 서비스 대기 한도 [s]"),
         DeclareLaunchArgument("payload_manager", default_value="true",
                               description="amr_simulation payload_manager_node (런타임 적재물) 기동"),
+        DeclareLaunchArgument("lidar3d", default_value=l3d.AUTO,
+                              description="3D LiDAR 브리지·전처리 true|false|auto "
+                                          "(auto = robots_file 의 로봇별 lidar3d 키, 없으면 false)"),
+        DeclareLaunchArgument("lidar3d_config", default_value="",
+                              description="3D LiDAR 설정 YAML "
+                                          "('' = share/amr_description/config/lidar3d.yaml)"),
+        DeclareLaunchArgument("lidar3d_preprocessor", default_value="true",
+                              description="lidar3d 로봇에 amr_lidar3d cloud_preprocessor_node 기동"),
     ]
     return LaunchDescription(args + [OpaqueFunction(function=_setup)])
