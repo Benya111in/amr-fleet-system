@@ -502,8 +502,18 @@ DISAMBIGUATE, `slam.md` §5.2 가 확장점으로 적어 둔 것). 정지한 360
 
 | 커밋 | 내용 |
 | --- | --- |
-| (이 커밋) | 어댑터가 `localization/lost`(latched)를 구독해 `RobotState.status = ERROR` 로 올린다. `fleet_manager._candidates` 의 기존 `status != IDLE` 조건이 그제서야 걸린다. 들러붙지 않는다 — 해제되면 phase 로 돌아간다 |
-| (이 커밋) | 회전 수단이 없는 동안 복구 예산·시한을 멈춘다 (위 ①→② 결함) |
+| `22dfcf3` | 어댑터가 `localization/lost`(latched)를 구독해 `RobotState.status = ERROR` 로 올린다. `fleet_manager._candidates` 의 기존 `status != IDLE` 조건이 그제서야 걸린다. 들러붙지 않는다 — 해제되면 phase 로 돌아간다 |
+| `49ecfec` | 회전 수단이 없는 동안 복구 예산·시한을 멈춘다 (위 ①→② 결함) |
+| `287b367` | 여백 게이트의 판정(보류/우회)과 외부 신뢰 창 개방을 **로그에 남긴다** — 동작 변경 없음. 이것이 없어 `R12a`·`R12b` 의 settle 실패를 로그로 가릴 수 없었다 (아래 참고) |
+
+> **부재를 증거로 쓴 오류를 하나 더 적는다.** 나는 `grep -c 'external pose reset'` 이 0 이라서
+> "외부 신뢰 창(§4.5 의 `0c5d8e7`)이 열리지 않았다" 고 읽었다. 틀렸다 —
+> `on_external_pose_reset` 은 창을 **무조건** 열지만 이벤트는 `state == SUSPECT` 분기에서만
+> 기록한다. 같은 이유로 `alias_rejections`·`external_trust_uses` 는 상태 토픽 JSON 으로만 나가
+> `launch.log` 에도 CSV 에도 남지 않는다. 즉 **남은 별칭 실패는 로그만으로 진단할 수 없었다.**
+> `287b367` 이 둘을 기록하게 만든다 (10 Hz 범람을 막는 `gate_log_period` 5 s 간격 제한, 구간의
+> 첫 판정과 종류 전환은 예외). 동작은 바꾸지 않는다 — 다음 측정에서 원인을 숫자로 가르기 위한
+> 것이다.
 
 **근본 원인은 우리 바깥에 남는다**: `change_state` 응답 유실 자체는 rmw/Nav2 쪽이다
 (`amr_bringup/lifecycle_watchdog.py` 머리말이 참가자 ~150 개 환경을 근거로 적는다).
