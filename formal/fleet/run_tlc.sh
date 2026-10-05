@@ -51,6 +51,8 @@ docker run --rm --name "amr-ai-f2-tla-tlc-$name" --network none --cpus "$WORKERS
      -workers $WORKERS -deadlock -cleanup -metadir /out/states/$name \
      -config $cfg $* $mod.tla" >> "$log" 2>&1 || rc=$?
 echo "# end=$(date -Is) rc=$rc loadavg=$(cut -d' ' -f1-3 /proc/loadavg)" >> "$log"
+# TLC 상태 디렉터리(지문·대기열)는 -cleanup 에도 남아 수 GB 가 된다 -- 결과는 로그에 있으므로 지운다
+command rm -rf "$OUT_DIR/states/$name"
 grep -E 'states generated|distinct states|depth of the complete|Error:|is violated|No error has been found|Finished in|Model checking completed' "$log" || true
 echo "log: $log (rc=$rc)"
 exit 0
