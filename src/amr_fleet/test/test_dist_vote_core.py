@@ -436,3 +436,56 @@ def test_voter_crash_between_vote_and_enter_is_safe():
     c.settle(3, dt=0.1)
     assert sum(1 for r in MEMBERS if c.agents[r].authorized()) == 1
     assert c.check() == []
+
+
+def _pop(c, pred):
+    """in-flight 에서 pred 를 만족하는 메시지를 모두 꺼낸다 (배달하지 않음)."""
+    out = [x for x in c.net if pred(x)]
+    c.net = [x for x in c.net if not pred(x)]
+    return out
+
+
+def _deliver_where(c, pred, limit=1000):
+    """조건 pred 를 만족하는 메시지만 FIFO 로 배달 (새로 생긴 것도 포함)."""
+    n = 0
+    while n < limit:
+        i = next((i for i, x in enumerate(c.net) if pred(x)), None)
+        if i is None:
+            return
+        c.deliver(i)
+        n += 1
+
+
+def test_stale_enter_ack_of_old_request_is_not_counted():
+    """
+    옛 요청의 늦은 ENTER_ACK 를 새 요청의 정족수로 세면 두 대가 허가된다 (요청자 자기 펜싱).
+
+    a 의 r1 은 e 에서만 확정되고 그 ACK 가 늦는다. a 가 r1 을 버리고 r2 로 다시 요청해 {a,b} 의 확정만
+    얻은 사이 d 가 {c,d,e} 로 과반을 얻는다. 늦게 온 ACK(r1, e) 를 r2 의 세 번째 ACK 로 세면 a 도 허가 → I1.
+    """
+    c = Cluster(CFG)
+    c.request('a', ['z'])
+    _deliver_where(c, lambda x: x.kind in (m.REQUEST, m.VOTE))
+    _deliver_where(c, lambda x: x.kind == m.ENTER and x.dst == 'e')
+    stale = _pop(c, lambda x: x.kind == m.ENTER_ACK)
+    _pop(c, lambda x: x.kind == m.ENTER)
+    assert len(stale) == 1 and stale[0].src == 'e'
+    c.request('a', ['z'])                                   # r1 포기 → r2
+    _deliver_where(c, lambda x: x.kind in (m.ABANDON, m.RELEASE_ACK))
+    _pop(c, lambda x: x.kind == m.REQUEST and x.dst in ('d', 'e'))
+    _deliver_where(c, lambda x: x.kind in (m.REQUEST, m.VOTE))
+    _deliver_where(c, lambda x: x.kind in (m.ENTER, m.ENTER_ACK) and x.dst in ('a', 'b'))
+    _pop(c, lambda x: x.kind == m.ENTER)
+    assert c.agents['a'].attempt.acks == {'a', 'b'}
+    c.send(stale)                                            # 늦은 ACK(r1) 도착
+    c.deliver_all()
+    assert c.check() == []                                   # 세면 I4 (확정 표 2 < 3)
+    assert not c.agents['a'].authorized()
+    c.advance_all(CFG.tentative_s + 1.0)                     # c 의 r2 잠정 표 만료 (a 는 포기)
+    c.tick_all()
+    c.deliver_all()
+    c.request('d', ['z'])
+    c.settle(5, dt=0.1)
+    assert c.agents['d'].authorized() == {'z'}
+    assert not c.agents['a'].authorized()
+    assert c.check() == []
