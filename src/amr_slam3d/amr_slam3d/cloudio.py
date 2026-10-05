@@ -115,3 +115,41 @@ def transform(xyz: np.ndarray, t: Sequence[float], q: Sequence[float]) -> np.nda
 def finite(xyz: np.ndarray) -> np.ndarray:
     """비유한 점 제거."""
     return xyz[np.all(np.isfinite(xyz), axis=1)]
+
+
+def voxel_downsample(xyz: np.ndarray, voxel: float) -> np.ndarray:
+    """복셀 격자마다 점 하나 (그 복셀 안 점들의 평균). voxel ≤ 0 이면 그대로."""
+    pts = np.asarray(xyz, dtype=float).reshape(-1, 3)
+    if voxel <= 0.0 or len(pts) == 0:
+        return pts
+    keys = np.floor(pts / voxel).astype(np.int64)
+    _, inv, counts = np.unique(keys, axis=0, return_inverse=True, return_counts=True)
+    inv = inv.reshape(-1)
+    sums = np.zeros((len(counts), 3))
+    np.add.at(sums, inv, pts)
+    return sums / counts[:, None]
+
+
+def pose_matrix(t: Sequence[float], q: Sequence[float]) -> np.ndarray:
+    """(t, q) → 4×4 동차 행렬."""
+    m = np.eye(4)
+    m[:3, :3] = quat_matrix(q)
+    m[:3, 3] = np.asarray(t, dtype=float)
+    return m
+
+
+def apply(m: np.ndarray, xyz: np.ndarray) -> np.ndarray:
+    """4×4 행렬을 점 (N, 3) 에 적용."""
+    return np.asarray(xyz, dtype=float) @ m[:3, :3].T + m[:3, 3]
+
+
+def read_pose_file(path: str) -> np.ndarray:
+    """'stamp x y z qx qy qz qw [id]' 줄 (TUM·RTAB-Map 형식 10/11) → (N, 8). '#' 줄은 건너뛴다."""
+    rows = []
+    with open(path, encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            rows.append([float(v) for v in line.split()[:8]])
+    return np.asarray(rows, dtype=float).reshape(-1, 8)

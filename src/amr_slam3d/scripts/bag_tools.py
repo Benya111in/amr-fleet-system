@@ -5,6 +5,15 @@ bag·지도 파일 도구 — 파일럿 bag 메타데이터, 정답 궤적(TUM),
     bag_tools.py stats <bag> --out meta.json        토픽별 메시지 수·header 주기·간격 (sim 시각)
     bag_tools.py tum <bag> --topic /amr_01/ground_truth/odom --out gt.tum
     bag_tools.py cloud <in.ply|in.pcd> <out.ply> --tf x,y,z,qx,qy,qz,qw
+    bag_tools.py match --in-bag <bag> --in-topic T --out-bag <out_bag> --out-topic T2 --out m.json
+    bag_tools.py poses <poses.txt> <out.tum> --tf x,y,z,qx,qy,qz,qw     (SLAM map 프레임 → 월드)
+    bag_tools.py assemble <bag> --topic /amr_01/lidar3d/points --poses p.tum --base F --out c.ply
+
+match 는 "처리 스캔 누락 0" 판정이다: 입력 bag 의 header 스탬프마다 출력 bag 에 같은 스탬프가 있는지 본다.
+출력 bag 은 C++ 기록기(ros2 bag record)라 Python 측정 노드처럼 뒤처져 버리지 않는다.
+assemble 은 자세 파일(월드 프레임, 스탬프 = 스캔 스탬프)의 각 자세에 그 스탬프의 점군을 붙여 월드 점 지도를 만든다
+(rtabmap-export --cloud --scan 이 0 점을 내서 [측정 s3_pilot_a rows/rtabmap3d/export_cloud.log] 대신 쓴다).
+점군 프레임 → base 변환은 bag 의 /tf_static 으로 계산한다.
 
 stats 는 header 가 첫 필드인 형만 header.stamp 로 주기를 낸다 (CDR 머리만 읽는다 — 점군을 역직렬화하지 않는다).
 TFMessage·Clock 같은 형은 bag 기록 시각(벽시계 기준 수신 시각) 통계만 낸다.
@@ -117,6 +126,116 @@ def cmd_cloud(ns) -> int:
     return 0
 
 
+def _stamps(path: str, topic: str):
+    reader, types = _reader(path)
+    if topic not in types:
+        return None
+    import rosbag2_py
+    reader.set_filter(rosbag2_py.StorageFilter(topics=[topic]))
+    out = []
+    while reader.has_next():
+        _, raw, _ = reader.read_next()
+        out.append(bagstat.cdr_header_stamp(raw))
+    return out
+
+
+def cmd_match(ns) -> int:
+    inp = _stamps(ns.in_bag, ns.in_topic)
+    out = _stamps(ns.out_bag, ns.out_topic)
+    if inp is None:
+        raise SystemExit(f'{ns.in_topic} 가 {ns.in_bag} 에 없다')
+    res = bagstat.matched(inp, out or [])
+    res.update({'in_bag': ns.in_bag, 'in_topic': ns.in_topic, 'out_bag': ns.out_bag,
+                'out_topic': ns.out_topic, 'out_present': out is not None,
+                'out_stats': bagstat.interval_stats(out or [])})
+    miss = np.asarray(sorted(set(inp) - set(out or [])))
+    if len(miss):
+        edges = np.arange(np.floor(min(inp)), np.ceil(max(inp)) + 10.0, 10.0)
+        hist, _ = np.histogram(miss, bins=edges)
+        res['missing_hist_10s'] = {f'{edges[i]:g}': int(h) for i, h in enumerate(hist) if h}
+    with open(ns.out, 'w', encoding='utf-8') as f:
+        json.dump(res, f, ensure_ascii=False, indent=1)
+    print(json.dumps({k: res[k] for k in ('input', 'output', 'matched', 'missing')}))
+    return 0
+
+
+def _parse_tf(text: str):
+    vals = [float(v) for v in text.split(',')]
+    if len(vals) != 7:
+        raise SystemExit('--tf 는 x,y,z,qx,qy,qz,qw')
+    return cloudio.pose_matrix(vals[:3], vals[3:])
+
+
+def cmd_poses(ns) -> int:
+    from scipy.spatial.transform import Rotation
+    world = _parse_tf(ns.tf)
+    arr = cloudio.read_pose_file(ns.src)
+    with open(ns.dst, 'w', encoding='utf-8') as f:
+        for st, x, y, z, qx, qy, qz, qw in arr:
+            m = world @ cloudio.pose_matrix((x, y, z), (qx, qy, qz, qw))
+            q = Rotation.from_matrix(m[:3, :3]).as_quat()
+            f.write(f'{st:.9f} {m[0, 3]:.6f} {m[1, 3]:.6f} {m[2, 3]:.6f} '
+                    f'{q[0]:.6f} {q[1]:.6f} {q[2]:.6f} {q[3]:.6f}\n')
+    print(f'{ns.dst}: {len(arr)} 자세 (월드)')
+    return 0
+
+
+def _static_tf(path: str, parent: str, child: str):
+    from rclpy.serialization import deserialize_message
+    from rclpy.time import Time
+    from tf2_msgs.msg import TFMessage
+    from tf2_ros import Buffer
+    import rosbag2_py
+    reader, _ = _reader(path)
+    reader.set_filter(rosbag2_py.StorageFilter(topics=['/tf_static']))
+    buf = Buffer()
+    while reader.has_next():
+        _, raw, _ = reader.read_next()
+        for tr in deserialize_message(raw, TFMessage).transforms:
+            buf.set_transform_static(tr, 'bag')
+    tr = buf.lookup_transform(parent, child, Time()).transform
+    return cloudio.pose_matrix((tr.translation.x, tr.translation.y, tr.translation.z),
+                               (tr.rotation.x, tr.rotation.y, tr.rotation.z, tr.rotation.w))
+
+
+def cmd_assemble(ns) -> int:
+    from rclpy.serialization import deserialize_message
+    from sensor_msgs.msg import PointCloud2
+    import rosbag2_py
+    poses = cloudio.read_pose_file(ns.poses)
+    want = {round(float(p[0]), 6): p for p in poses}
+    reader, _ = _reader(ns.bag)
+    reader.set_filter(rosbag2_py.StorageFilter(topics=[ns.topic]))
+    base_t_sensor = None
+    chunks, used = [], 0
+    while reader.has_next():
+        _, raw, _ = reader.read_next()
+        st = round(bagstat.cdr_header_stamp(raw), 6)
+        if st not in want:
+            continue
+        msg = deserialize_message(raw, PointCloud2)
+        if base_t_sensor is None:
+            base_t_sensor = _static_tf(ns.bag, ns.base, msg.header.frame_id)
+        p = want[st]
+        m = cloudio.pose_matrix(p[1:4], p[4:8]) @ base_t_sensor
+        off = {f.name: f.offset for f in msg.fields if f.datatype == 7}   # FLOAT32
+        arr = np.frombuffer(bytes(msg.data), dtype=np.dtype(
+            {'names': ['x', 'y', 'z'], 'formats': ['<f4'] * 3,
+             'offsets': [off['x'], off['y'], off['z']], 'itemsize': msg.point_step}),
+            count=msg.width * msg.height)
+        xyz = cloudio.finite(np.column_stack([arr['x'], arr['y'], arr['z']]).astype(float))
+        r = np.linalg.norm(xyz, axis=1)
+        xyz = xyz[(r >= ns.range_min) & (r <= ns.range_max)]
+        chunks.append(cloudio.apply(m, xyz))
+        used += 1
+    pts = cloudio.voxel_downsample(np.concatenate(chunks) if chunks else np.zeros((0, 3)),
+                                   ns.voxel)
+    cloudio.write_ply_xyz(ns.out, pts)
+    print(json.dumps({'poses': len(poses), 'clouds_used': used, 'points': len(pts),
+                      'voxel': ns.voxel, 'out': ns.out}, ensure_ascii=False))
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     sub = ap.add_subparsers(dest='cmd', required=True)
@@ -131,8 +250,28 @@ def main(argv=None) -> int:
     s.add_argument('src')
     s.add_argument('dst')
     s.add_argument('--tf', required=True)
+    s = sub.add_parser('match')
+    s.add_argument('--in-bag', required=True)
+    s.add_argument('--in-topic', required=True)
+    s.add_argument('--out-bag', required=True)
+    s.add_argument('--out-topic', required=True)
+    s.add_argument('--out', required=True)
+    s = sub.add_parser('poses')
+    s.add_argument('src')
+    s.add_argument('dst')
+    s.add_argument('--tf', required=True)
+    s = sub.add_parser('assemble')
+    s.add_argument('bag')
+    s.add_argument('--topic', required=True)
+    s.add_argument('--poses', required=True, help='월드 프레임 TUM (스탬프 = 스캔 스탬프)')
+    s.add_argument('--base', default='amr_01/base_footprint')
+    s.add_argument('--voxel', type=float, default=0.05)
+    s.add_argument('--range-min', type=float, default=0.2)
+    s.add_argument('--range-max', type=float, default=30.0)
+    s.add_argument('--out', required=True)
     ns = ap.parse_args(argv)
-    return {'stats': cmd_stats, 'tum': cmd_tum, 'cloud': cmd_cloud}[ns.cmd](ns)
+    return {'stats': cmd_stats, 'tum': cmd_tum, 'cloud': cmd_cloud, 'match': cmd_match,
+            'poses': cmd_poses, 'assemble': cmd_assemble}[ns.cmd](ns)
 
 
 if __name__ == '__main__':

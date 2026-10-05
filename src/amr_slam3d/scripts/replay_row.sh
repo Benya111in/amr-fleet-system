@@ -6,8 +6,9 @@
 #   replay_row.sh <행> <bag 디렉터리> <출력 디렉터리> [재생 배속, 기본 0.5]
 #
 # 순서: anchor_tf(map → slam_map = 스폰 자세; LIO-SAM 은 + LiDAR 장착 자리) → 행 런치 → slam_probe →
-#       ros2 bag play (행의 토픽만, /clock 은 --clock 200 으로 bag 시각에서 새로 낸다) → 마무리(지도 저장) →
-#       probe 종료(probe.json·traj_online.tum·map_world.*) → 로그 판정(log_scan.json) → 점 지도 월드 변환.
+#       ros2 bag play (행의 토픽만 — 기록된 /clock 포함, --clock 은 쓰지 않는다: rows.py 머리말) → 마무리(지도 저장) →
+#       probe 종료(probe.json·traj_online.tum·map_world.*) → 로그 판정(log_scan.json) → 처리 누락 판정
+#       (match_*.json: 입력 bag ↔ out_bag, C++ 기록기) → 최적화 궤적·점 지도를 월드로 (traj_final.tum, cloud_world.ply).
 # 환경: ROS_DOMAIN_ID·ROS_LOCALHOST_ONLY 는 호출자가 준다 (컨테이너마다 격리).
 set -eo pipefail
 
@@ -42,6 +43,8 @@ print(f"LAUNCH={shlex.quote(r.launch)}")
 print(f"PLAY_TOPICS={shlex.quote(' '.join(r.play_topics))}")
 print(f"POSE={spawn['x']!r},{spawn['y']!r},{spawn['yaw']!r}")
 print('ANCHORS=(' + ' '.join(shlex.quote(f'{p}|{c}|{v}') for p, c, v in r.anchors) + ')')
+print(f"INPUT={shlex.quote(r.input_topic)}")
+print(f"PROC_TOPICS={shlex.quote(' '.join(t for t, _, _ in r.processed))}")
 EOF
 )"
 
@@ -83,6 +86,14 @@ ros2 launch $LAUNCH database_path:="$OUT/rtabmap.db" > "$OUT/row.log" 2>&1 &
 PIDS+=($!)
 python3 "$SCRIPTS/slam_probe.py" --row "$ROW" --out "$OUT" > "$OUT/probe.log" 2>&1 &
 PROBE=$!
+REC=""
+if [ -n "$PROC_TOPICS" ]; then
+  # 처리 출력의 권위 있는 개수 — C++ 기록기 (Python 측정 노드는 부하에 뒤처질 수 있다)
+  # shellcheck disable=SC2086
+  ros2 bag record -s mcap -o "$OUT/out_bag" $PROC_TOPICS /tf > "$OUT/out_record.log" 2>&1 &
+  REC=$!
+  PIDS+=("$REC")
+fi
 sleep 15                              # 노드 기동 (벽시계)
 
 QOS="$OUT/qos_overrides.yaml"
@@ -94,7 +105,7 @@ cat > "$QOS" <<'EOF'
 EOF
 echo "play_start_wall: $(date -Iseconds) loadavg: $(cat /proc/loadavg)" >> "$OUT/env.txt"
 # shellcheck disable=SC2086
-ros2 bag play "$BAG" --rate "$RATE" --clock 200 --disable-keyboard-controls \
+ros2 bag play "$BAG" --rate "$RATE" --disable-keyboard-controls \
   --qos-profile-overrides-path "$QOS" --topics $PLAY_TOPICS > "$OUT/play.log" 2>&1
 echo "play_end_wall: $(date -Iseconds) loadavg: $(cat /proc/loadavg)" >> "$OUT/env.txt"
 sleep "$SETTLE"
@@ -108,6 +119,10 @@ esac
 
 kill -INT "$PROBE" 2>/dev/null || true
 for _ in $(seq 1 60); do kill -0 "$PROBE" 2>/dev/null || break; sleep 1; done
+if [ -n "$REC" ]; then
+  kill -INT "$REC" 2>/dev/null || true
+  for _ in $(seq 1 60); do kill -0 "$REC" 2>/dev/null || break; sleep 1; done
+fi
 cleanup
 trap - EXIT
 
@@ -126,18 +141,26 @@ anchor_of() {   # probe.json 의 world ← 프레임 변환 → x,y,z,qx,qy,qz,q
 print(','.join(repr(float(v)) for v in a))" "$OUT/probe.json" "$1"
 }
 
+for t in $PROC_TOPICS; do
+  python3 "$SCRIPTS/bag_tools.py" match --in-bag "$BAG" --in-topic "$INPUT" --out-bag "$OUT/out_bag" \
+    --out-topic "$t" --out "$OUT/match_$(echo "$t" | tr '/' '_' | sed 's/^_//').json" \
+    >> "$OUT/match.log" 2>&1 || true
+done
+
 case "$ROW" in
   rtabmap3d|rtabmap2d)
     if [ -f "$OUT/rtabmap.db" ]; then
       rtabmap-export --poses --poses_format 10 --opt 2 --output_dir "$OUT" --output rtabmap \
         "$OUT/rtabmap.db" > "$OUT/export_poses.log" 2>&1 || true
-      rtabmap-export --cloud --scan --opt 2 --output_dir "$OUT" --output rtabmap \
-        "$OUT/rtabmap.db" > "$OUT/export_cloud.log" 2>&1 || true
-      rtabmap-export --params "$OUT/rtabmap.db" > "$OUT/db_params.ini" 2>&1 || true
+      rtabmap-info "$OUT/rtabmap.db" > "$OUT/db_info.txt" 2>&1 || true
       TF=$(anchor_of slam_map) || TF=''
-      if [ -n "$TF" ] && [ -f "$OUT/rtabmap_cloud.ply" ]; then
-        python3 "$SCRIPTS/bag_tools.py" cloud "$OUT/rtabmap_cloud.ply" "$OUT/cloud_world.ply" \
-          --tf "$TF" > "$OUT/cloud_world.log" 2>&1 || true
+      if [ -n "$TF" ] && [ -f "$OUT/rtabmap_poses.txt" ]; then
+        python3 "$SCRIPTS/bag_tools.py" poses "$OUT/rtabmap_poses.txt" "$OUT/traj_final.tum" \
+          --tf "$TF" > "$OUT/traj_final.log" 2>&1 || true
+        if [ "$ROW" = rtabmap3d ]; then
+          python3 "$SCRIPTS/bag_tools.py" assemble "$BAG" --topic "$INPUT" \
+            --poses "$OUT/traj_final.tum" --out "$OUT/cloud_world.ply" > "$OUT/cloud_world.log" 2>&1 || true
+        fi
       fi
     fi
     ;;

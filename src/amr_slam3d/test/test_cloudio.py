@@ -57,3 +57,28 @@ def test_quat_matrix_is_rotation():
 def test_finite_drops_inf_nan():
     pts = np.array([[1, 2, 3], [np.inf, 0, 0], [0, np.nan, 0]], dtype=float)
     assert cloudio.finite(pts).shape == (1, 3)
+
+
+def test_voxel_downsample_merges_points_in_same_voxel():
+    pts = np.array([[0.01, 0.01, 0.01], [0.02, 0.03, 0.04], [1.0, 1.0, 1.0]])
+    out = cloudio.voxel_downsample(pts, 0.1)
+    assert len(out) == 2
+    np.testing.assert_allclose(sorted(out.tolist()), [[0.015, 0.02, 0.025], [1.0, 1.0, 1.0]])
+    assert len(cloudio.voxel_downsample(pts, 0.0)) == 3
+
+
+def test_pose_matrix_chain_matches_transform():
+    q = (0.0, 0.0, math.sin(math.pi / 4), math.cos(math.pi / 4))
+    world_t_map = cloudio.pose_matrix((18.0, -16.0, 0.0), q)
+    map_t_base = cloudio.pose_matrix((1.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
+    base_t_lidar = cloudio.pose_matrix((0.27, 0.0, 0.90), (0.0, 0.0, 0.0, 1.0))
+    m = world_t_map @ map_t_base @ base_t_lidar
+    out = cloudio.apply(m, np.array([[1.0, 0.0, 0.0]]))
+    np.testing.assert_allclose(out, [[18.0, -16.0 + 2.27, 0.9]], atol=1e-12)
+
+
+def test_read_pose_file(tmp_path):
+    p = tmp_path / 'p.txt'
+    p.write_text('#timestamp x y z qx qy qz qw\n3.8 0 0 0 0 0 0 1\n30.7 0.27 0 0 0 0 0 1 5\n')
+    arr = cloudio.read_pose_file(str(p))
+    assert arr.shape == (2, 8) and arr[1, 1] == pytest.approx(0.27)

@@ -6,7 +6,10 @@
 slam_toolbox(동기), LIO-SAM(madgwick 방위, 루프 on/off).
 
 재생 토픽 규칙
-- /clock 은 틀지 않는다 — `ros2 bag play --clock` 이 bag 시각으로 낸다 (시간원 하나, 보고서 '재생 통제' 절).
+- /clock 은 **bag 에 기록된 것**을 튼다 (시뮬레이션 시각). `ros2 bag play --clock` 은 쓰지 않는다 — Humble 기록기는
+  메시지 시각을 수신 벽시계로 남기므로 --clock 이 내는 시각은 기록 당시 벽시계(1.79e9 s)이고, header 는 sim 시각
+  (수 초~수백 초)이라 TF 조회가 전부 어긋난다 [측정: s3_pilot_a 첫 재생 row.log "earliest data is at time
+  1791240775"]. 시간원은 기록된 /clock 하나다 (보고서 '재생 통제' 절의 "시간원 둘" 금지와 같은 뜻).
 - 정답(ground_truth/odom)·원시 IMU(imu/data_raw)·imu/data 는 SLAM 행에 틀지 않는다 — 정답 방위·자세 누출 차단.
 - LIO-SAM 행은 /tf 를 틀지 않는다 — LIO-SAM 이 liosam_odom → base_footprint 를 내므로 EKF 의
   odom → base_footprint 와 같이 틀면 base_footprint 의 부모가 둘이 된다 (tftree.check 가 잡는다).
@@ -31,7 +34,9 @@ class Row:
     input_topic: str
     input_kind: str                     # 'cloud' | 'scan'
     map_topic: str = ''                 # OccupancyGrid (없으면 '')
-    processed: Tuple[Tuple[str, str], ...] = ()   # (토픽, 형 'odom' | 'cloud')
+    processed: Tuple[Tuple[str, str, str], ...] = ()
+    # (토픽, 형 'odom' | 'cloud', QoS 'reliable' | 'best_effort') — 발행자 QoS 에 맞춘다: best-effort 발행자에
+    # reliable 구독은 붙지 않는다 [측정: liosam_loop 첫 재생 probe.log "incompatible QoS"]
     anchors: Tuple[Tuple[str, str, str], ...] = (('map', 'slam_map', ''),)
     # (부모, 자식, via) — via '' = 스폰 자세 그대로, 'a>b' = 스폰 ⊕ TF(a→b) (LIO-SAM 오도메트리 원점 = LiDAR)
     fatal_patterns: Tuple[str, ...] = ()
@@ -44,13 +49,16 @@ CLOUD = f'{_R}/lidar3d/points'
 SCAN = f'{_R}/scan_filtered'
 IMU_MADGWICK = f'{_R}/imu/data_madgwick'
 TF = ('/tf', '/tf_static')
+CLOCK = ('/clock',)
 #: 모든 행에서 판정에 쓰는 공통 경고 (재생·TF 문제)
 COMMON_PATTERNS = ('Lookup would require extrapolation', 'TF_OLD_DATA', 'Message Filter dropping',
                    'queue is full', 'Did not receive data since')
 #: LIO-SAM 처리 출력 — imageProjection 이 처리한 스캔마다 deskew/cloud_deskewed (time 이 없어 실제 보정은 없다),
-#: mapOptimization 은 mappingProcessInterval(0.15 s) 마다 mapping/odometry
-LIOSAM_PROCESSED = (('/lio_sam/deskew/cloud_deskewed', 'cloud'),
-                    ('/lio_sam/mapping/odometry', 'odom'))
+#: mapOptimization 은 mappingProcessInterval(0.15 s) 마다 mapping/odometry.
+#: 상류 QoS (utility.hpp): 점군 구독
+#: best-effort 깊이 5, cloud_info 구독·mapping/odometry 발행 best-effort 깊이 1 — 매핑 단계는 바쁘면 버린다(설계)
+LIOSAM_PROCESSED = (('/lio_sam/deskew/cloud_deskewed', 'cloud', 'reliable'),
+                    ('/lio_sam/mapping/odometry', 'odom', 'best_effort'))
 #: LIO-SAM 오도메트리 원점 = 출발 때 LiDAR 자세 → slam_map 아래에 장착 자리(URDF)만큼 옮겨 붙인다
 LIOSAM_ANCHORS = (('map', 'slam_map', ''),
                   ('slam_map', f'{ROBOT}/liosam_odom',
@@ -62,25 +70,26 @@ ROWS: Dict[str, Row] = {
     'rtabmap3d': Row(
         name='rtabmap3d', image='amr-ai/slam:0.1',
         launch='amr_slam3d rtabmap.launch.py dim:=3d',
-        play_topics=TF + (CLOUD, IMU_MADGWICK), input_topic=CLOUD, input_kind='cloud',
-        map_topic=f'{_R}/map', processed=((f'{_R}/icp_odom', 'odom'),),
+        play_topics=CLOCK + TF + (CLOUD, IMU_MADGWICK), input_topic=CLOUD, input_kind='cloud',
+        map_topic=f'{_R}/map', processed=((f'{_R}/icp_odom', 'odom', 'reliable'),),
         fatal_patterns=RTABMAP_FATAL),
     'rtabmap2d': Row(
         name='rtabmap2d', image='amr-ai/slam:0.1',
         launch='amr_slam3d rtabmap.launch.py dim:=2d',
-        play_topics=TF + (SCAN, IMU_MADGWICK), input_topic=SCAN, input_kind='scan',
-        map_topic=f'{_R}/map', processed=((f'{_R}/icp_odom', 'odom'),),
+        play_topics=CLOCK + TF + (SCAN, IMU_MADGWICK), input_topic=SCAN, input_kind='scan',
+        map_topic=f'{_R}/map', processed=((f'{_R}/icp_odom', 'odom', 'reliable'),),
         fatal_patterns=RTABMAP_FATAL),
     'slam_toolbox': Row(
         name='slam_toolbox', image='amr-ai/slam:0.1',
         launch='amr_slam3d slam_toolbox.launch.py',
-        play_topics=TF + (SCAN,), input_topic=SCAN, input_kind='scan',
+        play_topics=CLOCK + TF + (SCAN,), input_topic=SCAN, input_kind='scan',
         map_topic=f'{_R}/slam_toolbox/map', processed=(),
         fatal_patterns=('Message Filter dropping',)),
     'liosam_loop': Row(
         name='liosam_loop', image='amr-ai/liosam:0.1',
         launch='/ros2_ws/src/amr_slam3d/launch/liosam.launch.py loop:=true',
-        play_topics=('/tf_static', CLOUD, IMU_MADGWICK), input_topic=CLOUD, input_kind='cloud',
+        play_topics=CLOCK + ('/tf_static', CLOUD, IMU_MADGWICK), input_topic=CLOUD,
+        input_kind='cloud',
         processed=LIOSAM_PROCESSED,
         anchors=LIOSAM_ANCHORS,
         fatal_patterns=('ring channel not available', 'Invalid quaternion', 'queue is full'),
@@ -88,7 +97,8 @@ ROWS: Dict[str, Row] = {
     'liosam_noloop': Row(
         name='liosam_noloop', image='amr-ai/liosam:0.1',
         launch='/ros2_ws/src/amr_slam3d/launch/liosam.launch.py loop:=false',
-        play_topics=('/tf_static', CLOUD, IMU_MADGWICK), input_topic=CLOUD, input_kind='cloud',
+        play_topics=CLOCK + ('/tf_static', CLOUD, IMU_MADGWICK), input_topic=CLOUD,
+        input_kind='cloud',
         processed=LIOSAM_PROCESSED,
         anchors=LIOSAM_ANCHORS,
         fatal_patterns=('ring channel not available', 'Invalid quaternion', 'queue is full'),

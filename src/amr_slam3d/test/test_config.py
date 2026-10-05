@@ -82,9 +82,10 @@ def test_madgwick_no_mag_no_tf():
     assert p['remove_gravity_vector'] is False
 
 
-def test_rows_never_play_oracle_topics_or_clock():
+def test_rows_play_recorded_clock_and_never_oracle_topics():
+    """시간원 = 기록된 /clock (--clock 은 기록 벽시계를 낸다), 정답 토픽은 재생하지 않는다."""
     for r in rows.ROWS.values():
-        assert '/clock' not in r.play_topics
+        assert '/clock' in r.play_topics
         for t in rows.ORACLE_TOPICS:
             assert t not in r.play_topics, (r.name, t)
         assert '/tf_static' in r.play_topics
