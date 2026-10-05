@@ -11,6 +11,8 @@
 >     - 2D SLAM 대비 맵 품질 및 위치 추정 정확도를 비교 분석한다.
 >     - 3D 포인트 클라우드 처리 및 최적화 기법을 학습한다.
 
+로그·산출물 경로(`/home/CAPYI_AI/...`)는 이 서버의 저장소 밖 디렉터리다 (공유 서버, 커밋하지 않음). 일회성 계산 스크립트는
+`/home/CAPYI_AI/logs/agents/s2-eval/scripts/` 에 남겼다 (perfect map·대역 차이·원본 대조·규모 시험·변이 검사).
 표기: **[측정]** 명령·로그 있음 · **[계산]** 오프라인 스크립트(경로 있음) · **[문서주장]** 근거 미확인 · **미측정**.
 공유 서버라 시간 수치는 "공유 부하 하 예비값" 이다.
 
@@ -88,13 +90,13 @@ ADNN 이 없다 — `grep 2.59 docs/reports` 가 잡는 `performance.md:261` 의
 
 | 단계 | 결과 | 근거 |
 | --- | --- | --- |
-| 기존 CLI 를 지금 트리에서 다시 돌림 | ADNN₀ **0.025914** m, Chamfer 0.0367, IoU/P/R 0.575/0.759/0.741 — §6.1 그대로 | [측정] `logs/agents/s2-eval/baseline_map_quality.log` |
-| 지도를 만든 시점(336abfd)의 월드로 | 위와 바이트 단위로 같은 JSON (그 뒤 더한 위치 표지 판은 0.05 m 셀 중심에 안 걸린다) | [측정] 같은 로그, `runs/s2-eval/mq_336abfd/` |
+| 기존 CLI 를 지금 트리에서 다시 돌림 | ADNN₀ **0.025914** m, Chamfer 0.0367, IoU/P/R 0.575/0.759/0.741 — §6.1 그대로 | [계산] `/home/CAPYI_AI/logs/agents/s2-eval/baseline_map_quality.log` |
+| 지도를 만든 시점(336abfd)의 월드로 | 위와 바이트 단위로 같은 JSON (그 뒤 더한 위치 표지 판은 0.05 m 셀 중심에 안 걸린다) | [계산] 같은 로그, `/home/CAPYI_AI/runs/s2-eval/mq_336abfd/` |
 | 새 생성기 0.05 m 단면 (`--gt-legacy-exclude`) | world_geometry 래스터와 **셀 단위로 같다** (차이 0 / 1 041 600 셀) | 시험 `test_slice_matches_existing_evaluator_gt` |
 | 그 GT 로 map_quality.evaluate | ADNN₀ 0.025914127536902674 (12 자리 일치), Chamfer 0.0367, IoU 0.575, R 0.741 | 시험 `test_adnn0_reproduces_existing_map_value` |
 
 생성기는 기존 GT 를 재현한다. 다음은 같은 지도를 새 지표·새 GT 로 잰 값이다 [계산] (`slam3d_eval grid`, τ = 0.05 m,
-관측 여유 0.10 m, 결과 `runs/s2-eval/validation/results.csv`, 표 `logs/agents/s2-eval/validation_table.txt`):
+관측 여유 0.10 m, 결과 `/home/CAPYI_AI/runs/s2-eval/validation/results.csv`, 표 `/home/CAPYI_AI/logs/agents/s2-eval/validation_table.txt`):
 
 | GT | ADNN₀ filled (중앙) | ADNN₀ surface (중앙) | 정밀도 filled / surface | 재현율 filled / surface | F1 surface | IoU (공통 0.05) |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -105,7 +107,7 @@ ADNN 이 없다 — `grep 2.59 docs/reports` 가 잡는 `performance.md:261` 의
 | 0.01 대역 0.05–2.0 | 1.40 | 3.77 | 0.886 / 0.705 | 0.604 / 0.994 | 0.825 | 0.713 |
 
 양자화 바닥값 — 정답 면을 지나는 0.05 m 셀만 점유로 칠한 "완전한 지도"(원점은 실제 지도와 같게) [계산,
-`logs/agents/s2-eval/perfect_map_floor.log`]:
+`/home/CAPYI_AI/logs/agents/s2-eval/perfect_map_floor.log`]:
 
 | GT | ADNN₀ filled | ADNN₀ surface | 정밀도 | 재현율 surface / filled | F1 |
 | --- | --- | --- | --- | --- | --- |
@@ -124,7 +126,7 @@ ADNN 이 없다 — `grep 2.59 docs/reports` 가 잡는 `performance.md:261` 의
 ## 3. 높이 대역 — 보고서 해석의 수정
 
 보고서 167–171행: 비교용 0.05–0.40 m, 운용용 0.05–2.0 m, "두 대역의 재현율 차이를 내면 2D 가 못 보는 구조물의 비율이
-수치로 나온다". 이 월드에서는 [계산] (`logs/agents/s2-eval/band_diff.log`):
+수치로 나온다". 이 월드에서는 [계산] (`/home/CAPYI_AI/logs/agents/s2-eval/band_diff.log`):
 
 - 0.01 m 래스터 셀 수: 단면 0.20 m **956 252** = 대역 0.05–0.40 **956 252** (차이 0), 대역 0.05–2.0 **958 608**.
 - 운용 대역이 더하는 2 356 셀은 **전부 표지판 판**(두께 0.02 m, 벽·랙 끝·기둥 면 앞 2 mm)이다.
@@ -152,7 +154,7 @@ ADNN 이 없다 — `grep 2.59 docs/reports` 가 잡는 `performance.md:261` 의
 | 3D 진단 | z·roll·pitch 오차는 주 지표에 넣지 않고 따로 (`z_rp_errors`) |
 
 evo 교차 확인 [계산] (`test_slam3d_evo_crosscheck.py`, amr-ai/slam:0.1 의 evo 1.37.1, 8 통과,
-`logs/agents/s2-eval/evo_crosscheck.log`): ATE none / origin / SE(2) Umeyama 와 연속 쌍 RPE(Δ = 1, 5, 5.013, 10.007 m)가
+`/home/CAPYI_AI/logs/agents/s2-eval/evo_crosscheck.log`): ATE none / origin / SE(2) Umeyama 와 연속 쌍 RPE(Δ = 1, 5, 5.013, 10.007 m)가
 **1e-12 안에서 같다**. 두 가지 함정을 확인했다:
 1. `evo_rpe` 는 기본으로 **추정** 궤적 경로로 쌍을 고른다. `--pairs_from_reference` 를 주지 않으면 값이 다르다
    (예: Δ = 1 m 병진 RMSE 0.0203 vs 0.0221 m, Δ = 10 m 회전 RMSE 0.117 vs 0.171°).
@@ -191,7 +193,7 @@ GT 부류는 `--gt-labels` 로 고른다 (바닥·천장 포함 여부를 결과
 규모 확인 [측정, 공유 부하 하 예비값 load 43–55]: 바닥·천장·도색을 뺀 1 cm GT **21 854 623** 점 대 합성 추정
 (GT 를 5 cm 복셀로 솎고 σ 2 cm 등방 잡음, 855 164 점)이 지표 계산 22.8 s, 최대 RSS 3.75 GB. 정밀도@5 cm 0.988 은 평면
 잡음의 닫힌 식 1 − 2Φ(−2.5) = 0.9876 과, AC 1.61 cm·정확도 평균 1.66 cm 는 σ√(2/π) = 1.60 cm 와 맞는다
-(`logs/agents/s2-eval/cloud_scale.log`).
+(`/home/CAPYI_AI/logs/agents/s2-eval/cloud_scale.log`).
 MME 는 같은 도구·반경·센서 밀도의 3D 후보끼리만 (보고서 230행) — 이 도구에는 넣지 않았다.
 
 ### 4.4 결과 CSV (`results.py`)
@@ -251,7 +253,7 @@ actor·차량은 sim 시간으로 결정적으로 돌므로, 기록 시작(경�
 ### 6.2 S6 단일 스캔 localizability [계산]
 
 도구 `python3 -m amr_evaluation.slam3d.localizability --gt-dir <GT>` (원본 연구 스크립트의 이식). 원본의 단순 기하를 넣으면
-보고서 1장 표 14 칸(축 구속 점·λmin/λmax, 사거리 무제한·4 m)을 **전부 그대로** 낸다 (`runs/s2-eval/localizability/
+보고서 1장 표 14 칸(축 구속 점·λmin/λmax, 사거리 무제한·4 m)을 **전부 그대로** 낸다 (`/home/CAPYI_AI/runs/s2-eval/localizability/
 port_equivalence.txt`, 원본 출력 `original_localizability2_voxel0.txt`). 원본 기본 인자(복셀 0.2)는 표와 다른 수를 낸다
 (`original_localizability2.txt`). 아래는 **정답 생성기 기하**(상자 jitter·표지판·마커·충전기 포함), 위치 (0, −10),
 통로 방향, 복셀 0, σ 0.03 m, 블로커 점은 지도에 없으므로 정보에서 뺀 값 (`gt_s6_outlier.csv`):
