@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from amr_rl_contract import constants as C
+from amr_rl_contract import geometry as G
 from amr_rl_contract import kinematics as K
 from amr_rl_contract import mask as M
 from amr_rl_contract import observation as OB
@@ -148,3 +149,52 @@ def test_goal_overshoot_exemption():
     ok = [i for i in straight if near_goal['jerk_ok'][i]]
     assert ok and all(near_goal['fp_ok'][i] for i in ok)       # 목표(0.45)+0.1 너머는 안 본다
     assert not any(far_goal['fp_ok'][i] for i in ok)           # 목표가 멀면 벽에 닿는다
+
+
+def _fp_free_doc_rule(pts, v, w, d_goal):
+    """contract.md §5.2(3) 를 글자 그대로 옮긴 독립 구현: 자세 k = 1…⌈T/0.1⌉ 마다 모든 점을 본다."""
+    T = min(max(abs(v) / C.A_MAX + 0.5, C.SIM_TIME_MIN), C.SIM_TIME_MAX)
+    for k in range(1, int(math.ceil(T / C.SIM_DT - 1e-9)) + 1):
+        if abs(v) * k * C.SIM_DT > d_goal + C.GOAL_OVERSHOOT_MARGIN:
+            break
+        x, y, th = G.integrate_arc(v, w, k * C.SIM_DT)
+        for px, py in pts:
+            lx = math.cos(th) * (px - x) + math.sin(th) * (py - y)
+            ly = -math.sin(th) * (px - x) + math.cos(th) * (py - y)
+            if abs(lx) <= C.HALF_L and abs(ly) <= C.HALF_W:
+                return False
+    return True
+
+
+def test_footprint_checks_last_pose_when_v_above_1():
+    # v 1.95: T 2.45, n 25 → 마지막 자세 중심 4.875, 앞 모서리 5.175. 점 5.15 는 그 자세에만 닿는다.
+    # v1.0.0 의 사전필터(반경 |v|·T + R = 5.138)가 이 점을 버려 '가행' 으로 판정했다 (리뷰 r0, probe1).
+    pts = np.array([[5.15, 0.0]])
+    assert M.sim_time(1.95) == pytest.approx(2.45)
+    assert not M.footprint_free(pts, 1.95, 0.0, math.inf)
+    assert M.footprint_free(pts, 1.93, 0.0, math.inf)          # 마지막 자세 앞 모서리 5.125
+    r = empty_scan()
+    r[360] = 5.15 - C.LIDAR_X
+    res = M.compute_mask(_state(path=[(0.0, 0.0), (20.0, 0.0)], scan_ranges=r, v_cmd=1.85,
+                                v_cap=2.0, prev_actions=[(1.0, 0.0)] * 3))
+    assert res['jerk_ok'][94] and res['speed_ok'][94] and not res['fp_ok'][94]
+
+
+def test_footprint_free_matches_doc_rule_random():
+    rng = np.random.default_rng(11)
+    for _ in range(300):
+        v = float(rng.uniform(0.0, 2.0))
+        w = float(rng.uniform(-1.5, 1.5))
+        d_goal = math.inf if rng.random() < 0.7 else float(rng.uniform(0.0, 6.0))
+        reach = abs(v) * C.SIM_TIME_MAX + C.ROBOT_RADIUS
+        pts = rng.uniform(-reach, reach, (int(rng.integers(1, 6)), 2))
+        # 마지막 자세의 앞 모서리 안쪽 5 cm 띠에 점 하나 (사전필터류 결함이 사는 곳)
+        n = int(math.ceil(M.sim_time(v) / C.SIM_DT - 1e-9))
+        x, y, th = G.integrate_arc(v, w, n * C.SIM_DT)
+        fx = C.HALF_L - float(rng.uniform(0.0, 0.05))
+        fy = float(rng.uniform(-C.HALF_W, C.HALF_W))
+        c, s = math.cos(th), math.sin(th)
+        edge = (x + c * fx - s * fy, y + s * fx + c * fy)
+        pts = np.vstack([pts, [edge]])
+        got = M.footprint_free(pts, v, w, d_goal)
+        assert got == _fp_free_doc_rule(pts, v, w, d_goal), (v, w, d_goal)

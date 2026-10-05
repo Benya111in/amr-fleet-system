@@ -40,8 +40,11 @@ def main():
             n_k = max(1, int(math.ceil(M.sim_time(v) / 0.1 - 1e-9)))
             ex, ey, eth = G.integrate_arc(v, w, n_k * 0.1)
             fb = K.fallback_command(vc, wc)
+            # C++ integrateArc 는 θ 를 [−π, π) 로 감고 파이썬은 감지 않는다 (마스크는 cos·sin 만 쓴다).
+            # v > 1 이면 ω·T 가 π 를 넘을 수 있으므로 각은 감은 차이로 비교한다.
             ok = (close(M.sim_time(v), T) and int(n_poses) == n_k + 1 and close(ex, lx)
-                  and close(ey, ly) and close(eth, lth) and close(fb[0], vb) and close(fb[1], wb))
+                  and close(ey, ly) and abs(G.wrap_angle(eth - lth)) <= 1e-9
+                  and close(fb[0], vb) and close(fb[1], wb))
         elif kind == 'prof':
             vt, wt, vr, wr, ar = x
             pv, pw = prof.step(vt, wt, 0.02)

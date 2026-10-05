@@ -40,21 +40,19 @@ def footprint_free(pts_robot, v, w, d_goal):
     """
     (v, w) 원호 롤아웃이 스캔 점과 겹치지 않는가.
 
-    poses k = 1..ceil(T/SIM_DT), 호길이 |v|·k·SIM_DT 가 d_goal + 여유를 넘으면 그 앞에서 멈춘다.
+    poses k = 1..ceil(T/SIM_DT) (dwa.cpp:175-187 rollout 과 같은 n), 호길이 |v|·k·SIM_DT 가
+    d_goal + 여유를 넘으면 그 앞에서 멈춘다 (dwa.cpp:711-723). 모든 점을 모든 자세에서 검사한다 —
+    근접점 사전필터를 두지 않는다. v1.0.0 의 필터(반경 |v|·T + R)는 T 가 SIM_DT 의 배수가 아닐 때
+    (|v| > 1.0) 마지막 자세 호길이 |v|·n·SIM_DT 보다 짧아 그 자세에만 닿는 점을 버렸다.
     """
     T = sim_time(v)
     n = max(1, int(math.ceil(T / C.SIM_DT - 1e-9)))
-    reach = abs(v) * T + C.ROBOT_RADIUS + C.FP_PAD + 1e-6
-    if pts_robot.shape[0]:
-        near = pts_robot[np.hypot(pts_robot[:, 0], pts_robot[:, 1]) <= reach]
-    else:
-        near = pts_robot
     for k in range(1, n + 1):
         s_k = abs(v) * k * C.SIM_DT
         if math.isfinite(d_goal) and s_k > d_goal + C.GOAL_OVERSHOOT_MARGIN:
             break
         pose = G.integrate_arc(v, w, k * C.SIM_DT)
-        if G.points_in_footprint(near, pose):
+        if G.points_in_footprint(pts_robot, pose):
             return False
     return True
 

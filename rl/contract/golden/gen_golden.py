@@ -299,6 +299,17 @@ def build_cases():
                     path=straight_path(0, 0, -5, 0))
     cases.append(decision_case('d14_spin_in_place', '경로가 뒤: 제자리 회전 1.0 rad/s 중', st))
 
+    # v1.1.0 추가 사례 — 기존 사례의 rng 순서를 건드리지 않도록 아래는 공유 rng 를 쓰지 않는다.
+    ranges = raycast(pose, corridor)
+    ranges[360] = 5.0           # 전방 점 x = 5.15: v' 1.95 의 마지막(25 번째) 자세 앞부분에만 닿는다
+    st = base_state(path=straight_path(0, 0, 20, 0), scan_ranges=ranges, v_meas=1.84,
+                    a_v_meas=0.95, v_cmd=1.85, v_cap=2.0,
+                    prev_actions=[(1.0, 0.0), (1.0, 0.0), (0.8, 0.0)])
+    cases.append(decision_case(
+        'd15_vcap2_last_pose',
+        'v_cap 2.0, v′ 1.95 (T_sim 2.45, n 25): 전방 5.15 m 점이 마지막 자세에만 닿는다 → 셀 94 충돌',
+        st))
+
     # ---------------- step
     pre = base_state(v_meas=0.8, v_cmd=0.8, prev_actions=[(0.2, 0.0)] * 3)
     post = base_state(pose=(0.08, 0.01, 0.0), v_meas=0.82, v_cmd=0.82,

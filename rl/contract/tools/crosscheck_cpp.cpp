@@ -44,8 +44,9 @@ int main()
   cfg.vx_samples = 11;
   cfg.vth_samples = 31;
   nav::DwaPlanner dwa(cfg);
+  // v 는 하드웨어 상한 2.0 까지: |v| > 1.0 이면 T_sim 이 sim_dt 의 배수가 아니다 (n = ceil)
   for (int i = 0; i < 300; ++i) {
-    const double v = urand(0.0, 1.0), w = urand(-1.5, 1.5);
+    const double v = urand(0.0, 2.0), w = urand(-1.5, 1.5);
     const double T = dwa.simTime(v);
     const auto poses = dwa.rollout(nav::Pose2D{0.0, 0.0, 0.0}, v, w, T);
     const auto & last = poses.back();
