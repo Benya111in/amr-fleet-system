@@ -131,17 +131,19 @@ struct Rig
   }
 
   /// 720 빔 스캔 (range 이 inf 면 무반사) 을 내고 구독 콜백까지 돌린다.
-  void publishScan(double range = std::numeric_limits<double>::infinity())
+  void publishScan(
+    double range = std::numeric_limits<double>::infinity(), double age = 0.0,
+    int beams = C::kLidarSamples)
   {
     sensor_msgs::msg::LaserScan s;
     s.header.frame_id = "lidar_link";
-    s.header.stamp = node->now();
+    s.header.stamp = node->now() - rclcpp::Duration::from_seconds(age);
     s.angle_min = static_cast<float>(C::kLidarAngleMin);
     s.angle_max = static_cast<float>(C::kLidarAngleMax);
     s.angle_increment = static_cast<float>(C::kLidarAngleInc);
     s.range_min = 0.1f;
     s.range_max = 25.0f;
-    s.ranges.assign(C::kLidarSamples, static_cast<float>(range));
+    s.ranges.assign(static_cast<std::size_t>(beams), static_cast<float>(range));
     scan_pub->publish(s);
     spin();
   }
@@ -300,6 +302,33 @@ TEST(RLControllerPlugin, WithoutDwaFallbackBrakesByContractRule)
   cmd = ctrl.computeVelocityCommands(pose(1.0, 3.0, 0.0), vel, nullptr);
   EXPECT_NEAR(cmd.twist.linear.x, 0.50, 1e-9);
   EXPECT_NEAR(cmd.twist.angular.z, 0.1, 1e-9);
+}
+
+TEST(RLControllerPlugin, StaleOrMalformedScanFallsBackToDwa)
+{
+  REQUIRE_MODELS();
+  Rig rig("s", params("fixture_c.onnx", "C"));
+  RLController ctrl;
+  ctrl.configure(rig.node, "FollowPath", rig.tf, rig.costmap);
+  ctrl.activate();
+  ctrl.setPlan(straightPlan(1.0, 3.0, 6.0));
+  geometry_msgs::msg::Twist vel;
+  // 나이 1.0 s > scan_timeout 0.3 s, 그다음 빔 719 개: 두 결정 모두 입력 무효 → DWA
+  rig.publishScan(5.0, 1.0);
+  for (int k = 0; k < 2; ++k) {
+    ctrl.computeVelocityCommands(pose(1.0, 3.0, 0.0), vel, nullptr);
+    EXPECT_EQ(ctrl.lastResult().dwa_reason, DwaReason::kStateInvalid);
+  }
+  rig.publishScan(5.0, 0.0, C::kLidarSamples - 1);
+  for (int k = 0; k < 2; ++k) {
+    ctrl.computeVelocityCommands(pose(1.0, 3.0, 0.0), vel, nullptr);
+    EXPECT_EQ(ctrl.lastResult().dwa_reason, DwaReason::kStateInvalid);
+  }
+  EXPECT_EQ(ctrl.counters().dwa[1], 2U);
+  // 정상 스캔 → 정책
+  rig.publishScan(5.0);
+  ctrl.computeVelocityCommands(pose(1.0, 3.0, 0.0), vel, nullptr);
+  EXPECT_NE(ctrl.lastResult().source, Source::kDwa);
 }
 
 TEST(RLControllerPlugin, NoPlanThrows)

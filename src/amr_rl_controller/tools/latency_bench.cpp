@@ -2,11 +2,16 @@
 // golden decision 상태 17 개를 돌려 가며 한 결정 주기의 단계별 시간을 잰다:
 //   obs = buildObservation, mask = MaskBuilder::compute (C 만), infer = OnnxPolicy::run (ORT Run),
 //   total = 세 단계 합 (플러그인의 결정 틱 비용에서 ROS 메시지 변환을 뺀 것).
-// 사용: latency_bench <model.onnx> <B|C> [반복 수 5000] [intra_op 스레드 1] [워밍업 200]
+// 사용: latency_bench <model.onnx> <B|C> [반복 수 5000] [intra_op 스레드 1] [워밍업 200] [worst]
+//   worst: golden 대신 합성 최악 장면 하나 — 720 빔 전부 유효(반경 4 m 원,
+//          롤아웃 안에서 충돌 없음 → 모든 자세에서 모든 점 검사), v_cmd 1.0 (T_sim 1.5 s),
+//          직전 행동 0 (저크 통과 9 셀),
+//          동적 트랙 8 개 (VO 계산), 경로 30 m (600 점 투영).
 // 출력: 단계별 p50 / p90 / p99 / max / mean [ms] 와 20 Hz 예산 50 ms 대비 비율.
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -63,6 +68,7 @@ int main(int argc, char ** argv)
   const int iters = argc > 3 ? std::atoi(argv[3]) : 5000;
   const int threads = argc > 4 ? std::atoi(argv[4]) : 1;
   const int warmup = argc > 5 ? std::atoi(argv[5]) : 200;
+  const bool worst = argc > 6 && std::string(argv[6]) == "worst";
 
   std::vector<amr_rl_controller::ContractState> states;
   for (const auto & e : fs::directory_iterator(std::string(RL_CONTRACT_DIR) + "/golden")) {
@@ -70,6 +76,24 @@ int main(int argc, char ** argv)
     if (n.rfind("d", 0) == 0 && e.path().extension() == ".json") {
       states.push_back(golden::toState(golden::load(e.path().string())["state"]));
     }
+  }
+  if (worst) {
+    states.clear();
+    amr_rl_controller::ContractState s;
+    s.pose = {0.0, 0.0, 0.0};
+    for (int k = 0; k <= 600; ++k) {
+      s.path.push_back({0.05 * k, 0.0});
+    }
+    s.scan_ranges.assign(C::kLidarSamples, 4.0);
+    s.v_meas = s.v_cmd = 1.0;
+    s.v_cap = 2.0;   // v' 1.02 까지 속도 조건 통과
+    for (int i = 0; i < 8; ++i) {
+      const double a = 0.7 * i - 2.0;
+      s.tracks.push_back(
+        {i, 5.0 * std::cos(a), 5.0 * std::sin(a), -0.8 * std::cos(a),
+          -0.8 * std::sin(a), true});
+    }
+    states.push_back(s);
   }
   if (states.empty()) {
     std::fprintf(stderr, "golden decision 상태가 없다\n");
@@ -115,8 +139,9 @@ int main(int argc, char ** argv)
     }
   }
   std::printf(
-    "model %s | mode %s | iters %d (warmup %d) | intra_op %d | states %zu | failures %d\n",
-    model.c_str(), c_mode ? "C" : "B", iters, warmup, threads, states.size(), failures);
+    "model %s | mode %s | iters %d (warmup %d) | intra_op %d | states %zu%s | failures %d\n",
+    model.c_str(), c_mode ? "C" : "B", iters, warmup, threads, states.size(),
+    worst ? " (합성 최악 장면)" : " (golden d01-d17)", failures);
   std::printf("%s\n", policy.describe().c_str());
   std::printf("| 단계   |   p50 ms |   p90 ms |   p99 ms |   max ms |  mean ms | p99/50ms |\n");
   std::printf("|--------|----------|----------|----------|----------|----------|----------|\n");

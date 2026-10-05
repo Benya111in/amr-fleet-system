@@ -8,6 +8,9 @@
   그대로 불러 만든다 → 기대 출력은 커밋된 rl/contract/onnx/fixtures/fixture_expected.json.
 - fixture_c_gru.onnx: 같은 입출력 + h_in/h_out (GRU 1 층, hidden 16) — 순환 경로 시험.
 - 결함 모델: 주 버전 2, obs_dim 290, 메타데이터 없음, NaN logits — configure 거부·폴백 시험.
+- 크기 대표 모델 (지연 측정용, --sizes 일 때만): size_c_mlp256 (MLP 391→256→256→100),
+  size_c_cnn_gru128 (섹터 180 Conv1d 2 층 + MLP + GRU 128), size_b_mlp256 (291→256→256→2).
+  학습 정책이 아직 없어서 실무 보고서·계약이 권하는 구조의 크기만 흉내 낸다.
 저장소 .gitignore 가 *.onnx 를 무시하므로 모델은 커밋하지 않고 시험 때 만든다.
 """
 
@@ -105,16 +108,90 @@ def _defects(out_dir, c_path):
         _meta(path, props)
 
 
-def main(out_dir):
+def _sizes(out_dir):
+    import torch
+    from torch import nn
+
+    n_sec = C.N_SECTORS
+
+    class MlpC(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.net = nn.Sequential(nn.Linear(OBS_DIM + C.N_ACTIONS_C, 256), nn.Tanh(),
+                                     nn.Linear(256, 256), nn.Tanh(),
+                                     nn.Linear(256, C.N_ACTIONS_C))
+
+        def forward(self, obs, mask):
+            logits = self.net(torch.cat([obs, mask], dim=1)) + (mask - 1.0) * 1e9
+            return logits, torch.argmax(logits, dim=1)
+
+    class MlpB(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.net = nn.Sequential(nn.Linear(OBS_DIM, 256), nn.Tanh(), nn.Linear(256, 256),
+                                     nn.Tanh(), nn.Linear(256, 2))
+            self.log_std = nn.Parameter(torch.tensor([-0.5, -0.5]))
+
+        def forward(self, obs):
+            mu = self.net(obs)
+            return torch.tanh(mu), mu, mu * 0.0 + self.log_std
+
+    class CnnGruC(nn.Module):
+        def __init__(self, hidden=128):
+            super().__init__()
+            self.conv = nn.Sequential(nn.Conv1d(1, 16, 5, stride=2, padding=2), nn.ReLU(),
+                                      nn.Conv1d(16, 32, 5, stride=2, padding=2), nn.ReLU())
+            self.fc = nn.Linear(32 * 45 + OBS_DIM - n_sec + C.N_ACTIONS_C, 256)
+            self.gru = nn.GRU(256, hidden)
+            self.head = nn.Linear(hidden, C.N_ACTIONS_C)
+
+        def forward(self, obs, mask, h_in):
+            z = self.conv(obs[:, :n_sec].unsqueeze(1)).flatten(1)
+            x = torch.relu(self.fc(torch.cat([z, obs[:, n_sec:], mask], dim=1))).unsqueeze(0)
+            y, h_out = self.gru(x, h_in)
+            logits = self.head(y[0]) + (mask - 1.0) * 1e9
+            return logits, torch.argmax(logits, dim=1), h_out
+
+    torch.manual_seed(11)
+    obs = torch.zeros(1, OBS_DIM)
+    mask = torch.ones(1, C.N_ACTIONS_C)
+    dyn = {'obs': {0: 'batch'}, 'mask': {0: 'batch'}, 'logits': {0: 'batch'},
+           'action': {0: 'batch'}}
+    with torch.no_grad():
+        p = os.path.join(out_dir, 'size_c_mlp256.onnx')
+        torch.onnx.export(MlpC().eval(), (obs, mask), p, input_names=['obs', 'mask'],
+                          output_names=['logits', 'action'], opset_version=OPSET, dynamo=False,
+                          dynamic_axes=dyn)
+        _meta(p, _base_meta('C'))
+        p = os.path.join(out_dir, 'size_b_mlp256.onnx')
+        torch.onnx.export(MlpB().eval(), (obs,), p, input_names=['obs'],
+                          output_names=['action', 'mu', 'log_std'], opset_version=OPSET,
+                          dynamo=False, dynamic_axes={'obs': {0: 'batch'},
+                                                      'action': {0: 'batch'}})
+        _meta(p, _base_meta('B'))
+        p = os.path.join(out_dir, 'size_c_cnn_gru128.onnx')
+        h = torch.zeros(1, 1, 128)
+        torch.onnx.export(CnnGruC().eval(), (obs, mask, h), p,
+                          input_names=['obs', 'mask', 'h_in'],
+                          output_names=['logits', 'action', 'h_out'], opset_version=OPSET,
+                          dynamo=False, dynamic_axes=dict(dyn, h_in={1: 'batch'},
+                                                          h_out={1: 'batch'}))
+        _meta(p, _base_meta('C', rnn_layers=1, rnn_hidden=128))
+
+
+def main(out_dir, sizes=False):
     """모든 시험 모델을 만든다."""
     os.makedirs(out_dir, exist_ok=True)
     b_path, c_path = mf.export(out_dir)
     _gru_and_nan(out_dir)
     _defects(out_dir, c_path)
+    if sizes:
+        _sizes(out_dir)
     print('models:', ' '.join(sorted(f for f in os.listdir(out_dir) if f.endswith('.onnx'))))
 
 
 if __name__ == '__main__':
-    if len(sys.argv) != 2:
-        sys.exit('사용: make_test_models.py <출력 디렉터리>')
-    main(sys.argv[1])
+    argv = [a for a in sys.argv[1:] if a != '--sizes']
+    if len(argv) != 1:
+        sys.exit('사용: make_test_models.py <출력 디렉터리> [--sizes]')
+    main(argv[0], sizes='--sizes' in sys.argv[1:])
