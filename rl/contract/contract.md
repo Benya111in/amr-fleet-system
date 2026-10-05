@@ -11,7 +11,8 @@ GPU 2D 시뮬레이터(r2), Gazebo 의 ONNX 컨트롤러 플러그인(r3), 평�
   `N` = `src/amr_navigation/config/nav2_params.yaml`, `V` = `src/amr_navigation/config/velocity_profiler.yaml`,
   `P` = `src/amr_perception/config/perception.yaml` (모두 develop `d8ae80c`). 보고서는
   「실무」 = `research/reports/물류 AMR 강화학습 AI 최신 연구.md`, 「이론」 = `…/물류 AMR 강화학습 이론 심층 연구.md`
-  의 행 번호. **[설계 선택]** = 근거 문헌이 없고 우리가 정한 값(바꿀 수 있지만 golden 과 함께 바꾼다).
+  의 행 번호 (저장소 사본 `docs/research/rl-navigation/rl-practical-survey.md`·`rl-theory-deep-dive.md` 에서는
+  머리말 때문에 +8 행). **[설계 선택]** = 근거 문헌이 없고 우리가 정한 값(바꿀 수 있지만 golden 과 함께 바꾼다).
 - **정직성**: 이 문서의 어떤 수치도 RL 성능을 측정한 값이 아니다. [계산] 표시는 오프라인 산술이다.
 - 상수의 단일 진실 공급원은 `amr_rl_contract/constants.py` 이고, `tests/test_constants.py` 가 위 설정 파일
   원문과 대조한다 (설정이 바뀌면 시험이 깨진다).
