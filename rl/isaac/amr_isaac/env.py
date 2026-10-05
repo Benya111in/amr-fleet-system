@@ -169,6 +169,9 @@ class AmrNavEnv(DirectRLEnv):
         self._collided = torch.zeros(N, dtype=torch.bool, device=dev)
         self._w_ref_prev = z()
         self._reward = torch.zeros(N, device=dev)
+        # 라그랑주 승수 (비용 5 채널, contract §7) — 학습 스크립트가 쌍대 상승으로 갱신한다.
+        # PPO 에 주는 보상 = 계약 보상 − Σ λ_i·c_i (기록·평가의 반환은 계약 보상 그대로).
+        self.lagrange = torch.zeros(C.N_COSTS, dtype=F64, device=dev)
         self.last_out = None
         # 통계: 누적 계수 (학습 스크립트가 읽어 비운다) + 최근 창
         self.stat_counts = torch.zeros(len(OUTCOMES), dtype=torch.long, device=dev)
@@ -299,7 +302,7 @@ class AmrNavEnv(DirectRLEnv):
     def _get_dones(self):
         out = self.step_outcome()
         self.last_out = out
-        self._reward = out.reward.to(torch.float32)
+        self._reward = (out.reward - (out.cost * self.lagrange).sum(dim=1)).to(torch.float32)
         self.in_dev, self.dev_peak, self.dev_t = out.in_dev, out.dev_peak, out.dev_t
         self.prev_actions = torch.cat([self._a_exec.unsqueeze(1), self.prev_actions[:, :-1]], 1)
         self.v_cmd = self._v1.clone()

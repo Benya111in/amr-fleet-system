@@ -28,6 +28,8 @@ ap.add_argument('--vcap_curriculum', default='',
                 help="v_cap 커리큘럼 'LO:HI0:N0:N1:P1' — 반복 N0 까지 v_cap ~ U[LO, HI0], "
                      "N1 까지 상한을 명목값(1.0)으로·명목 비율을 P1 로 선형, 빈 값 = 끔")
 ap.add_argument('--entropy', type=float, default=None)
+ap.add_argument('--lagrange', default='',
+                help="PPO-Lagrangian 'λ0,…,λ4/η0,…,η4/d1' — 초기 승수/쌍대 상승률/개입 예산, 빈 값 = 끔")
 ap.add_argument('--curriculum', default='',
                 help="경로 길이 상한 커리큘럼 'L0:L1:N' — 반복 N 까지 L0→L1 m 선형, 빈 값 = 끔")
 ap.add_argument('--root', default='/home/CAPYI_AI/runs/r1-isaac/train')
@@ -105,6 +107,12 @@ def main():
     t_train = time.time()
     cur = [float(x) for x in args.curriculum.split(':')] if args.curriculum else None
     vc = [float(x) for x in args.vcap_curriculum.split(':')] if args.vcap_curriculum else None
+    lag = None
+    if args.lagrange:
+        l0, eta, d1 = args.lagrange.split('/')
+        lag = {'eta': [float(x) for x in eta.split(',')],
+               'budget': [C.COST_BUDGETS[0], float(d1)] + list(C.COST_BUDGETS[2:])}
+        env.lagrange[:] = torch.tensor([float(x) for x in l0.split(',')], dtype=torch.float64)
     while it < args.iterations:
         n = min(args.chunk, args.iterations - it)
         if cur:
@@ -121,6 +129,12 @@ def main():
         it += n
         st = env.pop_stats()
         ep = max(st['episodes'], 1)
+        if lag and st['episodes'] > 0:
+            # 쌍대 상승: λ_i ← max(0, λ_i + η_i·(J_i − d_i)/d_i), J = 끝난 에피소드의 비할인 비용 합 평균
+            for i, k in enumerate(C.COST_NAMES):
+                d = lag['budget'][i]
+                err = min(max((st[f'cost_{k}'] / ep - d) / d, -1.0), 5.0)
+                env.lagrange[i] = max(0.0, float(env.lagrange[i]) + lag['eta'][i] * err)
         pol = runner.alg.policy
         rec = {
             'iteration': it, 'env_steps': it * steps_per_iter,
@@ -135,6 +149,7 @@ def main():
             'action_std': [round(float(v), 4) for v in torch.exp(pol.log_std).tolist()],
             'lr': runner.alg.learning_rate,
             'curriculum_lmax': env.curriculum_lmax,
+            'lagrange': [round(float(x), 5) for x in env.lagrange.tolist()],
             'vcap': [env.vcap_lo, env.vcap_hi, env.vcap_p_nominal],
             'torch_max_alloc_MiB': gpu_mem_mib()[0], 'torch_reserved_MiB': gpu_mem_mib()[1],
         }
@@ -159,7 +174,8 @@ def main():
                'train_wall_s': round(time.time() - t_train, 1),
                'policy_vs_rsl_mu_max_abs_diff': diff, 'seed': args.seed,
                'dr': not args.no_dr, 'curriculum': args.curriculum,
-               'vcap_curriculum': args.vcap_curriculum,
+               'vcap_curriculum': args.vcap_curriculum, 'lagrange': args.lagrange,
+               'lagrange_final': [float(x) for x in env.lagrange.tolist()],
                'entropy_coef': agent.algorithm.entropy_coef}
     with open(os.path.join(out, 'summary.json'), 'w') as f:
         json.dump(summary, f, indent=1)
