@@ -1,0 +1,87 @@
+# RTAB-Map 매핑 행 설정 — 3D(scan_cloud)와 2D(scan)가 **이 파일 하나를 같이** 쓴다 (차원만 바꾼다).
+# 근거: 「3D LiDAR SLAM 도입 방안」 출발값 표 (rtabmap_examples lidar3d.launch.py · husky_slam3d.launch.py 0.23.7 판을
+# 이미지 안에서 다시 읽어 확인). 구성 B: icp_odometry(guess = 휠-EKF odom) → icp_odom→odom 보정 TF,
+# rtabmap → slam_map→icp_odom. 프레임·토픽·입력 차원은 launch/rtabmap.launch.py 가 덮어쓴다.
+#
+# **RTAB-Map 코어 파라미터(Grp/Name)는 문자열이어야 한다** — bool·숫자로 주면 노드가
+# InvalidParameterTypeException 으로 abort 한다 (s0-images VERSIONS.md 1.1, test_config.py 가 검사).
+# icp_odometry 는 Icp/VoxelSize·Icp/PointToPlaneK 를 ROS 파라미터 scan_voxel_size·scan_normal_k 로 옮기고
+# 원래 값을 0 으로 만든다 (기동 로그 "Transferring value …") — 그래서 그 둘은 ROS 파라미터로 직접 준다.
+
+# ---- 두 노드 공통 (같은 ICP 설정을 오도메트리와 루프 검증이 같이 쓴다) ----
+/**:
+  ros__parameters:
+    use_sim_time: true
+    wait_for_transform: 0.2            # [s] TF 기다림 (예제와 같다)
+    qos: 1                             # 1 = reliable (bag 재생 QoS 와 같다)
+    Reg/Strategy: '1'                  # ICP
+    Reg/Force3DoF: 'true'              # 평면 바닥 — x, y, yaw 만 (Husky "2D flat floor")
+    Icp/Strategy: '1'                  # libpointmatcher
+    Icp/PointToPlane: 'true'
+    Icp/Iterations: '10'
+    Icp/Epsilon: '0.001'
+    Icp/VoxelSize: '0.1'               # 실내 0.1–0.3 (예제 인자 설명). icp_odometry 는 scan_voxel_size 로 옮긴다
+    Icp/PointToPlaneK: '20'
+    Icp/PointToPlaneRadius: '0'
+    Icp/PointToPlaneGroundNormalsUp: '0.9'
+    Icp/MaxCorrespondenceDistance: '1.0'   # 보고서 출발값 (예제 경험칙 = voxel × 10)
+    Icp/MaxTranslation: '1'            # Husky 데모
+    Icp/OutlierRatio: '0.7'            # lidar3d 예제
+    Icp/RangeMin: '0.2'                # 통로 랙 면 횡 0.30 m (sensor.md "소비자가 할 것")
+    Icp/RangeMax: '0'                  # 0 = 제한 없음 (센서 30 m)
+    Icp/PointToPlaneLowComplexityStrategy: '1'   # 저복잡도(복도) 축은 guess(휠-EKF) 값을 쓴다
+    Icp/PointToPlaneMinComplexity: '0.02'        # 기본값 명시 (퇴화 판정 문턱 — odom_info icpStructuralComplexity 와 비교)
+    Odom/Holonomic: 'false'            # 차동구동
+    Mem/NotLinkedNodesKept: 'false'
+
+# ---- icp_odometry ----
+/**/icp_odometry:
+  ros__parameters:
+    publish_tf: true                   # icp_odom → odom (guess_frame_id 를 주면 보정 TF 만 낸다)
+    deskewing: false                   # Gazebo 점군에 점별 time 이 없다 → 켜면 "Failed to deskew" 로 프레임을 버린다
+    expected_update_rate: 15.0         # [Hz] 10 Hz 입력보다 약간 크게 (예제 권장)
+    topic_queue_size: 10               # 기본 1 — 재생 중 처리 지연 때 입력을 버리지 않게 (누락 0 판정)
+    publish_null_when_lost: true       # 잃으면 공분산 9999 null odom → slam_probe 가 lost 로 센다
+    scan_voxel_size: 0.1               # = Icp/VoxelSize
+    scan_normal_k: 20                  # = Icp/PointToPlaneK
+    scan_range_min: 0.2                # = Icp/RangeMin
+    Odom/ScanKeyFrameThr: '0.4'        # lidar3d 예제
+    OdomF2M/ScanSubtractRadius: '0.1'  # = voxel
+    OdomF2M/ScanMaxSize: '15000'
+    OdomF2M/BundleAdjustment: 'false'
+    Icp/CorrespondenceRatio: '0.01'    # 오도메트리 단계는 느슨하게 (예제)
+
+# ---- rtabmap (그래프 SLAM + 격자) ----
+/**/rtabmap:
+  ros__parameters:
+    subscribe_depth: false
+    subscribe_rgb: false
+    subscribe_rgbd: false
+    subscribe_odom_info: true
+    odom_sensor_sync: true
+    publish_tf: true                   # slam_map → icp_odom
+    topic_queue_size: 10
+    sync_queue_size: 30                # scan + odom + odom_info 정확 동기 (재생 지연 여유)
+    RGBD/ProximityMaxGraphDepth: '0'
+    RGBD/ProximityPathMaxNeighbors: '1'
+    RGBD/AngularUpdate: '0.05'
+    RGBD/LinearUpdate: '0.05'
+    RGBD/OptimizeMaxError: '0.3'       # 반복 랙 — 루프를 엄격히 (Husky 데모·보고서 0.3–1.0 의 하한)
+    RGBD/MaxOdomCacheSize: '10'
+    Mem/STMSize: '30'
+    Icp/CorrespondenceRatio: '0.3'     # 루프 수락 겹침 하한 (보고서 ≥0.3)
+    Rtabmap/DetectionRate: '1'         # 기본 1 Hz (명시)
+    # 격자: 비교용 대역 0.05–0.40 m (로봇 높이 0.30 m + 여유, 보고서 '비교용 격자')
+    RGBD/CreateOccupancyGrid: 'true'
+    Grid/Sensor: '0'                   # 0 = 레이저(scan / scan_cloud)
+    Grid/3D: 'false'
+    Grid/CellSize: '0.05'              # 명세 ≤ 0.05 m, 기존 2D 지도와 같은 해상도
+    Grid/RangeMin: '0.2'
+    Grid/RangeMax: '20'                # 기본 5 m 는 통로 끝을 못 담는다
+    Grid/NormalsSegmentation: 'false'  # passthrough (높이 대역)
+    Grid/MaxGroundHeight: '0.05'
+    Grid/MaxObstacleHeight: '0.40'     # 비교용. 운용용(2.0)은 별도 행/후처리 — REPORT 참고
+    Grid/RayTracing: 'true'
+    Grid/FootprintLength: '0.60'       # 자기 차체 제외 (0.60 × 0.40 m, 높이 0.30)
+    Grid/FootprintWidth: '0.40'
+    Grid/FootprintHeight: '0.30'

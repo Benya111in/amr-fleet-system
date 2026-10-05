@@ -1,0 +1,21 @@
+# 파일럿 경로 (보너스 2 4단계 — bag 1 개). 정답 되먹임 주행 (scripts/route_driver.py, amr_slam3d/route.py).
+# 출발 = amr_01 스폰 자세 (18, -16, yaw π/2; amr_bringup config/fleet_spawn_lidar3d.yaml). 월드 좌표 [m].
+# 경로: 북 9 m → 서 13 m → 남 7 m → 동 13 m → 북 7 m(첫 구간 재방문) → 서 6 m(둘째 구간 재방문) = 55 m.
+#   랙 C 열(y = −3, 앞면 −3.5)에서 3.5 m, 기둥 (10, −12) 에서 2 m, 좁은 통로 랙(x ±0.8, y −12…−8)에서 4 m 떨어진
+#   열린 바닥만 지난다 (gen_warehouse_world.py ROWS·PILLARS·NARROW_*). 마지막 두 구간은 루프 폐쇄 기회다.
+# hold_start 20 s: imu_filter_node 바이어스 추정(정지 평균)과 SLAM 초기화. 정지 구간도 bag 에 남아 정지 평가에 쓴다.
+route:
+  start: [18.0, -16.0]
+  hold_start_s: 20.0
+  hold_end_s: 5.0
+  dwell_s: 2.0
+  waypoints:
+    - [18.0, -7.0]
+    - [5.0, -7.0]
+    - [5.0, -14.0]
+    - [18.0, -14.0]
+    - [18.0, -7.0]
+    - [12.0, -7.0]
+  limits:
+    v_max: 0.5
+    w_max: 0.5

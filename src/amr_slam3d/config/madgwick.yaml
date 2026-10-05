@@ -1,0 +1,16 @@
+# imu_filter_madgwick — 3D SLAM 행의 IMU 방위를 다시 만든다 (Gazebo IMU 방위는 잡음 없는 정답 = 오라클).
+# 근거: docs/research/slam3d/sensor.md §6 (정지 중 방위 표준편차 1e-15, 회전 중 IMU yaw − 정답 yaw ≤ 1e-4 rad 실측),
+# 보고서 「3D LiDAR SLAM 도입 방안」 65–69행. 입력은 imu_filter_node(amr_localization)가 바이어스를 뺀 imu/data —
+# madgwick 은 입력 방위를 읽지 않고 각속도·가속도만 쓴다. 출력 imu/data_madgwick 만 SLAM 행에 넣는다.
+# 파라미터 이름·기본값은 이미지 안 노드에서 ros2 param dump 로 확인했다 (use_mag·publish_tf 기본 true → 끈다).
+/**/imu_filter_madgwick:
+  ros__parameters:
+    use_mag: false            # 자력계 없음 (6축) — yaw 는 자이로 적분이라 천천히 떠돈다
+    publish_tf: false         # 기본 true 면 odom→imu_link TF 를 내 TF 트리를 깨뜨린다
+    world_frame: enu
+    gain: 0.1                 # 기본값 (가속도 보정 이득)
+    zeta: 0.0                 # 자이로 바이어스 추정 끔 (imu_filter_node 가 이미 뺐다)
+    remove_gravity_vector: false   # LIO-SAM 사전적분은 중력 포함 가속도를 받는다
+    stateless: false
+    constant_dt: 0.0
+    use_sim_time: true

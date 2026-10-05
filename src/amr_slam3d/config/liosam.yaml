@@ -1,0 +1,78 @@
+# LIO-SAM (ros2 브랜치 08af3f3, amr-ai/liosam:0.1 이미지) 매핑 비교 행 설정 — 루프 켬 (끔은 런치 인자 loop:=false).
+# 근거: 「3D LiDAR SLAM 도입 방안」 LIO-SAM 표 (보고서 122–146행), 센서 계약 docs/research/slam3d/sensor.md §4.
+# 키 이름·기본값은 이미지 안 상류 config/params.yaml 과 include/lio_sam/utility.hpp 를 읽어 확인했다 (상류 파일은
+# 복사하지 않았다 — 값만 우리 것으로 다시 적었다). 노드 4 개가 /** 로 같은 값을 읽는다.
+/**:
+  ros__parameters:
+    use_sim_time: true
+    # 토픽 — 점군은 전처리 출력(비유한 점 제거, ring 유지), IMU 는 madgwick 재추정 방위 (정답 방위 누출 차단)
+    pointCloudTopic: /amr_01/lidar3d/points
+    imuTopic: /amr_01/imu/data_madgwick
+    odomTopic: odometry/imu
+    gpsTopic: odometry/gpsz
+    # 프레임 — EKF 의 amr_01/odom 과 겹치지 않는 이름. LIO-SAM 은 odometryFrame → baselinkFrame TF 를 내므로
+    # 재생 때 bag 의 /tf(EKF odom→base_footprint)를 틀지 않는다 (base_footprint 의 부모가 둘이 된다).
+    # mapOptimization 은 odometryFrame → "lidar_link"(상류 하드코딩) TF 도 낸다 — 우리 lidar3d_link 와 다른 이름이라 충돌 없음.
+    lidarFrame: amr_01/lidar3d_link
+    baselinkFrame: amr_01/base_footprint
+    odometryFrame: amr_01/liosam_odom
+    mapFrame: slam_map
+    useImuHeadingInitialization: false   # 첫 yaw = 0 → odometryFrame 축 = 출발 때 LiDAR 축. 월드 고정은 anchor_tf
+    useGpsElevation: false
+    gpsCovThreshold: 2.0
+    poseCovThreshold: 25.0
+    savePCD: false
+    savePCDDirectory: /liosam_map/
+    # 센서 — Gazebo gpu_lidar 16×1800, ring uint16 (velodyne 형식), 점별 time 없음 → deskew 꺼짐 경고는 정상
+    sensor: velodyne
+    N_SCAN: 16
+    Horizon_SCAN: 1800
+    downsampleRate: 1
+    lidarMinRange: 0.2                   # 통로 랙 면 0.30 m
+    lidarMaxRange: 30.0                  # 센서 사거리
+    # IMU — 3D 로봇 IMU 200 Hz. 잡음 파라미터는 상류 기본 유지 (우리 밀도보다 커서 IMU 를 덜 믿는 쪽)
+    imuAccNoise: 3.9939570888238808e-03
+    imuGyrNoise: 1.5636343949698187e-03
+    imuAccBiasN: 6.4356659353532566e-05
+    imuGyrBiasN: 3.5640318696367613e-05
+    imuGravity: 9.8                      # 월드 SDF 중력 (imu_filter.yaml gravity 와 같다)
+    imuRPYWeight: 0.01
+    # 외부 파라미터 — IMU·LiDAR 축 정렬 (URDF rpy 0) → 회전 둘 다 단위행렬.
+    # extrinsicTrans = LiDAR 프레임에서 본 IMU 위치: imuPreintegration.cpp 221–222·324행이
+    #   imuPose = lidarPose.compose(Pose3(I, extTrans)) 로 쓴다. URDF: imu_link = base_footprint + (0, 0, 0.28),
+    #   lidar3d_link = base_footprint + (0.27, 0, 0.90) → IMU − LiDAR = (−0.27, 0, −0.62) [코드 읽기].
+    extrinsicTrans: [-0.27, 0.0, -0.62]
+    extrinsicRot: [1.0, 0.0, 0.0,
+                   0.0, 1.0, 0.0,
+                   0.0, 0.0, 1.0]
+    extrinsicRPY: [1.0, 0.0, 0.0,
+                   0.0, 1.0, 0.0,
+                   0.0, 0.0, 1.0]
+    # 특징 문턱 — 상류 기본
+    edgeThreshold: 1.0
+    surfThreshold: 0.1
+    edgeFeatureMinValidNum: 10
+    surfFeatureMinValidNum: 100
+    # 복셀 — 상류 주석의 실내 값 (보고서 표에 없음: REPORT "보고서와 다르게 한 것")
+    odometrySurfLeafSize: 0.2
+    mappingCornerLeafSize: 0.1
+    mappingSurfLeafSize: 0.2
+    # 평면 사전 — 끔(상류 기본). 켜면 평면 변형 행이 된다 (보고서: 별도 행)
+    z_tollerance: 1000.0
+    rotation_tollerance: 1000.0
+    numberOfCores: 4
+    mappingProcessInterval: 0.15         # 상류 기본: 매핑은 0.15 s 간격 → 10 Hz 입력의 일부만 매핑 단계에 들어간다
+    surroundingkeyframeAddingDistThreshold: 1.0
+    surroundingkeyframeAddingAngleThreshold: 0.2
+    surroundingKeyframeDensity: 2.0
+    surroundingKeyframeSearchRadius: 50.0
+    loopClosureEnableFlag: true
+    loopClosureFrequency: 1.0
+    surroundingKeyframeSize: 50
+    historyKeyframeSearchRadius: 15.0
+    historyKeyframeSearchTimeDiff: 30.0
+    historyKeyframeSearchNum: 25
+    historyKeyframeFitnessScore: 0.3
+    globalMapVisualizationSearchRadius: 1000.0
+    globalMapVisualizationPoseDensity: 10.0
+    globalMapVisualizationLeafSize: 1.0
