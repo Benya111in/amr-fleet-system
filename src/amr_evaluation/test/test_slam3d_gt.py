@@ -143,6 +143,23 @@ def test_surface_points_count_matches_analytic(gen):
     assert np.all((np.abs(fl[:, 0]) > 0.5) | (np.abs(fl[:, 1]) > 0.5))
 
 
+def test_points_outside_room_are_dropped(gen):
+    """
+    방 경계(x = HALF_X)에 걸친 상자: 바깥쪽 절반의 윗면·옆면 점은 버린다 (실내 센서가 볼 수 없다).
+
+    월드 자체에서는 면 단위 사전 거르기·천장 반공간 가림이 같은 일을 먼저 해서 이 점 필터를 가를 수 없다 —
+    그래서 합성 상자로 따로 시험한다.
+    """
+    t = np.eye(4)
+    t[:3, 3] = [gen.HALF_X, 0.0, 0.5]
+    p = gen.GtPrim('edge', 'rack_E', 'rack', 'box', (1.0, 1.0, 1.0), t)
+    pts, counts = gen.gt_surface_points([p], spacing=0.05)
+    xyz = cloud.xyz_of(pts)
+    assert np.all(xyz[:, 0] <= gen.HALF_X + 1e-6)
+    # 윗면·아랫면은 안쪽 절반(10 x 20)씩, 옆면 y = ±0.5 는 안쪽 절반(10 x 20)씩, 안쪽 x 면 20 x 20 하나
+    assert counts['rack'] == 2 * 200 + 2 * 200 + 400
+
+
 def test_spacing_upper_bound(gen):
     """면 간격은 spacing 이하 (셀 중심 표본): 0.3 m 면을 0.07 로 → 5 표본 (간격 0.06)."""
     eye = np.eye(4)
@@ -259,3 +276,20 @@ def test_adnn0_reproduces_existing_map_value(gen):
     assert q.adnn_initial == pytest.approx(m['adnn0'], abs=1e-12)
     assert (round(q.chamfer, 4), round(q.iou_tol, 3), round(q.recall_tol, 3)) == (0.0367, 0.575,
                                                                                   0.741)
+
+
+def test_whole_world_points_stay_inside_room(gen):
+    """성긴 간격(0.25 m)으로 월드 전체 표본: 모든 점이 실내(외벽 안쪽 면 안, 바닥~천장)에 있고 부류가 다 나온다."""
+    sdf = gen.build_sdf()[0]
+    prims, _ = gen.gt_primitives(sdf, [str(MODELS)])
+    pts, counts = gen.gt_surface_points(prims, spacing=0.25)
+    xyz = cloud.xyz_of(pts)
+    assert np.all(np.abs(xyz[:, 0]) <= gen.HALF_X + 1e-6)
+    assert np.all(np.abs(xyz[:, 1]) <= gen.HALF_Y + 1e-6)
+    assert np.all((xyz[:, 2] >= -1e-6) & (xyz[:, 2] <= gen.WALL_H + 1e-6))
+    assert {c for c in gen.GT_CLASSES if counts.get(c)} == set(gen.GT_CLASSES) - {'vehicle',
+                                                                                  'other'}
+    # 바닥·천장은 방 넓이(60 x 40)를 넘지 않는다 (평면을 방으로 자른다)
+    area = 0.25 * 0.25
+    assert counts['ceiling'] * area == pytest.approx(60 * 40, rel=1e-6)
+    assert counts['floor'] * area < 60 * 40

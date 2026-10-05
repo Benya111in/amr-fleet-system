@@ -133,6 +133,26 @@ def test_umeyama_recovers_transform():
         se2.umeyama_se2(src[:1], dst[:1])
 
 
+def test_umeyama_never_returns_reflection():
+    """
+    거울상 자료(dst = (x, −y))에도 반환은 **회전**의 최적해다 (Umeyama 의 det 보정).
+
+    det 보정이 없으면 SVD 가 반사 행렬을 주고, 그 각을 회전으로 쓰면 1° 격자로 찾은 최선 회전보다 잔차가 크다.
+    """
+    rng = np.random.default_rng(7)
+    src = rng.uniform(-5, 5, (40, 2)) * [1.0, 0.2]
+    dst = src * [1.0, -1.0]
+    tx, ty, th = se2.umeyama_se2(src, dst)
+
+    def residual(a, t=None):
+        c, s = math.cos(a), math.sin(a)
+        moved = src @ np.array([[c, s], [-s, c]])
+        shift = dst.mean(0) - moved.mean(0) if t is None else t
+        return float(np.sum((moved + shift - dst) ** 2))
+    best = min(residual(math.radians(d)) for d in range(360))
+    assert residual(th, np.array([tx, ty])) <= best + 1e-9
+
+
 def test_ate_by_motion_thresholds():
     """정지 2 s → 직선 2 s → 제자리 회전 2 s. 오차: 정지 0.02, 직선 0.06, 회전 0.01 m."""
     dt = 0.02
