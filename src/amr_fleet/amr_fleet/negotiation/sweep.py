@@ -13,6 +13,7 @@
 - health  : 보유 로봇의 위치추정 건강이 2 라운드째 나빠짐 → 'max' 대 'cbba' 재할당
 - event   : 이벤트 구동 방송(부정 대조군) 대 주기 재방송
 - burst   : Gilbert 버스트 손실(rho 0.8) 대 Bernoulli
+- burstlock: 버스트 손실에서 낙관 대 배타 잠금 (K=2·3 전원 수신, H=5)
 - cost    : 유클리드 대 격자 A* 비용에서 CBAA·중앙 탐욕·Hungarian 비용 비 (스폰·흩어진 배치)
 
 사례는 연구 계산과 같은 시드(사례 55·nt + k, 링크 시드 13·k + 1)를 써서 셀 사이가 쌍비교가 된다.
@@ -292,6 +293,15 @@ def cells_burst() -> Iterable[Cell]:
                         yield Cell('burst', nt, loss, K, heard, H, live, burst=burst)
 
 
+def cells_burstlock() -> Iterable[Cell]:
+    for nt in (3, 5):
+        for loss in (0.05, 0.2, 0.4):
+            for K in (2, 3):
+                for live in ('direct', 'indirect'):
+                    for lock in ('optimistic', 'exclusive'):
+                        yield Cell('burstlock', nt, loss, K, True, 5, live, lock=lock, burst=0.8)
+
+
 def cells_cost() -> Iterable[Cell]:
     for cost in ('euclid', 'grid'):
         for mode in ('spawn', 'scatter'):
@@ -303,7 +313,7 @@ def cells_cost() -> Iterable[Cell]:
 EXPERIMENTS = {
     'commit': cells_commit, 'rule': cells_rule, 'dropout': cells_dropout,
     'commitdie': cells_commitdie, 'health': cells_health, 'event': cells_event,
-    'burst': cells_burst, 'cost': cells_cost,
+    'burst': cells_burst, 'burstlock': cells_burstlock, 'cost': cells_cost,
 }
 
 
