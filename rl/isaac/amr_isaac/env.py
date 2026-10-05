@@ -115,6 +115,10 @@ class AmrNavEnv(DirectRLEnv):
         self.pool_len_sorted = plen[self.pool_order]
         self.curriculum_lmax = None      # 경로 길이 상한 커리큘럼 (None = 끔), 학습 스크립트가 바꾼다
         self.curriculum_uniform = 0.2    # 커리큘럼 중에도 이 비율은 전체 풀에서 균일 (contract §10)
+        # 리셋 때 v_cap: 확률 vcap_p_nominal 로 cfg.v_cap, 나머지는 U[vcap_lo, vcap_hi] (관측 블록
+        # timing 에 v_cap/2.0 이 있어 정책이 안다). 학습 스크립트의 속도 상한 커리큘럼이 바꾼다.
+        self.vcap_p_nominal = 1.0
+        self.vcap_lo = self.vcap_hi = float(cfg.v_cap)
         P = cfg.path_pad
         if int(self.pool_n.max()) > P:
             raise ValueError(f'경로 점 {int(self.pool_n.max())} > path_pad {P}')
@@ -387,7 +391,9 @@ class AmrNavEnv(DirectRLEnv):
         self.in_dev[env_ids] = False
         self.zone[env_ids] = C.ZONE_CLEAR
         self.speed_limit[env_ids] = math.inf
-        self.v_cap[env_ids] = self.cfg.v_cap
+        vc = self.vcap_lo + (self.vcap_hi - self.vcap_lo) * torch.rand(n, device=dev, dtype=F64)
+        nominal = torch.rand(n, device=dev) < self.vcap_p_nominal
+        self.v_cap[env_ids] = torch.where(nominal, torch.full_like(vc, self.cfg.v_cap), vc)
         self.stall_xy[env_ids] = pts[:, 0]
         self.ep_cost[env_ids] = 0.0
         self.ep_return[env_ids] = 0.0

@@ -24,6 +24,10 @@ ap.add_argument('--chunk', type=int, default=10)
 ap.add_argument('--seed', type=int, default=0)
 ap.add_argument('--run', default='ppo_b_s0')
 ap.add_argument('--no_dr', action='store_true')
+ap.add_argument('--vcap_curriculum', default='',
+                help="v_cap 커리큘럼 'LO:HI0:N0:N1:P1' — 반복 N0 까지 v_cap ~ U[LO, HI0], "
+                     "N1 까지 상한을 명목값(1.0)으로·명목 비율을 P1 로 선형, 빈 값 = 끔")
+ap.add_argument('--entropy', type=float, default=None)
 ap.add_argument('--curriculum', default='',
                 help="경로 길이 상한 커리큘럼 'L0:L1:N' — 반복 N 까지 L0→L1 m 선형, 빈 값 = 끔")
 ap.add_argument('--root', default='/home/CAPYI_AI/runs/r1-isaac/train')
@@ -85,6 +89,8 @@ def main():
     agent.seed = args.seed
     agent.max_iterations = args.iterations
     agent.device = 'cuda:0'
+    if args.entropy is not None:
+        agent.algorithm.entropy_coef = args.entropy
     t0 = time.time()
     env = AmrNavEnv(env_cfg)
     venv = RslRlVecEnvWrapper(env, clip_actions=agent.clip_actions)
@@ -98,10 +104,16 @@ def main():
     it = 0
     t_train = time.time()
     cur = [float(x) for x in args.curriculum.split(':')] if args.curriculum else None
+    vc = [float(x) for x in args.vcap_curriculum.split(':')] if args.vcap_curriculum else None
     while it < args.iterations:
         n = min(args.chunk, args.iterations - it)
         if cur:
             env.curriculum_lmax = cur[0] + (cur[1] - cur[0]) * min(1.0, it / cur[2])
+        if vc:
+            f = min(1.0, max(0.0, (it - vc[2]) / max(vc[3] - vc[2], 1.0)))
+            env.vcap_lo = vc[0]
+            env.vcap_hi = vc[1] + (env_cfg.v_cap - vc[1]) * f
+            env.vcap_p_nominal = vc[4] * f
         tc = time.time()
         runner.learn(num_learning_iterations=n, init_at_random_ep_len=False)
         torch.cuda.synchronize()
@@ -123,6 +135,7 @@ def main():
             'action_std': [round(float(v), 4) for v in torch.exp(pol.log_std).tolist()],
             'lr': runner.alg.learning_rate,
             'curriculum_lmax': env.curriculum_lmax,
+            'vcap': [env.vcap_lo, env.vcap_hi, env.vcap_p_nominal],
             'torch_max_alloc_MiB': gpu_mem_mib()[0], 'torch_reserved_MiB': gpu_mem_mib()[1],
         }
         curve.write(json.dumps(rec) + '\n')
@@ -145,7 +158,9 @@ def main():
                'env_steps': it * steps_per_iter, 'setup_s': round(setup_s, 1),
                'train_wall_s': round(time.time() - t_train, 1),
                'policy_vs_rsl_mu_max_abs_diff': diff, 'seed': args.seed,
-               'dr': not args.no_dr, 'curriculum': args.curriculum}
+               'dr': not args.no_dr, 'curriculum': args.curriculum,
+               'vcap_curriculum': args.vcap_curriculum,
+               'entropy_coef': agent.algorithm.entropy_coef}
     with open(os.path.join(out, 'summary.json'), 'w') as f:
         json.dump(summary, f, indent=1)
     print('TRAIN_DONE ' + json.dumps(summary), flush=True)
