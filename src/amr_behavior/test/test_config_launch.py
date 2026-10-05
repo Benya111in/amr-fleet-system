@@ -89,7 +89,7 @@ def test_launch_arguments_and_nodes():
     names = {a.name for a in ld.entities if hasattr(a, 'name')}
     for arg in ('namespace', 'use_sim_time', 'params_file', 'groot_publisher_port',
                 'groot_server_port', 'waiting_pose', 'frame_prefix', 'start_battery_model',
-                'battery_initial_percent'):
+                'battery_initial_percent', 'traffic_hold_policy'):
         assert arg in names
     context = LaunchContext()
     context.launch_configurations.update({
@@ -97,7 +97,8 @@ def test_launch_arguments_and_nodes():
         'params_file': CONFIG, 'robot_params_file': '', 'frame_prefix': 'auto',
         'groot_publisher_port': '1668', 'groot_server_port': '1669',
         'waiting_pose': '1.0, 2.0, 0.5', 'start_executor': 'true', 'start_docking': 'true',
-        'start_battery_model': 'true', 'battery_initial_percent': '25', 'log_level': 'debug'})
+        'start_battery_model': 'true', 'battery_initial_percent': '25', 'log_level': 'debug',
+        'traffic_hold_policy': ''})
     nodes = module._launch_setup(context)
     assert len(nodes) == 3
     assert all(isinstance(n, Node) for n in nodes)
@@ -110,6 +111,13 @@ def test_launch_arguments_and_nodes():
     assert executor['waiting_pose'] == [1.0, 2.0, 0.5]
     assert docking['base_frame'] == 'amr_02/base_link'
     assert battery['initial_percent'] == 25.0 and battery['use_sim_time'] is False
+    assert 'traffic_hold.policy' not in executor            # '' = behavior.yaml (auto)
+    values['traffic_hold_policy'] = 'required'               # 교통 관리자를 함께 띄우는 런치
+    executor, _, _ = module._overrides(lambda name: values[name], 'amr_02/')
+    assert executor['traffic_hold.policy'] == 'required'
+    values['traffic_hold_policy'] = 'on'
+    with pytest.raises(ValueError):
+        module._overrides(lambda name: values[name], 'amr_02/')
     context.launch_configurations.update({'start_docking': 'false', 'start_battery_model': 'false',
                                           'battery_initial_percent': ''})
     assert len(module._launch_setup(context)) == 1

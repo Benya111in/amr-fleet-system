@@ -15,6 +15,9 @@
     start_battery_model      시뮬레이션 배터리 battery_model_node (기본 true, 실기·다른 battery_state 발행자가
                              있으면 false)
     battery_initial_percent  시작 잔량 [%] ('' = params_file 값, 충전 경로 시험용)
+    traffic_hold_policy      auto | required ('' = params_file 값 auto). traffic/hold 첫 값을 받기 전 규칙:
+                             교통 관리자(traffic_manager_node)를 함께 띄운다고 아는 런치는 required 를 준다
+                             (docs/research/fleet-traffic-deadlock/hold_failsafe.md)
     log_level                기본 info
 """
 
@@ -57,6 +60,11 @@ def _overrides(arg, frame_prefix: str):
     waiting = _parse_pose(arg('waiting_pose'))
     if waiting is not None:
         executor['waiting_pose'] = waiting
+    policy = arg('traffic_hold_policy').strip()
+    if policy:
+        if policy not in ('auto', 'required'):
+            raise ValueError(f'traffic_hold_policy 는 auto | required: {policy!r}')
+        executor['traffic_hold.policy'] = policy
     docking = {'use_sim_time': use_sim_time, 'base_frame': f'{frame_prefix}base_link'}
     battery = {'use_sim_time': use_sim_time}
     if arg('battery_initial_percent').strip():
@@ -118,6 +126,8 @@ def generate_launch_description():
         DeclareLaunchArgument('start_docking', default_value='true'),
         DeclareLaunchArgument('start_battery_model', default_value='true'),
         DeclareLaunchArgument('battery_initial_percent', default_value=''),
+        DeclareLaunchArgument('traffic_hold_policy', default_value='',
+                              description="auto | required ('' = params_file)"),
         DeclareLaunchArgument('log_level', default_value='info'),
         OpaqueFunction(function=_launch_setup),
     ])
