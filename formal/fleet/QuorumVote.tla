@@ -327,4 +327,21 @@ NoStrandedCommit == \A v \in Robots, z \in Zones : ~Stranded(v, z)
 
 Symm == Permutations(Robots) \cup Permutations(Zones)
 
+(***************************************************************************)
+(* 상태 축약용 VIEW (TLC 가 상태 동일성을 이 값으로 판단한다).              *)
+(* 요청 id 는 로봇마다 단조 증가하므로 (inc 영속·증가, seq 증가), 요청자의  *)
+(* cur 와 다른 rid 의 VOTE/ACK 는 다시는 어떤 동작의 가드에도 쓰이지 않는다 *)
+(* (SendEnter/EnterZone/EnterOnePhase 는 cur[r] 의 것만 센다). 그런 죽은     *)
+(* 메시지만 빼고 본다. REQ/ENTER/ABANDON/RELEASE 는 투표자가 늦게 받을 수   *)
+(* 있으므로 남긴다. noRidCheck(다른 rid 의 ACK 를 셈)·volatileInc(rid 재사용) *)
+(* 변이에서는 이 전제가 깨지므로 VIEW 를 쓰지 않는다 (cfg 에서 뺀다).        *)
+(***************************************************************************)
+LiveMsg(m) ==
+  m.type \in {"vote", "ack"} => (cur[m.rid[1]] = m.rid)
+
+View == <<vote, done, phase, cur, curS, inc, seq,
+          {m \in msgs : LiveMsg(m)}, nreqs, ncrash>>
+
+ASSUME TRUE  \* (VIEW 사용 조건은 위 주석과 README 참고)
+
 =============================================================================
