@@ -21,6 +21,8 @@
 namespace py = pybind11;
 namespace core = amr_navigation::core;
 
+void registerSafety(py::module_ & m);   // safety_py.cpp
+
 namespace
 {
 using U8Array = py::array_t<uint8_t, py::array::c_style | py::array::forcecast>;
@@ -139,4 +141,5 @@ PYBIND11_MODULE(amr_core_py, m)
   m.attr("LETHAL") = static_cast<int>(core::kLethalObstacle);
   m.attr("UNKNOWN") = static_cast<int>(core::kNoInformation);
   m.attr("INSCRIBED") = static_cast<int>(core::kInscribedInflated);
+  registerSafety(m);
 }

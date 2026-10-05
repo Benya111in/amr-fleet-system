@@ -83,6 +83,19 @@ def path_cum(pts, n):
 
 
 # ------------------------------------------------------------------ 기하
+def first_true(m):
+    """
+    행마다 첫 참 인덱스 [N] (참이 없으면 0).
+
+    argmax 를 쓰지 않는다: torch.compile(inductor) 의 argmax 가 동률 행에서 첫 인덱스가 아닌(심지어 값이 0 인)
+    인덱스를 돌려준 사례를 2026-10-06 이 컨테이너에서 확인했다 (경로 투영 s 가 6.4 m → 0). min 축약은 안전하다.
+    """
+    k = torch.arange(m.shape[1], device=m.device)
+    big = torch.full_like(k, m.shape[1])
+    i = torch.where(m, k[None, :], big[None, :]).min(dim=1).values
+    return torch.where(i >= m.shape[1], torch.zeros_like(i), i)
+
+
 def wrap_angle(a):
     """[−π, π) 로 감는다 (geometry.wrap_angle)."""
     return torch.remainder(a + math.pi, 2.0 * math.pi) - math.pi
@@ -171,7 +184,7 @@ def project_onto_path(pts, n, cum, p):
     d = torch.where(valid, d, torch.full_like(d, INF))
     dmin = d.min(dim=1).values
     first = d <= (dmin + 1e-12)[:, None]
-    i = torch.argmax(first.to(torch.int8), dim=1)
+    i = first_true(first)
     gi = i[:, None]
     s = cum.gather(1, gi)[:, 0].nan_to_num(posinf=0.0) + u.gather(1, gi)[:, 0] * torch.sqrt(
         ln2_safe.gather(1, gi)[:, 0])
@@ -228,11 +241,17 @@ def remaining_arc(pts, n, cum, length, xy):
 
 
 # ------------------------------------------------------------------ LiDAR
+_TRIG = {}
+
+
 def beam_trig(device, dtype):
-    """빔 각의 (cos, sin) [720]."""
-    idx = torch.arange(C.LIDAR_SAMPLES, dtype=torch.float64)
-    ang = C.LIDAR_ANGLE_MIN + idx * C.LIDAR_ANGLE_INC
-    return torch.cos(ang).to(device, dtype), torch.sin(ang).to(device, dtype)
+    """빔 각의 (cos, sin) [720] — 장치·dtype 별로 한 번 계산해 둔다 (컴파일 그래프에서는 상수)."""
+    key = (str(device), dtype)
+    if key not in _TRIG:
+        idx = torch.arange(C.LIDAR_SAMPLES, dtype=torch.float64)
+        ang = C.LIDAR_ANGLE_MIN + idx * C.LIDAR_ANGLE_INC
+        _TRIG[key] = (torch.cos(ang).to(device, dtype), torch.sin(ang).to(device, dtype))
+    return _TRIG[key]
 
 
 def scan_points(ranges):
@@ -420,7 +439,7 @@ def nearest_cell(a_v, a_w, mask=None, fallback_accel=None):
         d = torch.where(mask.bool(), d, torch.full_like(d, INF))
     # 순차 규칙 "d < best − 1e-12 일 때만 교체" 와 같게: 최소 + 1e-12 이하인 첫 인덱스
     dmin = d.min(dim=1).values
-    return torch.argmax((d <= (dmin + 1e-12)[:, None]).to(torch.int8), dim=1)
+    return first_true(d <= (dmin + 1e-12)[:, None])
 
 
 def bc_label(v_dwa, w_dwa, v_cmd, w_cmd, mask):
