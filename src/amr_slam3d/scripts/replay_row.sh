@@ -9,8 +9,15 @@
 #       ros2 bag play (행의 토픽만 — 기록된 /clock 포함, --clock 은 쓰지 않는다: rows.py 머리말) → 마무리(지도 저장) →
 #       probe 종료(probe.json·traj_online.tum·map_world.*) → 로그 판정(log_scan.json) → 처리 누락 판정
 #       (match_*.json: 입력 bag ↔ out_bag, C++ 기록기) → 최적화 궤적·점 지도를 월드로 (traj_final.tum, cloud_world.ply).
-# 환경: ROS_DOMAIN_ID·ROS_LOCALHOST_ONLY 는 호출자가 준다 (컨테이너마다 격리).
+# 환경: ROS_DOMAIN_ID·ROS_LOCALHOST_ONLY 는 호출자가 준다 (컨테이너마다 격리). 컨테이너 /dev/shm 은 2 GiB 이상
+# (docker --shm-size) — 아래 Fast DDS 프로파일이 참가자마다 16 MB SHM 세그먼트를 잡는다.
 set -eo pipefail
+
+# 큰 점군(0.8 MB)을 SHM 한 조각으로 보낸다. 기본 SHM 세그먼트(0.5 MB)에 안 들어가면 UDP 조각 전송으로 떨어지고,
+# best-effort 구독(LIO-SAM 점군 구독 = best-effort 깊이 5)은 조각 하나만 잃어도 표본을 버린다 [측정: liosam_noloop
+# v2 재생 — 1 788 장 중 imageProjection 출력 523 장]. 세그먼트 크기는 쓰는 쪽(bag play)이 정하므로 컨테이너 전체에
+# 준다 — 통합 런치가 쓰는 것과 같은 파일 (amr_bringup config, perception.md §8.2 의 영상 실측과 같은 원인).
+export FASTRTPS_DEFAULT_PROFILES_FILE=${FASTRTPS_DEFAULT_PROFILES_FILE:-/ros2_ws/src/amr_bringup/config/fastdds_multi_robot_localhost.xml}
 
 ROW=${1:?행 (rtabmap3d | rtabmap2d | slam_toolbox | liosam_loop | liosam_noloop)}
 BAG=${2:?bag 디렉터리}
@@ -51,6 +58,7 @@ EOF
 {
   echo "date: $(date -Iseconds) row=$ROW bag=$BAG rate=$RATE settle=$SETTLE"
   echo "GIT_HEAD=${GIT_HEAD:-} ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-} ROS_LOCALHOST_ONLY=${ROS_LOCALHOST_ONLY:-}"
+  echo "FASTRTPS_DEFAULT_PROFILES_FILE=$FASTRTPS_DEFAULT_PROFILES_FILE shm=$(df -h /dev/shm | tail -1)"
   echo "launch: $LAUNCH"
   echo "play_topics: $PLAY_TOPICS"
   echo "spawn_pose: $POSE anchors: ${ANCHORS[*]}"

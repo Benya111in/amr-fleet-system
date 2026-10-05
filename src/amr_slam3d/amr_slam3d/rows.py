@@ -41,6 +41,10 @@ class Row:
     # (부모, 자식, via) — via '' = 스폰 자세 그대로, 'a>b' = 스폰 ⊕ TF(a→b) (LIO-SAM 오도메트리 원점 = LiDAR)
     fatal_patterns: Tuple[str, ...] = ()
     note_patterns: Tuple[str, ...] = ()
+    # 노드가 처리한 프레임마다 한 줄 찍는 로그 문구 — 처리 수의 1 차 근거. 출력 토픽을 받아 세면 발행자 큐
+    # (RTAB-Map odom 은 reliable keep_last 1)가 부하 때 덮여 구독자마다 다른 수가 나온다 [측정: rtabmap3d
+    # v2 재생 — 로그 1 785 줄, 측정 노드 1 607 개, C++ 기록기 1 586 개]
+    log_processed: str = ''
     extra: Dict[str, str] = field(default_factory=dict)
 
 
@@ -63,6 +67,10 @@ LIOSAM_PROCESSED = (('/lio_sam/deskew/cloud_deskewed', 'cloud', 'reliable'),
 LIOSAM_ANCHORS = (('map', 'slam_map', ''),
                   ('slam_map', f'{ROBOT}/liosam_odom',
                    f'{ROBOT}/base_footprint>{ROBOT}/lidar3d_link'))
+#: icp_odometry 가 처리한 스캔마다 찍는 줄 (ratio=0 이면 정합 실패 null odom)
+RTABMAP_PROCESSED = 'Odom: ratio='
+#: IMU 동기 때문에 버린 스캔 — "We didn't receive IMU newer than previous image/scan … is dropped!"
+RTABMAP_NOTE = ("didn't receive IMU newer", 'Odom: ratio=0.000000')
 RTABMAP_FATAL = ('Failed to deskew', 'aborting odometry update', 'InvalidParameterTypeException',
                  'Odometry lost')
 
@@ -72,13 +80,15 @@ ROWS: Dict[str, Row] = {
         launch='amr_slam3d rtabmap.launch.py dim:=3d',
         play_topics=CLOCK + TF + (CLOUD, IMU_MADGWICK), input_topic=CLOUD, input_kind='cloud',
         map_topic=f'{_R}/map', processed=((f'{_R}/icp_odom', 'odom', 'reliable'),),
-        fatal_patterns=RTABMAP_FATAL),
+        fatal_patterns=RTABMAP_FATAL, note_patterns=RTABMAP_NOTE,
+        log_processed=RTABMAP_PROCESSED),
     'rtabmap2d': Row(
         name='rtabmap2d', image='amr-ai/slam:0.1',
         launch='amr_slam3d rtabmap.launch.py dim:=2d',
         play_topics=CLOCK + TF + (SCAN, IMU_MADGWICK), input_topic=SCAN, input_kind='scan',
         map_topic=f'{_R}/map', processed=((f'{_R}/icp_odom', 'odom', 'reliable'),),
-        fatal_patterns=RTABMAP_FATAL),
+        fatal_patterns=RTABMAP_FATAL, note_patterns=RTABMAP_NOTE,
+        log_processed=RTABMAP_PROCESSED),
     'slam_toolbox': Row(
         name='slam_toolbox', image='amr-ai/slam:0.1',
         launch='amr_slam3d slam_toolbox.launch.py',
@@ -132,5 +142,8 @@ def scan_log(text: str, r: Row) -> Dict[str, Dict[str, int]]:
     """로그 본문에서 행의 치명·참고·공통 패턴 출현 수."""
     def count(pats: List[str]) -> Dict[str, int]:
         return {p: text.count(p) for p in pats}
-    return {'fatal': count(list(r.fatal_patterns)), 'note': count(list(r.note_patterns)),
-            'common': count([p for p in COMMON_PATTERNS if p not in r.fatal_patterns])}
+    out = {'fatal': count(list(r.fatal_patterns)), 'note': count(list(r.note_patterns)),
+           'common': count([p for p in COMMON_PATTERNS if p not in r.fatal_patterns])}
+    if r.log_processed:
+        out['processed_log_lines'] = text.count(r.log_processed)
+    return out

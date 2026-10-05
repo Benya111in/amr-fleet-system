@@ -142,3 +142,12 @@ def test_scan_log_counts_patterns():
     s = rows.scan_log('x Failed to deskew input cloud y\nFailed to deskew', r)
     assert s['fatal']['Failed to deskew'] == 2
     assert s['fatal']['aborting odometry update'] == 0
+
+
+def test_scan_log_counts_processed_lines():
+    r = rows.row('rtabmap2d')
+    text = 'Odom: ratio=0.5 x\nOdom: ratio=0.000000 y\nWe didn\'t receive IMU newer than previous'
+    s = rows.scan_log(text, r)
+    assert s['processed_log_lines'] == 2
+    assert s['note']['Odom: ratio=0.000000'] == 1 and s['note']["didn't receive IMU newer"] == 1
+    assert 'processed_log_lines' not in rows.scan_log(text, rows.row('liosam_loop'))
