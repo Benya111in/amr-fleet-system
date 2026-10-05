@@ -2,9 +2,12 @@
 
 r1(Isaac)·r2(2D)가 내보내는 정책과 r3(`src/amr_rl_controller`, ONNX Runtime C++ 1.23.2 `/opt/onnxruntime`)가
 읽는 정책의 인터페이스. 관측·행동의 의미는 [`contract.md`](contract.md) §4–§5 가 정한다.
-고정물 `onnx/fixtures/fixture_{b,c}.onnx` 는 **이 계약을 지키는 가짜 정책**(시드 고정 난수 가중치, 학습 안 함)이고
-`fixture_expected.json` 은 golden decision 14 사례의 obs·mask 에 대한 onnxruntime(CPU) 출력이다 — r3 는 학습된
-정책을 기다리지 않고 C++ 에서 같은 출력이 나오는지 시험할 수 있다 (`onnx/make_fixtures.py`, `tests/test_onnx_fixtures.py`).
+고정물 `fixture_{b,c}.onnx` 는 **이 계약을 지키는 가짜 정책**(시드 고정 난수 가중치, 학습 안 함)이고
+`onnx/fixtures/fixture_expected.json` 은 golden decision 14 사례의 obs·mask 에 대한 onnxruntime(CPU) 출력이다 —
+r3 는 학습된 정책을 기다리지 않고 C++ 에서 같은 출력이 나오는지 시험할 수 있다.
+저장소 `.gitignore:43` 이 `*.onnx` 를 무시하므로 **모델 파일은 커밋하지 않는다**. `amr-ai/rl:0.3` 안에서
+`python3 rl/contract/onnx/make_fixtures.py [출력 디렉터리]` 로 만든다 (기본 `rl/contract/onnx/fixtures/`, torch 2.11 CPU
+에서 결정적 — `tests/test_onnx_fixtures.py` 가 다시 만든 모델의 출력이 커밋된 JSON 과 1e-5 안에서 같음을 확인한다).
 
 ## 공통
 

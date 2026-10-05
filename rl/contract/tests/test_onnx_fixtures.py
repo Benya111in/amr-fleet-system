@@ -1,4 +1,9 @@
-"""ONNX 입출력 계약 고정물 시험 (torch·onnx·onnxruntime 이 있을 때만)."""
+"""
+ONNX 입출력 계약 고정물 시험 (torch·onnx·onnxruntime 이 있을 때만).
+
+`.gitignore` 가 `*.onnx` 를 무시하므로 고정물 모델은 커밋하지 않는다. 시험마다 `make_fixtures.export` 로
+임시 디렉터리에 다시 만들고(시드 고정, 결정적), 커밋된 `fixture_expected.json` 과 출력을 비교한다.
+"""
 
 import json
 import os
@@ -12,9 +17,16 @@ from amr_rl_contract.observation import OBS_DIM
 ort = pytest.importorskip('onnxruntime')
 onnx = pytest.importorskip('onnx')
 pytest.importorskip('torch')
+import make_fixtures as mf  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-FIX = os.path.join(os.path.dirname(HERE), 'onnx', 'fixtures')
+EXPECTED = os.path.join(os.path.dirname(HERE), 'onnx', 'fixtures', 'fixture_expected.json')
+
+
+@pytest.fixture(scope='module')
+def models(tmp_path_factory):
+    """임시 디렉터리에 고정물 두 개를 만든다."""
+    return mf.export(str(tmp_path_factory.mktemp('onnx')))
 
 
 def _io(path):
@@ -28,8 +40,8 @@ def _io(path):
     return m, ins, outs, meta
 
 
-def test_b_signature():
-    m, ins, outs, meta = _io(os.path.join(FIX, 'fixture_b.onnx'))
+def test_b_signature(models):
+    m, ins, outs, meta = _io(models[0])
     assert m.opset_import[0].version == 17
     assert ins == [('obs', onnx.TensorProto.FLOAT, ['batch', OBS_DIM])]
     assert [(n, t) for n, t, _ in outs] == [('action', 1), ('mu', 1), ('log_std', 1)]
@@ -38,8 +50,8 @@ def test_b_signature():
     assert meta['normalization'] == 'inside'
 
 
-def test_c_signature():
-    m, ins, outs, meta = _io(os.path.join(FIX, 'fixture_c.onnx'))
+def test_c_signature(models):
+    m, ins, outs, meta = _io(models[1])
     assert ins == [('obs', onnx.TensorProto.FLOAT, ['batch', OBS_DIM]),
                    ('mask', onnx.TensorProto.FLOAT, ['batch', C.N_ACTIONS_C])]
     assert outs == [('logits', onnx.TensorProto.FLOAT, ['batch', C.N_ACTIONS_C]),
@@ -47,12 +59,10 @@ def test_c_signature():
     assert meta['fallback_index'] == str(C.FALLBACK_INDEX)
 
 
-def test_expected_outputs_and_mask_respected():
-    with open(os.path.join(FIX, 'fixture_expected.json'), encoding='utf-8') as f:
+def test_expected_outputs_and_mask_respected(models):
+    with open(EXPECTED, encoding='utf-8') as f:
         exp = json.load(f)
-    import make_fixtures as mf
-    rows = mf.run_ort(os.path.join(FIX, 'fixture_b.onnx'), os.path.join(FIX, 'fixture_c.onnx'),
-                      mf.golden_inputs())
+    rows = mf.run_ort(models[0], models[1], mf.golden_inputs())
     assert len(rows) == len(exp['rows']) >= 14
     for a, b in zip(rows, exp['rows']):
         assert a['name'] == b['name'] and a['c_action'] == b['c_action']
@@ -61,9 +71,8 @@ def test_expected_outputs_and_mask_respected():
         assert b['c_logits_valid'][b['c_action']] is not None     # 선택 = 유효 셀
 
 
-def test_fallback_only_mask_selects_fallback():
-    sess = ort.InferenceSession(os.path.join(FIX, 'fixture_c.onnx'),
-                                providers=['CPUExecutionProvider'])
+def test_fallback_only_mask_selects_fallback(models):
+    sess = ort.InferenceSession(models[1], providers=['CPUExecutionProvider'])
     rng = np.random.default_rng(0)
     obs = rng.normal(0, 1, (16, OBS_DIM)).astype(np.float32)
     mask = np.zeros((16, C.N_ACTIONS_C), dtype=np.float32)
@@ -74,14 +83,3 @@ def test_fallback_only_mask_selects_fallback():
     mask[:, C.FALLBACK_INDEX] = 1.0
     _, act = sess.run(None, {'obs': obs, 'mask': mask})
     assert np.all(mask[np.arange(16), act] == 1.0)
-
-
-def test_regenerated_fixtures_match(tmp_path):
-    import make_fixtures as mf
-    b, c = mf.export(str(tmp_path))
-    ins = mf.golden_inputs()
-    new = mf.run_ort(b, c, ins)
-    old = mf.run_ort(os.path.join(FIX, 'fixture_b.onnx'), os.path.join(FIX, 'fixture_c.onnx'), ins)
-    for a, o in zip(new, old):
-        assert a['c_action'] == o['c_action']
-        assert np.allclose(a['b_mu'], o['b_mu'], atol=1e-6)
