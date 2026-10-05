@@ -41,8 +41,9 @@ formal/fleet/run_tlc.sh QuorumVote cfg/QV_N3_Z2_R3_C1_view.cfg
 formal/fleet/run_queue.sh QuorumVote:cfg/QV_N5_Z1_R2_C1_view.cfg TaskLock:cfg/TL_N3_T2_R3_C1.cfg
 # 위반 트레이스 뽑기 (traces/<cfg 이름>.txt — 바뀐 변수만 보이는 요약 + TLC 원문)
 formal/fleet/extract_trace.sh /home/CAPYI_AI/logs/agents/f2-tla/tlc/RA_report_N5.log
-# 결과 표 (§6 은 이 출력을 붙인 것이다)
+# 결과 표 한 번 보기 / README §6 다시 만들기
 python3 formal/fleet/summarize.py /home/CAPYI_AI/logs/agents/f2-tla/tlc
+python3 formal/fleet/update_readme_results.py
 ```
 
 환경 변수: `WORKERS`(≤ 4), `HEAP`, `TLC_TIMEOUT`(초), `TLA_JAR`, `OUT_DIR`, `IMAGE`. 로그 머리에
@@ -190,10 +191,12 @@ f3-cbaa 의 `negotiation/agent.py:263-268`(`_drop_assigned`)은 시작 전 `pend
 
 ## 6. 결과
 
-[측정] 모든 수치는 `summarize.py` 가 로그(`/home/CAPYI_AI/logs/agents/f2-tla/tlc/<cfg>.log`)에서 뽑은 것이다.
+[측정] 모든 수치는 `summarize.py` 가 로그(`/home/CAPYI_AI/logs/agents/f2-tla/tlc/<cfg>.log`)에서
+뽑은 것이다 (이 절은 `update_readme_results.py` 가 다시 만든다).
 cfg 이름: `<모델>_N<로봇>_Z<구역>|T<작업>_R<전체 요청 상한>_C<전체 크래시 상한>[_<변이/변형>][_view]`.
-"wall s" 는 공유 서버(32 코어, 시작 1 분 loadavg 열 참고) 위 4 작업자 기준 **예비값**이다. "깊이" 는 위반이면 반례까지의
-BFS 깊이, 위반 없음이면 상태 그래프 전체의 깊이다. spec sha256 열의 스펙 판은 커밋으로 찾을 수 있다 (§6.7).
+"wall s" 는 공유 서버(32 코어, 시작 1 분 loadavg 열 참고) 위 4 작업자 기준 **예비값**이다.
+"깊이" 는 위반이면 반례까지의 BFS 깊이, 위반 없음이면 상태 그래프 전체의 깊이다.
+spec sha256 열의 스펙 판은 커밋으로 찾을 수 있다 (§6.7).
 
 ### 6.1 RA_LiveMembers (생존 멤버 RA 변형)
 
@@ -215,7 +218,7 @@ BFS 깊이, 위반 없음이면 상태 그래프 전체의 깊이다. spec sha25
 | QV_N3_Z1_R2_C2_view | 위반 없음 (전수) | 930738 | 90981 | 30 | 8 | 36.85 | 1ab2620fb436 |
 | QV_N3_Z2_R3_C1_view | 위반 없음 (전수) | 410010263 | 26007001 | 42 | 1768 | 62.45 | 886be4a88678 |
 | QV_N5_Z1_R2_C1_view | 위반 없음 (전수) | 13523949 | 913764 | 41 | 402 | 35.28 | 1ab2620fb436 |
-| QV_N5_Z2_R2_C1_view | 로그 없음 | | | | | | |
+| QV_N5_Z2_R2_C1_view | 미완 (시간 상한/중단, rc=없음) | - | >=948,743 | >=17 |  | 53.87 | 1ab2620fb436 |
 
 ### 6.3 QuorumVote 가드 변이
 
@@ -241,7 +244,8 @@ BFS 깊이, 위반 없음이면 상태 그래프 전체의 깊이다. spec sha25
 | QV_N3_Z1_R2_C1_dead_report_view | 위반 NoDeadZone (트레이스 8 상태) | 13643 | 3571 | 8 | 1 | 48.74 | 1ab2620fb436 |
 | QV_N3_Z1_R2_C1_dead_fixA_view | 위반 NoDeadZone (트레이스 12 상태) | 266875 | 42896 | 12 | 5 | 48.74 | 1ab2620fb436 |
 | QV_N3_Z1_R2_C1_dead_fixB_view | 위반 없음 (전수) | 796304 | 96598 | 25 | 10 | 47.72 | 1ab2620fb436 |
-| QV_N3_Z2_R3_C1_fixB_view | 미완 (시간 상한/중단, rc=없음) | - | >=2,934,527 | >=13 |  | 72.40 | 1ab2620fb436 |
+| QV_N3_Z2_R2_C1_fixB_view | 위반 없음 (전수) | 6070222 | 592539 | 25 | 22 | 15.90 | 1ab2620fb436 |
+| QV_N3_Z1_R3_C1_fixB_view | 미완 (시간 상한/중단, rc=없음) | - | >=106,800 | >=12 |  | 15.77 | 1ab2620fb436 |
 
 ### 6.5 TaskLock
 
@@ -250,7 +254,7 @@ BFS 깊이, 위반 없음이면 상태 그래프 전체의 깊이다. spec sha25
 | TL_N3_T1_R2_C1 | 위반 없음 (전수) | 2527897 | 364626 | 32 | 18 | 90.21 | 290b7fafd0fa |
 | TL_N3_T1_R2_C1_view | 위반 없음 (전수) | 192652 | 28400 | 26 | 3 | 41.49 | 7ec69a1f8222 |
 | TL_N5_T1_R2_C1_view | 위반 없음 (전수) | 5383998 | 528047 | 37 | 114 | 39.61 | 7ec69a1f8222 |
-| TL_N3_T2_R3_C1_view | 미완 (시간 상한/중단, rc=없음) | - | >=4,213,891 | >=20 |  | 38.75 | 7ec69a1f8222 |
+| TL_N3_T2_R3_C1_view | 위반 없음 (전수) | 160577958 | 14775337 | 39 | 559 | 38.75 | 7ec69a1f8222 |
 | TL_N3_T1_R2_C1_forget | 위반 AtMostOnce (트레이스 18 상태) | 930304 | 170069 | 18 | 9 | 100.71 | 290b7fafd0fa |
 | TL_N3_T1_R2_C0_expireCommitted | 위반 AtMostOnce (트레이스 18 상태) | 317816 | 58407 | 18 | 4 | 92.57 | 290b7fafd0fa |
 | TL_N3_T1_R2_C0_releaseAfterDone | 위반 AtMostOnce (트레이스 19 상태) | 210067 | 40247 | 20 | 4 | 86.92 | 290b7fafd0fa |
@@ -264,6 +268,7 @@ BFS 깊이, 위반 없음이면 상태 그래프 전체의 깊이다. spec sha25
 | QV_N3_Z2_R3_C1_volatileInc.outer-timeout-killed | 미완 (시간 상한/중단, rc=없음) | - | >=14,264,863 | >=18 |  | 68.00 | 1a25ba07b50a |
 | TL_N3_T2_R3_C1.noview-killed | 미완 (시간 상한/중단, rc=143) | - | >=27,262,191 | >=19 | 638 | 50.76 | 290b7fafd0fa |
 | TL_N5_T1_R2_C1.noview-killed | 미완 (시간 상한/중단, rc=143) | - | >=15,725 | >=11 | 12 | 43.68 | 7ec69a1f8222 |
+| QV_N3_Z2_R3_C1_fixB_view.reprioritized-killed | 미완 (시간 상한/중단, rc=143) | - | >=5,417,472 | >=14 | 140 | 72.40 | 1ab2620fb436 |
 
 ### 6.7 스펙 판과 실행 메모
 
@@ -276,15 +281,19 @@ BFS 깊이, 위반 없음이면 상태 그래프 전체의 깊이다. spec sha25
 | 290b7fafd0fa | TaskLock.tla @ 68fcc1d | — |
 | 7ec69a1f8222 | TaskLock.tla @ ab7cdaf | `LiveMsg`·`View` 정의 추가만 (Init/Next 동일) |
 
-판 사이의 차이는 `git diff` 로 확인했고 지운 줄이 없다 (추가만). 그래서 같은 cfg 의 상태 수는 판과 무관하다.
+판 사이의 차이는 `git diff` 로 확인했고 지운 줄이 없다 (추가만).
+그래서 같은 cfg 의 상태 수는 판과 무관하다.
 
-- `QV_N3_Z2_R3_C1_view` 로그 끝의 `rc=127` 은 TLC 가 아니라 **실행 스크립트** 쪽이다: 실행 중에 `run_tlc.sh` 를 고쳐서
-  bash 가 바뀐 파일의 엉뚱한 줄(`h: command not found`)을 읽었다. TLC 자신은 "Model checking completed. No error has been
-  found." 와 최종 통계를 찍고 끝났다 (29 분 26 초). 이 실행은 입력 사본(`inputs/`) 기능이 들어가기 전이라 사본이 없고,
-  스펙은 sha 로 68fcc1d 의 파일과 같다.
-- 같은 실행의 지문 충돌 확률 추정: optimistic 5.4E-4, actual fingerprints 1.6E-5 (TLC 출력). 다른 실행의 값은 각 로그에 있다.
-- VIEW 없이 돌린 `QV_N3_Z1_R2_C1`(136,276) 과 VIEW 판(30,223)은 둘 다 위반 없음이다. 깊이가 32 → 29 로 줄어드는 것은
-  VIEW 가 같다고 본 상태를 합치기 때문이다.
+- `QV_N3_Z2_R3_C1_view` 로그 끝의 `rc=127` 은 TLC 가 아니라 **실행 스크립트** 쪽이다.
+  실행 중에 `run_tlc.sh` 를 고쳐서 bash 가 바뀐 파일의 엉뚱한 줄
+  (`h: command not found`)을 읽었다. TLC 자신은 "Model checking completed. No error
+  has been found." 와 최종 통계를 찍고 끝났다 (29 분 26 초). 이 실행은 입력 사본
+  (`inputs/`) 기능이 들어가기 전이라 사본이 없고, 스펙은 sha 로 68fcc1d 의 파일과 같다.
+- 같은 실행의 지문 충돌 확률 추정: optimistic 5.4E-4, actual fingerprints 1.6E-5
+  (TLC 출력). 다른 실행의 값은 각 로그에 있다.
+- VIEW 없이 돌린 `QV_N3_Z1_R2_C1`(136,276) 과 VIEW 판(30,223)은 둘 다 위반 없음이다.
+  깊이가 32 → 29 로 줄어드는 것은 VIEW 가 같다고 본 상태를 합치기 때문이다.
+- `*.reprioritized-killed` 는 더 중요한 실행에 CPU 를 넘기려고 직접 멈춘 것이다.
 
 ## 7. 이 결과로 쓸 수 있는 문장 · 쓸 수 없는 문장
 
@@ -297,7 +306,7 @@ BFS 깊이, 위반 없음이면 상태 그래프 전체의 깊이다. spec sha25
 | "서버가 죽어도 한 구역에 두 대가 동시에 '허가'되지 않는다" (조건부 정리) | "보고서의 2단계 투표 설계(정적 과반, 영속 투표, 요청 id·incarnation 으로 묶은 ENTER_ACK)를 TLA+ 로 모델링해 TLC 로 전수 검사했다. 로봇 3대·구역 2·요청 3·크래시-재시작 1, 메시지 유실·중복·재정렬·임의 지연, 투표자별 임의 시점 기한 만료 범위에서 MutualExclusion 위반 없음 (distinct 26,007,001, 깊이 42). 로봇 5대는 구역 1·요청 2·크래시 1 범위에서 위반 없음 (distinct 913,764)." — **유한 범위 모델 검사**이고 증명이 아니다. 정족수 교차 논증(수작업)과 함께 쓴다 |
 | (같은 행, 모델이 공허하지 않다는 근거) | "설계의 가드 6 개 — 투표 영속, 확정 표 비회수, 과반 정족수, 2단계, ACK 의 rid 일치, incarnation 증가 — 를 하나씩 되돌리면 TLC 가 각각 두 대 동시 진입 반례를 낸다 (10–24 상태)." |
 | 앞선 노트의 "생존 멤버 RA" 기각 | "생존 멤버 전원 REPLY + 멤버 ≥ 3 규칙은 유실 없는 채널에서도 생존 견해가 어긋나면 두 대를 들여보낸다. 보고서의 장면({A,B,C} 대 {C,D,E})을 TLC 가 15 상태 반례로 재현했고, 구역 안의 로봇 하나를 한 대가 오탐하는 것만으로도 반례가 나온다 (19 상태). 견해가 늘 전원이면(RA 원형) 같은 범위에서 위반 없음." |
-| "손실이 있어도 중복 실행이 0이다" (엄격 모드에서 설계상 참) | "작업 id 정족수 잠금 모델에서 로봇 3대·작업 1·요청 2·크래시 1 (및 로봇 5대·작업 1·요청 2·크래시 1) 범위, 같은 고장 모델로 픽업 시작이 작업당 2 회 이상인 실행 없음." (작업 2·요청 3 은 §6 표 참고) |
+| "손실이 있어도 중복 실행이 0이다" (엄격 모드에서 설계상 참) | "작업 id 정족수 잠금(2단계 투표, 시작한 작업의 잠금은 묘비로 유지)을 TLA+ 로 모델링해, 로봇 3대·작업 2·요청 3·크래시-재시작 1 (distinct 14,775,337) 과 로봇 5대·작업 1·요청 2·크래시 1 (distinct 528,047) 범위, 같은 고장 모델에서 어떤 작업도 픽업이 두 번 시작되지 않음을 TLC 로 전수 검사했다." 협상(CBAA)이 누구에게 낙찰하든(비결정) 성립한다. 낙관 모드(잠금 없음)의 중복률은 이 모델이 말하지 않는다 |
 | "split-brain 이 없다" — 구역·실행권 부분 | 위 두 문장이 그 범위다. 서버 명령의 epoch 펜싱은 **모델에 없다** |
 
 ### 쓸 수 없는 문장
