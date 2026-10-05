@@ -115,6 +115,17 @@ def test_heartbeat_invalidates_silent_holder(rule):
     assert b.start_round(5) == 't1'                        # 재입찰
 
 
+def test_heartbeat_never_invalidates_locked_task():
+    """실행을 시작한(잠금) 작업은 보유 로봇이 침묵해도 무효화하지 않는다 (픽업 뒤 재할당 금지)."""
+    b = CbaaAgent('b', ['a', 'b'], ['t1'], {'t1': 2.0}, AgentConfig(heartbeat_timeout=2))
+    b.table['t1'] = Bid(LOCKED_COST, 'a')
+    for now in range(1, 10):
+        b.start_round(now)
+        b.finish_round(now)
+    assert not b.is_alive('a', 9)
+    assert b.table['t1'] == Bid(LOCKED_COST, 'a') and b.assigned is None
+
+
 def test_heartbeat_none_keeps_dead_holder_forever():
     agents = make({'a': {'t1': 1.0}, 'b': {'t1': 2.0}}, tasks=('t1',), heartbeat_timeout=None)
     full_round(agents, 1)

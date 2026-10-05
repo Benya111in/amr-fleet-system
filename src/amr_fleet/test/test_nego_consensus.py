@@ -99,6 +99,11 @@ CASES = [
     (16, None, M, math.inf, LOW, s(m=NEW), s(m=OLD), 'update'),
     (16, None, M, math.inf, LOW, s(m=OLD), s(m=NEW), 'leave'),
     (17, None, None, math.inf, math.inf, s(), s(), 'leave'),
+    # 시각이 같으면 "더 새롭다"가 아니다 (엄밀 비교)
+    (3, K, M, HIGH, LOW, s(m=OLD), s(m=OLD), 'leave'),
+    (7, I, M, LOW, LOW, s(m=OLD), s(m=OLD), 'leave'),
+    (10, M, K, LOW, LOW, s(m=OLD), s(m=OLD), 'reset'),
+    (16, None, M, math.inf, LOW, s(m=OLD), s(m=OLD), 'leave'),
 ]
 
 
