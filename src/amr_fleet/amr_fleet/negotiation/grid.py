@@ -64,10 +64,10 @@ class OccupancyGrid:
         cw, ch = width // factor, height // factor
         occ = [[0] * cw for _ in range(ch)]
         unk = [[0] * cw for _ in range(ch)]
-        for row in range(ch * factor):            # PGM 첫 행 = 지도 위쪽(+y 끝)
-            gy = (height - 1 - row) // factor
+        for row in range(height):                 # PGM 첫 행 = 지도 위쪽(+y 끝)
+            gy = (height - 1 - row) // factor     # 맨 아래 행이 칸 행 0 (origin 이 왼쪽 아래)
             if gy >= ch:
-                continue
+                continue                          # 위쪽 나머지 행: 칸을 다 채우지 못해 격자 밖
             base = row * width
             o_row, u_row = occ[gy], unk[gy]
             for col in range(cw * factor):

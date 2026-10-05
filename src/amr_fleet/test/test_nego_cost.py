@@ -114,10 +114,35 @@ def test_read_pgm_roundtrip(tmp_path):
     assert [g.is_free((x, 0)) for x in range(3)] == [True, True, False]
 
 
+def _write_map(tmp_path, width, height, pixels, resolution):
+    (tmp_path / 'm.pgm').write_bytes(b'P5\n%d %d\n255\n' % (width, height) + bytes(pixels))
+    y = tmp_path / 'm.yaml'
+    y.write_text(f'image: m.pgm\nresolution: {resolution}\norigin: [0.0, 0.0, 0]\nnegate: 0\n'
+                 'occupied_thresh: 0.65\nfree_thresh: 0.196\n')
+    return str(y)
+
+
+def test_map_bottom_rows_are_read_when_height_is_not_a_multiple_of_cell(tmp_path):
+    """맨 아래 PGM 행(칸 행 0)을 빠짐없이 읽는다 — 리뷰 B1 회귀 (높이 5 화소, 칸 2 화소)."""
+    w, h = 4, 5                                    # 0.5 m 화소 → 1.0 m 칸, 높이 나머지 1 행
+    px = bytearray([254] * (w * h))
+    px[(h - 1) * w + 0] = px[(h - 1) * w + 1] = 0  # 마지막 PGM 행(y 0–0.5 m) 왼쪽 칸에 벽
+    for row in (h - 2, h - 1):                     # 오른쪽 아래 칸 화소 4 개 모두 미지
+        px[row * w + 2] = px[row * w + 3] = 205
+    g = OccupancyGrid.from_map_yaml(_write_map(tmp_path, w, h, px, 0.5),
+                                    cell_m=1.0, inflate_m=0.0)
+    assert g.cell_of(0.2, 0.2) == (0, 0)
+    assert not g.is_free((0, 0))                   # 벽 화소가 든 칸은 막힘
+    assert not g.is_free((1, 0))                   # 미지 4/4 > 절반
+    assert g.is_free((0, 1)) and g.is_free((1, 1))
+
+
 @pytest.mark.skipif(not MAP_YAML.is_file(), reason='maps/warehouse.yaml 없음')
 def test_real_map_grid_cost_is_finite_and_not_shorter_than_euclid():
     grid = OccupancyGrid.from_map_yaml(str(MAP_YAML), cell_m=0.5, inflate_m=0.25)
     assert 0.3 < grid.free_fraction() < 0.95
+    # 창고 아래쪽 벽(PGM 800–803 행, 높이 806 = 10 × 80 + 6 의 나머지 행)이 칸 행 0 에 들어간다
+    assert not any(grid.is_free((x, 0)) for x in range(grid.width))
     model = GridAstarCost(grid, 1.0)
     case = scenario.make_case(4, random.Random(5), 'spawn', free_xy=grid.is_free_xy)
     euclid = EuclideanCost(1.0).matrix(case.robots, case.tasks)
