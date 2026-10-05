@@ -1,0 +1,67 @@
+실행         HEAD     판정          소요   유실  exh   완료  실패 사유
+R12c       cecb0f6  passed    1869    0    0    5  —
+S12a       —        passed    1835    3    1    5  —
+S12c       —        passed    2083    1    0    5  —
+Z12        —        passed    1935    0    0    5  —
+b12        —        passed    1771    0    0    5  —
+reg2       —        passed    4048    1    1    5  —
+regF       011abdf  passed    3895    2    1    5  —
+regG       80874d3  passed    4011    2    1    5  —
+B12        f0e79ee  error     3425    1    0    5  test_10_concurrent_tasks:기타: Traceback (most recent call last): File "/r
+B12b       658aa12  failed    4717    5    3    5  test_10_concurrent_tasks:작업 미완
+E12        b37c687  failed    3708    0    0    5  test_20_forced_deadlock:settle(측위 별칭)
+R12a       cecb0f6  failed    2752    1    0    5  test_20_forced_deadlock:settle(측위 별칭)
+R12b       cecb0f6  failed    2076    2    0    5  test_20_forced_deadlock:settle(측위 별칭)
+S12b       —        failed    2567    0    2    5  test_10_concurrent_tasks:미해소 교착(전체)
+X12        —        failed    4631    3    2    5  test_10_concurrent_tasks:작업 미완
+Y12        —        missing      —    1    0    1  —
+itest      —        ?         4436    4    0    3  test_10_concurrent_tasks:작업 미완
+late12     —        failed    1772    3    0    5  test_10_concurrent_tasks:작업 미완; test_20_forced_deadlock:미해소 교착(강제)
+late3      —        failed    1282    0    0    5  test_10_concurrent_tasks:작업 미완; test_20_forced_deadlock:settle(측위 별칭)
+r12        —        failed    1792    2    0    5  test_10_concurrent_tasks:작업 미완
+r12b       —        failed    1710    1    0    4  test_10_concurrent_tasks:작업 미완; test_20_forced_deadlock:IDLE 아님
+reg1       —        failed    1210    1    2    0  test_10_concurrent_tasks:작업 미완; test_20_forced_deadlock:busy 작업 거절
+regress2   —        error     1809    3    0    5  launch_test:러너 타임아웃
+regress3   —        error        —    2    0    5  launch_test:러너 타임아웃
+s12        —        failed    3865    2    6    0  test_10_concurrent_tasks:작업 미완; test_20_forced_deadlock:busy 작업 거절
+v12        —        failed    3508    1   23    4  test_10_concurrent_tasks:작업 미완
+
+실행 26 회 — 통과 8 / 실패 18 (31 %)
+
+실패 사유 (테스트 단언 기준, 한 실행이 여러 개를 낼 수 있다):
+   10  작업 미완
+    4  settle(측위 별칭)
+    2  busy 작업 거절
+    2  러너 타임아웃
+    1  기타: Traceback (most recent call last): File "/ros2_ws/
+    1  미해소 교착(전체)
+    1  미해소 교착(강제)
+    1  IDLE 아님
+
+실패한 판정 이름 (result.json checks):
+   12  tasks completed
+    3  detected deadlocks resolved
+    2  forced deadlock resolved
+    1  TF namespaces with prefixed frames
+
+응답 유실이 난 실행과 그 결과 (lifecycle 사슬의 영향 범위):
+  S12a       유실 3 · exhausted 1 → passed
+  S12c       유실 1 · exhausted 0 → passed
+  reg2       유실 1 · exhausted 1 → passed
+  regF       유실 2 · exhausted 1 → passed
+  regG       유실 2 · exhausted 1 → passed
+  B12        유실 1 · exhausted 0 → error
+  B12b       유실 5 · exhausted 3 → failed
+  R12a       유실 1 · exhausted 0 → failed
+  R12b       유실 2 · exhausted 0 → failed
+  X12        유실 3 · exhausted 2 → failed
+  Y12        유실 1 · exhausted 0 → missing
+  itest      유실 4 · exhausted 0 → ?
+  late12     유실 3 · exhausted 0 → failed
+  r12        유실 2 · exhausted 0 → failed
+  r12b       유실 1 · exhausted 0 → failed
+  reg1       유실 1 · exhausted 2 → failed
+  regress2   유실 3 · exhausted 0 → error
+  regress3   유실 2 · exhausted 0 → error
+  s12        유실 2 · exhausted 6 → failed
+  v12        유실 1 · exhausted 23 → failed
