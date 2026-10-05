@@ -7,10 +7,13 @@
 - fixture_b.onnx·fixture_c.onnx: r0 계약의 고정물 생성기(rl/contract/onnx/make_fixtures.py)를
   그대로 불러 만든다 → 기대 출력은 커밋된 rl/contract/onnx/fixtures/fixture_expected.json.
 - fixture_c_gru.onnx: 같은 입출력 + h_in/h_out (GRU 1 층, hidden 16) — 순환 경로 시험.
-- 결함 모델: 주 버전 2, obs_dim 290, 메타데이터 없음, NaN logits — configure 거부·폴백 시험.
+- 결함 모델: 주 버전 2, obs_dim 290, 메타데이터 없음, arm 메타데이터 불일치, NaN logits — configure 거부·폴백 시험.
 - 크기 대표 모델 (지연 측정용, --sizes 일 때만): size_c_mlp256 (MLP 391→256→256→100),
   size_c_cnn_gru128 (섹터 180 Conv1d 2 층 + MLP + GRU 128), size_b_mlp256 (291→256→256→2).
   학습 정책이 아직 없어서 실무 보고서·계약이 권하는 구조의 크기만 흉내 낸다.
+- 손으로 만든 배관 시험 정책 (--sizes 일 때, 학습 아님): heuristic_c·heuristic_b — 관측의 subgoal 2
+  (1 m 앞) 방위로 목표 (v, ω) 를 정하고 가속도 공간 P 제어로 고른다. 폐루프 스모크에서 플러그인·마스크·
+  적분 배관을 보려는 것이지 RL 성능과 무관하다.
 저장소 .gitignore 가 *.onnx 를 무시하므로 모델은 커밋하지 않고 시험 때 만든다.
 """
 
@@ -102,7 +105,9 @@ def _defects(out_dir, c_path):
     for name, props in (
             ('bad_major_c.onnx', _base_meta('C', contract_version='2.0.0')),
             ('bad_obsdim_c.onnx', _base_meta('C', obs_dim='290')),
-            ('no_meta_c.onnx', {})):
+            ('no_meta_c.onnx', {}),
+            # 입출력은 C 인데 메타데이터 arm 이 B — 메타데이터 검사만 가를 수 있다
+            ('arm_b_meta_c_io.onnx', _base_meta('B'))):
         path = os.path.join(out_dir, name)
         onnx.save(m, path)
         _meta(path, props)
@@ -179,6 +184,64 @@ def _sizes(out_dir):
         _meta(p, _base_meta('C', rnn_layers=1, rnn_hidden=128))
 
 
+def _heuristic(out_dir):
+    import torch
+    from torch import nn
+
+    av = [C.LATTICE_AV[i // len(C.LATTICE_AW)] for i in range(C.N_CELLS)] + [-1.0]
+    aw = [C.LATTICE_AW[i % len(C.LATTICE_AW)] for i in range(C.N_CELLS)] + [0.0]
+    ego = 180          # observation.OBS_LAYOUT: lidar 180 → ego
+    path = 195         # → timing 3 → path
+
+    def targets(obs):
+        v_cmd = obs[:, ego + 4] * C.V_MAX_HW
+        w_cmd = obs[:, ego + 5] * C.W_MAX
+        sin_b = obs[:, path + 4]     # subgoal 2 (1.0 m 앞) sin 방위
+        cos_b = obs[:, path + 5]
+        goal_d = obs[:, 213] * 10.0  # 남은 호길이
+        v_des = torch.clamp(0.6 * cos_b, min=0.0) * torch.clamp(goal_d / 1.0, max=1.0)
+        w_des = torch.clamp(1.2 * torch.atan2(sin_b, cos_b), -1.0, 1.0)
+        a_v = torch.clamp(3.0 * (v_des - v_cmd), -C.A_MAX, C.A_MAX)
+        a_w = torch.clamp(4.0 * (w_des - w_cmd), -C.ALPHA_MAX, C.ALPHA_MAX)
+        return a_v, a_w
+
+    class HeuristicC(nn.Module):
+        """가속도 공간 P 제어 목표에 가까운 셀일수록 큰 logit (마스크는 모델 안에서)."""
+
+        def __init__(self):
+            super().__init__()
+            self.register_buffer('av', torch.tensor(av))
+            self.register_buffer('aw', torch.tensor(aw))
+
+        def forward(self, obs, mask):
+            a_v, a_w = targets(obs)
+            d = (self.av[None] - a_v[:, None]) ** 2 + ((self.aw[None] - a_w[:, None]) / 2.0) ** 2
+            logits = -10.0 * d + (mask - 1.0) * 1e9
+            return logits, torch.argmax(logits, dim=1)
+
+    class HeuristicB(nn.Module):
+        def forward(self, obs):
+            a_v, a_w = targets(obs)
+            mu = torch.stack([a_v / C.A_MAX, a_w / C.ALPHA_MAX], dim=1)
+            return torch.clamp(mu, -1.0, 1.0), mu, mu * 0.0 - 1.0
+
+    obs = torch.zeros(1, OBS_DIM)
+    mask = torch.ones(1, C.N_ACTIONS_C)
+    with torch.no_grad():
+        p = os.path.join(out_dir, 'heuristic_c.onnx')
+        torch.onnx.export(HeuristicC().eval(), (obs, mask), p, input_names=['obs', 'mask'],
+                          output_names=['logits', 'action'], opset_version=OPSET, dynamo=False,
+                          dynamic_axes={'obs': {0: 'batch'}, 'mask': {0: 'batch'},
+                                        'logits': {0: 'batch'}, 'action': {0: 'batch'}})
+        _meta(p, _base_meta('C', algo='heuristic-not-rl'))
+        p = os.path.join(out_dir, 'heuristic_b.onnx')
+        torch.onnx.export(HeuristicB().eval(), (obs,), p, input_names=['obs'],
+                          output_names=['action', 'mu', 'log_std'], opset_version=OPSET,
+                          dynamo=False, dynamic_axes={'obs': {0: 'batch'},
+                                                      'action': {0: 'batch'}})
+        _meta(p, _base_meta('B', algo='heuristic-not-rl'))
+
+
 def main(out_dir, sizes=False):
     """모든 시험 모델을 만든다."""
     os.makedirs(out_dir, exist_ok=True)
@@ -187,6 +250,7 @@ def main(out_dir, sizes=False):
     _defects(out_dir, c_path)
     if sizes:
         _sizes(out_dir)
+        _heuristic(out_dir)
     print('models:', ' '.join(sorted(f for f in os.listdir(out_dir) if f.endswith('.onnx'))))
 
 

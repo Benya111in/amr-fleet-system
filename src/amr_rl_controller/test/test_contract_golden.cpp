@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -197,4 +198,44 @@ TEST(ContractGeometry, ScanWithWrongBeamCountThrows)
   s.scan_ranges.assign(719, 5.0);
   EXPECT_THROW(buildObservation(s), std::invalid_argument);
   EXPECT_THROW(MaskBuilder().compute(s), std::invalid_argument);
+}
+
+// golden 이 가르지 못하는 규칙 두 개 (변이 검사에서 놓친 것, 기대값은 파이썬 기준 구현 결과).
+TEST(ContractRules, GoalOvershootCutExcludesPosesBeyondGoal)
+{
+  // 전방 벽 x = 1.2 m (빔 360 = 1.05 m), v_cmd 0.8: 롤아웃 k ≥ 12 (호길이 0.96 m) 에서 벽에 닿는다.
+  // 목표 0.4 m 면 d_goal + 0.1 = 0.5 m 너머는 검사하지 않아 9 셀 모두 가행, 목표 5 m 면 0 셀.
+  // 파이썬 compute_mask: 0.4 → fp [39 40 41 48 49 50 57 58 59], 5.0 → fp [] (2026-10-06 [계산])
+  for (const double goal : {0.4, 5.0}) {
+    amr_rl_controller::ContractState s;
+    for (int k = 0; k <= static_cast<int>(std::lround(goal / 0.05)); ++k) {
+      s.path.push_back({0.05 * k, 0.0});
+    }
+    s.scan_ranges.assign(C::kLidarSamples, std::numeric_limits<double>::quiet_NaN());
+    s.scan_ranges[360] = 1.05;
+    s.v_meas = s.v_cmd = 0.8;
+    const auto m = MaskBuilder().compute(s);
+    const std::vector<int> cells{39, 40, 41, 48, 49, 50, 57, 58, 59};
+    for (int i = 0; i < C::kNCells; ++i) {
+      const bool sel = std::find(cells.begin(), cells.end(), i) != cells.end();
+      const std::size_t k = static_cast<std::size_t>(i);
+      EXPECT_EQ(m.speed_ok[k] && m.jerk_ok[k], sel) << goal << " " << i;
+      EXPECT_EQ(m.fp_ok[k], sel && goal < 1.0) << goal << " " << i;
+    }
+    EXPECT_EQ(m.n_valid, goal < 1.0 ? 9 : 0);
+  }
+}
+
+TEST(ContractRules, ProjectionTieTakesSmallerArcLength)
+{
+  // 갔다 돌아오는 경로: (1, ±0.1) 은 두 구간에서 같은 거리 → 작은 호길이 1.0
+  // (파이썬 project_onto_path 결과 (1.0, 0.1, ±0.1, 0.0))
+  const amr_rl_controller::ContractPath path({{0.0, 0.0}, {2.0, 0.0}, {0.0, 0.0}});
+  for (const double y : {0.1, -0.1}) {
+    const auto p = path.project({1.0, y});
+    EXPECT_NEAR(p.s, 1.0, 1e-12) << y;
+    EXPECT_NEAR(p.dist, 0.1, 1e-12) << y;
+    EXPECT_NEAR(p.signed_e, y, 1e-12) << y;
+    EXPECT_NEAR(p.seg_yaw, 0.0, 1e-12) << y;
+  }
 }

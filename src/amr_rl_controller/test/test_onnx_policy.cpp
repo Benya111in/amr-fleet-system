@@ -119,6 +119,7 @@ TEST(OnnxPolicy, RejectsContractViolationsAtLoad)
   EXPECT_THROW(OnnxPolicy(cfg("bad_major_c.onnx", Arm::kC)), std::runtime_error);
   EXPECT_THROW(OnnxPolicy(cfg("bad_obsdim_c.onnx", Arm::kC)), std::runtime_error);
   EXPECT_THROW(OnnxPolicy(cfg("no_meta_c.onnx", Arm::kC)), std::runtime_error);
+  EXPECT_THROW(OnnxPolicy(cfg("arm_b_meta_c_io.onnx", Arm::kC)), std::runtime_error);
   EXPECT_THROW(OnnxPolicy(cfg("fixture_b.onnx", Arm::kC)), std::runtime_error);   // arm 불일치
   EXPECT_THROW(OnnxPolicy(cfg("fixture_c.onnx", Arm::kB)), std::runtime_error);
   EXPECT_THROW(OnnxPolicy(cfg("does_not_exist.onnx", Arm::kC)), std::runtime_error);
