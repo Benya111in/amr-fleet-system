@@ -58,6 +58,13 @@
     # test_12 피해 로봇 자리에서 0.034 를 낸다 (converge_margin 0.05 미만).
     # 창은 수렴 성공과 LOST 재선언에서 닫힌다 — 잡아 준 자세가 더는 유효하지 않다는 뜻이므로.
     external_trust_window: 30.0
+    # [s] 여백 게이트의 판정(보류/우회)을 이벤트 로그에 남기는 최소 간격. 이 판정은 match 주기
+    # (10 Hz)로 일어나므로 매번 적으면 로그가 넘친다. 그렇다고 안 적으면 결과가
+    # alias_rejections·external_trust_uses **카운터**로만 남고, 그 카운터는 status_topic 의 JSON
+    # 으로만 나가 launch.log 에도 CSV 에도 없다 — 실측 실패(logs/R12a·R12b·E12 의 "배치 뒤 위치
+    # 추정이 안정되지 않음")를 로그만으로 가릴 수 없었던 까닭이다. 구간의 첫 판정과 종류가
+    # 바뀌는 순간은 간격과 무관하게 적는다.
+    gate_log_period: 5.0
     recovery_timeout: 120.0       # [s] 이 안에 수렴 못 하면 FAILED (lost 유지, 수렴하면 언제든 복귀)
     cooldown: 3.0                 # [s] 복구 직후 재감지 유예
 

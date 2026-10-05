@@ -594,6 +594,51 @@ def test_backend_ready_flag_does_not_change_the_normal_path():
     assert det.backend_ready and det.backend_down_time == 0.0
 
 
+def test_alias_gate_decisions_are_logged_with_the_margin_and_throttled():
+    """
+    여백 게이트의 판정이 이벤트로 남아야 한다 — 안 남으면 로그만으로 진단할 수 없다.
+
+    왜 있는가: 이 판정은 match 주기(10 Hz)로 일어나고 결과가 카운터로만 쌓였다. 그 카운터는
+    상태 토픽 JSON 으로만 나가고 launch.log·CSV 어디에도 남지 않아, `R12a`·`R12b`·`E12` 의
+    "배치 뒤 위치 추정이 안정되지 않음" 을 로그로 가릴 수 없었다. 신뢰 창이 열렸는지조차
+    SUSPECT 였을 때만 기록돼 확인이 불가능했다.
+    """
+    p = KidnapParams(suspect_time=0.5, converge_count=2, converge_margin=0.05,
+                     gate_log_period=5.0)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 400.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 2.0, 0.1)
+    det.tick(1.6)
+    assert det.state == State.RECOVERING
+
+    def gate_events():
+        return [e for e in det.events if 'alias margin' in e.reason]
+
+    # 여백 부족으로 보류되는 판정 — 첫 건은 반드시 남고, 여백 값이 메시지에 있어야 한다
+    det.on_amcl(5.0, (3.0, 4.0, 0.5), 0.02, 0.01)
+    det.on_match(5.1, 0.93, 150, alias_margin=0.034)
+    assert len(gate_events()) == 1, '첫 보류가 기록되지 않았다'
+    assert '0.034' in gate_events()[0].reason, f'여백 값이 없다: {gate_events()[0].reason}'
+    assert 'blocks convergence' in gate_events()[0].reason
+
+    # 10 Hz 로 쏟아져도 간격 안에서는 한 건으로 묶는다 (로그 범람 방지)
+    for k in range(40):
+        det.on_match(5.2 + 0.1 * k, 0.93, 150, alias_margin=0.034)
+    assert len(gate_events()) <= 2, f'간격 제한이 걸리지 않았다: {len(gate_events())} 건'
+    # 간격이 지나면 다시 적는다 (현황을 알 수 있어야 한다)
+    det.on_match(30.0, 0.93, 150, alias_margin=0.034)
+    n = len(gate_events())
+    assert n >= 2, '간격이 지났는데도 더 적지 않았다'
+
+    # 외부 자세로 우회될 때도 남아야 한다 — 종류가 바뀌면 간격을 기다리지 않는다
+    det.on_external_pose_reset(30.5)
+    assert any('alias margin trusted' in e.reason for e in det.events), \
+        '신뢰 창이 열린 기록이 없다 (SUSPECT 가 아니어도 남아야 한다)'
+    det.on_match(30.6, 0.93, 150, alias_margin=0.034)
+    assert any('bypassed by external trust' in e.reason for e in gate_events()), \
+        '우회 판정이 기록되지 않았다'
+
+
 def test_no_rotation_mechanism_does_not_burn_recovery_attempts():
     """
     회전 수단(spin 액션 / fallback cmd_vel)이 없는 동안에는 시도를 소진하지 않는다.

@@ -91,6 +91,7 @@ class KidnapParams:
     # converge_margin 미만인 자리가 실제로 있다 (docs/research/state-estimation/checks/alias_margin.py:
     # test_12 피해 로봇 자리 0.034 < 0.05). 창은 LOST 재선언과 수렴 성공에서 닫힌다.
     external_trust_window: float = 30.0
+    gate_log_period: float = 5.0          # 여백 게이트 판정을 로그에 남기는 최소 간격 [s]
     spin_angle: float = 2.0 * math.pi  # [rad] 복구 회전량
     spin_retry: int = 1                # 재초기화(시도) 한 번당 회전 횟수
     reinit_retry: int = 4              # 재초기화 시도 횟수 (노드: 앞 시도는 가설 시드, 마지막은 AMCL 전역)
@@ -246,6 +247,8 @@ class KidnapDetector:
         self.backend_ready = True                     # 측위 백엔드(AMCL)가 active 인가
         self._backend_down_since: Optional[float] = None
         self.backend_down_time = 0.0                  # 백엔드가 내려가 있던 누적 시간 [s]
+        self._gate_logged_at = -math.inf              # 여백 게이트 판정을 마지막으로 적은 시각
+        self._gate_logged_kind: Optional[bool] = None  # 그때 적은 것이 우회였나(True)/보류였나(False)
         self.spin_ready = True                        # 회전 수단(spin 액션 또는 cmd_vel)이 있는가
         self._spin_down_since: Optional[float] = None
         self.spin_unavailable_time = 0.0              # 회전 수단이 없던 누적 시간 [s]
@@ -350,6 +353,12 @@ class KidnapDetector:
         # 별칭 여백 유예를 연다. 쿨다운만으로는 **재선언**만 막을 뿐, 이미 lost 인 상태에서
         # 수렴을 가로막는 여백 게이트는 그대로라 주기 별칭 자리에서는 영원히 복구하지 못한다.
         self._external_trust_until = t + self.params.external_trust_window
+        # **항상** 적는다. 예전에는 위 SUSPECT 분기에서만 기록이 남아, 창이 열렸는지를
+        # 로그로 확인할 수 없었다 (R12a·R12b 진단이 여기서 막혔다).
+        self.events.append(Event(
+            t, self.state.value,
+            f'external pose reset: alias margin trusted for '
+            f'{self.params.external_trust_window:.0f} s'))
 
     def set_backend_ready(self, t: float, ready: bool) -> List[Action]:
         """
@@ -629,10 +638,35 @@ class KidnapDetector:
                 # 바깥이 자세를 잡아 줬다 — 여백은 "내가 고른 가설이 맞는가" 를 묻는 것이라
                 # 이 경우에는 묻지 않는다. ρ·공분산 조건은 그대로 요구한다.
                 self.external_trust_uses += 1
+                self._note_gate(t, 'alias margin bypassed by external trust', True)
                 return True
             self.alias_rejections += 1        # 별칭과 가를 수 없다 → 수렴 보류
+            self._note_gate(t, 'alias margin blocks convergence', False)
             return False
         return cov_ok and match_ok
+
+    def _note_gate(self, t: float, what: str, bypassed: bool) -> None:
+        """
+        여백 게이트의 판정을 이벤트로 남긴다 (간격 제한).
+
+        왜 필요한가: 이 판정은 match 주기(10 Hz)로 일어나고 결과가 `alias_rejections` ·
+        `external_trust_uses` **카운터**로만 쌓인다. 그 카운터는 상태 토픽의 JSON 으로만 나가고
+        `launch.log` 에도 CSV 에도 남지 않아서, 실측 실패(`R12a`·`R12b`·`E12` 의 "배치 뒤 위치
+        추정이 안정되지 않음")를 로그만으로는 **진단할 수 없었다**. 신뢰 창이 열렸는지조차
+        알 수 없었다 — 그 기록은 SUSPECT 였을 때만 남았기 때문이다.
+
+        매 판정을 적으면 10 Hz 로 로그가 넘치므로, 구간의 **첫 판정**과 그 뒤
+        `gate_log_period` 간격만 적고 여백 값을 함께 남긴다.
+        """
+        stale = t - self._gate_logged_at >= self.params.gate_log_period
+        if self._gate_logged_kind != bypassed or stale:
+            self._gate_logged_kind = bypassed
+            self._gate_logged_at = t
+            margin = '—' if self._last_margin is None else f'{self._last_margin:.3f}'
+            self.events.append(Event(
+                t, self.state.value,
+                f'{what}: margin {margin} < {self.params.converge_margin:.3f} '
+                f'(rejections {self.alias_rejections}, trust uses {self.external_trust_uses})'))
 
     def _set_state(self, t: float, state: State, reason: str) -> None:
         self.state = state
