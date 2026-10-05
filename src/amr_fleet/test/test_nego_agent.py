@@ -38,6 +38,16 @@ def test_config_validation():
         AgentConfig(rule='nope').validate()
 
 
+def test_mode_presets():
+    strict, opt = AgentConfig.strict_mode(), AgentConfig.optimistic_mode()
+    for c in (strict, opt):
+        c.validate()
+        assert c.rule == 'cbba' and c.stable_rounds == 3 and c.liveness == 'indirect'
+        assert c.heartbeat_timeout == 5.0
+    assert not strict.require_all_heard and opt.require_all_heard
+    assert AgentConfig().liveness == 'indirect'
+
+
 def test_bid_picks_cheapest_winnable_task_and_tie_by_order():
     ag = CbaaAgent('a', IDS, ['t1', 't2', 't3'], {'t1': 5.0, 't2': 3.0, 't3': 3.0})
     assert ag.start_round(1) == 't2'                      # 같은 비용 3.0 → 후보 순서 앞

@@ -37,7 +37,8 @@ class AgentConfig:
     stable_rounds     : K — 국소 확정에 필요한 연속 불변 라운드 수 (≥ 1)
     require_all_heard : 이번 라운드에 생존 로봇 전원에게서 직접 받아야 확정
     heartbeat_timeout : H — 이보다 오래 소식이 없는 로봇의 낙찰을 무효화 (None = 끔)
-    liveness          : 'direct' = 직접 수신 시각으로 생존 판정 | 'indirect' = 출처별 최신 시각(간접 포함)
+    liveness          : 'indirect'(기본) = 출처별 최신 시각(간접 포함)으로 생존 판정 | 'direct' = 직접 수신만
+                        (손실 40 %·H=3 에서 직접 판정은 실행당 오탐 무효화 8.6 건, 간접은 0.05 건)
     local_commit      : False 면 확정·잠금을 하지 않는다 (전역 종료 오라클 재현용)
     announce_commits  : 실행을 시작한 작업을 LOCKED 입찰로 방송한다
     """
@@ -46,9 +47,25 @@ class AgentConfig:
     stable_rounds: int = 3
     require_all_heard: bool = True
     heartbeat_timeout: Optional[float] = 5.0
-    liveness: str = 'direct'
+    liveness: str = 'indirect'
     local_commit: bool = True
     announce_commits: bool = True
+
+    @classmethod
+    def strict_mode(cls) -> 'AgentConfig':
+        """
+        엄격 모드 제안값 (작업 ID 배타 잠금과 함께 쓴다) — 스윕 근거: negotiation.md 6 절.
+
+        중복은 잠금이 막으므로 전원 직접 수신을 끄고 K=3 으로 확정 지연을 줄인다.
+        """
+        return cls(rule='cbba', stable_rounds=3, require_all_heard=False,
+                   heartbeat_timeout=5.0, liveness='indirect')
+
+    @classmethod
+    def optimistic_mode(cls) -> 'AgentConfig':
+        """낙관 모드(잠금 없이 국소 확정만, 비교군) 제안값: K=3 + 전원 직접 수신."""
+        return cls(rule='cbba', stable_rounds=3, require_all_heard=True,
+                   heartbeat_timeout=5.0, liveness='indirect')
 
     def validate(self) -> None:
         """잘못된 값이면 ValueError."""
