@@ -109,6 +109,7 @@ class AmrNavEnvCfg(DirectRLEnvCfg):
     v_cap: float = C.V_MAX_OP
     stats_window: int = 1024         # 최근 에피소드 결과 창 (로그용)
     path_pad: int = 640              # 경로 점 패딩 (풀 최대 602)
+    max_tracks: int = 16             # 트랙 버퍼 (관측은 상위 8, contract §4)
 
 
 @configclass

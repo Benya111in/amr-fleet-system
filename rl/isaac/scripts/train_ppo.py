@@ -24,6 +24,8 @@ ap.add_argument('--chunk', type=int, default=10)
 ap.add_argument('--seed', type=int, default=0)
 ap.add_argument('--run', default='ppo_b_s0')
 ap.add_argument('--no_dr', action='store_true')
+ap.add_argument('--curriculum', default='',
+                help="경로 길이 상한 커리큘럼 'L0:L1:N' — 반복 N 까지 L0→L1 m 선형, 빈 값 = 끔")
 ap.add_argument('--root', default='/home/CAPYI_AI/runs/r1-isaac/train')
 AppLauncher.add_app_launcher_args(ap)
 args = ap.parse_args()
@@ -95,8 +97,11 @@ def main():
     steps_per_iter = agent.num_steps_per_env * args.num_envs
     it = 0
     t_train = time.time()
+    cur = [float(x) for x in args.curriculum.split(':')] if args.curriculum else None
     while it < args.iterations:
         n = min(args.chunk, args.iterations - it)
+        if cur:
+            env.curriculum_lmax = cur[0] + (cur[1] - cur[0]) * min(1.0, it / cur[2])
         tc = time.time()
         runner.learn(num_learning_iterations=n, init_at_random_ep_len=False)
         torch.cuda.synchronize()
@@ -117,6 +122,7 @@ def main():
             **{f'cost_{k}_per_ep': st[f'cost_{k}'] / ep for k in C.COST_NAMES},
             'action_std': [round(float(v), 4) for v in torch.exp(pol.log_std).tolist()],
             'lr': runner.alg.learning_rate,
+            'curriculum_lmax': env.curriculum_lmax,
             'torch_max_alloc_MiB': gpu_mem_mib()[0], 'torch_reserved_MiB': gpu_mem_mib()[1],
         }
         curve.write(json.dumps(rec) + '\n')
@@ -139,7 +145,7 @@ def main():
                'env_steps': it * steps_per_iter, 'setup_s': round(setup_s, 1),
                'train_wall_s': round(time.time() - t_train, 1),
                'policy_vs_rsl_mu_max_abs_diff': diff, 'seed': args.seed,
-               'dr': not args.no_dr}
+               'dr': not args.no_dr, 'curriculum': args.curriculum}
     with open(os.path.join(out, 'summary.json'), 'w') as f:
         json.dump(summary, f, indent=1)
     print('TRAIN_DONE ' + json.dumps(summary), flush=True)

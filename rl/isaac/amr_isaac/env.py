@@ -110,6 +110,11 @@ class AmrNavEnv(DirectRLEnv):
         self.pool_offs = torch.tensor(pool['offs'], dtype=torch.long, device=dev)
         self.pool_n = self.pool_offs[1:] - self.pool_offs[:-1]
         self.pool_size = int(self.pool_n.shape[0])
+        plen = torch.tensor(pool['length'], dtype=F64, device=dev)
+        self.pool_order = torch.argsort(plen)
+        self.pool_len_sorted = plen[self.pool_order]
+        self.curriculum_lmax = None      # 경로 길이 상한 커리큘럼 (None = 끔), 학습 스크립트가 바꾼다
+        self.curriculum_uniform = 0.2    # 커리큘럼 중에도 이 비율은 전체 풀에서 균일 (contract §10)
         P = cfg.path_pad
         if int(self.pool_n.max()) > P:
             raise ValueError(f'경로 점 {int(self.pool_n.max())} > path_pad {P}')
@@ -144,14 +149,19 @@ class AmrNavEnv(DirectRLEnv):
         self.scan = torch.full((N, C.LIDAR_SAMPLES), math.nan, dtype=F64, device=dev)
         self.scan_pts_w = torch.zeros(N, C.LIDAR_SAMPLES, 2, dtype=F64, device=dev)
         self.scan_valid = torch.zeros(N, C.LIDAR_SAMPLES, dtype=torch.bool, device=dev)
-        self.no_tracks = torch.zeros(N, 1, 6, dtype=F64, device=dev)
-        self.no_track_id = torch.zeros(N, 1, dtype=torch.long, device=dev)
+        T = cfg.max_tracks
+        self.tracks = torch.zeros(N, T, 6, dtype=F64, device=dev)      # 동적 장애물 없음 = 전부 무효
+        self.track_id = torch.zeros(N, T, dtype=torch.long, device=dev)
+        self.scan_age, self.track_age = z(), z()
+        self.prox_stop = torch.zeros(N, dtype=torch.bool, device=dev)   # safety_lite: 래치 없음
+        self.min_ttc = torch.full((N,), math.inf, dtype=F64, device=dev)
         self.beam_ang = CT.beam_angles(dev, F64)
         # 결정 주기 안 버퍼
         self._sub = 0
         self._v0, self._w0, self._v1, self._w1 = z(), z(), z(), z()
         self._a_exec = torch.zeros(N, 2, dtype=F64, device=dev)
         self._pairs = torch.zeros(N, N_SUB, 4, dtype=F64, device=dev)
+        self._pairs_n = torch.full((N,), N_SUB, dtype=torch.long, device=dev)
         self._collided = torch.zeros(N, dtype=torch.bool, device=dev)
         self._w_ref_prev = z()
         self._reward = torch.zeros(N, device=dev)
@@ -198,18 +208,15 @@ class AmrNavEnv(DirectRLEnv):
     # ------------------------------------------------------------------ 상태 묶음
     def contract_state(self):
         """현재 버퍼 → contract_torch.BatchState (복사 없음)."""
-        N = self.num_envs
         return CT.BatchState(
             pose=self.pose, path_pts=self.path_pts, path_n=self.path_n, scan=self.scan,
             v_meas=self.v_meas, w_meas=self.w_meas, a_v_meas=self.a_v_meas,
             a_w_meas=self.a_w_meas, v_cmd=self.v_cmd, w_cmd=self.w_cmd,
             prev_actions=self.prev_actions, v_cap=self.v_cap,
-            scan_age=torch.zeros(N, dtype=F64, device=self.device),
-            track_age=torch.zeros(N, dtype=F64, device=self.device),
-            tracks=self.no_tracks, track_id=self.no_track_id,
+            scan_age=self.scan_age, track_age=self.track_age,
+            tracks=self.tracks, track_id=self.track_id,
             zone=self.zone, speed_limit=self.speed_limit,
-            proximity_stop=torch.zeros(N, dtype=torch.bool, device=self.device),
-            min_ttc=torch.full((N,), math.inf, dtype=F64, device=self.device),
+            proximity_stop=self.prox_stop, min_ttc=self.min_ttc,
             in_dev=self.in_dev, dev_peak=self.dev_peak, dev_t=self.dev_t,
             path_cum=self.path_cum)
 
@@ -236,9 +243,7 @@ class AmrNavEnv(DirectRLEnv):
         # φ: 스캔 끝점(세계 좌표, 촬영 뒤 이동 보정)을 현재 자세로
         pts_r = CT.to_robot_frame(self.pose, self.scan_pts_w)
         d_main = approach_distance(pts_r, self.scan_valid, v_ref, w_ref)
-        out = CT.safety_filter(v_ref, w_ref, d_main,
-                               torch.full_like(v_ref, math.inf),
-                               torch.zeros_like(self._collided))
+        out = CT.safety_filter(v_ref, w_ref, d_main, self.min_ttc, self.prox_stop)
         self._pairs[:, k - 1] = torch.stack([v_ref, w_ref, out['v'], out['w']], dim=1)
         self.zone = out['zone']
         self.speed_limit = out['speed_limit']
@@ -282,10 +287,13 @@ class AmrNavEnv(DirectRLEnv):
                 torch.zeros(root.shape[0], 6, device=self.device), env_ids=env_ids)
 
     # ------------------------------------------------------------------ 종료·보상
+    def step_outcome(self):
+        """이번 전이의 보상·비용·종료 — 경로·이탈·직전 행동은 전이 전, 자세·v_meas 는 전이 뒤 버퍼."""
+        return CT.reward_step(self.contract_state(), self.pose, self.v_meas, self._a_exec,
+                              self._collided, self._pairs, self._pairs_n, d_arc_pre=self.d_arc)
+
     def _get_dones(self):
-        pre = self.contract_state()
-        out = CT.reward_step(pre, self.pose, self.v_meas, self._a_exec, self._collided,
-                             self._pairs, d_arc_pre=self.d_arc)
+        out = self.step_outcome()
         self.last_out = out
         self._reward = out.reward.to(torch.float32)
         self.in_dev, self.dev_peak, self.dev_t = out.in_dev, out.dev_peak, out.dev_t
@@ -342,6 +350,14 @@ class AmrNavEnv(DirectRLEnv):
         n = len(env_ids)
         dev = self.device
         pid = torch.randint(0, self.pool_size, (n,), device=dev)
+        if self.curriculum_lmax is not None:
+            k = int(torch.searchsorted(self.pool_len_sorted,
+                                       torch.tensor([self.curriculum_lmax], dtype=F64,
+                                                    device=dev), right=True))
+            k = max(k, 1)
+            short = self.pool_order[torch.randint(0, k, (n,), device=dev)]
+            use = torch.rand(n, device=dev) >= self.curriculum_uniform
+            pid = torch.where(use, short, pid)
         self.path_id[env_ids] = pid
         cnt = self.pool_n[pid]
         P = self.cfg.path_pad
@@ -444,7 +460,11 @@ class AmrNavEnv(DirectRLEnv):
         noise = torch.randn_like(r) * self.lidar_sigma.unsqueeze(1)
         r = r + noise
         drop = torch.rand_like(r) < self.beam_drop.unsqueeze(1)
-        r = torch.where(drop, torch.full_like(r, math.nan), r)
+        self.set_scan(torch.where(drop, torch.full_like(r, math.nan), r))
+        return {'policy': self.build_obs()}
+
+    def set_scan(self, r):
+        """스캔 거리 [N, 720] (무효 = nan/inf/범위 밖) 를 넣고 세계 좌표 끝점을 갱신한다."""
         self.scan = r
         valid = CT.scan_valid(r)
         self.scan_valid = valid
@@ -453,9 +473,48 @@ class AmrNavEnv(DirectRLEnv):
         rr = torch.where(valid, r, torch.zeros_like(r))
         self.scan_pts_w = torch.stack([o[:, 0:1] + rr * torch.cos(ang),
                                        o[:, 1:2] + rr * torch.sin(ang)], dim=-1)
+
+    def build_obs(self):
+        """현재 버퍼의 계약 관측 [N, 291] (Φ 캐시 d_arc 도 갱신)."""
         obs, parts = CT.build_observation(self.contract_state(), return_parts=True)
         self.d_arc = parts['d_arc']
-        return {'policy': obs}
+        return obs
+
+    def inject_state(self, st, ids):
+        """
+        시험용: contract_torch.BatchState(배치 = len(ids)) 를 env 버퍼 ids 에 넣는다.
+
+        경로는 path_pad 로 끝점 반복 패딩, 트랙은 max_tracks 까지.
+        """
+        n, P = st.path_pts.shape[1], self.cfg.path_pad
+        pts = torch.cat([st.path_pts, st.path_pts[:, -1:].expand(-1, P - n, -1)], 1)
+        idx = torch.arange(P, device=self.device).unsqueeze(0)
+        last = (st.path_n - 1).unsqueeze(1)
+        last_pt = pts.gather(1, last.unsqueeze(-1).expand(-1, 1, 2))
+        pts = torch.where((idx > last).unsqueeze(-1), last_pt.expand(-1, P, -1), pts)
+        self.path_pts[ids] = pts
+        self.path_n[ids] = st.path_n
+        self.path_cum[ids] = CT.path_cumulative(pts, st.path_n)
+        self.path_len[ids] = self.path_cum[ids].gather(1, last).squeeze(1)
+        for name in ('pose', 'v_meas', 'w_meas', 'a_v_meas', 'a_w_meas', 'v_cmd', 'w_cmd',
+                     'prev_actions', 'v_cap', 'zone', 'speed_limit', 'in_dev', 'dev_peak',
+                     'dev_t', 'scan_age', 'track_age', 'min_ttc'):
+            getattr(self, name)[ids] = getattr(st, name).to(getattr(self, name).dtype)
+        self.prox_stop[ids] = st.proximity_stop
+        T = st.tracks.shape[1]
+        if T > self.tracks.shape[1]:
+            raise ValueError(f'트랙 {T} > max_tracks {self.tracks.shape[1]}')
+        self.tracks[ids] = 0.0
+        self.track_id[ids] = 0
+        self.tracks[ids, :T] = st.tracks
+        self.track_id[ids, :T] = st.track_id
+        full = torch.full((self.num_envs, C.LIDAR_SAMPLES), math.nan, dtype=F64,
+                          device=self.device)
+        full[ids] = st.scan
+        keep = torch.ones(self.num_envs, dtype=torch.bool, device=self.device)
+        keep[ids] = False
+        full[keep] = self.scan[keep]
+        self.set_scan(full)
 
     # ------------------------------------------------------------------ 통계
     def pop_stats(self):
