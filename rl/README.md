@@ -19,7 +19,7 @@ ROS 패키지가 아니다. `rl/COLCON_IGNORE` 때문에 `colcon list`·`colcon 
 1. 규범: [`contract/contract.md`](contract/contract.md) — 모든 수치에 출처(파일:행 또는 보고서 절).
 2. ONNX: [`contract/onnx_io.md`](contract/onnx_io.md) — 비교군 B·C 의 입력·출력 이름, 모양, dtype, 정규화 위치.
 3. 기준 구현: `contract/amr_rl_contract/` (numpy 만). 정확성 우선이고 벡터화하지 않았다.
-4. Golden: `contract/golden/*.json` (28 사례, `gen_golden.py` 로 재생성). r1(torch)·r2(torch)·r3(C++)는
+4. Golden: `contract/golden/*.json` (31 사례, 계약 v1.1.0, `gen_golden.py` 로 재생성). r1(torch)·r2(torch)·r3(C++)는
    **자기 구현이 golden 과 허용오차(`tolerance` 블록) 안에서 일치하는지** 자기 경로에 시험을 둔다.
    `contract/tests/test_golden.py` 의 `test_decision_replay`·`test_step_replay` 가 그 시험의 견본이다.
 5. 계약을 바꿔야 하면 직접 고치지 말고 r0 에 요청한다 (REPORT "다른 소유자에게 요청").

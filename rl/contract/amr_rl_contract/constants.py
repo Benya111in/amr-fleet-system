@@ -11,7 +11,7 @@ P = src/amr_perception/config/perception.yaml.
 
 import math
 
-CONTRACT_VERSION = '1.0.0'
+CONTRACT_VERSION = '1.1.0'   # contract.md 「변경 이력」
 
 # ---------------------------------------------------------------- 로봇 기하·한계
 FOOTPRINT_LENGTH = 0.60          # [m] R:15

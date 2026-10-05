@@ -3214,7 +3214,7 @@
   "phi_pre": -9.0,
   "phi_post": -8.94
  },
- "contract_version": "1.0.0",
+ "contract_version": "1.1.0",
  "tolerance": {
   "obs": 1e-05,
   "vo_time": 0.0001,
