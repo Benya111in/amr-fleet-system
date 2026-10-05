@@ -1,0 +1,157 @@
+{
+ "kind": "safety",
+ "name": "f01_safety_lite",
+ "description": "φ_lite: 존 상한·여유거리 상한·TTC 상한·곡률 보존 스케일",
+ "expected": {
+  "rows": [
+   {
+    "in": {
+     "v": 1.0,
+     "w": 0.0,
+     "d_main": null,
+     "min_ttc": null,
+     "proximity_stop": false
+    },
+    "out": {
+     "v": 1.0,
+     "w": 0.0,
+     "zone": 0,
+     "speed_limit": 2.0
+    }
+   },
+   {
+    "in": {
+     "v": 1.0,
+     "w": 0.0,
+     "d_main": 2.0,
+     "min_ttc": null,
+     "proximity_stop": false
+    },
+    "out": {
+     "v": 1.0,
+     "w": 0.0,
+     "zone": 0,
+     "speed_limit": 1.7
+    }
+   },
+   {
+    "in": {
+     "v": 0.8,
+     "w": 0.4,
+     "d_main": 0.8,
+     "min_ttc": null,
+     "proximity_stop": false
+    },
+    "out": {
+     "v": 0.450377349,
+     "w": 0.225188675,
+     "zone": 1,
+     "speed_limit": 0.5
+    }
+   },
+   {
+    "in": {
+     "v": 0.5,
+     "w": 0.0,
+     "d_main": 0.45,
+     "min_ttc": null,
+     "proximity_stop": false
+    },
+    "out": {
+     "v": 0.2,
+     "w": 0.0,
+     "zone": 2,
+     "speed_limit": 0.2
+    }
+   },
+   {
+    "in": {
+     "v": 0.9,
+     "w": 0.0,
+     "d_main": 3.0,
+     "min_ttc": 1.2,
+     "proximity_stop": false
+    },
+    "out": {
+     "v": 0.9,
+     "w": 0.0,
+     "zone": 0,
+     "speed_limit": 1.05
+    }
+   },
+   {
+    "in": {
+     "v": 0.3,
+     "w": 0.0,
+     "d_main": 0.28,
+     "min_ttc": null,
+     "proximity_stop": false
+    },
+    "out": {
+     "v": 0.0,
+     "w": 0.0,
+     "zone": 2,
+     "speed_limit": 0.0
+    }
+   },
+   {
+    "in": {
+     "v": 0.3,
+     "w": 0.5,
+     "d_main": 0.25,
+     "min_ttc": null,
+     "proximity_stop": true
+    },
+    "out": {
+     "v": 0.0,
+     "w": 0.0,
+     "zone": 3,
+     "speed_limit": 0.0
+    }
+   },
+   {
+    "in": {
+     "v": -0.2,
+     "w": 0.0,
+     "d_main": 5.0,
+     "min_ttc": 0.5,
+     "proximity_stop": false
+    },
+    "out": {
+     "v": -0.2,
+     "w": 0.0,
+     "zone": 0,
+     "speed_limit": 0.35
+    }
+   },
+   {
+    "in": {
+     "v": 0.0,
+     "w": 1.0,
+     "d_main": 0.9,
+     "min_ttc": null,
+     "proximity_stop": false
+    },
+    "out": {
+     "v": 0.0,
+     "w": 1.0,
+     "zone": 1,
+     "speed_limit": 0.5
+    }
+   }
+  ]
+ },
+ "contract_version": "1.0.0",
+ "tolerance": {
+  "obs": 1e-05,
+  "vo_time": 0.0001,
+  "fallback": 1e-09,
+  "reward": 0.0001,
+  "reward_terms": 0.0001,
+  "cost": 1e-06,
+  "integrate": 1e-09,
+  "profiler": 1e-06,
+  "safety": 1e-09,
+  "e": 1e-06
+ }
+}
