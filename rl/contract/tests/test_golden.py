@@ -110,6 +110,14 @@ def test_integrate_profiler_safety_replay():
                                    row['out'], atol=1e-9)
             for row in e['nearest_cell']:
                 assert K.nearest_cell(*row['a']) == row['cell']
+            assert len(e['bc_label']) >= 7
+            for row in e['bc_label']:
+                lab = K.bc_label(*row['dwa'], row['v_cmd'], row['w_cmd'], row['mask'])
+                assert lab == row['out']['label'], row['scene']
+                assert row['mask'][lab]                                   # 레이블은 마스크 안
+                a = [(row['dwa'][0] - row['v_cmd']) / C.DT, (row['dwa'][1] - row['w_cmd']) / C.DT]
+                assert np.allclose(a, row['out']['a'], atol=1e-9)
+                assert K.nearest_cell(*a) == row['out']['nearest_unmasked']
         elif d['kind'] == 'profiler':
             prof = P.ProfilerReference()
             for stp in e['steps']:

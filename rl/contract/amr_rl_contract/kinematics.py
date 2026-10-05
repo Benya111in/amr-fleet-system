@@ -71,19 +71,52 @@ def integrate_c(index, v_cmd, w_cmd):
     return v_cmd + a_v * C.DT, w_cmd + a_w * C.DT, a_v, a_w
 
 
-def nearest_cell(a_v, a_w):
-    """
-    임의 가속도에 가장 가까운 격자 셀 (DWA 시연 → BC 레이블 변환용).
+def accel_distance(a, b):
+    """정규화 가속도 거리 (Δa_v/A_MAX)² + (Δa_w/ALPHA_MAX)²."""
+    return ((a[0] - b[0]) / C.A_MAX) ** 2 + ((a[1] - b[1]) / C.ALPHA_MAX) ** 2
 
-    거리 = (Δa_v/A_MAX)² + (Δa_w/ALPHA_MAX)², 동률이면 작은 인덱스.
+
+def nearest_cell(a_v, a_w, mask=None, fallback_accel=None):
     """
-    best, best_d = 0, math.inf
-    for i in range(C.N_CELLS):
-        cv, cw = cell_accel(i)
-        d = ((cv - a_v) / C.A_MAX) ** 2 + ((cw - a_w) / C.ALPHA_MAX) ** 2
+    임의 가속도에 가장 가까운 행동 (정규화 거리 accel_distance 최소, 동률이면 작은 인덱스).
+
+    mask 가 None 이면 99 셀 전부가 후보이고 폴백은 후보가 아니다 (격자 투영, v1.0.0 과 같음).
+    mask(길이 N_ACTIONS_C) 를 주면 mask 가 참인 셀, 그리고 mask[99] 가 참이면 가속도
+    fallback_accel 인 폴백(99)이 후보다 — 결과는 항상 마스크 안이다 (BC 레이블, bc_label).
+    """
+    if mask is None:
+        cands = [(i, cell_accel(i)) for i in range(C.N_CELLS)]
+    else:
+        if len(mask) != C.N_ACTIONS_C:
+            raise ValueError(f'마스크 길이 {len(mask)} != {C.N_ACTIONS_C}')
+        cands = [(i, cell_accel(i)) for i in range(C.N_CELLS) if mask[i]]
+        if mask[C.FALLBACK_INDEX]:
+            if fallback_accel is None:
+                raise ValueError('mask[99] 가 참이면 fallback_accel 이 필요하다')
+            cands.append((C.FALLBACK_INDEX, tuple(fallback_accel)))
+    best, best_d = None, math.inf
+    for i, acc in cands:
+        d = accel_distance(acc, (a_v, a_w))
         if d < best_d - 1e-12:
             best, best_d = i, d
+    if best is None:
+        raise ValueError('후보가 없다 (마스크가 전부 거짓)')
     return best
+
+
+def bc_label(v_dwa, w_dwa, v_cmd, w_cmd, mask):
+    """
+    비교군 C 의 BC 레이블 (contract.md §5.2) — DWA 명령을 **마스크 안** 최근접 행동으로.
+
+    a = ((v_dwa − v_cmd)/DT, (w_dwa − w_cmd)/DT). 후보 = 마스크가 참인 셀 + 폴백
+    (가속도 = fallback_command(v_cmd, w_cmd) 의 실행 가속도). 동률이면 작은 인덱스 (폴백 99 가 마지막).
+    DWA 는 계획기에서 저크를 걸지 않으므로(dwa.cpp:108-135, 저크는 하류 프로파일러) 가속 시작·선회 시작의
+    DWA 가속도는 저크 마스크 밖에 있기 쉽다 — 그때 레이블은 저크가 허락하는 만큼 같은 방향으로 간 셀이다.
+    """
+    a_v = (v_dwa - v_cmd) / C.DT
+    a_w = (w_dwa - w_cmd) / C.DT
+    fb = fallback_command(v_cmd, w_cmd)
+    return nearest_cell(a_v, a_w, mask, (fb[2], fb[3]))
 
 
 def stop_time_and_distance(v, a=C.A_MAX, j=C.JERK_MAX, t_c=0.0):

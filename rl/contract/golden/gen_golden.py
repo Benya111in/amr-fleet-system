@@ -274,6 +274,52 @@ def step_case(name, desc, pre, post, action, collision, pairs=()):
     }
 
 
+def bc_label_rows():
+    """
+    BC 레이블 사례 (contract.md §5.2, v1.1.0): (마스크, v_cmd, ω_cmd, DWA 명령) → 레이블.
+
+    마스크는 각 장면의 compute_mask 결과다 (장면 강건성도 decision 과 같이 검사). 레이블 거리 1·2 위의 차가
+    1e-6 이하인 행은 거부한다 (float32 구현이 같은 레이블을 내도록).
+    """
+    path = straight_path(0.0, 0.0, 10.0, 0.0)
+    wall = [(1.035, -1.0, 1.035, 1.0)]      # v′ 0.48 의 마지막 자세 앞 모서리 1.02, 0.50 은 1.05
+    rest = [(0.0, 0.0)] * 3
+    scenes = [
+        ('정지 → DWA 최대 가속 (a 1.0): 저크 마스크 밖 → 저크만큼 가속 (0.2, 0)',
+         base_state(path=path), 0.1, 0.0),
+        ('순항 0.5 → DWA 가속 (a 1.0)', base_state(path=path, v_cmd=0.5, prev_actions=rest), 0.6, 0.0),
+        ('순항 0.5 → DWA 선회 시작 (α 2.0): 저크만큼 선회 (0, 0.5)',
+         base_state(path=path, v_cmd=0.5, prev_actions=rest), 0.5, 0.2),
+        ('순항 0.5 → DWA 최대 감속 (a −1.0): 폴백이 정확히 같다',
+         base_state(path=path, v_cmd=0.5, prev_actions=rest), 0.4, 0.0),
+        ('전방 벽: 직진·가속 셀 충돌, DWA 감속 (a −0.4) → 남은 감속 셀 (−0.2, 0)',
+         base_state(path=path, scan_ranges=raycast((0.0, 0.0, 0.0), wall), v_cmd=0.5,
+                    prev_actions=rest), 0.46, 0.0),
+        ('직전 (0.2, 1.0) 에서 DWA 가 반대로 꺾음 (−0.3, −2.0): 폴백(−1.0, −2.0)이 더 가깝다',
+         base_state(path=path, v_cmd=0.5, w_cmd=0.3, prev_actions=[(0.2, 1.0)] * 3), 0.47, 0.1),
+        ('VO 포화 (d07 장면)에서 DWA 선회 (0, 1.5)',
+         base_state(path=path, v_cmd=0.6, prev_actions=rest,
+                    tracks=[Track(3, 1.8, 0.05, -1.5, 0.0, True)]), 0.6, 0.15),
+    ]
+    rows = []
+    for scene, st, v_dwa, w_dwa in scenes:
+        res = M.compute_mask(st)
+        _assert_robust(st, res, 'bc_label: ' + scene)
+        m = res['mask']
+        a = ((v_dwa - st.v_cmd) / C.DT, (w_dwa - st.w_cmd) / C.DT)
+        fb = K.fallback_command(st.v_cmd, st.w_cmd)
+        ds = sorted([K.accel_distance(K.cell_accel(i), a) for i in range(C.N_CELLS) if m[i]] +
+                    [K.accel_distance((fb[2], fb[3]), a)])
+        if len(ds) > 1 and ds[1] - ds[0] <= 1e-6:
+            raise AssertionError(f'bc_label: {scene}: 레이블 동률 경계 민감')
+        label = K.bc_label(v_dwa, w_dwa, st.v_cmd, st.w_cmd, m)
+        rows.append({'scene': scene, 'v_cmd': st.v_cmd, 'w_cmd': st.w_cmd, 'dwa': [v_dwa, w_dwa],
+                     'mask': [bool(x) for x in m],
+                     'out': {'a': [rnd(a[0]), rnd(a[1])], 'label': label,
+                             'nearest_unmasked': K.nearest_cell(*a)}})
+    return rows
+
+
 def base_state(**kw):
     """기본 상태 (원점, 전방 직선 경로 10 m, 무반사)."""
     d = dict(pose=(0.0, 0.0, 0.0), path=straight_path(0.0, 0.0, 10.0, 0.0),
@@ -503,8 +549,10 @@ def build_cases():
     rows_n = [{'a': [a, b], 'cell': K.nearest_cell(a, b)}
               for a, b in [(0.0, 0.0), (0.33, -0.7), (-0.95, 1.9), (0.1, 0.25), (1.0, -2.0)]]
     cases.append({'kind': 'integrate', 'name': 'i01_action_integration',
-                  'description': '비교군 B 적분(클램프)·C 셀/폴백 적분·최근접 셀 (BC 레이블)',
+                  'description': '비교군 B 적분(클램프)·C 셀/폴백 적분·격자 최근접 셀·BC 레이블(마스크 안 최근접, '
+                                 'v1.1.0)',
                   'expected': {'b': rows_b, 'c': rows_c, 'nearest_cell': rows_n,
+                               'bc_label': bc_label_rows(),
                                'lattice_av': list(C.LATTICE_AV),
                                'lattice_aw': list(C.LATTICE_AW)}})
 
