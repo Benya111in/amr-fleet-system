@@ -31,7 +31,30 @@ def test_phase_mapping(phase, expected):
 def test_estop_overrides_everything():
     for phase in PHASE_TO_STATUS:
         assert map_status(True, phase) == STATUS_ESTOP
+        assert map_status(True, phase, lost=True) == STATUS_ESTOP   # E-stop 이 lost 보다 위
     assert STATUS_NAMES[STATUS_ESTOP] == 'ESTOP' and len(STATUS_NAMES) == 7
+
+
+def test_localization_lost_overrides_the_phase():
+    """측위 상실은 phase 와 무관하게 ERROR 다 — IDLE 로 보이면 fleet 가 계속 배정한다 (§4.6)."""
+    for phase in PHASE_TO_STATUS:
+        assert map_status(False, phase, lost=True) == STATUS_ERROR
+    # phase 가 비어 있어도(실행기가 아직 아무것도 발행 안 함) lost 면 ERROR
+    assert map_status(False, None, lost=True) == STATUS_ERROR
+
+
+def test_lost_is_not_sticky():
+    """해제되면 phase 로 되돌아가야 한다 — 들러붙으면 한 번 lost 된 로봇을 영구히 잃는다."""
+    assert map_status(False, 'idle', lost=True) == STATUS_ERROR
+    assert map_status(False, 'idle', lost=False) == STATUS_IDLE
+    assert map_status(False, 'moving', lost=True) == STATUS_ERROR
+    assert map_status(False, 'moving', lost=False) == STATUS_MOVING
+
+
+def test_lost_defaults_to_false_so_the_old_call_shape_is_unchanged():
+    """기존 두 인자 호출의 뜻이 바뀌면 안 된다 (다른 호출부·테스트가 그대로 쓴다)."""
+    for phase in PHASE_TO_STATUS:
+        assert map_status(False, phase) == map_status(False, phase, lost=False)
 
 
 def test_battery_percent():
