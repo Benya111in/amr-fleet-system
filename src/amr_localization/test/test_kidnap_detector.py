@@ -497,3 +497,92 @@ def test_alias_gate_still_blocks_self_recovery_without_external_help():
         assert det.on_match(5.1 + 0.5 * k, 0.93, 150, alias_margin=0.02) == []
     assert det.state == State.RECOVERING and det.lost
     assert det.alias_rejections >= 10 and det.external_trust_uses == 0
+
+
+def test_backend_down_does_not_burn_recovery_attempts():
+    """
+    측위 백엔드(AMCL)가 inactive 인 동안에는 시도를 소진하지 않는다.
+
+    회귀 근거 (logs/X12): lifecycle_manager 가 change_state 응답을 유실해 amcl 이 ~90 s 동안
+    inactive 였다. 그 동안 이 상태기가 심은 initialpose 는 amcl 이 전부 버렸는데
+    ("not yet in the active state") 시도는 그대로 소진돼 amr_02·03·05 가 셋 다
+    global re-init #4 까지 태우고 FAILED 로 떨어졌고, 그 뒤 작업 배정에서 영구 제외됐다.
+    """
+    p = KidnapParams(suspect_time=0.5, converge_count=2, reinit_retry=4, recovery_timeout=120.0)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 400.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 2.0, 0.1)
+    det.tick(1.6)
+    assert det.state == State.RECOVERING
+    assert det._reinits_done == 1          # LOST 선언이 1 회 쓴다
+
+    det.set_backend_ready(2.0, False)
+    assert not det.backend_ready
+    # 백엔드가 죽은 동안 회전이 끝나도 시도를 쓰지 않는다
+    for k in range(6):
+        assert det.on_spin_done(3.0 + k, True) == []
+    assert det._reinits_done == 1 and det.state == State.RECOVERING
+    # 복구 시한도 흐르지 않는다 (120 s 를 훌쩍 넘겨도 FAILED 가 아니다)
+    det.tick(300.0)
+    assert det.state == State.RECOVERING, 'FAILED 로 떨어졌다 — 시한이 멈추지 않았다'
+
+
+def test_backend_coming_back_rewinds_attempts_and_trusts_its_pose():
+    """백엔드가 돌아오면 시도를 되돌리고, 그 자세를 외부 증거로 믿어 여백을 묻지 않는다."""
+    p = KidnapParams(suspect_time=0.5, converge_count=2, converge_margin=0.05, reinit_retry=4)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 400.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 2.0, 0.1)
+    det.tick(1.6)
+    det.set_backend_ready(2.0, False)
+    det.tick(200.0)                         # 시한이 멈춰 있다
+    assert det.state == State.RECOVERING
+
+    det.set_backend_ready(210.0, True)
+    assert det.backend_ready and det.backend_down_time == pytest.approx(208.0)
+    assert det._reinits_done == 0           # 백엔드가 죽은 동안의 시도는 없던 것으로
+
+    # 대기 구역 스폰 자세의 실측 여백 0.034 (< converge_margin 0.05) 에서도 수렴한다 —
+    # 백엔드가 올라오며 적용한 설정 자세는 우리 스캔 정합 바깥의 증거다
+    # on_amcl 시점에는 아직 이번 lost 구간의 match 가 없어 수렴 카운트가 오르지 않는다
+    det.on_amcl(211.0, (20.0, -16.0, 1.5708), 0.02, 0.01)
+    assert det.on_match(211.1, 0.93, 150, alias_margin=0.034) == []
+    actions = det.on_match(211.6, 0.93, 150, alias_margin=0.034)
+    assert ActionType.SET_EKF_POSE in kinds(actions)
+    assert det.external_trust_uses >= 2
+    assert det.state == State.TRACKING and not det.lost
+
+
+def test_backend_recovery_from_failed_restarts_and_does_not_fire_when_backend_is_fine():
+    """FAILED 에서도 백엔드 복귀로 다시 시도하고, 백엔드가 멀쩡하면 아무것도 바뀌지 않는다."""
+    p = KidnapParams(suspect_time=0.5, converge_count=2, reinit_retry=1, recovery_timeout=120.0)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 400.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 2.0, 0.1)
+    det.tick(1.6)
+    det.on_spin_done(3.0, True)             # reinit_retry 1 소진 → FAILED
+    assert det.state == State.FAILED
+
+    actions = det.set_backend_ready(10.0, True)   # 이미 ready 였다 → 변화 없음
+    assert actions == [] and det.state == State.FAILED
+
+    det.set_backend_ready(11.0, False)
+    actions = det.set_backend_ready(20.0, True)
+    assert det.state == State.RECOVERING
+    assert ActionType.REINITIALIZE in kinds(actions)
+    assert det._reinits_done == 1
+
+
+def test_backend_ready_flag_does_not_change_the_normal_path():
+    """회귀 방어: 백엔드가 계속 active 면 예전과 똑같이 시도를 쓰고 시한도 흐른다."""
+    p = KidnapParams(suspect_time=0.5, converge_count=2, reinit_retry=2, recovery_timeout=50.0)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 400.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 2.0, 0.1)
+    det.tick(1.6)
+    assert det._reinits_done == 1
+    det.on_spin_done(3.0, True)
+    assert det._reinits_done == 2
+    det.on_spin_done(4.0, True)             # 소진
+    assert det.state == State.FAILED
+    assert det.backend_ready and det.backend_down_time == 0.0

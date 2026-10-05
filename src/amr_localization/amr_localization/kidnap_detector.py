@@ -243,6 +243,9 @@ class KidnapDetector:
         self.alias_rejections = 0                     # 여백 부족으로 수렴을 보류한 판정 수
         self.external_trust_uses = 0                  # 외부 자세를 믿고 여백 요구를 건너뛴 판정 수
         self._external_trust_until = -math.inf        # 바깥이 자세를 잡아 준 뒤 여백 유예 끝 시각
+        self.backend_ready = True                     # 측위 백엔드(AMCL)가 active 인가
+        self._backend_down_since: Optional[float] = None
+        self.backend_down_time = 0.0                  # 백엔드가 내려가 있던 누적 시간 [s]
         self._amcl_alarm = False      # 지속 경보: 공분산
         self._amcl_reason = ''
         self._match_alarm = False     # 지속 경보: 스캔-맵 불일치
@@ -327,6 +330,44 @@ class KidnapDetector:
         # 별칭 여백 유예를 연다. 쿨다운만으로는 **재선언**만 막을 뿐, 이미 lost 인 상태에서
         # 수렴을 가로막는 여백 게이트는 그대로라 주기 별칭 자리에서는 영원히 복구하지 못한다.
         self._external_trust_until = t + self.params.external_trust_window
+
+    def set_backend_ready(self, t: float, ready: bool) -> List[Action]:
+        """
+        측위 백엔드(AMCL)가 active 인지 알린다. inactive 동안 복구는 **쉰다**.
+
+        왜: lifecycle_manager 가 change_state 응답을 유실하면 amcl 이 inactive 에 머문다
+        (amr_bringup/lifecycle_watchdog 머리말). 그 동안 이 상태기는 복구를 정상적으로 돌리는데,
+        심는 initialpose 는 amcl 이 "not yet in the active state" 로 **전부 버린다** — 즉 성공할 수
+        없는 시도로 reinit_retry 를 소진하고 FAILED 로 떨어진다 (logs/X12: amr_02·03·05 가 셋 다
+        global re-init #4 까지 태우고 recovery exhausted, 그 뒤 작업 배정에서 영구 제외됐다).
+
+        백엔드가 돌아오면 (a) 쉰 시간을 복구 시한에서 빼고, (b) 시도 횟수를 되돌리고,
+        (c) **별칭 여백 유예를 연다** — 백엔드가 active 로 올라올 때 적용하는 자세는 설정
+        (initial_pose.*) 이나 보관된 initialpose 에서 온 것이라 우리 스캔 정합 바깥의 증거다
+        (watchdog 이 올린 amcl 이 "Setting pose: 20.000 -16.000 1.571" 로 정답을 넣은 것이 실측이다).
+        그것이 없으면 점대칭 창고의 대기 구역처럼 여백이 임계 미만인 자리에서는 AMCL 이 맞게
+        있는데도 게이트가 증명하지 못해 lost 가 영원히 풀리지 않는다.
+        """
+        if ready == self.backend_ready:
+            return []
+        self.backend_ready = ready
+        if not ready:
+            self._backend_down_since = t
+            self.events.append(Event(t, self.state.value, 'localization backend inactive'))
+            return []
+        if self._backend_down_since is not None:
+            self.backend_down_time += t - self._backend_down_since
+            self._backend_down_since = None
+        self.events.append(Event(t, self.state.value, 'localization backend active'))
+        self._external_trust_until = t + self.params.external_trust_window
+        if self.state in (State.RECOVERING, State.FAILED):
+            # 백엔드가 죽어 있는 동안 태운 시도는 성공할 수 없었다 — 되돌리고 시한도 다시 센다
+            self._reinits_done = 0
+            self._lost_since = t
+            if self.state == State.FAILED:
+                self._set_state(t, State.RECOVERING, 'backend active: retry recovery')
+                return self._reinitialize(t, 'localization backend came back')
+        return []
 
     def on_marker_fix(self, t: float, pose: Pose) -> List[Action]:
         """
@@ -443,6 +484,10 @@ class KidnapDetector:
         if self.state != State.RECOVERING:
             return []  # FAILED 이후에는 더 시도하지 않는다 (수렴하면 on_match/on_amcl 로 복귀)
         actions: List[Action] = []
+        if not self.backend_ready:
+            # 백엔드가 inactive 면 어떤 시드도 적용되지 않는다 — 시도를 쓰지 않고 기다린다
+            # (set_backend_ready 가 돌아올 때 다시 시작한다)
+            return []
         if self._spins_left > 0:
             self._spins_left -= 1
             actions += self._spin(t, 'spin finished without convergence' if succeeded
@@ -461,7 +506,7 @@ class KidnapDetector:
                 actions += self._declare_lost(t, self._alarm_reason)
             else:
                 self._set_state(t, State.TRACKING, 'alarm cleared')
-        elif (self.state == State.RECOVERING
+        elif (self.state == State.RECOVERING and self.backend_ready
               and t - self._lost_since > self.params.recovery_timeout):
             actions += self._fail(t, f'recovery timeout {self.params.recovery_timeout:.0f} s')
         return actions
