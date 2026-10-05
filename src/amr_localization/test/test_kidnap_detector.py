@@ -592,3 +592,99 @@ def test_backend_ready_flag_does_not_change_the_normal_path():
     det.on_spin_done(4.0, True)             # 소진
     assert det.state == State.FAILED
     assert det.backend_ready and det.backend_down_time == 0.0
+
+
+def test_external_pose_reset_clears_scan_history_from_the_old_pose():
+    """
+    순간 이동 **전** 스캔이 이동 **뒤** 판정에 섞이면 안 된다.
+
+    회귀 근거 (logs/R12b): amr_05 가 (3, 6, 0) 에 올바르게 배치되고 전역 탐색이 참 자세를
+    inlier 0.914 로 1 순위에 올린 상태였는데, 배치 2.48 s 만에
+    "scan registration rejected 17/20" 으로 lost 가 됐다. 하네스는 set_pose 뒤 2 s 기다렸다가
+    seed_pose 하므로, 등록 창(20 스캔 @ 10 Hz = 2 s)에는 **옛 자세 기준의 거부**가 차 있다.
+    그것이 시드 뒤에도 남아 문턱을 넘겼다. 그리고 _declare_lost 가 여백 유예까지 닫아
+    그 뒤 자가 복구가 별칭 자리에서 영원히 실패했다.
+
+    개수로 판정한다 (시간 의존을 피한다): reg_min_samples 미만씩 두 번 — 창을 비우지 않으면
+    합이 문턱을 넘고, 비우면 넘지 않는다.
+    """
+    p = KidnapParams(reg_window=20, reg_min_samples=10, reg_reject_ratio=0.8,
+                     match_window=99, suspect_time=99.0)      # 다른 신호는 재우고 정합기만 본다
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 30.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 0.01, 0.001)
+
+    for k in range(9):                                  # 창을 채우기 직전까지 (옛 자세 기준 거부)
+        det.on_scan_match(2.0 + 0.1 * k, False)
+    assert len(det._reg_hist) == 9 and not det._reg_alarm
+
+    det.on_external_pose_reset(3.0)                     # 바깥이 자세를 잡아 줬다
+    assert not det._reg_hist, '등록 창이 비워지지 않았다'
+    assert det._low_match == 0 and not det._match_alarm
+
+    for k in range(9):                                  # 이동 뒤 거부 9 건 — 창이 비었으면 아직 문턱 미만
+        det.on_scan_match(4.0 + 0.1 * k, False)
+    assert not det._reg_alarm, '옛 자세의 거부가 새 판정에 섞였다'
+    assert not det.lost and det.state == State.TRACKING
+
+
+def test_external_pose_reset_clears_the_scan_match_streak_too():
+    """
+    등록 창뿐 아니라 **스캔 일치도 연속 카운터**도 비운다.
+
+    회귀 근거 (logs/R12a): amr_04 의 LOST 사유가 "scan-map inlier 0.14 < 0.50 for 6 scans" 였다.
+    이 신호도 옛 자세 기준으로 쌓인다. 개수로 판정한다 — match_window 미만씩 두 번.
+    """
+    p = KidnapParams(match_window=5, match_thresh=0.5, reg_min_samples=99, suspect_time=99.0)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 30.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 0.01, 0.001)
+
+    for k in range(4):                       # 창을 채우기 직전까지 (옛 자세 기준)
+        det.on_match(2.0 + 0.1 * k, 0.1, 150)
+    assert det._low_match == 4 and not det._match_alarm
+
+    det.on_external_pose_reset(3.0)
+    assert det._low_match == 0, '일치도 연속 카운터가 비워지지 않았다'
+
+    for k in range(4):                       # 이동 뒤 4 회 — 비웠으면 아직 문턱 미만
+        det.on_match(4.0 + 0.1 * k, 0.1, 150)
+    assert not det._match_alarm, '옛 자세의 불일치가 새 판정에 섞였다'
+    assert not det.lost and det.state == State.TRACKING
+
+
+def test_external_pose_reset_cancels_an_in_flight_suspicion():
+    """
+    진행 중인 의심도 거둔다 — 쿨다운만으로는 못 막는다.
+
+    tick 의 SUSPECT → LOST 승격은 쿨다운을 보지 않는다. 그래서 순간 이동과 시드 사이에 이미
+    SUSPECT 로 들어갔으면 시드가 와도 suspect_time 뒤에 LOST 가 선언된다.
+    """
+    p = KidnapParams(match_window=3, match_thresh=0.5, suspect_time=5.0, cooldown=3.0)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 30.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 0.01, 0.001)
+    for k in range(4):
+        det.on_match(2.0 + 0.1 * k, 0.1, 150)
+    assert det.state == State.SUSPECT, '전제: 시드 전에 의심 상태다'
+
+    det.on_external_pose_reset(2.5)
+    assert det.state == State.TRACKING, '의심이 거둬지지 않았다'
+    assert det.tick(10.0) == [] and not det.lost, 'suspect_time 뒤에도 LOST 가 되면 안 된다'
+
+
+def test_external_pose_reset_does_not_hide_a_real_problem_afterwards():
+    """회귀 방어: 이력을 비우되, 이동 **뒤** 스캔이 계속 나쁘면 예전대로 LOST 를 선언한다."""
+    p = KidnapParams(reg_window=20, reg_min_samples=10, reg_reject_ratio=0.8,
+                     match_window=5, match_thresh=0.5, suspect_time=0.5, cooldown=1.0)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 60.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 0.01, 0.001)
+    det.on_external_pose_reset(2.0)
+
+    # 쿨다운(1 s)이 지난 뒤 이동 뒤 스캔만으로 창을 채운다 → LOST
+    for k in range(20):
+        det.on_scan_match(4.0 + 0.1 * k, False)
+        det.on_match(4.0 + 0.1 * k, 0.1, 150)
+    det.tick(7.0)
+    assert det.lost, '이동 뒤에도 나쁘면 LOST 를 선언해야 한다'

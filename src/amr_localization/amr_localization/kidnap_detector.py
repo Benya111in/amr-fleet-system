@@ -327,6 +327,23 @@ class KidnapDetector:
         """
         self._cooldown_until = max(self._cooldown_until, t + self.params.cooldown)
         self._marker_mismatch_since = None
+        # 스캔에서 유래한 이력은 **이전 자세**에 대한 것이다 — 자세가 바뀌었으니 비운다.
+        # 이것이 없으면 순간 이동 직후 등록 창(reg_window 20 스캔 @ 10 Hz = 2 s)에 이동 전 스캔이
+        # 남아 거부가 쌓이고, 쿨다운(3 s)이 끝나기도 전에 "scan registration rejected 17/20" 으로
+        # LOST 가 선언된다 (logs/R12b 실측: amr_05 이 배치 2.48 s 만에, 전역 탐색이 참 자세를
+        # inlier 0.914 로 1 순위에 올린 상태에서 lost 가 됐다). 그리고 _declare_lost 가 아래
+        # 여백 유예까지 닫아 버려, 그 뒤 자가 복구가 별칭 자리에서 영원히 실패한다.
+        self._reset_reg()
+        self._low_match = 0
+        self._match_alarm = False
+        self._match_reason = ''
+        self._alarm_active = self._amcl_alarm
+        # 진행 중인 의심도 **이전 자세**에 대한 것이다 — 거둬들인다. 쿨다운만으로는 못 막는다:
+        # tick 의 SUSPECT → LOST 승격은 쿨다운을 보지 않으므로, 순간 이동과 시드 사이에 이미
+        # SUSPECT 로 들어갔으면 시드가 와도 suspect_time 뒤 LOST 가 선언된다 (logs/R12b 의 2.48 s).
+        if self.state == State.SUSPECT:
+            self._set_state(t, State.TRACKING,
+                            'external pose reset: suspicion was about the old pose')
         # 별칭 여백 유예를 연다. 쿨다운만으로는 **재선언**만 막을 뿐, 이미 lost 인 상태에서
         # 수렴을 가로막는 여백 게이트는 그대로라 주기 별칭 자리에서는 영원히 복구하지 못한다.
         self._external_trust_until = t + self.params.external_trust_window
