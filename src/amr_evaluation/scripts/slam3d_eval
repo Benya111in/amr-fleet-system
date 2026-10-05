@@ -1,0 +1,9 @@
+#!/usr/bin/env python3
+"""ros2 run amr_evaluation slam3d_eval {traj,grid,cloud} 진입점 (보너스 2 평가 → 결과 CSV)."""
+
+import sys
+
+from amr_evaluation.slam3d.cli import main
+
+if __name__ == '__main__':
+    sys.exit(main())
