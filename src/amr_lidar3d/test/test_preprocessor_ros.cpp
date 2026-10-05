@@ -147,4 +147,21 @@ TEST_F(PreprocessorRos, NonLazyFrameOverride)
   EXPECT_EQ(got.front().width, 4U);
 }
 
+TEST_F(PreprocessorRos, DefaultSubscribesWithoutOutputSubscriber)
+{
+  // 기본(lazy false): 출력 구독자가 없어도 입력을 구독한다 → 스폰 때 센서가 켜져 따라잡기 렌더가 없다
+  const std::string ns = "/t_default";
+  rclcpp::NodeOptions opts;
+  opts.arguments({"--ros-args", "-r", "__ns:=" + ns, "-p", "report_period:=0.0"});
+  auto node = amr_lidar3d::createCloudPreprocessor(opts);
+  auto peer = std::make_shared<rclcpp::Node>("peer3", ns);
+  auto raw_pub = peer->create_publisher<PointCloud2>("lidar3d/points_raw", rclcpp::QoS(5));
+  exec_.add_node(node);
+  exec_.add_node(peer);
+  spinFor(3000ms, [&]() {return raw_pub->get_subscription_count() > 0U;});
+  EXPECT_GT(raw_pub->get_subscription_count(), 0U);
+  spinFor(1500ms);   // lazy 였다면 이 사이 구독을 해제한다
+  EXPECT_GT(raw_pub->get_subscription_count(), 0U);
+}
+
 }  // namespace

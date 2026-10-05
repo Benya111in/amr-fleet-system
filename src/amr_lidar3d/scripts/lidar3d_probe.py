@@ -92,7 +92,7 @@ class Probe(Node):
         qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
         self.subs = [self.create_subscription(TYPES[guess_type(t)], t, self._cb(t), qos, raw=True)
                      for t in topics]
-        self.create_subscription(Clock, '/clock', self._clock, QoSProfile(depth=50), raw=True)
+        self.create_subscription(Clock, '/clock', self._on_clock, QoSProfile(depth=50), raw=True)
 
     def _cb(self, topic):
         def cb(raw):
@@ -105,7 +105,7 @@ class Probe(Node):
                 self.sizes[topic].append(len(raw))
         return cb
 
-    def _clock(self, raw):
+    def _on_clock(self, raw):
         if self.recording:
             with self.lock:
                 self.clock.append((time.monotonic(), cdr_stamp(raw)))
