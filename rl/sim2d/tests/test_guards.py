@@ -115,3 +115,15 @@ def test_truncation_bootstraps_final_value():
     assert float(tr.b_rew[0, 0]) == pytest.approx(0.995 * v_final, rel=1e-5)
     assert float(tr.b_rew[0, 1]) == 0.0
     assert float(tr.b_done[0, 0]) == 1.0 and math.isfinite(v_final)
+
+
+def test_running_norm_variance_floor():
+    """늘 같던 특징이 나중에 바뀌어도 정규화 값이 ±10 에 붙지 않는다 (분산 하한 0.01)."""
+    from amr_sim2d.ppo import RunningNorm
+    nm = RunningNorm(3)
+    for _ in range(50):
+        nm.update(torch.zeros(256, 3))
+    assert float(nm.var.max()) < 1e-8
+    z = nm(torch.ones(1, 3))
+    assert float(z.abs().max()) <= 10.0 + 1e-6
+    assert float(z.abs().max()) == pytest.approx(1.0 / math.sqrt(0.01 + 1e-8), rel=1e-4)

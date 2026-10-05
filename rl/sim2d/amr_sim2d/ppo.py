@@ -25,15 +25,22 @@ OBS_DIM = 291
 
 
 class RunningNorm(nn.Module):
-    """관측 running mean/var (Welford 병합). ONNX 로 같이 나간다."""
+    """
+    관측 running mean/var (Welford 병합). ONNX 로 같이 나간다.
 
-    def __init__(self, dim, clip=10.0, eps=1e-8):
+    분산 하한 var_floor: 학습 초기에 늘 같은 값이던 특징(커리큘럼 앞 단계의 빈 트랙 칸, 이탈 블록 등)은 분산이
+    1e-10 까지 내려가고, 나중에 그 특징이 0 → 1 로 바뀌면 정규화 값이 ±10 에 붙어 정책이 무너진다 (2026-10-06
+    B_bc2 실측: 이탈 블록 224–226·트랙 칸 4–7 의 분산 3e-10). 계약 관측은 이미 O(1) 로 정규화돼 있으므로
+    σ ≥ 0.1 (var ≥ 0.01) 하한을 둔다. 하한은 forward 그래프 안의 clamp 라 ONNX 에도 그대로 들어간다.
+    """
+
+    def __init__(self, dim, clip=10.0, eps=1e-8, var_floor=1e-2):
         """버퍼: mean, var, count."""
         super().__init__()
         self.register_buffer('mean', torch.zeros(dim))
         self.register_buffer('var', torch.ones(dim))
         self.register_buffer('count', torch.tensor(1e-4))
-        self.clip, self.eps = clip, eps
+        self.clip, self.eps, self.var_floor = clip, eps, var_floor
 
     @torch.no_grad()
     def update(self, x):
@@ -49,7 +56,7 @@ class RunningNorm(nn.Module):
 
     def forward(self, x):
         """정규화·자르기."""
-        z = (x - self.mean) / torch.sqrt(self.var + self.eps)
+        z = (x - self.mean) / torch.sqrt(torch.clamp(self.var, min=self.var_floor) + self.eps)
         return torch.clamp(z, -self.clip, self.clip)
 
 
