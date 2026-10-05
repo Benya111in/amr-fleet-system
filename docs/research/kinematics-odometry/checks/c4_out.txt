@@ -1,0 +1,14 @@
+v2clip  true/nom=[0.952 0.952]: 60 s max err  0.076 %, t(<=1 %) median   7.2 s max   7.9 s, gate rejections median 1
+v2clip  true/nom=[1.04 0.97]: 60 s max err  3.418 %, t(<=1 %) median   inf s max   inf s, gate rejections median 449
+v2clip  true/nom=[1.05 0.95]: 60 s max err  4.948 %, t(<=1 %) median   inf s max   inf s, gate rejections median 449
+v2clip  true/nom=[0.96 1.03]: 60 s max err  3.493 %, t(<=1 %) median   inf s max   inf s, gate rejections median 449
+joseph  true/nom=[0.952 0.952]: 60 s max err  0.075 %, t(<=1 %) median   7.5 s max   9.0 s, gate rejections median 1
+joseph  true/nom=[1.04 0.97]: 60 s max err  0.175 %, t(<=1 %) median  12.5 s max  16.0 s, gate rejections median 8
+joseph  true/nom=[1.05 0.95]: 60 s max err  0.144 %, t(<=1 %) median  10.7 s max  16.0 s, gate rejections median 11
+joseph  true/nom=[0.96 1.03]: 60 s max err  0.156 %, t(<=1 %) median  11.3 s max  12.1 s, gate rejections median 8
+noclip  true/nom=[0.952 0.952]: 60 s max err  0.076 %, t(<=1 %) median   3.0 s max   4.5 s, gate rejections median 1
+noclip  true/nom=[1.04 0.97]: 60 s max err  0.227 %, t(<=1 %) median  10.4 s max  15.3 s, gate rejections median 38
+noclip  true/nom=[1.05 0.95]: 60 s max err  0.241 %, t(<=1 %) median  10.8 s max  17.7 s, gate rejections median 45
+noclip  true/nom=[0.96 1.03]: 60 s max err  0.196 %, t(<=1 %) median  10.3 s max  15.5 s, gate rejections median 34
+persistent left-wheel slip 0.5 % for 120 s: psi_hat change [ 0.22  -0.267] % of nominal, gate rejections 6/1200
+persistent left-wheel slip 2.0 % for 120 s: psi_hat change [ 0.899 -0.997] % of nominal, gate rejections 134/1200

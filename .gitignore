@@ -54,3 +54,7 @@ src/amr_perception/models/*
 
 # 환경변수
 .env
+
+# C++ 커버리지 측정용 별도 빌드 (scripts/cpp_coverage.sh)
+build_cov/
+install_cov/

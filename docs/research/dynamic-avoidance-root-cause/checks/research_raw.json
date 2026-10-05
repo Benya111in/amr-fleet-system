@@ -1,0 +1,1797 @@
+{
+ "domains_completed": [
+  "ics-safety",
+  "geometry",
+  "vo-multiagent",
+  "crowd-freezing",
+  "spacetime-planning",
+  "mpc-optimization",
+  "prediction-reachability"
+ ],
+ "diagnoses": [
+  {
+   "domain": "ics-safety",
+   "diagnosis": "이 시스템은 안전을 **한 시점·한 주기짜리 입력 제약 필터**(안전 게이트의 속도 상한 + 동적 창 한 주기에 대한 VO 기각)로 강제한다. 즉 \"지금 이 순간이 안전한가\"만 검정하고 \"안전한 연속(continuation)이 존재하는가\"는 한 번도 검정하지 않는다 — persistent/recursive feasibility 개념이 코드 어디에도 없다. 그 필터가 암묵적으로 가정하는 유일한 백업 정책은 \"정지\"인데, 1.0 m/s 로 다가오는 보행자 앞에서 정지는 Fraichard 의미의 ICS 이고, 명세가 요구하는 것은 passive safety(충돌 시 로봇이 정지해 있음)가 아니라 active safety(충돌 0)이다. 실제로 코드는 passive safety 를 정확히 구현하고 있고 접촉의 52 %가 \"정지한 채 받힘\" 인 것은 그 구현이 **설계대로 동작한 결과**다. 여기에 두 개의 모델 오차가 겹쳐 탈출 자체를 불가능하게 만든다: (a) 동적 장애물에 대해 외접원(0.361)을 쓰므로 배리어 h 가 요(yaw)에 무관해져 v=0 에서 ω 채널의 제어 권한이 **정확히 0** 이 된다 (Lg h ≡ 0, QP 가 여유가 아니라 구조적으로 infeasible), (b) rollout() 이 등속 원호를 적분하므로 v_meas=0 일 때 모든 후보의 1.5 s 예측 변위가 7.5 cm 안에 갇힌다 — 실제 가속 도달거리 1.125 m 의 **1/15** 다. 비용 함수가 후보를 구별하지 못하니 선택은 전부 tie-break 로 떨어지고, 그 tie-break 가 정지·제자리회전을 뽑는다. 요컨대 근본 원인은 파라미터가 아니라 **안전 판정의 집합이 틀렸고(ICS 를 안전으로 분류), 탈출 기동이 후보 집합·배리어·예측 지평 어디에도 표현되지 않는다**는 것이다.",
+   "verdict": "조건부"
+  },
+  {
+   "domain": "geometry",
+   "diagnosis": "근본 원인은 \"여유 부족\"이 아니라 **기하 추상화가 로봇에게 남은 마지막 제어 채널을 소거한 것**이다. 외접원 R=0.361은 SO(2) 회전에 대해 불변인데, 차동구동 로봇이 v→0에서 유일하게 온전히 보유한 제어 입력이 바로 그 SO(2) 회전이다(Δθ=ωt는 t의 1차, Δy≈½vωt²는 v에 비례해 v=0에서 정확히 0). 즉 DWA의 동적 비용은 접촉의 52 %가 발생하는 v<0.05 m/s 영역에서 ω 후보 31개 전부에 대해 **상수**이며, 계획기는 그 순간 구조적으로 눈이 멀어 있다. 이것은 보수성 문제가 아니다 — 외접원 0.361은 직사각형의 최대 도달거리 0.3606보다 항상 크므로 planner의 모델은 gate의 모델(safety_gate.cpp의 `distanceToRectangle`, 정확 SDF)보다 이미 더 보수적이다. 그런데도 맞는다. 침투가 중앙 6.0 mm에 몰린 \"경계 포화\"는 시스템이 이미 경계를 정확히 찾아냈다는 증거이고, 부족한 것은 19 mm인데 회전은 공짜로 161 mm를 준다(도달거리 0.3606→0.200). 추가로, 경로 9.00 m 중 8.49 m가 보행자 실린더 안이고 최장 자유 구간이 0.25 m < 로봇 폭 0.40 m라는 것은 **평면 자유공간이 경로 상에서 연결되어 있지 않다**는 뜻이며, 자유공간은 오직 시공간(x,y,t)에서만 연결된다 — 그래서 \"옆으로 비키기\"와 \"대기점\"은 위상적으로 실패할 수밖에 없었고, 정지 궤적(시공간의 수직선)은 기울어진 C-장애물 튜브를 반드시 관통한다.",
+   "verdict": "조건부"
+  },
+  {
+   "domain": "vo-multiagent",
+   "diagnosis": "우리 문제는 \"VO 가 부족하다\"가 아니라 **VO 를 하드 기각으로 쓰면서 로봇 자신의 탈출 권한을 1주기 등속 근사로 모형화한 것**의 실패다. 비협조 장애물이 다가오면 VO 는 정의상 원점(v=0)을 포함하므로 \"정지\"는 항상 VO 안이고, 그 상태에서 시스템이 가진 것은 Fraichard 계열이 말하는 passive safety(충돌 시 로봇이 정지해 있음)뿐이다 — 명세가 요구하는 것은 active safety 다. 여기에 동적 창(폭 0.10 m/s)과 등속 롤아웃이 겹쳐, 계획기는 자신을 \"1.5 s 에 0.075 m 가는 물체\"로 본다. 실제 권한은 1.5 s 에 1.000 m 로 **13.3 배**다. 그 결과 보행자가 2.911 m 에 오는 순간 창 전체가 기각되고(실측: R_vo=0.361+0.25+0.30=0.911, τ=2.0, 보행자 1.0 m/s), 그 뒤 접촉까지 2.3 s 동안 비용함수는 사실상 꺼진 채 `vo_saturated` tiebreak 만 돈다. 참 ICS 경계는 필요 횡이동 0.450 m ÷ a=1.0 → 0.95 s → 보행자 ≈1.56 m 이므로, **계획기는 실제로 갇히기 1.35 s 전부터 불필요하게 눈이 먼다** — 그 구간이 회피가 가장 쉬운 구간이다. 116 구성 스윕이 단조 반응을 못 낸 이유도 여기 있다: VO 파라미터는 포화가 *언제* 시작되는지만 옮기고, 포화 *후* 무슨 일이 일어나는지는 tiebreak 이 결정한다.",
+   "verdict": "조건부"
+  },
+  {
+   "domain": "crowd-freezing",
+   "diagnosis": "우리 증상은 freezing robot problem 의 겉모습을 하고 있지만 Trautman & Krause 가 정식화한 그 문제는 아니다. 그들의 FRP 는 예측 불확실성 폭발로 모든 행동이 불가능해 보여 얼어붙는 것이고 해법은 \"사람이 비켜 줄 것\"을 모형화하는 것인데, 우리는 (a) 인지가 실패한 적이 없고(yield_state=clear 접촉 0건) (b) Gazebo actor 가 결정론적 스플라인을 따라가며 로봇을 인지조차 하지 않으므로 협조 가정 계열(IGP, ORCA, social force, 대부분의 학습형 군중 내비)은 원천적으로 무효다. 실제 근본 원인은 시스템이 \"정지\"를 안전한 최종 행동으로 취급한다는 것이다 — 비협조 횡단 흐름 안에서 정지는 Fraichard 의 braking-ICS 이고, 우리가 달성하고 있는 것은 passive motion safety(\"충돌이 나면 로봇은 정지해 있다\") 뿐인데 이것은 상대가 회피할 수 있을 때(passive friendly safety) 에만 안전 개념으로서 의미가 있으며 우리 actor 는 회피하지 않는다. 접촉의 52 %가 v<0.05 라는 실측은 이 정리의 문자 그대로의 확인이다: 우리 컨트롤러는 자기가 요구받은 안전 성질을 정확히 만족시키면서 충돌하고 있다. 그 위에 회피 기동이 **표현 불가능**하다는 두 겹의 붕괴가 겹친다 — 속도 공간 붕괴(1-step 동적 창이 v_meas=0 에서 [0, 0.05] m/s, ω 창 ±0.1 rad/s 로 붕괴하고 롤아웃이 등속이라 1.5 s 지평에서 후보 간 변위 차가 0.075 m, 방위 차가 0.15 rad 밖에 안 된다 → 비용 항의 해상도 이하라 argmin 이 사실상 무작위) 와 위상 공간 붕괴(어느 틈·어느 쪽을 택했는지를 담는 상태 변수가 없어 비용면이 평평하고, 그래서 최적점이 제약 경계에 눌러앉아 침투가 6 mm 에 몰린다 — 균일 여유 증가가 분포 모양을 못 바꾼 이유가 이것이다).",
+   "verdict": "조건부"
+  },
+  {
+   "domain": "spacetime-planning",
+   "diagnosis": "우리 시스템은 다섯 층(전역 코스트맵, 보행차선 필터, crossing_yield 통로, DWA VO, TTC) 전부에서 **시간축을 주변화(marginalize out)** 한 뒤 남은 공간 좌표에서만 문제를 푼다. 실측으로 확인했다: A(−4,−5)→B(4,−9) 경로 × worker_crossing 반주기(15.24 s)의 (s,t) 직사각형 136.3 m·s 중 실제 충돌집합은 넓이 3.07 m·s 의 **타원 하나, 2.25 %** 뿐인데, 이것을 s 축으로 사영하면 2.96 m(경로의 33.0 %)의 벽이 되고 모든 차선을 합쳐 사영하면 실측 94 %가 된다 — **42배의 정보 손실**이다. 그래서 회피는 자유측도 5.7 %인 좌표(공간)에서 시도되고, 자유측도 97.8 %인 좌표(시간)는 상태공간에 아예 없다. 116구성×3480시행 스윕이 단조 반응을 못 낸 것, 균일 여유 증가가 전부 실패한 것, 보행차선 밴드가 이탈·시간만 악화시킨 것, 횡단 게이트가 4.0 %→10~12 %로 나빠진 것은 전부 같은 한 가지 표현 오류의 귀결이다. 파라미터로는 표현 오류를 못 고친다. 두 번째 층위의 진단: 명세가 요구하는 \"재계획하여 회피\"가 코드상 **작동하지 않는다**. BT 의 `IsTTCBelowThreshold` 는 `ComputePathToPose` 를 부르지만 전역 코스트맵은 동적 트랙 끝점을 뺀 스캔(`scan_costmap_static`, nav2_params.yaml L543)을 구독하므로 재계획 결과 경로는 이전 경로와 같다 — TTC 트리거는 no-op 이다. 셋째, 시간축이 없으니 \"대기\"가 타입 없는 행동이 된다. SIPP 계열 문헌이 말하는 β(최종 안전 출발시각, Thomas·Ruml·Shimony 2024)에 해당하는 양이 시스템 어디에도 없어서, 안전 게이트의 STOP 은 \"이 셀의 안전구간이 언제 끝나는가\"를 모른 채 걸린다. 접촉 148건 중 77건(52 %)이 v<0.05 인 것은 인지 실패가 아니라 **대기 허용성 판정의 부재**다.",
+   "verdict": "조건부"
+  },
+  {
+   "domain": "mpc-optimization",
+   "diagnosis": "우리 시스템은 사실상 **passive motion safety**(충돌이 일어난다면 로봇은 정지 상태였다 — Bouraine/Fraichard의 braking-ICS)를 구현해 놓고 명세는 **active safety**(접촉 0)를 요구한다. Braking-ICS가 유효하려면 종단 집합 {v=0}이 제어불변(control invariant)이어야 하는데, 1.0 m/s로 양보 없이 걸어오는 보행자 앞에서 정지 상태는 후속 안전 상태를 갖지 않는다 — 즉 우리 계획기의 **암묵적 terminal set 자체가 무효**이고, 그래서 recursive feasibility가 존재하지 않는다. 148건 집계표는 이 실패의 교과서적 서명이다: yield_state=clear 0건(지금은 실현가능)·committed 86.5 %(다음 순간 실현불가)·v<0.05 가 52 %(무효한 종단 집합으로 수렴)·침투가 6 mm에 몰림(순시 제약만 binding하므로 경계를 타고 미끄러짐). 두 번째 근본 원인은 **탐색 공간이 도달 집합의 캐리커처**라는 것이다: 동적 창은 1스텝 도달집합 [v_c±aΔt_c]인데 롤아웃은 그 v를 1.5~2.5 s 등속으로 적분한다. v=0에서 후보가 표현할 수 있는 최대 이동은 0.05×1.5 = 0.075 m인 반면 실제 1.5 s 도달거리는 ½·1·1.5² = 1.125 m로 **15배** 차이가 나고, 가로 이동은 0.054 m 대 0.97 m로 **18배**다. 세 번째는 **비용의 null 방향**이다: 동적 항이 로봇을 외접원 0.361로 보므로 J_dyn·VO·in_body가 전부 yaw에 대해 불변이고, v=0에서 차동 구동이 낼 수 있는 유일한 입력이 바로 그 yaw다. 즉 멈춘 순간 로봇이 가진 유일한 제어 권한이 보행자를 아는 유일한 비용항의 정확히 영공간(null space)에 놓인다. 마지막으로 8항 가중합은 원리적으로 이 문제를 못 푼다 — J_dyn은 min(·,1)로 클리핑돼 **exact penalty가 아니며**, 가로 방향 기울기로 재면 경로항(2.5/m)+탈출항(1.91/m)=4.41/m 대 J_dyn 0.09/m로 **49:1**로 진다. 116구성 스윕이 단조 반응을 못 낸 이유가 이것이다.",
+   "verdict": "조건부"
+  },
+  {
+   "domain": "prediction-reachability",
+   "diagnosis": "근본 원인은 예측 정확도가 아니라 **시간축이 계획 어디에도 표현되어 있지 않다**는 것이다. 전역 A*는 Kant–Zucker 분해의 PPP(정적 경로)만 풀고 VPP(경로 위 속도 계획)는 아무도 풀지 않으며, 지역층의 회피 기하(통로 반폭 β, in_body, escape, 양보 결정)는 보행자 궤적을 **시간 없이 무한 원기둥으로 투영**한다. 그래서 \"경로의 94 %가 보행자 원기둥 안, 빈 구간 최장 0.25 m ⇒ 기다릴 자리가 없다\"는 결론이 나왔지만, 90° 횡단 기하의 실제 공간-시간 충돌 상자는 경로 방향 2(0.30+0.25)=1.10 m × 0.90 s 에 불과하다 — 즉 **0.9 초짜리 틈이 있는데 시간축이 없어서 보이지 않았다.** 이것이 실패한 시도 전부(전역 코스트맵 차선 밴드, 횡단 게이트 + 대기점)가 같은 이유로 죽은 까닭이고, 회피 예산이 이미 고갈된 **횡방향**(이탈 1 m 제한)에만 지출되고 완전히 미사용인 **시간축**에는 한 번도 지출되지 않은 까닭이다. 둘째로 시스템이 구현한 안전 개념은 passive safety(접촉 순간 로봇이 정지 상태)인데 명세가 요구하는 것은 접촉 0이다 — \"정지가 위험한 상태\"라는 술어가 없고, 오히려 `ttc.cpp`의 `min_robot_speed = 0.2` 바닥이 정지한 로봇도 경로를 0.2 m/s로 빠져나가는 것으로 예측해 정지 위험을 **구조적으로 은폐**하며, DWA의 J_dyn 주항 `excess = max(0, |v| − a(TTC−t_lag))` 는 v=0 에서 항상 0 이라 정지 후보를 벌할 수단 자체가 없다. 셋째로 정지 상태에서 몸을 빼는 데 드는 시간(90° 선회 1.80 s + 0.30 m 전진 0.78~1.03 s ⇒ T_esc ≈ 0.85~2.65 s, 보행자 거리로 0.85~2.65 m)이 시스템의 결정 지평(양보 통로 진입 1.2~1.5 m, 안전 게이트 0.3 m)보다 **1~2 m 길다** — 결정이 구조적으로 늦고, 파라미터가 움직일 수 있는 폭(≤ 0.3 m)으로는 이 결손을 메울 수 없다. 이것이 116 구성 × 3480 시행이 단조 반응을 못 낸 물리적 이유다.",
+   "verdict": "조건부"
+  }
+ ],
+ "literature_count": 138,
+ "all_literature": [
+  {
+   "domain": "ics-safety",
+   "citation": "T. Fraichard, H. Asama, \"Inevitable Collision States — A Step Towards Safer Robots?\", Advanced Robotics (RSJ), vol. 18, no. 10, 2004 (초기본 IROS 2003)",
+   "year": 2004,
+   "url": "http://emotion.inrialpes.fr/fraichard/publications/journals/04-rsjar-fraichard-asama.pdf",
+   "depth": "2차인용",
+   "takeaway": "ICS = 미래에 어떤 궤적을 따르더라도 결국 충돌하는 상태. 시스템 동역학과 **움직이는** 장애물의 미래 거동을 함께 고려한다. 실무적으로는 회피 궤적 부분집합 E 에 대한 보수적 근사 ICS(E) 로 계산한다."
+  },
+  {
+   "domain": "ics-safety",
+   "citation": "S. Bouraine, T. Fraichard, H. Salhi, \"Provably safe navigation for mobile robots with limited field-of-views in dynamic environments\", Autonomous Robots, vol. 32, no. 3, pp. 267–283, 2012",
+   "year": 2012,
+   "url": "https://link.springer.com/article/10.1007/s10514-011-9258-8",
+   "depth": "초록만",
+   "takeaway": "미지의 동적 환경에서 절대적 motion safety 는 일반적으로 보장 불가. 대신 passive motion safety — '충돌이 나더라도 로봇은 정지해 있다' — 로 약화하고, 그에 대응하는 **braking ICS**(어떤 제동 궤적을 따라도 정지 전에 충돌하는 상태)를 정의한다."
+  },
+  {
+   "domain": "ics-safety",
+   "citation": "S. Mitsch, K. Ghorbal, A. Platzer, \"On Provably Safe Obstacle Avoidance for Autonomous Robotic Ground Vehicles\", Robotics: Science and Systems (RSS) IX, 2013 (확장판: Mitsch, Ghorbal, Vogelbacher, Platzer, IJRR 2017; FMSD 2017)",
+   "year": 2013,
+   "url": "https://www.roboticsproceedings.org/rss09/p14.html",
+   "depth": "초록만",
+   "takeaway": "세 수준의 안전을 형식적으로 구분: static safety, passive safety, **passive friendly safety** — 후자는 로봇이 정지한 뒤에도 장애물이 스스로 제동해 충돌을 피할 여지를 남길 것을 요구한다. PDF 본문 추출 실패로 부등식 원문은 확인 못 했다."
+  },
+  {
+   "domain": "ics-safety",
+   "citation": "K. E. Bekris, L. E. Kavraki, \"Avoiding Inevitable Collision States: Safety and Computational Efficiency in Replanning with Sampling-based Algorithms\", ICRA Workshop on Guaranteeing Safe Navigation in Dynamic Environments, 2010",
+   "year": 2010,
+   "url": "http://emotion.inrialpes.fr/fraichard/safety2010/10-bekris-icraw.pdf",
+   "depth": "2차인용",
+   "takeaway": "ICS 판정의 계산 비용과 보수성의 트레이드오프를 다룬다. E 를 줄이면 판정은 싸지지만 ICS(E) 가 커져 로봇이 과도하게 보수적이 된다."
+  },
+  {
+   "domain": "ics-safety",
+   "citation": "D. R. Agrawal, R. Chen, D. Panagou, \"gatekeeper: Online Safety Verification and Control for Nonlinear Systems in Dynamic Environments\", IEEE Transactions on Robotics, vol. 40, pp. 4358–4375, 2024 (arXiv:2211.14361)",
+   "year": 2024,
+   "url": "https://arxiv.org/abs/2211.14361",
+   "depth": "2차인용",
+   "takeaway": "공칭 계획기 뒤에 검증 단계를 덧붙인다. 매 주기 '공칭 궤적 접두부 + 백업 정책 접미부' 를 짧은 유한 지평으로 수치 전방 적분해 검증하고, 검증된 커밋 궤적을 추종하면 **유한 지평 너머 모든 미래**에 대해 안전이 보장됨을 증명한다. 검증 실패 시 직전 커밋 궤적을 계속 실행 → recursive feasibility."
+  },
+  {
+   "domain": "ics-safety",
+   "citation": "T. Kim, A. D. Menon, A. Trivedi, D. Panagou, \"Backup-Based Safety Filters: A Comparative Review of Backup CBF, Model Predictive Shielding, and gatekeeper\", arXiv:2604.02401v2, CDC 2026",
+   "year": 2026,
+   "url": "https://arxiv.org/html/2604.02401",
+   "depth": "본문확인",
+   "takeaway": "세 방법을 하나의 안전 필터 추상으로 통일. Backup CBF 는 백업 롤아웃으로 암묵 안전집합을 만들어 QP 로 입력을 수정, MPS 는 고정 전환 시각 Δt 에서 이진 수락/거부, gatekeeper 는 전환 시각을 탐색한다. 정리 2: I_MPS ⊆ I_GK. 정리 3: Backup CBF 의 비활성 집합 상대내부 ⊆ gatekeeper 의 비활성 집합. 표 II 계산 시간: 병렬 gatekeeper ≈ 1.3 ms, 순차 gatekeeper ≈ 10.86 ms, MPS ≈ 1.3 ms, Backup CBF ≈ 10.33–27.90 ms. reach-avoid 실험에서 공칭 정책 활성 비율 Backup CBF 28.8 % / MPS 55.3 % / gatekeeper 87.5 % 이고 **gatekeeper 만 목표에 도달**했다. 저자들이 공통 한계로 지적하는 것: 안전을 공칭 궤적이 아니라 백업 기동의 실행 가능성으로 판정한다는 점."
+  },
+  {
+   "domain": "ics-safety",
+   "citation": "T. Kim, H. K. Park, R. Wada, N. Atanasov, S. Koga, D. Panagou, \"OcclusionCBF: Backup Control Barrier Functions for Safe Navigation Among Hidden Dynamic Obstacles\", arXiv:2609.06342, 2026-09-06",
+   "year": 2026,
+   "url": "https://arxiv.org/abs/2609.06342",
+   "depth": "초록만",
+   "takeaway": "핵심 문제 제기가 우리와 같다 — 로봇이 '동적 장애물이 보이는 순간 어떤 허용 입력으로도 회피할 수 없는 상태' 에 도달할 수 있다. 수동적 정지 대신 **능동 기동 백업**을 쓰고, 도달 가능 점유 예측 위에서 safety filter 의 recursive feasibility 와 예측이 포괄하는 모든 장애물 운동에 대한 무충돌을 증명한다. 안전 조건을 아핀 제약으로 만들어 최소 침습 QP 필터로 실시간 수행."
+  },
+  {
+   "domain": "ics-safety",
+   "citation": "M. F. Reis, A. P. Aguiar, P. Tabuada, \"Control Barrier Function-Based Quadratic Programs Introduce Undesirable Asymptotically Stable Equilibria\", IEEE Control Systems Letters (L-CSS), vol. 5, no. 2, 2021 (arXiv:2003.07819)",
+   "year": 2021,
+   "url": "https://arxiv.org/abs/2003.07819",
+   "depth": "2차인용",
+   "takeaway": "CLF-CBF-QP 가 안전집합 **경계 위에** 리아푸노프 최소점이 아닌 평형점을 만들 수 있고, 그 평형이 점근 안정이 되는 명시적 조건을 유도한다. 경계 평형을 명시적으로 회피하는 QP 확장을 제안한다."
+  },
+  {
+   "domain": "ics-safety",
+   "citation": "H. Parwana, M. Black, B. Hoxha, H. Okamoto, G. Fainekos, D. Prokhorov, D. Panagou, \"Feasible Space Monitoring for Multiple Control Barrier Functions with Application to Large Scale Indoor Navigation\", arXiv:2312.07803, 2023 (ICRA 2024)",
+   "year": 2023,
+   "url": "https://arxiv.org/abs/2312.07803",
+   "depth": "초록만",
+   "takeaway": "여러 CBF 제약이 동시에 걸리면 허용 입력 공간의 **부피가 0 으로 수축**해 QP 가 infeasible 해진다. 그 부피의 변화율 자체에 배리어를 걸어(FS-CBF) 부피가 0 이 되지 않도록 한다. AWS Hospital gazebo 에서 동적 에이전트들 사이 항법으로 검증."
+  },
+  {
+   "domain": "ics-safety",
+   "citation": "A. Thirugnanam, J. Zeng, K. Sreenath, \"Safety-Critical Control and Planning for Obstacle Avoidance between Polytopes with Control Barrier Functions\", ICRA 2022 (arXiv:2109.12313); 관련 arXiv:2107.08360",
+   "year": 2022,
+   "url": "https://arxiv.org/abs/2109.12313",
+   "depth": "초록만",
+   "takeaway": "두 다면체 사이 최소 거리를 쌍대(dual) 최적화로 표현하고 그 라그랑지안으로 비평활 CBF 를 구성해 실시간 QP 로 푼다. L 자(소파형) 로봇이 좁은 복도를 통과하는 것으로 검증 — 즉 **배리어가 자세(yaw)에 의존**한다."
+  },
+  {
+   "domain": "ics-safety",
+   "citation": "T. Gurriet, M. Mote, A. Singletary, E. Feron, A. D. Ames, \"A Scalable Controlled Set Invariance Framework with Practical Safety Guarantees\", CDC 2019; Y. Chen, A. Singletary, A. D. Ames, \"Backup Control Barrier Functions: Formulation and Comparative Study\", CDC 2021 (arXiv:2104.11332)",
+   "year": 2021,
+   "url": "https://arxiv.org/abs/2104.11332",
+   "depth": "2차인용",
+   "takeaway": "큰 제어 불변 집합을 직접 합성하는 대신, 작고 확실한 백업 집합을 백업 정책으로 전방 적분해 **암묵적** 불변 집합을 키운다. 구성상 제어 불변이며 입력 한계를 존중하고, 안전 조건의 상대 차수를 1 로 낮춘다."
+  },
+  {
+   "domain": "ics-safety",
+   "citation": "P. Ong, D. E. J. van Wijk, M. de Sa, J. W. Burdick, A. D. Ames, \"SafeSpace: Aggregating Safe Sets from Backup Control Barrier Functions under Input Constraints\", arXiv:2604.03536, 2026-04-04",
+   "year": 2026,
+   "url": "https://arxiv.org/abs/2604.03536",
+   "depth": "초록만",
+   "takeaway": "여러 백업 CBF 가 만드는 암묵 안전집합들을 논리 합성(combinatorial CBF + 보조 변수)으로 **합집합**처럼 묶어 하나의 연속 안전 필터를 만든다. conjunctive compatibility 조건 아래 일반화 combinatorial CBF 가 된다. 우주선 자세·궤도 유지로 검증."
+  },
+  {
+   "domain": "ics-safety",
+   "citation": "C. Pek, M. Althoff, \"Fail-Safe Motion Planning for Online Verification of Autonomous Vehicles Using Convex Optimization\", IEEE Transactions on Robotics, 2021; 관련 Nature Machine Intelligence, \"Using online verification to prevent autonomous vehicles from causing accidents\", 2020",
+   "year": 2021,
+   "url": "https://mediatum.ub.tum.de/doc/1636797/vr86dh5t8uw2fj92w8kq913o9.Pek-2021-TRO.pdf",
+   "depth": "2차인용",
+   "takeaway": "invariably safe set = 무한 지평에 걸쳐 또 다른 안전 상태로의 안전한 전이를 보장하는 상태만 담는 부분집합. 계획기가 낸 의도 궤적을 온라인 검증하고, 안전 임계 상황에서는 실시간으로 fail-safe 궤적(볼록 최적화, 저크 최소화)을 낸다."
+  },
+  {
+   "domain": "ics-safety",
+   "citation": "H. Hu, C. Siu, M. Chen, \"A Hamilton-Jacobi Reachability-Guided Search Framework for Efficient and Safe Indoor Planar Robot Navigation\", arXiv:2604.17679, 2026-04-20",
+   "year": 2026,
+   "url": "https://arxiv.org/abs/2604.17679",
+   "depth": "초록만",
+   "takeaway": "HJ 도달성 값함수를 오프라인으로 계산해 그래프 탐색의 휴리스틱 겸 선제적 안전 제약으로 쓴다. HJ 도달성이 환경 전체를 알아야 한다는 오랜 제약을 온라인 탐색과 결합해 우회한다."
+  },
+  {
+   "domain": "ics-safety",
+   "citation": "Taekyung Kim, \"Is Your Safe Controller Actually Safe? A Critical Review of CBF Tautologies and Hidden Assumptions\", arXiv:2603.06954, 2026-03-07 (개정 2026-07-22)",
+   "year": 2026,
+   "url": "https://arxiv.org/abs/2603.06954",
+   "depth": "초록만",
+   "takeaway": "안전 제어기의 '존재' 라는 수학적 가정과 입력 제약이 있는 실제 시스템에서의 '구성적 실현' 사이에 반복되는 간극을 지적한다. 많은 CBF 시연이 단일 적분기나 기구학 매니퓰레이터처럼 **물리 자체가 이미 안전을 물려주는** 수동적으로 안전한 시스템에서만 성립한다. 후보 CBF 와 유효 CBF 의 구분을 강조."
+  },
+  {
+   "domain": "ics-safety",
+   "citation": "X. Tan, D. V. Dimarogonas 외, \"Compatibility checking of multiple control barrier functions for input constrained systems\", arXiv:2209.02284 (CDC 2022); 및 \"Feasibility of multiple robust control barrier functions for bounding box constraints\", arXiv:2503.18524, 2025",
+   "year": 2025,
+   "url": "https://arxiv.org/abs/2209.02284",
+   "depth": "초록만",
+   "takeaway": "CBF 기반 제어기는 CBF 조건들이 **양립 가능(compatible)** 할 때만 잘 정의된다. 입력 제약이 있으면 여러 CBF 가 동시에 만족 가능한지 검사해야 하고, 2025년 후속은 경계 상자 제약 아래 여러 로버스트 CBF 의 상호 실현 가능성을 보장하는 파라미터 조건을 유도한다."
+  },
+  {
+   "domain": "ics-safety",
+   "citation": "\"Zero-Order Control Barrier Functions for Sampled-Data Systems with State and Input Dependent Safety Constraints\", arXiv:2411.17079, 2024–2025; \"Sampling-Aware Control Barrier Functions\", arXiv:2511.11897, 2025",
+   "year": 2025,
+   "url": "https://arxiv.org/abs/2411.17079",
+   "depth": "초록만",
+   "takeaway": "영차 유지(ZOH)로 제어하는 실제 시스템에서 표본 시각 사이의 안전까지 보장하려면 배리어 조건을 다음 표본 시점의 **예측값** 위에 걸거나(ZOCBF), 테일러 상계로 표본 간 효과를 명시적으로 포착해 로버스트 여유를 두어야 한다(SACBF)."
+  },
+  {
+   "domain": "ics-safety",
+   "citation": "D. Fox, W. Burgard, S. Thrun, \"The Dynamic Window Approach to Collision Avoidance\", IEEE Robotics & Automation Magazine, vol. 4, no. 1, pp. 23–33, 1997",
+   "year": 1997,
+   "url": "https://dl.acm.org/doi/abs/10.5555/895623",
+   "depth": "2차인용",
+   "takeaway": "동적 창은 현재 속도에서 한 제어 주기에 도달 가능한 (v, ω) 로 탐색을 제한하고, 각 후보를 **등속 원호**로 전개해 평가한다. 정지 거리 이내에 장애물이 없는 후보만 허용한다."
+  },
+  {
+   "domain": "ics-safety",
+   "citation": "Counterfactual Closing-Acceleration Risk 외, \"An Anticipatory Surrogate Safety Measure for the Blind Region of Car-Following\", arXiv:2609.00370, 2026; 관련 \"Beyond 1D and oversimplified kinematics: A generic analytical framework for surrogate safety measures\", arXiv:2312.07019",
+   "year": 2026,
+   "url": "https://arxiv.org/abs/2609.00370",
+   "depth": "초록만",
+   "takeaway": "TTC 류는 등속 운동을 가정하고 접근 속도가 양이 아닐 때 정의되지 않아, 차간 추종 프레임의 51 %가 위험 값이 없는 blind region 으로 남는다고 보고한다."
+  },
+  {
+   "domain": "geometry",
+   "citation": "P. Fiorini, Z. Shiller, \"Motion Planning in Dynamic Environments Using Velocity Obstacles,\" International Journal of Robotics Research 17(7): 760-772",
+   "year": 1998,
+   "url": "https://journals.sagepub.com/doi/10.1177/027836499801700706",
+   "depth": "2차인용",
+   "takeaway": "VO 의 정본. 원판-원판 기하에서 상대속도 공간의 원뿔로 충돌 집합을 닫힌 형태로 쓴다. 우리 velocity_obstacle.cpp 가 시간 절단형으로 정확히 이 형태를 구현하고 있다."
+  },
+  {
+   "domain": "geometry",
+   "citation": "D. Fox, W. Burgard, S. Thrun, \"The Dynamic Window Approach to Collision Avoidance,\" IEEE Robotics & Automation Magazine 4(1): 23-33",
+   "year": 1997,
+   "url": "https://www.ri.cmu.edu/pub_files/pub1/fox_dieter_1997_1/fox_dieter_1997_1.pdf",
+   "depth": "2차인용",
+   "takeaway": "DWA 정본. 동적 창을 측정 속도 중심으로 잡고 원호 롤아웃을 평가한다. 원 논문도 로봇을 원으로 근사한다."
+  },
+  {
+   "domain": "geometry",
+   "citation": "J. Huang, J. Zeng, X. Chi, K. Sreenath, Z. Liu, H. Su, \"Velocity Obstacle for Polytopic Collision Avoidance for Distributed Multi-robot Systems,\" IEEE Robotics and Automation Letters (arXiv:2304.07954)",
+   "year": 2024,
+   "url": "https://arxiv.org/abs/2304.07954",
+   "depth": "초록만",
+   "takeaway": "VO 를 **다면체(polytope)** 사이에서 꼭짓점 좌표의 함수로 직접 구성한다. 최적화 없이(optimization-free) 닫힌 형태로 구성되며, 기존 거리 제약 최적화 기반 방법보다 계산이 훨씬 싸다고 주장한다. 저자 공개 구현 존재(HybridRobotics/vo-polytope)."
+  },
+  {
+   "domain": "geometry",
+   "citation": "F. Vesentini, R. Muradore, P. Fiorini, \"A survey on Velocity Obstacle paradigm,\" Robotics and Autonomous Systems, art. 104645",
+   "year": 2024,
+   "url": "https://www.sciencedirect.com/science/article/abs/pii/S0921889024000289",
+   "depth": "2차인용",
+   "takeaway": "VO 20여 년의 확장 분류. 비원형 형상·비홀로노믹 확장이 별도 가지로 정리되어 있다고 검색 스니펫이 밝힌다 (ScienceDirect 본문 403 으로 미확인)."
+  },
+  {
+   "domain": "geometry",
+   "citation": "D. Wilkie, J. van den Berg, D. Manocha, \"Generalized Velocity Obstacles,\" IEEE/RSJ IROS, pp. 5573-5578",
+   "year": 2009,
+   "url": "http://gamma-web.iacs.umd.edu/NHRVO/WilkieIROS09.pdf",
+   "depth": "초록만",
+   "takeaway": "VO 를 홀로노믹 가정에서 떼어내 제어 입력 집합 위에서 정의한다. 충돌로 이어지는 '제어'를 직접 식별한다."
+  },
+  {
+   "domain": "geometry",
+   "citation": "J. Alonso-Mora, A. Breitenmoser, M. Rufli, P. Beardsley, R. Siegwart, \"Optimal Reciprocal Collision Avoidance for Multiple Non-Holonomic Robots\" (NH-ORCA), DARS 2010 / Springer STAR 83, pp. 203-216",
+   "year": 2013,
+   "url": "https://autonomousrobots.nl/assets/files/publications/10-alonsomora.pdf",
+   "depth": "초록만",
+   "takeaway": "차동구동이 홀로노믹 속도 벡터를 추종할 때의 추종 오차 ε 를 로봇 반경에 **더해** ORCA 를 그대로 쓴다."
+  },
+  {
+   "domain": "geometry",
+   "citation": "M. Erdmann, T. Lozano-Pérez, \"On Multiple Moving Objects,\" Algorithmica 2: 477-521 (MIT AI Memo AIM-883, 1986)",
+   "year": 1987,
+   "url": "https://people.csail.mit.edu/tlp/publications/01087401.pdf",
+   "depth": "초록만",
+   "takeaway": "구성공간-시간(configuration space-time) 의 정본. 움직이는 장애물이 만드는 시변 제약을 2차원 시간 슬라이스로 근사 표현하고 그 안에서 충돌 없는 경로를 탐색한다."
+  },
+  {
+   "domain": "geometry",
+   "citation": "M. Phillips, M. Likhachev, \"SIPP: Safe Interval Path Planning for Dynamic Environments,\" IEEE ICRA, pp. 5628-5635",
+   "year": 2011,
+   "url": "https://ieeexplore.ieee.org/document/5980306",
+   "depth": "2차인용",
+   "takeaway": "각 격자 셀에 대해 충돌 없는 '안전 구간'을 명시 계산해 시공간 탐색의 상태 수를 폭발시키지 않고 시간 최적 경로를 찾는다. 시간 이산화 대신 구간을 쓰므로 완전성·시간 최적성을 유지한다."
+  },
+  {
+   "domain": "geometry",
+   "citation": "\"Path Planning with Motion Primitives in Dynamic Environments: SIPP on Lattices,\" arXiv:2609.31803 (Int. Conf. on Interactive Collaborative Robotics, ICR 2026)",
+   "year": 2026,
+   "url": "https://arxiv.org/abs/2609.31803",
+   "depth": "초록만",
+   "takeaway": "SIPP 를 상태 격자 + 운동 프리미티브 위로 올린다. 움직이는 장애물의 **시공간 스윕 볼륨을 격자에 직접 래스터화**해 동적 환경을 처리한다."
+  },
+  {
+   "domain": "geometry",
+   "citation": "J. Wang, T. Zhang, Q. Zhang, C. Zeng, J. Yu, C. Xu, L. Xu, F. Gao, \"Implicit Swept Volume SDF: Enabling Continuous Collision-Free Trajectory Generation for Arbitrary Shapes,\" ACM Transactions on Graphics 43 (SIGGRAPH 2024), arXiv:2405.00362",
+   "year": 2024,
+   "url": "https://arxiv.org/abs/2405.00362",
+   "depth": "초록만",
+   "takeaway": "스윕 볼륨 SDF 를 일반화 준무한계획(GSIP)으로 정식화하고 질의점에서 암시적으로 수치 계산한다 — 표면을 명시적으로 복원하지 않는다. 명시 동기가 \"기존 방법은 형상을 과단순화하거나 이산 샘플링에 의존해 **터널 효과**를 겪는다\" 이다."
+  },
+  {
+   "domain": "geometry",
+   "citation": "M. Tang, Y. J. Kim, D. Manocha, \"C²A: Controlled Conservative Advancement for Continuous Collision Detection of Polygonal Models,\" IEEE ICRA",
+   "year": 2009,
+   "url": "https://graphics.ewha.ac.kr/C2A/C2A.pdf",
+   "depth": "초록만",
+   "takeaway": "등속 병진+회전 강체 운동에 대해 **운동 상한(motion bound)** — 물체 점들의 궤적 길이를 최근접 방향으로 투영한 상한 — 을 계산하고, 그만큼씩만 시간을 전진시켜 충돌 시각에 수렴한다. 놓치는 충돌이 없다."
+  },
+  {
+   "domain": "geometry",
+   "citation": "E. G. Gilbert, D. W. Johnson, S. S. Keerthi, \"A fast procedure for computing the distance between complex objects in three-dimensional space\" (GJK), IEEE Journal of Robotics and Automation 4(2): 193-203",
+   "year": 1988,
+   "url": "https://ieeexplore.ieee.org/document/2083",
+   "depth": "2차인용",
+   "takeaway": "지지함수만으로 볼록체 간 거리를 구하는 정본 알고리즘. 침투 깊이는 EPA 로 확장한다."
+  },
+  {
+   "domain": "geometry",
+   "citation": "C. Ericson, \"Real-Time Collision Detection,\" Morgan Kaufmann (OBB 최근접점: p.133)",
+   "year": 2005,
+   "url": "https://www.sciencedirect.com/book/9781558607323/real-time-collision-detection",
+   "depth": "2차인용",
+   "takeaway": "OBB-점 최근접점·거리의 표준 폐형식과 그 분기 없는 구현. 우리 d_box 식의 교과서 출처."
+  },
+  {
+   "domain": "geometry",
+   "citation": "Y.-H. Chen, S. Liu, W. Xiao, C. Belta, M. Otte, \"Exact Signed-Distance Control Barrier Functions via Minkowski Operations for Safe Navigation among Polytopes,\" arXiv:2608.02886",
+   "year": 2026,
+   "url": "https://arxiv.org/abs/2608.02886",
+   "depth": "초록만",
+   "takeaway": "다면체 로봇/장애물 쌍의 **정확** SDF 를 Minkowski 연산의 동반 볼록계획으로 구하고, 민감도 해석으로 SDF 기울기의 통일된 해석식을 유도한다. 명시적으로 \"기하와 비홀로노믹 운동학의 결합이 만드는, 지금까지 가려져 있던(previously masked) 국소 최소 부류를 발견했다\"고 보고한다."
+  },
+  {
+   "domain": "geometry",
+   "citation": "Y.-H. Chen, S. Liu, W. Xiao, C. Belta, M. Otte, \"Control Barrier Functions via Minkowski Operations for Safe Navigation among Polytopic Sets,\" arXiv:2504.00364",
+   "year": 2025,
+   "url": "https://arxiv.org/abs/2504.00364",
+   "depth": "초록만",
+   "takeaway": "최소 거리와 침투 깊이를 Minkowski 차 공간의 볼록계획으로 정식화하고, 미분가능 최적화로 암시적 SDF 의 도함수를 얻는다. 실험은 정적 다면체 장애물(병진, 초기 충돌 회복, 다중 장애물)이다."
+  },
+  {
+   "domain": "geometry",
+   "citation": "C. Peng, Z. Ge, W. Lu, H. Gao, S. Vougioukas, P. Wei, \"EXACT-MPPI: Exact Signed-Distance Navigation for Arbitrary-Footprint Robots from Point Clouds via Path Integral Control,\" arXiv:2605.29663",
+   "year": 2026,
+   "url": "https://arxiv.org/abs/2605.29663",
+   "depth": "초록만",
+   "takeaway": "임의(볼록·오목) 단순 다각형 발자국에 대한 **해석적 정확 SDF 평가기**를 MPPI 롤아웃 안에 넣는다. 직사각형 계열에는 rectangle-cover 특수화를 쓴다. 롤아웃 중 예측 body frame 변환으로 방위를 본질적으로 다루며, 조밀한 정적·이동 장애물에서 견고하다고 보고한다. 차동구동/애커만/전방향을 발자국과 운동모델 교체만으로 지원."
+  },
+  {
+   "domain": "geometry",
+   "citation": "T. Ga, J. Choi, \"GPU-Accelerated Polygonal Signed Distance Functions for Real-Time Collision Avoidance,\" arXiv:2607.04310",
+   "year": 2026,
+   "url": "https://arxiv.org/abs/2607.04310",
+   "depth": "초록만",
+   "takeaway": "볼록 다각형 발자국과 경계 에지로 표현된 장애물 사이의 **기하 정확(geometry-exact)** SDF 를, 가중치 없고 분기 없는 텐서화 파이프라인으로 배치 계산한다."
+  },
+  {
+   "domain": "geometry",
+   "citation": "P. Trautman, A. Krause, \"Unfreezing the Robot: Navigation in Dense, Interacting Crowds,\" IEEE/RSJ IROS, pp. 797-803, DOI 10.1109/IROS.2010.5654369",
+   "year": 2010,
+   "url": "https://las.inf.ethz.ch/files/trautman10unfreezing.pdf",
+   "depth": "초록만",
+   "takeaway": "'freezing robot problem' 의 정본: 환경 복잡도가 어떤 수준을 넘으면 계획기가 모든 전진 경로를 위험하다고 판정해 제자리에 얼어붙거나 불필요한 기동을 하며, 실제로는 실행 가능한 경로가 존재하는데도 그렇다."
+  },
+  {
+   "domain": "geometry",
+   "citation": "P. Rousseas, D. Panagou, K. J. Kyriakopoulos, \"Robust and topology-aware motion planning with moving obstacles,\" International Journal of Robotics Research, DOI 10.1177/02783649251324554",
+   "year": 2025,
+   "url": "https://journals.sagepub.com/doi/10.1177/02783649251324554",
+   "depth": "2차인용",
+   "takeaway": "움직이는 장애물 하의 계획을 로봇 상태 추정 불확실성과 사전 미지의 장애물 운동 추정 불확실성을 함께 다루며 **위상(topology) 인식**으로 푼다."
+  },
+  {
+   "domain": "geometry",
+   "citation": "J. Wang, D. E. Chang, \"Velocity-Obstacle Based MPC for Shape-Aware Mobile Robot Motion Planning,\" SSRN preprint 6506802",
+   "year": 2026,
+   "url": "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6506802",
+   "depth": "2차인용",
+   "takeaway": "다각형 로봇에 대한 최적화 기반 계획의 보수성 문제를 지적하고, 로봇 최고 속도와 적절한 시간 지평을 명시적으로 넣은 **시간 인식(time-aware) VO 재정식화**를 제안한다. 안전을 유지하면서 가용 속도 집합을 넓히고, 제약을 속도 공간에 표현해 변수 수를 줄인다(ADMM)."
+  },
+  {
+   "domain": "vo-multiagent",
+   "citation": "Zvi Shiller, Oren Gal, Thierry Fraichard, \"The Nonlinear Velocity Obstacle Revisited: the Optimal Time Horizon\", ICRA 2010 Workshop on Safe Navigation in Open and Dynamic Environments",
+   "year": 2010,
+   "url": "http://emotion.inrialpes.fr/fraichard/safety2010/10-shiller-etal-icraw.pdf",
+   "depth": "본문확인",
+   "takeaway": "VO 의 절단 시간지평은 고정 상수가 아니라 상태·장애물별로 계산해야 한다. 올바른 값은 \"제어 제약 아래 VO 를 빠져나가는 최소 시간\"이며, 그 지평으로 절단한 VO 는 정확히 ICS 에 해당하는 속도만 포함한다. 해는 제어 제약 경계의 bang-bang extremal 위에 있고(점질량이면 extremal 4 개), 해석적으로 적분해 탄젠트 시각을 찾으면 된다. 저자들은 또 \"ACV(t) = {v(t)+u·Δt : u∈U}\"(= 동적 창)가 모든 속도를 시각 t 에 도달한다고 가정하는 오차를 명시하고, 그 편차를 e = (Δt²/2)·‖u‖ 로 경계짓는다."
+  },
+  {
+   "domain": "vo-multiagent",
+   "citation": "Thierry Fraichard, Hajime Asama, \"Inevitable Collision States. A Step Towards Safer Robots?\", Advanced Robotics, 18(10):1001-1024",
+   "year": 2004,
+   "url": "http://emotion.inrialpes.fr/fraichard/publications/journals/04-rsjar-fraichard-asama.pdf",
+   "depth": "본문확인",
+   "takeaway": "ICS = 미래에 어떤 궤적을 따르든 결국 충돌이 일어나는 상태. 시스템 동역학과 (고정·이동) 장애물을 모두 고려한다. 정의상 \"로봇은 자신의 안전을 위해 절대 ICS 에 들어가면 안 된다\". 핵심 실무 성질: ICS 를 전체 제어 집합 대신 **부분집합(회피 기동 몇 개)** 으로 계산하면 참 ICS 의 상위집합이 나오므로 보수적(안전 쪽)이다. 저자들은 braking prism / 회피 기동 집합 계열 선행 연구를 모두 이 틀의 특수 경우로 포섭한다."
+  },
+  {
+   "domain": "vo-multiagent",
+   "citation": "Andrew Best, Sahil Narang, Dinesh Manocha, \"Real-time Reciprocal Collision Avoidance with Elliptical Agents\", IEEE ICRA 2016",
+   "year": 2016,
+   "url": "http://gamma-web.iacs.umd.edu/EORCA/files/EORCA_ICRA16.pdf",
+   "depth": "본문확인",
+   "takeaway": "\"원판은 방위에 영향받지 않으므로 VO 모양·접선·최근접점 계산이 단순하지만, 타원 에이전트에서는 이 연산들이 에이전트와 장애물의 방위에 지배된다.\" VO 를 −X ⊕ Y 민코프스키 합의 τ 배율 절단 원뿔로 짓고, 방위를 결정 변수로 올린다(ERVO-F: 현재 방위로 필요 여유 MC(o) 를 못 내면 낼 수 있는 가장 가까운 방위 o^E 로 튼다). 회전 중 충돌은 δt·α_max 로 쓸린 스윕면의 볼록껍질로 보수화한다. **ERVO 집합이 비면(밀집 조건) 먼저 방위를 바꿔 해를 찾고, 그래도 없으면 3D LP 로 \"제약을 최소로 침범하는\" 속도를 고른다.** 5도 간격 민코프스키 합 사전계산으로 40 배 가속, 원형 대비 4~5 배 느림."
+  },
+  {
+   "domain": "vo-multiagent",
+   "citation": "Alejandro Sánchez Roncero, Rafael I. Cabral Muchacho, Petter Ögren, \"Multi-Agent Obstacle Avoidance using Velocity Obstacles and Control Barrier Functions\", arXiv:2409.10117v3",
+   "year": 2025,
+   "url": "https://arxiv.org/html/2409.10117v3",
+   "depth": "초록만",
+   "takeaway": "VO 를 하드 제약으로 쓰는 것이 과보수·실행불가능의 원인이라고 지목하고, VO 제약에 슬랙 λ 를 붙여 목적함수로 옮기고(min k_u‖u−u_ref‖² + k_vo Σ w λ²), 별도의 덜 제한적인 CBF 를 하드 제약으로 남긴다. 12 에이전트 원형 대치에서 하드 VO(hVO)는 **성공률 0 %**(실행불가능), 제안 방식은 성공률 100 %·충돌 0.00±0.00·계산 6.18 ms. 다만 모든 에이전트가 회피한다고 가정하며 비협조/적대 상대는 다루지 않는다. (WebFetch 가 본문 HTML 에서 식과 표를 요약해 준 것이고 내가 PDF 를 직접 읽지는 않았다.)"
+  },
+  {
+   "domain": "vo-multiagent",
+   "citation": "David Wilkie, Jur van den Berg, Dinesh Manocha, \"Generalized Velocity Obstacles\", IEEE/RSJ IROS 2009, pp. 5573-5578",
+   "year": 2009,
+   "url": "http://gamma-web.iacs.umd.edu/NHRVO/WilkieIROS09.pdf",
+   "depth": "2차인용",
+   "takeaway": "VO 를 홀로노믹 가정에서 풀어, car-like/비홀로노믹 로봇의 **제어**가 만드는 실제 궤적이 미래에 장애물과 충돌하는지를 직접 판정한다. 즉 VO 를 속도 공간이 아니라 제어 공간에서 정의한다."
+  },
+  {
+   "domain": "vo-multiagent",
+   "citation": "Jur van den Berg, Jamie Snape, Stephen J. Guy, Dinesh Manocha, \"Reciprocal collision avoidance with acceleration-velocity obstacles\", IEEE ICRA 2011",
+   "year": 2011,
+   "url": "https://ieeexplore.ieee.org/document/5980408/",
+   "depth": "2차인용",
+   "takeaway": "VO 의 \"속도를 즉시 바꿀 수 있다\"는 가정을 버리고, 가속 한계 아래 **비례 제어로 실제 안전하게 도달·유지할 수 있는 새 속도 집합**을 특성화한다. 후속 일반화(Bareiss & van den Berg, \"Generalized reciprocal collision avoidance\", IJRR 2015)는 VO / AVO / continuous control obstacles / LQR-obstacles 를 control obstacle 이라는 한 틀의 특수 경우로 묶는다."
+  },
+  {
+   "domain": "vo-multiagent",
+   "citation": "Asher Stern, Zvi Shiller, \"From NLVO to NAO: Reactive Robot Navigation using Velocity and Acceleration Obstacles\", arXiv:2506.06255 (관련: arXiv:2504.13637, \"Robot Navigation in Dynamic Environments using Acceleration Obstacles\")",
+   "year": 2025,
+   "url": "https://arxiv.org/abs/2506.06255",
+   "depth": "초록만",
+   "takeaway": "VO/NLVO 를 Acceleration Obstacle (AO) 과 Nonlinear AO (NAO) 로 확장해 속도·가속 제약을 함께 담는다. 비선형 궤적을 가는 장애물에 대해 충돌을 일으키는 **등가속도 집합**의 경계를 해석적으로 유도한다. 초록 수준에서는 공집합 처리나 교착에 대한 언급을 찾지 못했다."
+  },
+  {
+   "domain": "vo-multiagent",
+   "citation": "Jihao Huang, Jun Zeng, Xuemin Chi, Koushil Sreenath, Zhitao Liu, Hongye Su, \"Velocity Obstacle for Polytopic Collision Avoidance for Distributed Multi-robot Systems\", IEEE Robotics and Automation Letters (RA-L)",
+   "year": 2023,
+   "url": "https://arxiv.org/abs/2304.07954",
+   "depth": "초록만",
+   "takeaway": "다면체 형상 로봇에 대해 VO 를 꼭짓점 좌표와 상대 상태의 함수로 구성한다. 최적화가 필요 없는(optimization-free) 구성이라 충돌 회피를 볼록/비볼록 최적화로 푸는 기존 방식보다 훨씬 싸다고 주장한다. 오픈소스 공개."
+  },
+  {
+   "domain": "vo-multiagent",
+   "citation": "Diego Martinez-Baselga, Eduardo Sebastián, Eduardo Montijano, Luis Riazuelo, Carlos Sagüés, Luis Montano, \"AVOCADO: Adaptive Optimal Collision Avoidance driven by Opinion\", IEEE Transactions on Robotics, DOI 10.1109/TRO.2025.3552350",
+   "year": 2025,
+   "url": "https://arxiv.org/abs/2407.00507",
+   "depth": "초록만",
+   "takeaway": "ORCA 류 VO 정식화에서 출발하되 **상호성 가정을 버리고**, 센서 관측만으로 상대의 협조 수준을 추정해 책임 분담 α 를 비선형 opinion dynamics 로 온라인 적응시킨다. 혼합 협조/비협조 환경에서 성공률·도달시간·계산시간이 기존 계획기보다 낫고, VO 계열이 걸리는 기하 대칭 교착을 자연히 피한다고 보고한다."
+  },
+  {
+   "domain": "vo-multiagent",
+   "citation": "Javier Alonso-Mora, Andreas Breitenmoser, Martin Rufli, Paul Beardsley, Roland Siegwart, \"Optimal Reciprocal Collision Avoidance for Multiple Non-Holonomic Robots\" (NH-ORCA), DARS 2010 / Springer STAR 83, 2013",
+   "year": 2013,
+   "url": "https://la.disneyresearch.com/wp-content/uploads/alonsomora10dars_paper1.pdf",
+   "depth": "2차인용",
+   "takeaway": "차동구동 로봇이 원하는 홀로노믹 속도 명령을 오차 ε 안에서 따라갈 수 있게 하고, 그 ε 만큼만 유효 반경을 키워 VO 를 쓴다. 선행 ORCA-DD(Snape 외, IROS 2010)는 유효 반경을 **두 배**로 키워 같은 문제를 풀었는데, 그 때문에 좁은 통로·비정형 환경에서 성능이 나빴다."
+  },
+  {
+   "domain": "vo-multiagent",
+   "citation": "Taekyung Kim, Hun Kuk Park, Renya Wada, Nikolay Atanasov, Shumon Koga, Dimitra Panagou, \"OcclusionCBF: Backup Control Barrier Functions for Safe Navigation Among Hidden Dynamic Obstacles\", arXiv:2609.06342v1",
+   "year": 2026,
+   "url": "https://arxiv.org/html/2609.06342",
+   "depth": "초록만",
+   "takeaway": "백업 정책이 유도하는 **회복 가능 집합**(유한 지평 T 롤아웃이 안전 집합 안에 머물고 검증된 종단 집합에 도달하는 상태들)을 암묵적 안전 집합으로 쓴다. 구동 포화를 표준 CBF 가 보장 못 하는 부분을 이 방식이 메운다. 계산: 이중적분기 1.6~3.9 ms/주기, unicycle 4.1~4.5 ms/주기. 장애물 50 개에서 unicycle 성공률 86 %."
+  },
+  {
+   "domain": "vo-multiagent",
+   "citation": "Lei Shi, Haosong Wen, Qichao Liu, \"Escape-Aware Control Barrier Functions for Quadrotor Safety under Body-Rate Limits\", arXiv:2609.17292v1",
+   "year": 2026,
+   "url": "https://arxiv.org/html/2609.17292v1",
+   "depth": "초록만",
+   "takeaway": "상태만 보는 배리어는 구동(자세각속도) 한계 아래 **탈출이 불가능한 상태를 안전하다고 인증하는 간극**을 만들고, 그 간극 폭이 접근 속도에 비례하고 각속도 한계에 반비례함을 증명한다. 해법은 배리어에 직전 입력 u⁻ 를 넣어 \"1 제어구간 도달 가능 추력 집합\"으로 재정의하고, 재정렬 동안 소모되는 여유를 미리 청구하는 것. 닫힌 형태 해가 있어 온라인 계산이 가능하다."
+  },
+  {
+   "domain": "vo-multiagent",
+   "citation": "Paolo Fiorini, Zvi Shiller, \"Motion Planning in Dynamic Environments Using Velocity Obstacles\", International Journal of Robotics Research, 17(7):760-772",
+   "year": 1998,
+   "url": "https://journals.sagepub.com/doi/10.1177/027836499801700706",
+   "depth": "2차인용",
+   "takeaway": "VO 의 정본. 현재 위치·속도만으로 속도 공간에서 회피 기동을 고른다. VO = 장애물과 언젠가 충돌하는 로봇 속도들의 집합 (상대 속도가 충돌 원뿔에 드는 속도)."
+  },
+  {
+   "domain": "vo-multiagent",
+   "citation": "Zvi Shiller, Frédéric Large, Sepanta Sekhavat, \"Motion planning in dynamic environments: Obstacles moving along arbitrary trajectories\", IEEE ICRA 2001",
+   "year": 2001,
+   "url": "https://www.researchgate.net/publication/3902680_Motion_planning_in_dynamic_environments_Obstacles_moving_along_arbitrary_trajectories",
+   "depth": "2차인용",
+   "takeaway": "NLVO 의 원전. 장애물의 모양·속도·경로 곡률을 반영해 VO 를 임의 궤적으로 일반화한다. NLVO 는 시각별 순간 VO 의 합집합(비틀린 원뿔)이고, t=t₀ 에 NLVO 밖의 속도를 **하나** 고르면 장애물이 그 궤적을 유지하는 한 모든 시각에 충돌이 없음이 보장된다."
+  },
+  {
+   "domain": "vo-multiagent",
+   "citation": "Peter Trautman, Andreas Krause, \"Unfreezing the Robot: Navigation in Dense, Interacting Crowds\", IEEE/RSJ IROS 2010, pp. 797-803, DOI 10.1109/IROS.2010.5654369",
+   "year": 2010,
+   "url": "https://las.inf.ethz.ch/files/trautman10unfreezing.pdf",
+   "depth": "2차인용",
+   "takeaway": "freezing robot problem 의 정본. 환경 복잡도가 어느 선을 넘으면 계획기가 모든 전방 경로를 위험으로 판정해 로봇이 정지하거나 불필요한 기동을 한다. 원인은 불확실성 폭발이며, **완벽한 개별 예측만으로도 FRP 는 사라지지 않는다** — 협조의 수학적 모형이 없으면 안 된다."
+  },
+  {
+   "domain": "vo-multiagent",
+   "citation": "Fabio Vesentini, Riccardo Muradore, Paolo Fiorini, \"A survey on velocity obstacle paradigm\", Robotics and Autonomous Systems",
+   "year": 2024,
+   "url": "https://www.sciencedirect.com/science/article/abs/pii/S0921889024000289",
+   "depth": "2차인용",
+   "takeaway": "20여 년의 VO 확장을 분류 체계로 정리한 최신 서베이. VO 계열의 알려진 약점으로 (1) 에이전트 수에 따른 계산 부담, (2) 주변 상태(위치·반경·속도)를 완벽히 안다는 비현실적 가정, (3) **교착** 을 명시한다."
+  },
+  {
+   "domain": "vo-multiagent",
+   "citation": "Junfeng Wu, Jiaqi Chen, Hongkun Lyu, Kevin Zheng, Andy Li, \"Cooperative-ORCA*: Real-Time Proactive Deadlock Avoidance for Continuous-Space Multi-Agent Navigation\", arXiv:2606.22757v1",
+   "year": 2026,
+   "url": "https://arxiv.org/html/2606.22757",
+   "depth": "초록만",
+   "takeaway": "ORCA* 가 순수 반응형이라 현재 시각의 속도가 미래 교착을 낳는다는 점을 지적하고, MAPF 유도 경로 + 통로 의존관계 + drift 모드로 선제적으로 교착을 피한다. Gap 맵에서 ORCA* 는 40 에이전트에서 성공률 50 % 이하로 떨어지는 반면 C-ORCA* 는 ~100 % 유지."
+  },
+  {
+   "domain": "vo-multiagent",
+   "citation": "Rohan Chandra, Shubham Singh, Wenhao Luo, Katia Sycara, \"Multi-Robot Navigation in Social Mini-Games: Definitions, Taxonomy, and Algorithms\", arXiv:2508.13459",
+   "year": 2025,
+   "url": "https://arxiv.org/pdf/2508.13459",
+   "depth": "초록만",
+   "takeaway": "사회적 미니게임(좁은 통로, 교차로, 마주보기 등)의 정의·분류·알고리즘 서베이. 상호 회피(ORCA 등) 계열이 \"협조 에이전트를 가정\"하며 \"에이전트가 예측된 궤적을 따르지 않으면 실패\"한다고 명시한다. 교착 해소 알고리즘군을 충돌 회피형 / 분산 조정형 / 게임이론형 / 학습형으로 나눈다."
+  },
+  {
+   "domain": "vo-multiagent",
+   "citation": "Ryusei Shigemoto, Shohei Saida, Ryosuke Tasaki, \"Human-Inspired Flow-Crossing Navigation for Nonholonomic Mobile Robots in Dynamic Pedestrian Environments\", Journal of Robotics and Mechatronics, 37(6):1499-1507",
+   "year": 2025,
+   "url": "https://www.fujipress.jp/jrm/rb/robot003700061499/",
+   "depth": "초록만",
+   "takeaway": "사람의 관측된 행동에 기반해, **보행자 뒤쪽에 위치를 잡아** 흐름 속 간격(gap)을 통과하는 횡단 항법. 멈춰서 기다리지 않고 통과 지점을 골라 포텐셜 필드로 궤적을 만들고 pure pursuit 으로 추종한다. 사회력 기반 방법 대비 도달시간·경로길이가 유의하게 줄고 보행자 교란도 감소. 6 m x 6 m 실환경 실험."
+  },
+  {
+   "domain": "vo-multiagent",
+   "citation": "Luis Martinez-Gomez, Thierry Fraichard 계열 / Sara Bouraine, Thierry Fraichard, Hassen Salhi, \"Provably safe navigation for mobile robots with limited field-of-views in dynamic environments\", Autonomous Robots",
+   "year": 2012,
+   "url": "https://link.springer.com/article/10.1007/s10514-011-9258-8",
+   "depth": "2차인용",
+   "takeaway": "제한 시야·미지 동적 환경에서 **절대 운동 안전(어떤 경우에도 충돌 없음)은 일반적으로 보장 불가능**하다. 달성 가능한 것은 passive motion safety — Braking ICS(어떤 제동 궤적을 따르든 정지 전에 충돌하는 상태)를 항상 피하는 것 — 이며, 이는 \"충돌이 나면 로봇은 정지 상태였다\"만 보장한다. passive friendly safety 는 장애물의 제동력과 반응 지연을 알아야 성립한다."
+  },
+  {
+   "domain": "crowd-freezing",
+   "citation": "P. Trautman, A. Krause, \"Unfreezing the Robot: Navigation in Dense, Interacting Crowds\", IEEE/RSJ IROS 2010, pp. 797–803",
+   "year": 2010,
+   "url": "https://las.inf.ethz.ch/files/trautman10unfreezing.pdf",
+   "depth": "2차인용",
+   "takeaway": "FRP 를 최초로 명명·정식화. 원인은 예측 불확실성 폭발이며, 개별 예측이 완벽해도 **협조 모형이 없으면** 계획기는 과격 회피 또는 정지를 고른다고 논증한다."
+  },
+  {
+   "domain": "crowd-freezing",
+   "citation": "P. Trautman, J. Ma, R. M. Murray, A. Krause, \"Robot navigation in dense human crowds: Statistical models and experimental studies of human–robot cooperation\", Int. J. Robotics Research 34(3), 2015",
+   "year": 2015,
+   "url": "https://journals.sagepub.com/doi/abs/10.1177/0278364914557874",
+   "depth": "2차인용",
+   "takeaway": "IGP 의 실기 검증. 사람의 협조가 안전 여유의 상당 부분을 만든다는 것을 실측으로 보인다."
+  },
+  {
+   "domain": "crowd-freezing",
+   "citation": "T. Fraichard, H. Asama, \"Inevitable Collision States — A Step Towards Safer Robots\", Advanced Robotics 18(10), 2004",
+   "year": 2004,
+   "url": "https://www.semanticscholar.org/paper/64be486150521eddcf83ef356a0719d1ef65ceb8",
+   "depth": "2차인용",
+   "takeaway": "어떤 미래 제어를 써도 충돌이 불가피한 상태(ICS) 개념. 로봇 동역학과 장애물 운동을 함께 본다."
+  },
+  {
+   "domain": "crowd-freezing",
+   "citation": "S. Bouraine, T. Fraichard, H. Salhi, \"Provably safe navigation for mobile robots with limited field-of-views in dynamic environments\", Autonomous Robots 32(3), 2012",
+   "year": 2012,
+   "url": "https://link.springer.com/article/10.1007/s10514-011-9258-8",
+   "depth": "초록만",
+   "takeaway": "Braking ICS = 어떤 제동 궤적을 따라도 정지 전에 충돌하는 상태. Braking ICS 를 항상 피하면 passive motion safety(충돌 시 로봇은 정지해 있음)를 얻는다."
+  },
+  {
+   "domain": "crowd-freezing",
+   "citation": "K. Macek, D. Vasquez, T. Fraichard, R. Siegwart, \"Towards Safe Vehicle Navigation in Dynamic Urban Scenarios\", 2009",
+   "year": 2009,
+   "url": "https://www.researchgate.net/publication/29621345_Towards_Safe_Vehicle_Navigation_in_Dynamic_Urban_Scenarios",
+   "depth": "2차인용",
+   "takeaway": "Passive friendly safety 도입: 로봇이 충분히 일찍 멈춰 **상대가 회피할 여지**를 남기는 것까지 요구한다."
+  },
+  {
+   "domain": "crowd-freezing",
+   "citation": "M. Asselmeier, D. Ahuja, A. Zaro, A. Abuaish, Y. Zhao, P. A. Vela, \"Dynamic Gap: Safe Gap-based Navigation in Dynamic Environments\", arXiv:2210.05022; ICRA 2025",
+   "year": 2025,
+   "url": "https://arxiv.org/abs/2210.05022",
+   "depth": "본문확인",
+   "takeaway": "자유공간을 gap 으로 표현하고 gap 끝점을 회전 자기 좌표계에서 등속(2차) 모형 + EKF 로 전파. 'crossing'(각폭 → 0, 틈이 닫힘) 과 'overlapping'(각폭 → 2π) 조건을 유도해 통과 가능성을 판정. 충돌 무발생 증명은 1차 점질량·홀로노믹·**등속 gap 점(장애물이 로봇에 반응하지 않음)**·고립 gap 가정 아래. 계획 루프 ≈50 Hz (i9-12900K), MPC 추종기 6.7 ms/해."
+  },
+  {
+   "domain": "crowd-freezing",
+   "citation": "M. Asselmeier, A. Zaro, D. Ahuja, Y. Zhao, P. A. Vela, \"Safe Gap-based Planning in Dynamic Settings\", Algorithms for Machine Vision in Navigation and Control (Springer), arXiv:2509.07239, 2025",
+   "year": 2025,
+   "url": "https://arxiv.org/abs/2509.07239",
+   "depth": "초록만",
+   "takeaway": "gap 추적 + 동역학 추정 + gap 전파에 추격 유도(pursuit guidance) 이론을 얹어 '이상적 조건에서 증명 가능하게 충돌 없는' 지역 궤적을 만든다. TurtleBot2 실기 검증."
+  },
+  {
+   "domain": "crowd-freezing",
+   "citation": "C. Mavrogiannis, K. Balasubramanian, S. Poddar, A. Gandra, S. S. Srinivasa, \"Winding Through: Crowd Navigation via Topological Invariance\", IEEE RA-L, 2023",
+   "year": 2023,
+   "url": "https://arxiv.org/abs/2109.05084",
+   "depth": "초록만",
+   "takeaway": "사람 옆을 지나는 행위를 회전으로 형식화한 위상 불변량을 만들고, 통과 진행도를 보상하며 **사람의 좌우를 바꾸는 것에 벌점**을 주는 비용 범함수를 설계. 최신 기법 대비 통계적으로 유의하게 큰 여유(clearance) 를 얻으면서 효율은 유지."
+  },
+  {
+   "domain": "crowd-freezing",
+   "citation": "D. Martinez-Baselga, O. de Groot, L. Knoedler, L. Riazuelo, J. Alonso-Mora, L. Montano, \"SHINE: Social Homology Identification for Navigation in Crowded Environments\", Int. J. Robotics Research, 2025 (arXiv:2404.16705)",
+   "year": 2025,
+   "url": "https://arxiv.org/abs/2404.16705",
+   "depth": "초록만",
+   "takeaway": "통과 위상(왼쪽/오른쪽/양보 등 homology class)을 신경망으로 먼저 **이산 선택**하고, 선택된 위상 안에서만 최적화 기반 지역 계획기가 실시간 정련한다."
+  },
+  {
+   "domain": "crowd-freezing",
+   "citation": "M. Phillips, M. Likhachev, \"SIPP: Safe Interval Path Planning for Dynamic Environments\", IEEE ICRA 2011",
+   "year": 2011,
+   "url": "https://www.cs.cmu.edu/~maxim/files/sipp_icra11.pdf",
+   "depth": "2차인용",
+   "takeaway": "동적 장애물의 예측 궤적으로 각 셀의 안전 시간 구간을 만들고 (셀, 구간) 그래프에서 A*. 대기 동작이 자연스럽게 나오되 **안전 구간이 있는 곳에서만** 나온다."
+  },
+  {
+   "domain": "crowd-freezing",
+   "citation": "Z. A. Ali, K. Yakovlev, \"Safe Interval Path Planning With Kinodynamic Constraints\", arXiv:2302.00776, 2023",
+   "year": 2023,
+   "url": "https://arxiv.org/abs/2302.00776",
+   "depth": "초록만",
+   "takeaway": "SIPP 를 가감속 제약(정지·출발에 시간이 걸림)까지 확장하고 완전성·최적성을 유지하면서 A* 대비 계산 효율 개선."
+  },
+  {
+   "domain": "crowd-freezing",
+   "citation": "M. Agranovskiy, \"Path Planning with Motion Primitives in Dynamic Environments: SIPP on Lattices\", Int. Conf. on Interactive Collaborative Robotics (ICR), 2026",
+   "year": 2026,
+   "url": "https://arxiv.org/html/2609.31803",
+   "depth": "본문확인",
+   "takeaway": "SIPP 를 상태 격자(x, y, heading) + 사전 계산된 차동 구동 운동 프리미티브와 결합하고, 움직이는 장애물의 시공간 스웹트 볼륨을 격자에 직접 래스터화한다. 3D 상태공간 때문에 4-연결 격자 대비 탐색 시간이 늘어난다는 점을 한계로 명시하고 실시간성은 주장하지 않는다."
+  },
+  {
+   "domain": "crowd-freezing",
+   "citation": "J. Shi, H. Zhang, Y. Yan 외, \"Optimal-Horizon Social Robot Navigation in Heterogeneous Crowds\", arXiv:2603.00507, 2026-02-28",
+   "year": 2026,
+   "url": "https://arxiv.org/abs/2603.00507",
+   "depth": "초록만",
+   "takeaway": "보행자의 '협조 속성'을 시공간 Transformer 로 추론하고 MPC 예측 지평 자체를 사회적 조건부 결정 변수로 삼는다. 협조적 보행자에겐 짧은 지평, **비협조적 보행자에겐 긴 지평과 보수적 여유**. 성공률 +6.8 %, 충돌 −50 %, 주행시간 −19 % 보고."
+  },
+  {
+   "domain": "crowd-freezing",
+   "citation": "J. Zhang, Y. Xu, V. Aggarwal, \"Don't Freeze, Don't Crash: Extending the Safe Operating Range of Neural Navigation in Dense Crowds\", arXiv:2603.06729, 2026-03-06",
+   "year": 2026,
+   "url": "https://arxiv.org/abs/2603.06729",
+   "depth": "초록만",
+   "takeaway": "고밀도에서 충돌 없는 속도 집합이 소멸해 solver 가 전진을 포기하는 것이 FRP 라고 규정하고, 밀도 불변 인코딩·밀도 무작위 학습·물리 기반 근접학 보상으로 얼어붙음과 충돌을 동시에 억제. 목표 도달 >99 %, 무충돌 86 %."
+  },
+  {
+   "domain": "crowd-freezing",
+   "citation": "N. Tsoi 외, \"SocNavBench: A Grounded Simulation Testing Framework for Evaluating Social Navigation\", ACM THRI, 2022 (arXiv:2103.00047)",
+   "year": 2022,
+   "url": "https://arxiv.org/pdf/2103.00047",
+   "depth": "2차인용",
+   "takeaway": "사전 기록 궤적을 재생하며 로봇에 **반응하지 않는** 보행자로 사회적 내비게이션을 평가하는 벤치마크. 보행자 모형을 비반응/반응형/애니메이션으로 분류."
+  },
+  {
+   "domain": "crowd-freezing",
+   "citation": "P. Ögren, N. E. Leonard, \"A convergent dynamic window approach to obstacle avoidance\", IEEE Trans. Robotics 21(2), 2005",
+   "year": 2005,
+   "url": "https://ieeexplore.ieee.org/document/1435481",
+   "depth": "2차인용",
+   "takeaway": "원판 DWA 의 1-step 동적 창 + 등속 롤아웃은 서로 불일치하며, 이 때문에 수렴성·최적성 보장이 깨진다. 지평 일관(receding-horizon) 정식화로 수렴성을 회복한다."
+  },
+  {
+   "domain": "crowd-freezing",
+   "citation": "D. Fox, W. Burgard, S. Thrun, \"The dynamic window approach to collision avoidance\", IEEE Robotics & Automation Magazine 4(1), 1997",
+   "year": 1997,
+   "url": "https://ieeexplore.ieee.org/document/580977",
+   "depth": "2차인용",
+   "takeaway": "DWA 원판. 허용 속도 = (한 주기 가감속 도달 가능) ∩ (정지거리 안에 설 수 있음). 안전 판정이 **제동 가능성**으로 정의된다."
+  },
+  {
+   "domain": "crowd-freezing",
+   "citation": "P. Fiorini, Z. Shiller, \"Motion planning in dynamic environments using velocity obstacles\", Int. J. Robotics Research 17(7), 1998",
+   "year": 1998,
+   "url": "https://journals.sagepub.com/doi/10.1177/027836499801700706",
+   "depth": "2차인용",
+   "takeaway": "상대 속도 공간에서 충돌로 이어지는 속도 집합(VO). 상호성 가정이 없다 — 상대는 등속으로 간다고만 본다."
+  },
+  {
+   "domain": "crowd-freezing",
+   "citation": "J. van den Berg, S. J. Guy, M. Lin, D. Manocha, \"Reciprocal n-body collision avoidance\" (ORCA), Robotics Research (ISRR 2009), Springer STAR 70, 2011",
+   "year": 2011,
+   "url": "https://gamma.cs.unc.edu/ORCA/",
+   "depth": "2차인용",
+   "takeaway": "각 에이전트가 회피 부담의 절반을 진다는 상호성 가정 위에서 선형 제약으로 안전 속도 집합을 만든다."
+  },
+  {
+   "domain": "crowd-freezing",
+   "citation": "A. Rasouli 외 계열, \"Intend-Wait-Cross: Towards Modeling Realistic Pedestrian Crossing Behavior\", arXiv:2203.07324, 2022 / \"Deconstructing Pedestrian Crossing Decision-making in Interactions with Continuous Traffic: an Anthropomorphic Model\", arXiv:2301.10419, 2023",
+   "year": 2023,
+   "url": "https://arxiv.org/abs/2301.10419",
+   "depth": "2차인용",
+   "takeaway": "연속 흐름을 건너는 결정은 '의도 → 대기 → 진입'의 이산 상태기이며, 진입 판정은 임계 간격(critical gap) / 도달 시간(TTA) 임계로 모형화된다. 대기 중에도 주변 여러 틈의 위험을 비교한다."
+  },
+  {
+   "domain": "spacetime-planning",
+   "citation": "Devin Wild Thomas, Wheeler Ruml, Solomon Eyal Shimony, \"Real-time Safe Interval Path Planning\", Proceedings of the International Symposium on Combinatorial Search (SoCS) 17(1), pp. 161–169, 2024. DOI 10.1609/socs.v17i1.31554",
+   "year": 2024,
+   "url": "https://www.cs.unh.edu/~ruml/papers/rtsipp-socs-24.pdf",
+   "depth": "본문확인",
+   "takeaway": "RTSIPP 문제 정의: 에이전트가 온라인으로 계획하고 **엄격한 시간 한도 b 안에 다음 행동을 내야 한다**. 핵심 문장 — \"the cost-to-go in Real-time Safe Interval Path Planning is a function of time rather than a scalar\". 도착시각함수 ATF A[ζ,α,β,Δ](t) 를 g 대신 전파하는 ASIPP 와, 확장 예산을 받는 NLASIPP(Algorithm 1)를 준다. β 를 \"the latest departure time before one of the states or edges becomes unsafe\" 로 정의한다. β<α 인 반직관적 경우(출발지에서 필요한 대기를 다 할 수 없는 경우)를 명시적으로 허용한다. 동기 예시가 문자 그대로 \"a food delivery robot waiting at a pedestrian crossing\" 이다. Thomas et al.(2023)을 인용해 ASIPP 의 오버헤드가 일반 SIPP 대비 미미하다고 보고한다."
+  },
+  {
+   "domain": "spacetime-planning",
+   "citation": "Venkatraman Narayanan, Mike Phillips, Maxim Likhachev, \"Anytime Safe Interval Path Planning for Dynamic Environments\", IEEE/RSJ IROS, pp. 4708–4715, 2012",
+   "year": 2012,
+   "url": "https://publications.ri.cmu.edu/storage/publications/pub_files/2012/10/asipp_iros12.pdf",
+   "depth": "본문확인",
+   "takeaway": "ARA* 의 휴리스틱 팽창 ε>1 을 SIPP 에 결합한 anytime 판. **UAV 가 동적 장애물 50개 사이에서 향후 15초분 안전 경로를 0.05 s 안에** 낸다. Time-Bounded Lattice 의 유한 지평을 얹어 \"지평 이후 상태는 시간 없이 공간만으로\" 계획하고, SIPP 에서는 이 구현이 \"예측 궤적의 길이를 지평으로 자르는 것\"뿐임을 명시한다. **\"a different time horizon can be applied to different dynamic obstacles depending on certainty in prediction\"**. 관련연구에서 우리 실패 사례를 그대로 예언한다: 동적 장애물을 \"정적 장애물 + 궤적 앞부분 고비용 창\" 으로 모델링하는 접근은 \"the robot could have crossed a trajectory without being hit, or just waited until...\" 인 경우에 준최적이라고 적는다."
+  },
+  {
+   "domain": "spacetime-planning",
+   "citation": "Yiyuan Zou, Clark Borst, \"Zeta*-SIPP: Improved Time-Optimal Any-Angle Safe-Interval Path Planning\", Proceedings of IJCAI-24, pp. 6823–6829, 2024",
+   "year": 2024,
+   "url": "https://www.ijcai.org/proceedings/2024/0754.pdf",
+   "depth": "본문확인",
+   "takeaway": "시간축 처리의 두 갈래를 명시적으로 대비한다: 등간격 시간 슬롯 space-time grid(Silver 2005)는 \"may aggravate the curse of dimensionality problem because obstacle grids could be quite sparse, especially when there are only few dynamic obstacles\", 그래서 SIPP 가 \"merge consecutive obstacle-free time slots into safe intervals, creating a compact space-time map to narrow the search space\". 노드는 (p,[t1,t2]) 이고 같은 p 에 여러 안전구간 노드가 존재할 수 있다. 실측(Table 1, JavaScript/Node.js 구현, 170×84 Warehouse 맵, 동적 장애물 32~128): 탐색 노드 TO-AA-SIPP 1.71e4 → Zeta*-SIPP 2.50e3, 스캔 격자 6.01e7 → 2.06e5. 평균 실행시간 Fig. 3 에서 Warehouse 맵 TO-AA-SIPP 약 700~1150 ms → Zeta* 약 150~250 ms."
+  },
+  {
+   "domain": "spacetime-planning",
+   "citation": "Zain Alabedeen Ali, Konstantin Yakovlev, \"Safe Interval Path Planning With Kinodynamic Constraints\", AAAI-23, vol. 37 no. 10, pp. 12330–12337, 2023 (arXiv:2302.00776). DOI 10.1609/aaai.v37i10.26453",
+   "year": 2023,
+   "url": "https://arxiv.org/abs/2302.00776",
+   "depth": "초록만",
+   "takeaway": "고전 SIPP 는 순간 정지·출발을 가정해서 가감속이 있는 실제 로봇에서는 **불완전(incomplete)** 해진다. SIPP-IP 는 탐색 노드를 '대기 구간(waiting intervals)'을 실은 형태로 재정의해 선행자에서 오는 모든 wait-and-move 행동을 포괄하고, 가감속 하에서 완결·최적임을 증명한다. A* 대비 확장 수가 훨씬 적다고 보고. (공개 구현 github.com/PathPlanning/SIPP-IP — 라이선스 확인 전이며 우리는 코드를 가져오지 않는다.)"
+  },
+  {
+   "domain": "spacetime-planning",
+   "citation": "Marat Agranovskiy, \"Path Planning with Motion Primitives in Dynamic Environments: SIPP on Lattices\", arXiv:2609.31803v1, 2026-09-25 (International Conference on Interactive Collaborative Robotics, ICR 2026 채택 표기)",
+   "year": 2026,
+   "url": "https://arxiv.org/abs/2609.31803",
+   "depth": "초록만",
+   "takeaway": "2^k-연결 격자의 stop-and-turn 궤적이 차동구속 로봇에게 운동학적으로 매우 준최적임을 지적하고, SIPP 를 state lattice + 사전계산 모션 프리미티브 위에서 돌린다. 핵심 구현 문장: \"we rasterize the spatiotemporal swept volumes of moving obstacles directly onto the grid, treating grid cells as atomic units of space, **whose resolution is typically dictated by inherent localization noise**\". 프리미티브마다 시공간 스윕 흔적을 두고 장애물 점유 구간을 시간 역방향으로 사영해 '무효 출발 블록'을 만든 뒤 빈틈을 찾는다. MovingAI Denver/Arena/Empty_64_64, 256×256 격자, 장애물 0~320개. 격자 탐색 대비 약 2~20배 느리지만 궤적 품질(각도성, 누적 헤딩 변화, bending energy)은 크게 우수."
+  },
+  {
+   "domain": "spacetime-planning",
+   "citation": "Franz Queißner, Andreas Orthey, Wolfgang Hönig, \"DynoFluxBench: Benchmarking Kinodynamic Space-Time Planners in Dynamic Environments\", arXiv:2609.18549v1, 2026-09-16 (TU Berlin)",
+   "year": 2026,
+   "url": "https://arxiv.org/abs/2609.18549",
+   "depth": "본문확인",
+   "takeaway": "동역학 제약 + 동적 장애물을 함께 다루는 전용 벤치마크가 없었다며 프레임워크와 세 플래너(ST-Db-RRT, ST-GBRRT, KIST)를 낸다. 시스템에 **2차 unicycle**(우리 차동구동 로봇과 같은 급)이 포함된다. 가장 우리에게 직접적인 결과: 시간축이 그 자체로 이득은 아니다 — \"Outside the Wait environments the success rates of the two planners are close, and the time dimension is not by itself an advantage\". 그러나 **Wait 환경(좁은 공간에서 오래 기다려야 하는 문제)에서는 시간 없는 Db-RRT 가 전부 실패**하고 ST-Db-RRT 만 푼다(1차 unicycle sr=1.0, 2차 unicycle sr=0.7). 2차 unicycle Wait 사례는 약 30 s 를 기다려야 하며 ST-Db-RRT 만이 어떤 해라도 찾는다."
+  },
+  {
+   "domain": "spacetime-planning",
+   "citation": "Zongyuan Shen, Yaming Ou, Shalabh Gupta, Shancheng Zhao, Dehua Zhou, Gao Wang, Zhongqiang Ren, Junfeng Fan, Long Cheng, \"Motion Planning in Dynamic Environments: A Survey from Classical to Modern Methods\", arXiv:2606.02677v1, 2026-06-03",
+   "year": 2026,
+   "url": "https://arxiv.org/abs/2606.02677",
+   "depth": "본문확인",
+   "takeaway": "§B Spatiotemporal Search-based Methods 에서 SIPP 를 중심축으로 두고 변종을 정리한다: sub-optimal SIPP, anytime SIPP [Narayanan 2012], generalized SIPP [Gonzalez, Dornbush, Likhachev, ICRA 2012], multi-objective SIPP [Ren et al., RA-L 7(3):8154–8161, 2022]. 최신 사례로 Cao·Trautman·Iba 의 Dynamic Channel(들로네 삼각분할 + 시변 게이트 + modified Timed A*, ICRA 2019)과 Huang·Wu·Tao·Kumar 의 쿼드로터 안전구간 계획(동적 가시성 그래프 + UTVD + B-spline, ICRA 2025, pp. 2780–2786)을 든다. 별도 절(§5 Freezing-robot Mitigation)에서 freezing 을 독립 문제로 다루며 Potential Freezing Zone(Sathyamoorthy et al.), 혼잡 인지 도착시각 공유(Du et al.), VO 를 보상에 넣는 방식(Han et al.) 등을 정리한다."
+  },
+  {
+   "domain": "spacetime-planning",
+   "citation": "Maxim Phillips, Maxim Likhachev, \"SIPP: Safe interval path planning for dynamic environments\", IEEE ICRA, pp. 5628–5635, 2011",
+   "year": 2011,
+   "url": "https://ieeexplore.ieee.org/document/5980306/",
+   "depth": "2차인용",
+   "takeaway": "정본. 어떤 배치에서 안전한 타임스텝 수는 무한할 수 있어도 **안전 시간구간의 수는 유한하고 대개 매우 작다**는 관찰에서 출발한다. 안전구간은 '충돌이 없는 연속 구간으로서 직전 타임스텝과 직후 타임스텝에서는 충돌인 것'으로 정의된다(극대성)."
+  },
+  {
+   "domain": "spacetime-planning",
+   "citation": "Jiaoyang Li, Zhe Chen, Daniel Harabor, Peter J. Stuckey, Sven Koenig, \"MAPF-LNS2: Fast Repairing for Multi-Agent Path Finding via Large Neighborhood Search\", AAAI-22, pp. 10256–10265. DOI 10.1609/aaai.v36i9.21266 (SIPPS 원출처)",
+   "year": 2022,
+   "url": "https://cdn.aaai.org/ojs/21266/21266-13-25279-1-2-20220628.pdf",
+   "depth": "초록만",
+   "takeaway": "SIPPS(Safe Interval Path Planning with Soft constraints)는 하드 제약을 하나도 어기지 않으면서 소프트 제약 위반 수를 최소화하는 경로를 낸다. CBS/PBS/PrP/LNS2 의 저수준 계획기로 널리 쓰인다."
+  },
+  {
+   "domain": "spacetime-planning",
+   "citation": "O. de Groot, L. Ferranti, D. Gavrila, J. Alonso-Mora, \"Globally Guided Trajectory Planning in Dynamic Environments\", IEEE ICRA 2023 (arXiv:2303.07751)",
+   "year": 2023,
+   "url": "https://arxiv.org/abs/2303.07751",
+   "depth": "초록만",
+   "takeaway": "사람이 동적 장애물일 때 충돌 없는 공간은 비볼록이고 국소최적이 여럿(좌로 지나감/우로 지나감)이라는 관찰에서 출발한다. 여러 국소최적 주행 행동의 궤적을 위상(topology)으로 구분해 찾고, **연속 계획 반복 사이에 위상 정보를 전파(propagating the topology information)** 해 통과 방향에 커밋하고 진동을 막는다."
+  },
+  {
+   "domain": "spacetime-planning",
+   "citation": "Kaier Liang et al., \"Time-aware Motion Planning in Dynamic Environments with Conformal Prediction\", arXiv:2511.18170, 2025-11-22 (Lehigh Univ. / UC Riverside)",
+   "year": 2025,
+   "url": "https://arxiv.org/abs/2511.18170",
+   "depth": "초록만",
+   "takeaway": "CP-SIPP: 컨포멀 예측의 이산 신뢰수준을 SIPP 상태에 실어 안전구간을 **신뢰수준 인덱스 구간**으로 만들고, 적응 분위수로 분포 무관(distribution-free) 유한표본 안전 보장을 준다. 전역(CP-SIPP)과 지역(시간 인지 ACP-RRT) 두 층으로 구성."
+  },
+  {
+   "domain": "spacetime-planning",
+   "citation": "Ajith Kemisetti, Shahaf S. Shperberg, Yoonchang Sung, \"StochSIPP: Safe Interval Path Planning in Stochastic Dynamic Environments\", arXiv:2608.00792, 2026-08-01",
+   "year": 2026,
+   "url": "https://arxiv.org/abs/2608.00792",
+   "depth": "초록만",
+   "takeaway": "간선·정점 상태가 불확실하고 실행 중 국소적으로 밝혀지는 시간 로드맵에서의 정확(exact) 조건부 계획기. SIPP 로 매크로 행동을 만들고 유계 AND/OR 탐색으로 관측 결과에 따라 행동을 고른다. 조건이 맞으면 무충돌 정책을, 확률이 맞으면 기대 도착시각 최소화를 보장. 동시 관측 불확실 상태 수가 늘면 확장성이 급격히 나빠진다는 확장성 연구를 싣는다. 보수적 고정경로 계획기가 해를 못 내는 '게이트' 시나리오를 푼다."
+  },
+  {
+   "domain": "spacetime-planning",
+   "citation": "Ariel Orda, Raphael Rom, \"Shortest-Path and Minimum-Delay Algorithms in Networks with Time-Dependent Edge-Length\", Journal of the ACM 37(3), 607–625, 1990 (및 S. E. Dreyfus, \"An Appraisal of Some Shortest-Path Algorithms\", Operations Research 17(3), 1969)",
+   "year": 1990,
+   "url": "https://sites.cs.ucsb.edu/~suri/cs231/Rlist/ordaRom.pdf",
+   "depth": "2차인용",
+   "takeaway": "Dreyfus(1969)는 출발시각이 주어지면 Dijkstra 로 시간의존 최단경로를 풀 수 있다고 했으나 노드에서의 무제한 대기를 암묵 가정했다. Halpern 이 이 일반화가 **FIFO 망에서만** 참임을 증명했다. Orda·Rom 은 **노드 대기가 허용되면** 임의 사례를 FIFO 등가 사례로 다항시간 변환할 수 있음을 보였다(따라서 대기가 필요 없어진다)."
+  },
+  {
+   "domain": "spacetime-planning",
+   "citation": "Peter Trautman, Andreas Krause, \"Unfreezing the Robot: Navigation in Dense, Interacting Crowds\", IEEE/RSJ IROS, pp. 797–803, 2010. DOI 10.1109/IROS.2010.5654369",
+   "year": 2010,
+   "url": "https://las.inf.ethz.ch/files/trautman10unfreezing.pdf",
+   "depth": "2차인용",
+   "takeaway": "환경 복잡도가 어떤 수준을 넘으면 기존 알고리즘이 모든 전진 경로를 위험으로 판정해 로봇이 제자리에 얼어붙는다(freezing robot problem). 원인 중 하나는 '불확실성 폭발' — 주변 이동 장애물들의 과보수적 예측의 합집합이 모든 이동을 막는다. 각 에이전트를 독립으로 모델링하는 것이 충분히 조밀한 군중에서 freezing 을 낳는다."
+  },
+  {
+   "domain": "spacetime-planning",
+   "citation": "J. Chae, H. Seo, S. Lee, K.-J. Park, \"Time-aware Costmap for Smoother and Less Disruptive AMR Navigation With ROS 2\", International Journal of Control, Automation, and Systems, 2025. DOI 10.1007/s12555-025-0558-8",
+   "year": 2025,
+   "url": "https://link.springer.com/article/10.1007/s12555-025-0558-8",
+   "depth": "초록만",
+   "takeaway": "동적 장애물이 자주 점유하는 영역 정보를 전역 코스트맵에 통합해 더 매끄럽고 덜 교란적인 ROS 2 주행을 얻는다는 시간 인지 코스트맵 프레임워크. (전문은 접근하지 못했다 — Springer 인증 리다이렉트. 제목·저자·저널·연도와 랜딩 페이지 수준 요약만 확인.)"
+  },
+  {
+   "domain": "mpc-optimization",
+   "citation": "T. Fraichard, H. Asama, \"Inevitable Collision States — A Step Towards Safer Robots?\", IEEE/RSJ IROS 2003 / Advanced Robotics 18(10), 2004",
+   "year": 2004,
+   "url": "https://www.semanticscholar.org/paper/64be486150521eddcf83ef356a0719d1ef65ceb8",
+   "depth": "2차인용",
+   "takeaway": "ICS = 로봇이 무슨 짓을 해도 결국 충돌하는 상태. 안전은 '지금 충돌 안 함'이 아니라 '충돌이 불가피한 상태 집합 밖에 머무름'으로 정의해야 한다."
+  },
+  {
+   "domain": "mpc-optimization",
+   "citation": "S. Bouraine, T. Fraichard, H. Salhi, \"Provably safe navigation for mobile robots with limited field-of-views in dynamic environments\", Autonomous Robots 32(3), 2012 (Braking ICS · PassAvoid)",
+   "year": 2012,
+   "url": "https://link.springer.com/article/10.1007/s10514-011-9258-8",
+   "depth": "2차인용",
+   "takeaway": "절대 안전은 일반적으로 보장 불가. 대신 **passive motion safety** = '충돌이 나면 로봇은 정지 상태' 를 braking ICS 로 보장한다."
+  },
+  {
+   "domain": "mpc-optimization",
+   "citation": "P. Trautman, A. Krause, \"Unfreezing the Robot: Navigation in Dense, Interacting Crowds\", IEEE/RSJ IROS 2010, pp. 797–803",
+   "year": 2010,
+   "url": "https://las.inf.ethz.ch/files/trautman10unfreezing.pdf",
+   "depth": "2차인용",
+   "takeaway": "환경 복잡도가 어느 선을 넘으면 계획기가 '모든 전진 경로가 위험'으로 판정해 얼어붙는다(freezing robot problem). 원인은 예측 불확실성 합집합이 모든 운동을 막는 것."
+  },
+  {
+   "domain": "mpc-optimization",
+   "citation": "D. Q. Mayne, J. B. Rawlings, C. V. Rao, P. O. M. Scokaert, \"Constrained model predictive control: Stability and optimality\", Automatica 36(6):789–814, 2000",
+   "year": 2000,
+   "url": "https://doi.org/10.1016/S0005-1098(99)00214-9",
+   "depth": "2차인용",
+   "takeaway": "유한 지평 MPC의 안정성·재귀 실현가능성은 terminal cost + terminal constraint set(제어불변)에서 나온다. 종단 요소가 없으면 '지금 실현가능, 다음 주기 실현불가'가 원리적으로 가능하다."
+  },
+  {
+   "domain": "mpc-optimization",
+   "citation": "E. C. Kerrigan, J. M. Maciejowski, \"Soft constraints and exact penalty functions in model predictive control\", Control 2000 Conference, Cambridge, 2000",
+   "year": 2000,
+   "url": "https://www.researchgate.net/publication/2461090_Soft_Constraints_And_Exact_Penalty_Functions_In_Model_Predictive_Control",
+   "depth": "2차인용",
+   "takeaway": "slack으로 완화한 제약이 hard 제약과 **같은 해**를 주려면 벌점이 exact해야 한다(경계 기울기가 나머지 목적함수를 이겨야 함). 유계 벌점은 제약을 못 만든다."
+  },
+  {
+   "domain": "mpc-optimization",
+   "citation": "M. N. Zeilinger, C. N. Jones, M. Morari, \"Soft Constrained Model Predictive Control With Robust Stability Guarantees\", IEEE TAC 59(5), 2014",
+   "year": 2014,
+   "url": "https://www.researchgate.net/publication/263144598_Soft_Constrained_Model_Predictive_Control_With_Robust_Stability_Guarantees",
+   "depth": "2차인용",
+   "takeaway": "큰 slack 벌점 + 제약 조임(constraint tightening)을 결합하면 실현불가 상태에서도 재귀 실현가능성을 유지하고 원래 실현가능 집합으로 **복귀**한다."
+  },
+  {
+   "domain": "mpc-optimization",
+   "citation": "K. P. Wabersich, M. N. Zeilinger, \"A predictive safety filter for learning-based control of constrained nonlinear dynamical systems\", Automatica 129, 2021 (arXiv:1812.05506)",
+   "year": 2021,
+   "url": "https://arxiv.org/abs/1812.05506",
+   "depth": "2차인용",
+   "takeaway": "명목 제어를 그대로 통과시키되, 매 주기 '알려진 안전 상태로 가는 백업 궤적'의 존재를 실시간으로 탐색해 안전을 강제한다."
+  },
+  {
+   "domain": "mpc-optimization",
+   "citation": "D. R. Agrawal, R. Chen, D. Panagou, \"gatekeeper: Online Safety Verification and Control for Nonlinear Systems in Dynamic Environments\", IEEE Transactions on Robotics, 2024 (arXiv:2211.14361)",
+   "year": 2024,
+   "url": "https://arxiv.org/abs/2211.14361",
+   "depth": "초록만",
+   "takeaway": "명목 궤적을 유한 시간 T_H 만 따르고 그 뒤 백업 정책으로 전환하는 '후보 궤적'을 만들어, 전환 시각이라는 **스칼라 하나만** 최적화한다. 커밋된 궤적이 무한 지평 안전을 보장함을 증명(재귀 실현가능·정확)."
+  },
+  {
+   "domain": "mpc-optimization",
+   "citation": "T. Kim, A. D. Menon, A. Trivedi, D. Panagou, \"Backup-Based Safety Filters: A Comparative Review of Backup CBF, Model Predictive Shielding, and gatekeeper\", arXiv:2604.02401v2, 2026",
+   "year": 2026,
+   "url": "https://arxiv.org/html/2604.02401",
+   "depth": "본문확인",
+   "takeaway": "세 방법의 공통 구조는 (명목 정책, 백업 정책 π_b, 종단 제어불변 집합 S₀)이고 π_b는 두 성질을 만족해야 한다 — (i) T_B 지평 recoverable set이 S₀의 근방을 포함, (ii) S₀가 π_b 아래 전방불변. 실측 비교(Table II): 계산시간 Backup CBF ≈ 10 ms, MPS ≈ 1.3 ms, gatekeeper ≈ 10.9 ms(순차)/1.3 ms(병렬). 명목 정책 보존율은 Backup CBF 28.8 %, MPS ≈ 55 %, gatekeeper 87.5~100 %."
+  },
+  {
+   "domain": "mpc-optimization",
+   "citation": "T. Kim, H. K. Park, R. Wada, N. Atanasov, S. Koga, D. Panagou, \"OcclusionCBF: Backup Control Barrier Functions for Safe Navigation Among Hidden Dynamic Obstacles\", arXiv:2609.06342, 2026",
+   "year": 2026,
+   "url": "https://arxiv.org/abs/2609.06342",
+   "depth": "초록만",
+   "takeaway": "백업 롤아웃을 '충돌 팽창 점유(collision-inflated occupancy)'와 검증된 종단 집합에 대해 인증하고, 그 결과를 아핀 제약으로 바꿔 최소 침습 QP 필터로 쓴다. 이동 예측 지평에서의 재귀 실현가능성과, 점유 예측이 덮는 모든 은닉 장애물 운동에 대한 충돌 회피를 증명. 밀리초 수준 계산."
+  },
+  {
+   "domain": "mpc-optimization",
+   "citation": "B. Derajić, M.-K. Bouzidi, S. Bernhard, W. Hönig, \"Residual Neural Terminal Constraint for MPC-based Collision Avoidance in Dynamic Environments\", arXiv:2508.03428, 2025",
+   "year": 2025,
+   "url": "https://arxiv.org/abs/2508.03428",
+   "depth": "초록만",
+   "takeaway": "시변 안전집합(HJ value function의 0-superlevel set)을 신경망으로 근사해 MPC의 **terminal constraint**로 쓴다. 표현은 SDF − 비음수 신경 residual, hypernetwork로 실시간화. 보행자가 로봇 경로를 가로지르는 하드웨어 실험 포함, 최고 베이스라인 대비 성공률 최대 **30 % 향상**, 계산량은 비슷."
+  },
+  {
+   "domain": "mpc-optimization",
+   "citation": "J. P. Alsterda, M. Brown, J. C. Gerdes, \"Contingency Model Predictive Control for Automated Vehicles\", American Control Conference (ACC) 2019, pp. 717–722 (arXiv:1903.08818)",
+   "year": 2019,
+   "url": "https://arxiv.org/abs/1903.08818",
+   "depth": "2차인용",
+   "takeaway": "고전 MPC 지평과 **병렬로** contingency 지평을 하나 더 두고, contingency 지평은 '회피 해가 실현가능하게 유지될 것'으로 제약한다. 두 지평은 첫 입력을 공유한다."
+  },
+  {
+   "domain": "mpc-optimization",
+   "citation": "M.-K. Bouzidi, B. Derajić, D. Goehring, J. Reichardt, \"Reachability-Based Contingency Planning against Multi-Modal Predictions with Branch MPC\", arXiv:2502.02550, 2025",
+   "year": 2025,
+   "url": "https://arxiv.org/abs/2502.02550",
+   "depth": "초록만",
+   "takeaway": "다모드 예측을 주행 통로(driving corridor)로 묶어 시나리오 트리 분기로 만들고, **도달성 해석으로 '결정을 미룰 수 있는 최대 시각'** 을 계산해 분기 결정이 실행가능하도록 보장한다. 가지치기·군집화로 계산량을 크게 줄이되 모든 예측 모드는 보존."
+  },
+  {
+   "domain": "mpc-optimization",
+   "citation": "L. Zheng, L. Zhang, P. Yu, Y. Sun, S. Grammatico, J. Ma, C. Liu, \"Contingency Planning for Safety-Critical Autonomous Vehicles: A Review and Perspectives\", arXiv:2601.14880, 2026",
+   "year": 2026,
+   "url": "https://arxiv.org/abs/2601.14880",
+   "depth": "초록만",
+   "takeaway": "두 패러다임으로 분류: **reactive safety**(실현된 위험에 대해 제약 강제 또는 fail-safe 기동)와 **proactive safety**(모드 전이에 대해 분기해 미래 recourse를 최적화). 물리적 위험은 형식적 보증으로, 의미론적 이상은 경험적 검증으로 다뤄지는 구조적 분열을 지적."
+  },
+  {
+   "domain": "mpc-optimization",
+   "citation": "X. Zhang, A. Liniger, F. Borrelli, \"Optimization-Based Collision Avoidance\", IEEE Transactions on Control Systems Technology 29(3):972–983, 2021 (arXiv:1711.03449)",
+   "year": 2021,
+   "url": "https://arxiv.org/abs/1711.03449",
+   "depth": "2차인용",
+   "takeaway": "볼록집합 간 거리함수를 강쌍대성으로 재정식화해, 미분불가능한 충돌 회피 제약을 **근사 없이(비보수적으로)** 매끄러운 비볼록 제약으로 바꾼다. 다면체/타원체(또는 그 유한 합집합)에 적용되고 부호거리 개념과 연결된다."
+  },
+  {
+   "domain": "mpc-optimization",
+   "citation": "J. Huang, J. Zeng, X. Chi, K. Sreenath, Z. Liu, H. Su, \"Velocity Obstacle for Polytopic Collision Avoidance\", IEEE Robotics and Automation Letters (RA-L), 2023 (arXiv:2304.07954)",
+   "year": 2023,
+   "url": "https://arxiv.org/abs/2304.07954",
+   "depth": "초록만",
+   "takeaway": "VO를 다면체 로봇에 대해 **꼭짓점 좌표와 상태의 함수**로 직접 구성한다. optimization-free 라서 기존 다면체 회피보다 가볍고, 완주율·교착률·평균 주행거리에서 개선."
+  },
+  {
+   "domain": "mpc-optimization",
+   "citation": "J. van den Berg, S. J. Guy, M. Lin, D. Manocha, \"Reciprocal n-Body Collision Avoidance\" (ORCA), International Symposium on Robotics Research (ISRR), 2011",
+   "year": 2011,
+   "url": "https://gamma.cs.unc.edu/ORCA/",
+   "depth": "2차인용",
+   "takeaway": "각 에이전트가 상호 책임을 절반씩 나눠 속도 공간의 절반평면 제약을 만들고, 그 교집합에서 선호 속도에 가장 가까운 속도를 LP로 고른다."
+  },
+  {
+   "domain": "mpc-optimization",
+   "citation": "G. Williams, A. Aldrich, E. A. Theodorou, \"Model Predictive Path Integral Control: From Theory to Parallel Computation\", AIAA Journal of Guidance, Control, and Dynamics 40(2):344–357, 2017",
+   "year": 2017,
+   "url": "https://arc.aiaa.org/doi/pdf/10.2514/1.G001921",
+   "depth": "2차인용",
+   "takeaway": "확률적 최적제어의 자유에너지 관계로 비볼록·비미분 비용에 대해 샘플 롤아웃의 지수가중 평균으로 제어열을 갱신한다. 등속 단일 입력이 아니라 **시변 입력열**을 샘플링한다."
+  },
+  {
+   "domain": "mpc-optimization",
+   "citation": "Z. Liu, K. Chang, X. Chen, \"Clustering-Embedded MPPI: Avoiding Averaging-Induced Failure and Enabling Efficient Cluster Selection for Dynamic Obstacles\", arXiv:2607.06499, 2026",
+   "year": 2026,
+   "url": "https://arxiv.org/abs/2607.06499",
+   "depth": "초록만",
+   "takeaway": "중요도 가중 갱신이 **서로 양립 불가능한 롤아웃을 평균**해 장애물이 정면에 있을 때 망설임 또는 충돌을 낳는다. DBSCAN + 충돌점 기하 방향 특징으로 모드를 분리하고, 동적 환경에서는 '장애물 운동의 반대쪽으로' 선택. UR5e 실기에서 목표 도달시간 48 % 단축."
+  },
+  {
+   "domain": "mpc-optimization",
+   "citation": "E. Trevisan, K. A. Mustafa, G. Notten, X. Wang, J. Alonso-Mora, \"Dynamic Risk-Aware MPPI for Mobile Robots in Crowds via Efficient Monte Carlo Approximations\" (DRA-MPPI), IEEE/RSJ IROS 2025 (arXiv:2506.21205)",
+   "year": 2025,
+   "url": "https://arxiv.org/abs/2506.21205",
+   "depth": "초록만",
+   "takeaway": "비가우시안 예측 하에서 다수 동적 장애물에 대한 **결합 충돌확률**을 수백 개 샘플 궤적에 대해 몬테카를로로 실시간 근사하고, 임계 초과 샘플을 기각하거나 CP를 가중 목적항으로 쓴다. Scenario MPC / Frenet / vanilla MPPI 대비 우수."
+  },
+  {
+   "domain": "mpc-optimization",
+   "citation": "K. Pfeiffer, A. Kheddar, \"Efficient Lexicographic Optimization for Prioritized Robot Control and Planning\", arXiv:2403.09160, 2024",
+   "year": 2024,
+   "url": "https://arxiv.org/abs/2403.09160",
+   "depth": "초록만",
+   "takeaway": "S-HLSP(Sequential Hierarchical Least-Squares Programming)으로 비선형 계층 최소자승을 푼다. 가중합 스칼라화 대비 장점: 실현불가 제약의 최적성 보장, 정규화된 국소최소 회피로 하위 우선순위의 최적성 향상, **가중치 튜닝 불필요**."
+  },
+  {
+   "domain": "mpc-optimization",
+   "citation": "D. Fox, W. Burgard, S. Thrun, \"The Dynamic Window Approach to Collision Avoidance\", IEEE Robotics & Automation Magazine 4(1):23–33, 1997",
+   "year": 1997,
+   "url": "https://www.researchgate.net/publication/3344494_The_Dynamic_Window_Approach_to_Collision_Avoidance",
+   "depth": "2차인용",
+   "takeaway": "동적 창 V_d = 한 제어 주기 가속도 한계 안의 속도 집합, 허용 속도 V_a = 충돌 전 정지 가능한 속도. 등속 원호 롤아웃."
+  },
+  {
+   "domain": "mpc-optimization",
+   "citation": "X. Fan, F. Kong, X. Xie, Y. Guo, \"Enhanced dynamic window approach for autonomous obstacle avoidance in unmanned underwater vehicles\", Scientific Reports, 2026",
+   "year": 2026,
+   "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC13357604/",
+   "depth": "본문확인",
+   "takeaway": "종래 DWA는 속도공간 샘플링(예: Δv 0.1 m/s, Δω 0.05 rad/s)을 유지한 채 퍼지 가중치 조정과 각속도 변화 벌점을 더한다. 실기 비교에서 회피 성공률 50 %→90 %, 에너지 −27.9 %."
+  },
+  {
+   "domain": "mpc-optimization",
+   "citation": "S. Macenski et al., \"On Use of Nav2 MPPI Controller\", ROSCon 2023 / nav2_mppi_controller 문서 (ros-navigation/navigation2)",
+   "year": 2023,
+   "url": "https://roscon.ros.org/2023/talks/On_Use_of_Nav2_MPPI_Controller.pdf",
+   "depth": "2차인용",
+   "takeaway": "AVX2/FMA 벡터화로 **CPU 전용** 구현. 경험적으로 1000 샘플 @ 50 Hz 또는 2000 샘플 @ 30 Hz가 4세대 Intel i5 급에서 무난하고, 50+ Hz로 측정됨."
+  },
+  {
+   "domain": "prediction-reachability",
+   "citation": "T. Fraichard, H. Asama, \"Inevitable Collision States — A Step Towards Safer Robots?\", Advanced Robotics 18(10):1001–1024, 2004",
+   "year": 2004,
+   "url": "http://emotion.inrialpes.fr/fraichard/publications/journals/04-rsjar-fraichard-asama.pdf",
+   "depth": "2차인용",
+   "takeaway": "미래 제어가 무엇이든 충돌하는 상태 집합(ICS)을 형식화하고, 로봇은 결코 ICS 에 들어가면 안 된다고 못박는다. ICS 는 로봇 동역학과 장애물 운동을 **함께** 본다."
+  },
+  {
+   "domain": "prediction-reachability",
+   "citation": "S. Bouraine, T. Fraichard, H. Salhi, \"Provably safe navigation for mobile robots with limited field-of-views in dynamic environments\", Autonomous Robots 32(3):267–283, 2012",
+   "year": 2012,
+   "url": "https://link.springer.com/article/10.1007/s10514-011-9258-8",
+   "depth": "2차인용",
+   "takeaway": "Braking-ICS 회피 = passive motion safety. 즉 '충돌이 나더라도 로봇은 정지해 있다'만 보장한다."
+  },
+  {
+   "domain": "prediction-reachability",
+   "citation": "S. Mitsch, K. Ghorbal, D. Vogelbacher, A. Platzer, \"Formal Verification of Obstacle Avoidance and Navigation of Ground Robots\", IJRR 36(12):1312–1340, 2017",
+   "year": 2017,
+   "url": "https://arxiv.org/abs/1605.00604",
+   "depth": "초록만",
+   "takeaway": "DWA 계열 지상로봇 제어기에 대해 static safety / passive safety / passive friendly safety / passive orientation safety 를 KeYmaera X 로 증명한다. 목록에 '동적 장애물에 대한 무조건 충돌 없음'은 없다."
+  },
+  {
+   "domain": "prediction-reachability",
+   "citation": "K. Kant, S. W. Zucker, \"Toward Efficient Trajectory Planning: The Path-Velocity Decomposition\", IJRR 5(3):72–89, 1986",
+   "year": 1986,
+   "url": "https://journals.sagepub.com/doi/10.1177/027836498600500304",
+   "depth": "2차인용",
+   "takeaway": "TPP ⇒ PPP + VPP. 정적 장애물은 경로로, 동적 장애물은 **그 경로 위 속도 프로파일**로 푼다. VPP 는 경로-시간 공간의 그래프 탐색으로 환원된다. Apollo/Autoware 의 ST-graph 가 이 계보다."
+  },
+  {
+   "domain": "prediction-reachability",
+   "citation": "M. Phillips, M. Likhachev, \"SIPP: Safe Interval Path Planning for Dynamic Environments\", IEEE ICRA 2011, pp. 5628–5635",
+   "year": 2011,
+   "url": "https://www.semanticscholar.org/paper/7dba986bfff6cb4c7bffed3675a8cfbf0d08c1f9",
+   "depth": "2차인용",
+   "takeaway": "각 구성에 대해 충돌 없는 연속 시간 구간(safe interval)들을 묶어 (구성, 구간) 쌍을 상태로 하는 A*. 간선이 '기다렸다 이동' 을 한 번에 표현해 시간 격자 폭발을 피한다. 완전·최적."
+  },
+  {
+   "domain": "prediction-reachability",
+   "citation": "C. Schöller, V. Aravantinos, F. Lay, A. Knoll, \"What the Constant Velocity Model Can Teach Us About Pedestrian Motion Prediction\", IEEE RA-L 5(2):1696–1703, 2020",
+   "year": 2020,
+   "url": "https://arxiv.org/abs/1903.07933",
+   "depth": "2차인용",
+   "takeaway": "단순 등속 모델이 최신 신경망 예측기를 능가한다. 상호작용/이력이 짧은 지평에서는 거의 기여하지 않는다."
+  },
+  {
+   "domain": "prediction-reachability",
+   "citation": "L. Lindemann, M. Cleaveland, G. Shim, G. J. Pappas, \"Safe Planning in Dynamic Environments Using Conformal Prediction\", IEEE RA-L 8(8), 2023, DOI 10.1109/LRA.2023.3292071",
+   "year": 2023,
+   "url": "https://par.nsf.gov/biblio/10441188-safe-planning-dynamic-environments-using-conformal-prediction",
+   "depth": "2차인용",
+   "takeaway": "궤적 예측기 + 적합예측으로 예측 영역을 만들고 그것을 MPC 제약으로 넣어 확률적 안전을 보장한다. 오프라인 궤적 데이터가 전제."
+  },
+  {
+   "domain": "prediction-reachability",
+   "citation": "A. Muthali, H. Shen, S. Deglurkar, M. H. Lim, R. Roelofs, A. Faust, C. Tomlin, \"Multi-Agent Reachability Calibration with Conformal Prediction\", IEEE CDC 2023 (arXiv:2304.00432)",
+   "year": 2023,
+   "url": "https://arxiv.org/abs/2304.00432",
+   "depth": "2차인용",
+   "takeaway": "분위수 회귀 + 적합예측 + HJ 도달가능성을 결합해 **동역학적으로 타당한** 확률 보장 예측 집합('safety bubble')을 만든다. 순수 통계 영역과 달리 물리적으로 불가능한 영역을 제외한다."
+  },
+  {
+   "domain": "prediction-reachability",
+   "citation": "I. Gibbs, E. Candès, \"Adaptive Conformal Inference Under Distribution Shift\", NeurIPS 2021 (arXiv:2106.00170)",
+   "year": 2021,
+   "url": "https://arxiv.org/abs/2106.00170",
+   "depth": "2차인용",
+   "takeaway": "교환가능성 없이도 장기 커버리지를 달성하는 온라인 적응(ACI). 임계를 한 개 파라미터의 온라인 학습으로 본다."
+  },
+  {
+   "domain": "prediction-reachability",
+   "citation": "C. Guo, M. Ni, Z. Liang, Y. Ling, Y. Hu, M. Caprio, D. Pucci, W. Pan, \"CoCoNav: Conformal Control for Safe Robot Navigation in Crowds\", arXiv:2608.07751, 2026-08",
+   "year": 2026,
+   "url": "https://arxiv.org/abs/2608.07751",
+   "depth": "초록만",
+   "takeaway": "지평 단계별(horizon-specific) 적합 PI 제어기로 예측 오차 한계를 온라인 조절하고, soft-constrained MPC 로 만든 공칭 궤적과 **비상 기동(contingency)** 을 보정된 한계에 대해 독립 검증한 뒤에야 실행한다('relax-then-verify')."
+  },
+  {
+   "domain": "prediction-reachability",
+   "citation": "Z. Huang, T. Ji, H. Zhang, F. Cheraghi Pouria, K. Driggs-Campbell, R. Dong, \"Interaction-aware Conformal Prediction for Crowd Navigation\", WAFR 2024 (arXiv:2502.06221)",
+   "year": 2025,
+   "url": "https://arxiv.org/abs/2502.06221",
+   "depth": "초록만",
+   "takeaway": "인간 운동 불확실성이 **로봇의 계획에 의존**한다는 점을 반영해, 계획된 로봇 궤적에 조건부인 보정 데이터로 적합예측 영역을 만든다. MPC 와 CP 를 교대로 돌린다."
+  },
+  {
+   "domain": "prediction-reachability",
+   "citation": "J. Yao, X. Zhang, Y. Xia, Z. Wang, A. K. Roy-Chowdhury, J. Li, \"Towards Generalizable Safety in Crowd Navigation via Conformal Uncertainty Handling\", CoRL 2025 (arXiv:2508.05634)",
+   "year": 2025,
+   "url": "https://arxiv.org/abs/2508.05634",
+   "depth": "초록만",
+   "takeaway": "적응형 적합추론이 낸 예측 불확실성 추정치를 관측에 덧붙여 정책을 학습. 분포 이동(속도 변화, 정책 변화, 개인→군집)에 강인. 분포 내에서 충돌 3.72배 감소, 사람 미래 궤적 침범 2.43배 감소 보고."
+  },
+  {
+   "domain": "prediction-reachability",
+   "citation": "S. Kousik, S. Vaskov, F. Bu, M. Johnson-Roberson, R. Vasudevan, \"Bridging the gap between safety and real-time performance in receding-horizon trajectory design for mobile robots\", IJRR 39(12), 2020",
+   "year": 2020,
+   "url": "https://journals.sagepub.com/doi/10.1177/0278364920943266",
+   "depth": "2차인용",
+   "takeaway": "파라미터화된 궤적족(각 궤적은 **비상 정지 기동으로 끝난다**)의 FRS 를 오프라인 계산하고, 온라인에서는 장애물을 궤적 파라미터 공간의 제약으로 사상한다. FRS 가 추적 오차까지 포함한다."
+  },
+  {
+   "domain": "prediction-reachability",
+   "citation": "M. Althoff, J. M. Dolan, \"Online Verification of Automated Road Vehicles Using Reachability Analysis\", IEEE T-RO 30(4):903–918, 2014",
+   "year": 2014,
+   "url": "https://www.ri.cmu.edu/publications/online-verification-of-automated-road-vehicles-using-reachability-analysis/",
+   "depth": "2차인용",
+   "takeaway": "자차와 타 참여자의 가능 점유 집합을 온라인으로 예측하고 교차가 없을 때만 공칭 계획을 실행, 아니면 검증된 비상 궤적으로 전환한다."
+  },
+  {
+   "domain": "prediction-reachability",
+   "citation": "H. Hu, C. Siu, M. Chen, \"A Hamilton-Jacobi Reachability-Guided Search Framework for Efficient and Safe Indoor Planar Robot Navigation\", arXiv:2604.17679, 2026-04",
+   "year": 2026,
+   "url": "https://arxiv.org/abs/2604.17679",
+   "depth": "초록만",
+   "takeaway": "오프라인 HJ 값함수를 (a) 탐색 휴리스틱, (b) 선제적 안전 제약 둘로 쓰면서 온라인 그래프 탐색과 결합해 온라인 계산을 상각한다. 사람이 있는 실내 환경에서 실기 실험."
+  },
+  {
+   "domain": "prediction-reachability",
+   "citation": "R. H. Srirangam, L. Jung, R. Poola, M. Everett, \"SCRAMPPI: Efficient Contingency Planning for Mobile Robot Navigation via Hamilton-Jacobi Reachability\", arXiv:2603.26995, 2026-03 (rev. 2026-09)",
+   "year": 2026,
+   "url": "https://arxiv.org/abs/2603.26995",
+   "depth": "초록만",
+   "takeaway": "공칭 계획의 각 검사 지점에서 '허용 가능한 비상 기동이 존재할 것' 을 제약으로 강제하고, 그 실행가능성 판정을 중첩 샘플링 대신 HJ reach-avoid 로 한다. **15–20 Hz 로 동작**한다고 보고."
+  },
+  {
+   "domain": "prediction-reachability",
+   "citation": "M. Li, Y.-X. Wang, D. Ramanan, \"Towards Streaming Perception\", ECCV 2020",
+   "year": 2020,
+   "url": "https://www.ecva.net/papers/eccv_2020/papers_ECCV/papers/123470460.pdf",
+   "depth": "2차인용",
+   "takeaway": "출력이 나온 **그 순간의 세계 상태**에 대해 평가해야 한다는 스트리밍 지표를 정의하고, 예측(forecasting)으로 지연을 보상하면 정확도가 회복됨을 보인다."
+  },
+  {
+   "domain": "prediction-reachability",
+   "citation": "P. Songchitruksa, A. P. Tarko, \"The extreme value theory approach to safety estimation\", Accident Analysis & Prevention 38(4):811–822, 2006",
+   "year": 2006,
+   "url": "https://www.researchgate.net/publication/7232990_The_extreme_value_theory_approach_to_safety_estimation",
+   "depth": "2차인용",
+   "takeaway": "관측 가능한 빈번한 상충(surrogate)의 꼬리를 GEV/GPD 로 모형화해 관측 불가능한 희귀 사고율을 외삽한다. 이후 POT/Block-Maxima 비교 연구들이 이어졌다."
+  },
+  {
+   "domain": "prediction-reachability",
+   "citation": "Z. Xie, P. Dames, \"SCOPE: Stochastic Cartographic Occupancy Prediction Engine for Uncertainty-Aware Dynamic Navigation\", arXiv:2407.00144, 2024",
+   "year": 2024,
+   "url": "https://arxiv.org/pdf/2407.00144",
+   "depth": "2차인용",
+   "takeaway": "확률적 점유 격자의 미래 상태를 불확실성과 함께 예측하고, 예측 지도 + 불확실성 지도로 더 안전한 코스트맵을 만드는 계획기와 결합한다."
+  },
+  {
+   "domain": "prediction-reachability",
+   "citation": "StochSIPP: Safe Interval Path Planning in Stochastic Dynamic Environments, arXiv:2608.00792, 2026-08",
+   "year": 2026,
+   "url": "https://arxiv.org/abs/2608.00792",
+   "depth": "2차인용",
+   "takeaway": "SIPP 의 safe interval 을 확률적 장애물 예측으로 확장한다(제목·초록 수준에서 확인)."
+  }
+ ],
+ "survivors_count": 32,
+ "plans": [
+  {
+   "measurement_design": "## 먼저: 제안된 측정 계획 두 개를 실측으로 기각했다 (비용 0, 기존 로그만 사용)\n\n**(A) 침투 깊이 — 폐기.** logs/**/contacts.csv 148건 전수: |distance_m| 이 |v_rel|x0.020 s (ground truth 50 Hz) 를 넘는 표본이 **0/148**. 침투/상한 비율은 중앙 0.269 · 평균 0.324 로 사실상 균등분포 — 샘플링 위상 산물의 정확한 서명이다. 정지 중 접촉(v_rel = 1.000) 61건의 최대는 18.80 mm 로 상한 20.0 mm 의 94 %, 한 번도 넘지 않는다. 따라서 \"침투 6 mm = 경계 포화\" 는 **거짓**이고, footprint_reach.hpp:19-25 주석의 \"84.8 %\" 와 geometry 분야의 \"이득 > 침투 14/16\" 논증은 **비교 대상 자체가 무의미**하다. 침투는 여유 부족의 척도가 아니라 검열된 관측량이다. 이 주석은 삭제해야 한다.\n\n**(B) min_distance 꼬리의 EVT 외삽 (prediction-reachability P6) — 기각.** 그 제안이 스스로 제시한 반증 조건을 실행했다. 146개 실행 4309 시행, 실측 시행단위 접촉률 **3.435 %**. 양의 꼬리에 GPD 를 적합해 P(M<0) 을 외삽하면 임계 u = 0.12~0.30 전 구간에서 **0.017~0.080 %** — 실측의 **1/40 ~ 1/200**. 게다가 형상모수가 전 구간 음수(xi = -0.43 ~ -0.63)라 적합된 분포는 **유한한 끝점을 갖는다**: 모형이 \"M 은 0 아래로 못 간다\" 고 말한다. 물리적 이유도 명확하다 — actor 에 충돌체가 없어 실패는 0 을 스치는 것이 아니라 **불연속으로 깊은 음수로 점프**한다(음수 M 130건). 꼬리는 0 을 규칙적으로 가로지르지 않는다. \"유효 표본 20~40배\" 주장은 성립하지 않는다.\n\n**(C) 근접 밴드 계수 — 기각.** frac(0 < M < 0.35) 와 접촉률의 상관은 **r = -0.038**, Cohen d = -0.01. 신호가 전혀 없다. \"아차 사고를 세자\" 류 대안을 미리 닫는다.\n\n---\n\n## 실제로 쓸 측정 설계 (3층)\n\n### 1층 — 기제 지표 (검정력 문제가 원리적으로 없음). 1차 판정 기준.\n이 세 양은 **현재 정확히 축퇴**되어 있다. 축퇴가 깨지는지는 이항 검정이 아니라 관측이며, 표본 수가 아니라 논리가 답을 준다.\n\n- **saturation_fraction** = (n_vo_rejected == n_samples) 인 주기의 비율. **실측 현재값: 접촉 전 2 s 창에서 n_vo_rejected 중앙 = 342 = n_samples 전부**, 접촉 직전 마지막 주기의 78 %가 >= 300. 이미 stats_trial*.csv 의 `vo_rejected` 열에 있다 — 새 로깅 불필요. R1~R3 의 1차 종점. 이것이 안 떨어지면 다른 어떤 것도 작동할 수 없다.\n- **candidate_spread** = 후보 집합의 롤아웃 종점 변위 max-min, 및 후보 비용 max-min. 현재 v=0 에서 각각 0.075 m 와 ~0. R1+R2 의 1차 종점. DwaResult 에 2필드 추가(dwa_controller.cpp:558 배열 뒤에 append — 기존 28 인덱스 불변).\n- **omega_discrimination** = |v|<0.05 주기에서 omega 후보 간 동적항 max-min. **현재 정확히 0 임이 코드로 증명된다**: chordVelocity(theta, 0, w, tau) = 0 (velocity_obstacle.cpp:18-27, mag = v·sin/half 에서 v=0), 따라서 모든 omega 후보의 v_eff 가 동일 → vo_time 동일. R3/R4 의 1차 종점. 0 이 아닌 값이 나오는 순간 착지가 증명된다.\n\n**자기상관 정정**: 20 Hz x 조우 ~1.4 s = 주기 28개가 한 사건이다. **실측 조우 수는 시행당 중앙 2 / 평균 4.5** (60 시행에서 268 조우). 따라서 위 지표는 반드시 **조우 단위 요약**(예: \"주기의 50 % 이상이 포화인 조우의 비율\")으로 보고한다. 30 시행 = 약 135 조우.\n\n### 2층 — 검증된 대리 지표: 시행별 min_distance 좌측 꼬리. (기존 데이터로 교차검증 완료)\n`avoidance.csv` 의 `min_distance_m` 은 **84개 실행 전부에 이미 기록되어 있다**(COLUMNS 71행). 새 계측 불필요 — prediction-reachability 의 \"추가 로깅 필요\" 는 틀렸다.\n\n25 시행 이상인 141개 실행으로 대리 타당성을 직접 검증했다:\n| 후보 지표 | 접촉률과의 상관 | 무접촉 실행 vs 접촉 실행 Cohen d |\n| --- | --- | --- |\n| **p05(min_distance)** | **r = -0.826** | **d = 1.48** (0.282 m vs 0.046 m) |\n| p10(min_distance) | r = -0.670 | d = 1.04 |\n| p25(min_distance) | r = -0.330 | — |\n| frac(0<M<0.35) | r = -0.038 | d = -0.01 |\n\n**p05 는 가정이 아니라 검증된 대리 지표다.** 외삽하지 않고 **두 팔의 분포를 직접 비교**한다(단측 Mann-Whitney + p05 부트스트랩 CI). 연속량의 d=1.48 급 이동은 3.4 % 이항률 대비 훨씬 적은 표본으로 잡힌다 — 팔당 633 시행이 아니라 **90~120 시행**(이미 돌리던 규모)이면 좌측 꼬리 이동을 유의하게 가른다. 층화: `per_obstacle_min` 이 있으므로 worker_crossing / worker_random 로 반드시 나눈다(기제가 다르다 — 후자는 예측 오차, 전자는 예측 오차 0).\n\n주의: `per_obstacle_min` 은 실행 누적 최소이고 reset 서비스로만 초기화된다(collision_monitor_node.py:125-126). 통합시험 08 은 시행마다 reset 하므로 **시행 단위로만** 유효하다. 조우 단위 분해가 필요하면 이미 발행 중인 50 Hz `/<robot>/collision_monitor/min_distance`(138행)를 기록한다.\n\n### 3층 — 확인 시험. 마지막에 한 번만.\n최종 결합 구성에만 대규모 시행을 쓴다. **정직하게 명시할 것: 30시행 무접촉 1회 통과는 0.3 % 를 입증하지 못한다.** 명세의 수락 시험은 명세가 함의하는 비율을 증명할 검정력이 없다. 주장은 2층의 분포 이동 + 1층의 기제 증거가 진다.\n\n### 실험 순서 (반증 우선)\n- **E0 (오늘, 코드 변경 0)**: 위 (A)(B)(C) 검증 — **완료**. 결과: 침투·EVT·근접밴드 전부 폐기, p05 채택.\n- **E1 (1줄)**: dwa_controller.cpp:543 `v_last_ = res.v` → 실행된 속도. 창 붕괴가 폐루프에서 실재하는지 가르는 가장 싼 실험. 종점 = saturation_fraction.\n- **E2**: R1+R2 (분리 불가). 종점 = candidate_spread, saturation_fraction.\n- **E3**: R3. 종점 = saturation_fraction → ~0, n_vo_rejected < n_samples.\n- **E4**: R4. 종점 = omega_discrimination > 0 **그리고** p05 이동.\n- **E5**: R5. 종점 = certified_empty 조우 발생률, \"위협 하 정지\" 주기 수.\n\n각 단계는 **단독으로** 출하한다. 저장소에 묶음 출하가 귀속 불가로 끝난 기록이 셋 있다(crossing_gate 0/610 → 4배 악화, yield_decision x8a, 탐욕 회전).",
+   "root_cause": "**계획기가 표현할 수 있는 미래의 집합이, 회피가 필요한 바로 그 순간에 단 하나(제자리에 머무름)로 붕괴한다. 그리고 그 위에 세워진 안전 판정이 그 유일한 미래를 \"안전\" 으로 분류한다.**\n\n일곱 분야가 서로 다른 말을 했지만, 코드와 로그로 재판하면 하나의 대상 — **후보 집합의 표현력** — 이 세 경로로 동시에 무너지고, 세 붕괴가 **같은 순간**(v→0 이고 보행자가 R_vo 안)에 일어난다.\n\n**(1) 시간 붕괴.** `dynamicWindow`(dwa.cpp:107)는 1주기 도달집합 v_c ± a·Δt_c 인데 `rollout`(dwa.cpp:165)은 `integrateArc(start, v, w, k·dt)` 로 그 v 를 T_sim 동안 **등속 유지**한다. v=0 에서 창은 [0, 0.05], 1.5 s 변위 폭 7.5 cm — 참 도달 범위의 1/15. 모든 비용항의 해상도 이하라 후보들이 서로 구별되지 않는다. (Ögren·Leonard 2005 가 정확히 이 1-step 창 / 다단계 롤아웃 불일치를 DWA 의 수렴성 파괴 원인으로 지목한다.)\n\n**(2) 각 붕괴.** `chordVelocity(theta, v, w, tau)` 는 v=0 에서 `mag = v·sin(half)/half = 0` 이므로 **omega 와 무관하게 정확히 (0,0)** 이다(velocity_obstacle.cpp:18-27). 차동 구동이 v=0 에서 온전히 보유한 **유일한** 제어 채널이 동적 술어에서 **구조적으로 소거**된다. 외접원 0.361 은 이 소거의 두 번째·약한 사례일 뿐이다 — chordVelocity 가 먼저 0 으로 만들기 때문에 기하가 개입할 자리조차 없다.\n\n**(3) 판정 붕괴 — 그리고 이것이 결정적이다.** 접촉 시점 ||p|| 는 **중앙 0.594 m · 최대 0.659 m, 99 %가 R_vo = 0.911 m 안**이다(실측). `velocityObstacleTime` 은 `pn2 < R*R` 이면 `closing > 0 ? 0.0 : inf` 를 돌려주고 **tau 를 보지 않는다**. 따라서 접근 중인 모든 후보가 vo_time = 0.0 으로 동률 기각된다. 실측: **접촉 전 2 s 창에서 n_vo_rejected 중앙값이 342 = n_samples 전부**, 마지막 주기의 78 %가 >= 300. 즉 주 선택 루프(`!collision && !vo_rejected` 의 argmin)가 **nullptr 을 반환**하고, 8항 가중 비용함수는 **순위를 매기는 일을 하지 않는다**. 시스템은 나쁜 궤적을 고르는 것이 아니라 **순위 자체가 없다**.\n\n그 아래 깔린 안전 개념: 설계가 암묵적으로 가정한 유일한 백업 정책은 \"정지\" 인데, 0.59 m 앞에서 1.0 m/s 로 양보 없이 걸어오는 보행자에 대해 정지는 Fraichard 의 braking-ICS 다. 코드는 passive motion safety(충돌 시 로봇은 정지 상태)를 **정확히 설계대로** 구현하고 있고, 명세는 active safety(충돌 0)를 요구한다. **접촉의 52 %가 \"멈춘 채 받힘\" 인 것은 버그가 아니라 사양대로 동작한 결과다.**\n\n한 문장으로: **시스템은 \"지금 이 순간이 안전한가\" 를 자기 자신에 대한 축퇴된 모형 위에서 검정하고, \"안전한 연속이 존재하는가\" 는 한 번도 검정하지 않으며, 암묵적으로 가정한 유일한 연속이 바로 위험한 그것이다.**",
+   "why_previous_attempts_failed": "근본 원인 하나로 다섯 실패가 전부 설명된다. 설명되지 않는 것이 남으면 진단이 틀린 것이므로, 각각을 실측 수치에 붙인다.\n\n**1) 116 구성 x 3480 시행 파라미터 스윕, 단조 반응 없음.**\n접촉 전 주기의 78 % 이상이 완전 VO 포화다(n_vo_rejected = 342/342 실측). 스윕된 손잡이들 — 비용 가중치, 여유, 임계 — 은 (a) **순위를 매기지 않는 비용함수**에 들어가거나 (b) ||p|| < R 안에서 **읽히지도 않는 tau** 에 들어간다. 파라미터는 포화가 *언제* 시작되는지만 옮길 수 있고, 포화 *후* 무슨 일이 일어나는지는 `vo_saturated` 대체 분기(dwa.cpp:745~)가 결정한다. 그리고 148건 전부가 \"후\" 에서 일어난다. 스윕은 단조 반응을 못 낸 것이 아니라 **측정 대상에 연결조차 되어 있지 않았다.**\n\n**2) 균일 여유 증가가 전부 실패한 것.**\n기존 설명(\"침투 6 mm 경계 포화\")은 **실측으로 거짓**이다(0/148 이 샘플링 상한 초과, 비율 균등분포). 참된 이유는 정반대 방향이다: R 을 키우면 `pn2 < R*R` 이 **더 일찍** 참이 되므로 전면 포화가 **더 일찍** 시작된다. 즉 **모든 \"여유를 늘리자\" 실험은 기제적으로 \"눈먼 구간을 늘리자\" 실험이었다.** 이득이 없거나 악화된 것이 당연하다. 같은 이유로 `vo_time_horizon` 2.0 → 3.0 은 **반드시 악화**시킨다(VO^tau 는 tau 에 대해 단조 증가) — ics-safety 의 P4 기각이 옳고, 게다가 포화 영역에서는 tau 가 아예 읽히지 않으므로 효과는 0 아니면 음수다.\n\n**3) 횡단 게이트(노출 구역 + 대기점 + commit): 4.0 % → 10~12 % 로 악화.**\n정지가 ICS 인데, 이 기제의 **주된 행동이 \"더 일찍, 지정된 자리에서 정지\" 다.** 실패 모드로 더 신뢰성 있게 로봇을 밀어 넣었다. 출발 위상 610개 개루프에서 접촉 0/610 을 낸 것이 결정적 증거다 — 개루프 모형이 \"대기점에 정지\" 를 안전으로 채점했고, 그것이 실제 시스템의 모형 오류와 **정확히 같은 오류**다. \"대기할 자리가 없다\" 는 부차적 설명이고, 참된 설명은 \"대기 자체가 위험 상태\" 다.\n\n**4) 보행자 차선 비용 밴드: 안전 이득 0, 이탈·복귀·시간 악화.**\n움직이는 원통을 정적 금지구역으로 시간 주변화했다. 이미 명세 상한 1 m 로 포화된 **횡 예산**을 더 쓰면서, 명령을 실제로 내는 결정층(포화 분기)에는 닿지 않는다. 지출한 자원과 병목이 다른 축에 있다.\n\n**5) 탐욕적 제자리 회전: 종료 안 함(이탈 4.8 m, 복귀 251 s).**\n두 이유 모두 확인된다. (a) `reach(psi) = min(hl/|cos|, hw/|sin|)` 는 **단봉이 아니다** — 모서리 방위 33.69°에서 최대(0.3606)라 탐욕적 기울기는 정횡(이득 큼)이 아니라 정면 쪽으로 간다. 실측 계측 16건의 |방위| 중앙은 110.7°(정횡 접힘 69.3°)로 그 언덕 반대편이다. (b) 더 근본적으로, **회전은 vo_time 을 바꿀 수 없다** (chordVelocity ≡ 0). 동적 술어로부터 종료 신호가 애초에 존재하지 않았다.\n\n**6) \"한 조우 안에서 보수적인 쪽으로만\" 제약 되돌림.**\n구속력 없는 층(결정층)을 제약했다. 배포 설정이 `yield_decision: false` · `yield_gate: false` 라 `dec` 는 항상 kNone 이다 — 여러 분야 제안서가 인용한 go/hold/retreat 분기는 **배포 설정에서 죽은 코드**다.\n\n**공통 형태**: 실패한 다섯 시도 중 넷이 \"정지를 더 잘/더 일찍 하게 만들기\" 였고, 하나가 \"순위가 없는 비용함수의 항을 조정하기\" 였다. 근본 원인이 \"정지가 유일하게 표현 가능한 미래이고 그것이 위험하다\" 이므로, 다섯 모두 **원인을 강화하는 방향**이었다.",
+   "plan": [
+    {
+     "rank": 1,
+     "title": "R0. 측정 기반을 먼저 교체한다 — 침투/EVT 폐기, p05(min_distance) + 포화율 채택",
+     "mechanism": "접촉률 A/B 는 팔당 633 시행이 필요해 불가능하고, 제안된 대체 지표 두 개는 내가 기존 로그로 직접 반증했다. 침투는 |v_rel|x0.020 s 로 검열된 관측량이고(0/148 초과), min_distance 꼬리의 GPD 외삽은 실측 접촉률 3.435 % 를 0.017~0.080 % 로 40~200배 과소예측하며 형상모수가 음수라 꼬리가 0 을 가로지르지 않는다. 대신 141개 실행으로 교차검증한 대리 지표를 쓴다: p05(시행별 min_distance) 는 접촉률과 r=-0.826, 무접촉 vs 접촉 실행 간 Cohen d=1.48. 외삽하지 않고 두 팔의 분포를 직접 비교하므로 가정이 없다. 여기에 현재 정확히 축퇴된 기제 지표 셋(포화율=342/342, 후보 변위 폭=0.075 m, omega 변별=정확히 0)을 붙이면 각 변경의 착지 여부가 표본 수와 무관하게 판정된다.",
+     "files": [
+      "src/amr_evaluation/amr_evaluation/metrics.py",
+      "src/amr_evaluation/test/test_metrics.py",
+      "tests/integration/test_08_dynamic_obstacles.py",
+      "src/amr_navigation/src/ros/dwa_controller.cpp",
+      "src/amr_navigation/include/amr_navigation/core/footprint_reach.hpp"
+     ],
+     "contracts": [
+      "TEST(Metrics, PenetrationIsASamplingArtifactNotAClearanceDeficit): 50 Hz 로 샘플한 1.0 m/s 상대 접근에서 기록되는 |distance| 의 상한이 0.0200 m 이고, 같은 조우의 최소 부호 거리와 무상관이다. 회귀 자료로 logs/**/contacts.csv 148건이 0건 위반임을 고정한다.",
+      "TEST(Metrics, P05OfMinDistanceSeparatesContactBearingRuns): 141개 실행의 (p05, 접촉률) 쌍에 대해 Pearson r < -0.75 이고, 무접촉/접촉 실행 간 p05 의 Cohen d > 1.2 이다.",
+      "TEST(Metrics, GpdExtrapolationIsRejected): 같은 자료에서 u=0.12~0.30 전 구간 GPD 적합의 형상모수가 음수이고 P(M<0) 추정이 실측 접촉률의 1/10 미만임을 기록한다 (재도입 방지용 회귀).",
+      "dwa/stats 배열(dwa_controller.cpp:558, 현재 28원소) 뒤에 append: [28] saturation_flag(n_vo_rejected==n_samples), [29] candidate_disp_spread, [30] omega_dyn_spread. 기존 인덱스 불변."
+     ],
+     "falsifier": "p05 가 접촉률의 대리로 쓸 수 없다면: R1~R5 중 어느 하나라도 p05 를 유의하게 올렸는데 같은 팔의 접촉률이 오르면 대리 관계가 깨진 것이고, 그때는 조우 단위 50 Hz min_distance 토픽 기록으로 내려가야 한다. 또 포화율이 기제 지표로 무효라면: 포화율이 90 % 에서 10 % 로 떨어졌는데 p05 와 접촉률이 둘 다 안 움직이는 경우 — 그러면 포화는 증상이었고 병목은 포화 이후의 대체 분기가 아니라 다른 곳이다.",
+     "expected_effect": "접촉 감소 0 (측정 항목). 그러나 이것 없이는 148건 집계표의 어느 항목도 실현 가능한 시행 수 안에서 판정할 수 없고, 틀린 양(침투 6 mm)을 목표로 또 평탄한 스윕을 돈다. footprint_reach.hpp 의 '84.8 %' 주석은 침투를 필요 여유로 본 위에 서 있으므로 이 단계에서 삭제한다.",
+     "effort": "S",
+     "risk": "없음 — src/ 런타임 거동을 바꾸지 않는다(계측 3필드 append 만). 유일한 위험은 이 단계를 건너뛰고 R1 로 직행하는 것이다.",
+     "domain_support": [
+      "ics-safety (P5a: 침투는 샘플링 산물, collision_monitor 는 이미 다 발행한다)",
+      "prediction-reachability (P6: 침투는 검열된 관측량 — 단 그 제안의 EVT 처방은 내가 기각했다)",
+      "mpc-optimization (실측 재확인으로 집계표 검증)"
+     ],
+     "depends_on": []
+    },
+    {
+     "rank": 2,
+     "title": "R1. 롤아웃을 가속 실현 가능 궤적으로 — 등속 원호 폐기 + 호길이 재유도",
+     "mechanism": "dwa.cpp:165 의 rollout 은 integrateArc(start, v, w, k*dt) 로 후보 속도를 T_sim 내내 등속 유지한다. 계획기는 v=0 에서 자기를 '1.5 s 에 0.075 m 가는 물체' 로 본다 — 실제 도달은 저크 2.0 하에서도 0.75 m 로 10배다. 후보들이 서로 구별되지 않는 것은 비용 가중치 때문이 아니라 후보들이 실제로 같기 때문이다. 램프 적분으로 바꾸면 '돌고 나서 병진한다' 는 기동이 처음으로 비용면에 나타난다. 반드시 함께: 호길이로 색인되는 두 식이 상수 v 를 전제하므로(dwa.cpp:524 s_k, dwa.cpp:600 s_ref) 누적 호길이를 단계마다 들고 다녀야 하고, 안 그러면 J_clear 기준점이 어긋나 여유 항이 통째로 뜻을 잃는다.",
+     "files": [
+      "src/amr_navigation/src/core/dwa.cpp",
+      "src/amr_navigation/include/amr_navigation/core/dwa.hpp",
+      "src/amr_navigation/include/amr_navigation/core/jerk_limiter.hpp",
+      "src/amr_navigation/test/test_dwa.cpp"
+     ],
+     "contracts": [
+      "TEST(Dwa, RampRolloutSeparatesEscapeFromFreeze): v_meas=0 에서 v_target=1.0 후보의 1.5 s 종점 변위가 >= 0.70 m 이고 v_target=0 후보는 0.0 m 이다 (현재는 0.075 vs 0.0 으로 같은 자릿수).",
+      "TEST(Dwa, ArcLengthFollowsTheRampNotTheCommand): 램프 후보의 누적 호길이가 |v_cmd|*k*sim_dt 와 다르고, J_clear 의 기준점 s_ref 가 그 누적값을 쓴다.",
+      "기존 TEST(Dwa, RolloutIsExactArc) 는 v0=v_cmd 위임 경로로 보존한다 — 등속 계약을 깨지 않는다.",
+      "적분기를 명시한다: 누적식이므로 RK2. sim_dt 0.1 s x 최대 60 단계에서 Euler 는 허용하지 않는다."
+     ],
+     "falsifier": "램프 롤아웃을 넣었는데 candidate_disp_spread 가 0.075 m 근방에 남으면 구현이 안 된 것이다(단위 시험이 먼저 잡는다). 진짜 반증: 변위 폭이 0.70 m 로 커졌는데 saturation_fraction 과 'DWA 자체가 v=0 출력'(27건) 이 안 줄면 — 후보 공간이 아니라 **하드 VO 기각**이 구속 조건이었다는 뜻이고, 그러면 R1 은 R3 의 선행조건일 뿐 독립 효과가 0 이다. (나는 이쪽이 실제로 일어날 것으로 본다 — 포화율 342/342 실측이 그것을 가리킨다.)",
+     "expected_effect": "단독 접촉 감소를 주장하지 않는다. 148건 표에서 직접 겨냥하는 항목은 'DWA 자체가 v=0 을 출력 27건' 이고, 그것도 R3 없이는 안 줄 가능성이 높다. 이 항목의 값어치는 R2~R5 전부의 **필요조건**이라는 것이다 — 등속 롤아웃 위에서는 백업 인증도, 방위 이득도, 지평 정합도 전부 무의미하다.",
+     "effort": "S",
+     "risk": "낮음. 계산량 +-10 %. 유일한 실질 위험은 호길이 재유도를 빠뜨려 J_clear 가 조용히 망가지는 것 — 계약 시험이 막는다.",
+     "domain_support": [
+      "ics-safety (P3)",
+      "vo-multiagent (P1)",
+      "crowd-freezing (P2)",
+      "mpc-optimization (제안 4)"
+     ],
+     "depends_on": [
+      "R0"
+     ]
+    },
+    {
+     "rank": 3,
+     "title": "R2. 표본을 1주기 도달 속도에서 지속 명령으로 — 창 붕괴 덫 제거",
+     "mechanism": "sampleVelocities(dwa.cpp:135)가 DwaWindow(1주기 ±a·Δt_c) 를 격자화하므로 v=0 에서 후보 v 가 [0, 0.05] 뿐이다. 창을 '표본 필터' 가 아니라 '방출 명령 클램프' 로 재정의한다: 표본은 [min_vel_x, v_cap] x [±max_vel_theta] 전체를 목표 명령으로 잡고(11x31 유지, 표본 수 342 고정), R1 의 램프로 적분하며, 실제로 내보내는 것은 control_period(0.05 s) 시점의 램프 상태다. 그 첫 스텝은 구성상 기존 1주기 창 안에 들어가므로 하류 velocity_profiler·safety_gate 계약이 형식상 유지된다. 함께 고칠 것 둘: simTime(dwa.cpp:59)을 후보 명령 v 가 아니라 **롤아웃 최고 속도**로 다시 키잉해야 dwa.hpp 의 T_sim(v)·v >= s_stop(v) 불변식이 살아남고, 방출은 sim_dt(0.1)가 아니라 control_period(0.05)에서 뽑아야 한다(제안서들이 이 두 배 차이를 빠뜨렸다).",
+     "files": [
+      "src/amr_navigation/src/core/dwa.cpp",
+      "src/amr_navigation/include/amr_navigation/core/dwa.hpp",
+      "src/amr_navigation/config/nav2_params.yaml",
+      "src/amr_navigation/test/test_dwa.cpp"
+     ],
+     "contracts": [
+      "TEST(Dwa, SustainedSamplingReachesFarTargetsWhileFirstStepStaysInTheOneCycleWindow): v_meas=w_meas=0 에서 (a) 1.5 s 롤아웃 종점 변위 >= 0.70 m 인 후보가 존재하고, (b) 모든 호출에서 |res.v - in.v_meas| <= acc_lim_x*control_period + 1e-9 이며 |res.w - in.w_meas| <= acc_lim_theta*control_period + 1e-9 이다.",
+      "TEST(Dwa, SimTimeIsKeyedToPeakRolloutSpeed): 0 → 1.0 으로 램프하는 후보가 T_sim(0)=1.5 s 가 아니라 s_stop(1.0) 을 덮는 지평을 받는다.",
+      "TEST(Dwa, SampleCountIsUnchanged): n_samples == 342 (CPU 예산 회귀).",
+      "기존 TEST(Dwa, CycleTimeBudget) 50 ms 상한을 **완화하지 않는 것**이 출하 조건이다. 5대 동시 80 % 제약 때문에 증가분은 5배로 계상한다."
+     ],
+     "falsifier": "candidate_disp_spread 가 0.70 m 이상으로 커졌는데 saturation_fraction 이 안 떨어지면 — 넓힌 후보들이 전부 VO 에 기각되고 있다는 뜻이고(chordVelocity 는 여전히 등속 현 근사를 쓴다), R2 의 효과는 R3 없이 정확히 0 이다. 두 번째 반증: 이탈 p95 나 no_valid_patience 예외·BT 복구 호출이 늘면 넓힌 표본이 유효 후보를 고갈시킨 것이다.",
+     "expected_effect": "148건 표의 '접촉 시 로봇 속도 < 0.05 m/s 77건(52 %)' 을 구조적으로 겨냥하는 유일한 항목이다 — 그 인구에서 정지가 아닌 대안이 처음으로 **존재**하게 된다. 다만 R3 없이는 그 대안들이 전부 VO 기각되므로 단독 기대치는 0~10 % 로 본다. R1+R2+R3 묶음에서 이 52 % 부분집합의 절반 이상을 닫는 것이 현실적 상한이다.",
+     "effort": "M",
+     "risk": "중간. 비용 순위가 '속도' 가 아니라 '계획' 을 비교하게 되므로 종단 비용 없이는 주기간 채터(가속↔감속)가 날 수 있다 — 기존 J_osc 는 부호 반전만 보므로 못 잡는다. a_v/a_w 를 acc_lim 으로 묶고 저크 2.0 을 램프에 반영하지 않으면 계획기가 자기를 다시 1.33배 과대평가한다.",
+     "domain_support": [
+      "vo-multiagent (P1)",
+      "crowd-freezing (P2)",
+      "mpc-optimization (제안 4)",
+      "ics-safety (P3 의 연장)"
+     ],
+     "depends_on": [
+      "R1"
+     ]
+    },
+    {
+     "rank": 4,
+     "title": "R3. 동적 하드 제약을 현(chord) 근사 VO 에서 참 호(arc) 접촉 판정으로 — 전면 포화 제거",
+     "mechanism": "이 계획의 **핵심 항목**이고, 실측이 가장 강하게 지지하는 항목이다. dwa.cpp:543 의 chordVelocity 경로는 두 개의 치명적 축퇴를 만든다. (a) v=0 에서 chordVelocity ≡ (0,0) 이므로 **모든 omega 후보가 동일하게 판정**된다 — 회전이 동적 술어에 원리적으로 보이지 않는다. (b) 접촉 시점 ||p|| 중앙 0.594 m 가 R_vo=0.911 m 안이므로 velocityObstacleTime 의 `pn2 < R*R` 조기 반환이 걸려 **모든 접근 후보가 vo_time=0.0 으로 동률 기각**된다 — 실측 접촉 전 2 s 창의 n_vo_rejected 중앙값이 342/342 이고 마지막 주기의 78 %가 >=300 이다. 즉 주 선택 루프가 nullptr 을 내고 8항 비용함수는 순위를 매기지 않는다. 처방: dwa.cpp:543~556 의 chordVelocity+velocityObstacleTime 판정을 삭제하고, 하드 제약을 **R1 의 램프 롤아웃 위 firstContactTime** 하나로 통일한다(dwa.cpp:668 이 이미 그 형태다). VO 는 하드 기각에서 내려와 J_vo = clamp(1 - t_VO/t_h, 0, 1) 비용항이 된다. dwa.cpp:741~820 의 vo_saturated 대체 분기(3중 tiebreak, leave_lane, drop_spin)는 통째로 제거된다 — 포화 자체가 사라지므로. chordVelocity/velocityObstacleTime 함수는 test_collision.cpp 가 쓰므로 남긴다. **부수 수정**: in_body 가 `if (escaping)` 블록 안에서만 계산되고 escaping 이 kCommitted 를 요구하므로, yield_state=kYield 인 19건(12.8 %)에서는 관련 로직이 한 번도 켜지지 않았다 — 이 게이팅을 푼다.",
+     "files": [
+      "src/amr_navigation/src/core/dwa.cpp",
+      "src/amr_navigation/include/amr_navigation/core/dwa.hpp",
+      "src/amr_navigation/src/core/velocity_obstacle.cpp",
+      "src/amr_navigation/include/amr_navigation/core/velocity_obstacle.hpp",
+      "src/amr_navigation/test/test_dwa.cpp"
+     ],
+     "contracts": [
+      "TEST(VelocityObstacle, ChordApproximationIsBlindToRotationAtZeroSpeed): chordVelocity(theta, 0, w, tau) 가 모든 w 에 대해 (0,0) 임을 고정한다 — 현재 코드의 축퇴를 시험으로 못박아, 참 호 판정이 이를 고치는지 대조군을 만든다.",
+      "TEST(Dwa, NoCandidateIsHardRejectedByTheChordVelocityObstacle): 접촉 재현 기하(||p||=0.59, 보행자 1.0 m/s 접근)에서 r.n_vo_rejected < r.n_samples 이고, 후보 비용의 max-min > 1e-6 이다 (비용함수가 실제로 순위를 매기고 있다).",
+      "TEST(Dwa, HeadOnStillDecelerates): 정면 3.0 m 에서 -1.0 m/s 로 마주 오는 기하에서 r.v < in.v_meas 이다 — 소프트화가 제동 계약을 깨지 않음을 고정.",
+      "기존 시험 2개를 **기제가 아니라 결과를 단언하도록** 재작성한다: test_dwa.cpp:319 VelocityObstacleSaturationKeepsVoAndBrakes (현재 r.vo_saturated==true, r.n_vo_rejected==r.n_valid, r.v==0.75 를 정확히 단언), test_dwa.cpp:982 VoSaturatedEscapeStaysInsideTheDeviationBudget. 이 재작성 비용을 예산에 넣는다."
+     ],
+     "falsifier": "**이 항목의 사활**: R3 적용 후 saturation_fraction 이 90 % 대에서 20 % 아래로 떨어져야 한다. 안 떨어지면 포화의 원인이 chordVelocity 의 `pn2<R*R` 조기 반환이 아니라 firstContactTime 의 기하 자체이고, 그러면 진단의 (3)번 기둥이 틀린 것이다 — 그 경우 남는 길은 R5 뿐이다. 두 번째 반증: 포화가 사라졌는데 p05(min_distance) 가 **나빠지면** 하드 제약을 대체 없이 완화한 것이다(참 호 판정이 현 근사보다 느슨한 경우). 그 경우 접촉 시 n_vo_rejected 가 감소해 있을 것이므로 즉시 관측 가능하다.",
+     "expected_effect": "148건 표의 **전 항목에 대한 전제 조건**이다. 이것 없이는 R1·R2·R4 가 모두 '기각된 후보 집합을 더 잘 만드는' 일이 되어 거동 변화가 0 이다. 직접 겨냥: committed 128건(86.5 %) 전부가 포화 구간에서 발생하므로, 이 구간에서 비용함수가 다시 작동하는 것 자체가 가장 큰 단일 변화다. 정직한 배수 추정: 단독으로는 예측 불가(순위 회복이지 기동 생성이 아니다). R1+R2+R3 묶음으로 2~4배를 기대하고, 그 이상은 측정 후에 말한다.",
+     "effort": "M",
+     "risk": "높음 — 이 계획에서 가장 위험한 항목이다. 하드 제약을 하나 없애는 변경이므로 **반드시 R1·R2 이후**여야 한다. 지금 순서로 넣으면 유일하게 남는 하드 제약이 등속 롤아웃 위의 회전 불변 외접원이라 지금보다 나쁘다. 통과 중인 계약 시험 2개를 무효화하며, 그 재작성을 예산에 넣지 않으면 착수하지 마라.",
+     "domain_support": [
+      "vo-multiagent (P2+P3, 이 분야가 유일하게 포화 이후를 봤다)",
+      "geometry (P3 의 CA 논거 일부)",
+      "ics-safety (경계 평형 / 실현가능성 수축)"
+     ],
+     "depends_on": [
+      "R1",
+      "R2"
+     ]
+    },
+    {
+     "rank": 5,
+     "title": "R4. 동적 접촉 판정의 기하를 방위 의존으로 — footprint_reach 를 처음으로 배선한다",
+     "mechanism": "src/amr_navigation/include/amr_navigation/core/footprint_reach.hpp 는 완전히 구현·시험되어 있는데 **프로덕션 호출이 0건**이다(grep 확인 — 사용처가 test_footprint_reach.cpp 뿐). 반면 dwa.cpp 는 동적 장애물에 대해 스칼라 0.361(외접원)을 쓴다. 외접원은 SO(2) 회전에 불변인데, 차동 구동이 v→0 에서 온전히 보유한 유일한 입력이 바로 그 회전이다. 즉 '몸을 돌려 좁은 쪽을 보행자에게 향한다' 가 비용함수에 표현될 수 없다. 안전 게이트는 이미 distanceToRectangle 로 직사각형을 쓰므로(safety_gate.cpp:582 yieldEscapeAllowed), 이 변경은 **계획기와 게이트의 모형을 처음으로 일치시킨다** — 계획기가 선호하는 후보와 게이트가 승인하는 후보가 같은 기하 위에 놓인다. 적용처는 R3 이 남긴 단 하나의 하드 제약, 즉 램프 롤아웃 위 firstContactTime 의 반경뿐이다.",
+     "files": [
+      "src/amr_navigation/src/core/dwa.cpp",
+      "src/amr_navigation/src/core/velocity_obstacle.cpp",
+      "src/amr_navigation/include/amr_navigation/core/velocity_obstacle.hpp",
+      "src/amr_navigation/include/amr_navigation/core/footprint_reach.hpp",
+      "src/amr_navigation/test/test_dwa.cpp",
+      "src/amr_navigation/test/test_footprint_reach.cpp"
+     ],
+     "contracts": [
+      "TEST(Dwa, YawTowardNarrowFaceRaisesContactTime): v_meas=0, 상대 방위 psi 에서 1.0 m/s 트랙에 대해 정횡 쪽으로 도는 후보의 접촉 시각이 반대로 도는 후보보다 엄격히 크고, 외접원 모델에서는 두 값이 1e-9 안에서 같다 (= 현재는 구별 불가임을 같은 시험이 못박는다).",
+      "TEST(VelocityObstacle, VaryingRadiusUsesIntervalMinimumBound): 구간 양 끝 reach 의 min 을 반경으로 쓰는 보수 근사가 구간 내 어떤 자세의 참 reach 보다 크지 않다 — 2차 근 해법이 시변 R 에서 무효가 되는 문제를 닫는 방식임을 고정한다.",
+      "TEST(FootprintReach, ReachIsNotUnimodalInYaw): reach(psi) 가 psi*=33.69° 에서 최대(0.3606)임을 고정한다 — 순시 기울기(CBF-QP 형) 구현을 금지하는 근거를 시험으로 남긴다.",
+      "footprint_reach.hpp:19-25 의 '84.8 %' 주석을 삭제한다 (R0 에서 침투 기반 계산이 무효화됨)."
+     ],
+     "falsifier": "omega_discrimination 이 0 에서 벗어나야 한다 — 안 벗어나면 배선이 안 된 것이다(단위 시험이 먼저 잡는다). 진짜 반증: 좁은 면을 향한 회전을 실제로 명령했는데 그 조우의 p05(min_distance) 가 개선되지 않으면 — 회전 권한이 게이트의 omega 상한(safety_gate.cpp:857 `st.angular_limit = min(1.5, u_cap/circumscribedRadius())`, CRITICAL 존에서 0.554 rad/s)에 먹혔거나, 회전에 드는 시간 동안 보행자가 좁힌 거리가 이득을 상쇄한 것이다. 그러면 R4 는 R5 의 백업 검증 안에서만 의미가 있고 독립 효과는 0 이다.",
+     "expected_effect": "실측 계측 16건에서 현재 자세 reach 와 최소 reach 의 차(= 회전으로 얻을 수 있는 여유)가 중앙 37.1 mm, 최대 110.9 mm 다. 이것을 침투 6 mm 와 비교하면 **안 된다**(R0 참조) — 비교 대상은 조우 최소 부호 거리이고, 접촉 실행의 p05 가 0.046 m 이므로 중앙 37 mm 이득은 그 절반 규모다. 실재하지만 단독으로 결정적이지는 않다. 148건 표에서는 worker_crossing 128건(86.5 %)의 단일 횡단 기하에 작용한다. 정직한 기대: 단독 1.2~1.8배, R3 과 결합했을 때만 의미가 있다.",
+     "effort": "M",
+     "risk": "중간. **절대 하지 말 것 셋**: (1) ttc.hpp TtcParams::robot_radius 를 건드리지 마라 — obstacle_tracker_node.cpp:137 을 거쳐 safety_gate 의 TTC 속도 상한이 되므로 게이트의 거부권을 직접 약화시킨다(절대 제약 위반). (2) crossing_yield.cpp:162 의 통로 반폭은 그대로 둔다 — 경로 수준 구성물이라 미래 자세에 의존시키면 '요가 정지선을 움직이고 정지선이 요를 움직이는' 되먹임이 생긴다(s8a 31회/410주기 진동의 재판). (3) 순시 기울기로 쓰지 마라 — reach 가 단봉이 아니라 탐욕적 추적이 정면으로 간다(기존 '탐욕 회전 종료 안 함' 실패의 원인).",
+     "domain_support": [
+      "geometry (P1, 이 분야의 핵심)",
+      "mpc-optimization (제안 3, 게이트-계획기 모형 불일치 논거가 가장 강하다)",
+      "prediction-reachability (경고 3: 죽은 코드 지적)",
+      "ics-safety (P2, 단 기각 지점 3곳을 반영했다)"
+     ],
+     "depends_on": [
+      "R3"
+     ]
+    },
+    {
+     "rank": 6,
+     "title": "R5. 정지 백업을 검증된 회피 백업으로 — gatekeeper 식 커밋 궤적 필터",
+     "mechanism": "여기까지 오면 계획기는 미래를 구별할 수 있게 되지만, '안전한 연속이 존재하는가' 는 여전히 검정하지 않는다. 암묵 백업이 '정지' 인 한 시스템이 구현하는 것은 passive motion safety 이고 명세는 active safety 를 요구한다 — 접촉의 52 %가 정지 상태인 것이 그 증거다. 매 주기 '공칭 궤적 접두부 + 백업 정책 접미부' 를 짧은 유한 지평으로 전방 적분해 검증하고, 검증된 커밋 궤적만 실행한다. 검증 실패 시 직전 커밋 궤적을 계속 실행 → recursive feasibility. 백업 집합은 정지 하나가 아니라 (전환 시각 T_s x 백업 정책 pi_b) 격자이고, 정지는 그중 하나일 뿐이며 이 기하에서는 거의 항상 탈락한다. **결정적 설계 제약**: 백업 롤아웃은 반드시 **게이트가 실제로 허용할 입력**으로 적분해야 한다 — safety_gate.cpp:857 의 angular_limit = min(1.5, u_cap/0.361) 때문에 CRITICAL 존에서 omega 상한이 1.5 가 아니라 0.554 rad/s 다. omega=1.5 로 검증한 백업은 게이트가 0.554 로 깎으므로 '검증한 궤적' 과 '실행되는 궤적' 이 달라져 증명이 그 순간 무효가 된다. 안전 게이트는 한 줄도 건드리지 않는다 — 필터는 게이트 상류에서 후보 집합을 좁히기만 하므로 거부권 단방향성이 유지된다.",
+     "files": [
+      "src/amr_navigation/src/core/commit_filter.cpp",
+      "src/amr_navigation/include/amr_navigation/core/commit_filter.hpp",
+      "src/amr_navigation/src/ros/dwa_controller.cpp",
+      "src/amr_navigation/test/test_commit_filter.cpp",
+      "src/amr_navigation/CMakeLists.txt"
+     ],
+     "contracts": [
+      "TEST(CommitFilter, StopBackupFailsAgainstCrossingPedestrian): 로봇 v=0, 1.0 m/s 보행자가 거리 0.59 m(실측 접촉 기하 중앙값)로 접근 — 정지 유지 백업은 검증 실패하고, 백업 격자 중 최소 1개가 통과하며, 선택된 명령이 정지가 아니다.",
+      "TEST(CommitFilter, BackupRolloutRespectsGateAngularLimit): 백업 적분이 존 거리 → u_cap → omega 상한을 함께 적분하고, CRITICAL 존 안에서 |omega| <= u_cap/0.361 을 넘는 백업을 생성하지 않는다.",
+      "TEST(CommitFilter, BackupIsCheckedAgainstStaticCostmapToo): 백업 궤적이 랙(정적 장애물)으로 들어가면 검증 실패한다 — footprint_cost 를 반드시 포함한다.",
+      "TEST(CommitFilter, TopKCapBoundsWorstCaseCycleTime): 인증 대상을 상위 K=32 후보로 제한하고 CycleTimeBudget 50 ms 를 5대 동시 기준으로 유지한다."
+     ],
+     "falsifier": "(a) worker_crossing 조우에서 certified_empty 가 한 번도 참이 아니었는데 접촉이 나면 → 실패 원인이 백업 집합의 크기가 아니라 검증 술어의 모형(예측 / 기하 / 게이트 상한 미반영)이고, 백업을 더 넓혀도 안 고쳐진다. (b) **조우 첫 주기부터 백업이 전부 검증 실패하면** → 재귀 가능성의 초기 조건이 경로 위에 없다는 뜻이고, 이는 이미 실패한 '대기 게이트' 와 같은 벽이므로 R5 도 같은 결과가 난다(4.0 % → 10~12 % 재현 위험). 이 경우 즉시 되돌린다. (c) certified_empty 비율이 committed 구간의 80 % 를 넘으면 필터가 사실상 항상 대체 경로로 떨어지는 것이므로 단독 가치가 없다.",
+     "expected_effect": "148건 표의 '접촉 시 로봇 속도 < 0.05 m/s 77건(52 %)' 과 'yield_state=committed 128건' 에 동시에 작용하는 유일한 항목이다. worker_crossing 128건은 속도가 109건 정확히 1.000 · 19건 0.998 m/s 로 예측 오차가 사실상 0 이므로 이 액터에 한해 원리적으로 실패 경로가 닫힌다는 논증이 성립한다. 그러나 worker_random 20건에는 예측 오차가 있어 같은 논증이 안 선다. 정직한 기대치는 **2~3배 추가 감소**이고, 이것이 R1~R4 위에 얹혔을 때 전체가 5~10배 범위에 들어갈 가능성이 있다. **10~20배를 뒷받침하는 증거는 문헌에도 로그에도 없다.**",
+     "effort": "L",
+     "risk": "높음. 인용 문헌 자신(Kim 외, arXiv:2604.02401)이 '안전을 공칭 궤적이 아니라 백업 기동의 실현가능성으로 판정하는 것이 보수성의 주된 원인' 이라고 지적하며, 같은 논문 실측에서 Backup CBF 는 공칭 정책 유지율 28.8 % 로 **목표에 도달하지 못했다**(gatekeeper 만 87.5 %로 도달). 즉 잘못 구현하면 이탈 1 m·복귀 5 s 예산이 깨진다. 실시간 비용도 위험하다 — 백업 궤적마다 footprint_cost(코스트맵 조회)가 들어 제안서들의 '0.1 ms' 추정은 한 자릿수 틀렸다(수 ms 급). top-K 제한은 선택이 아니라 필수다.",
+     "domain_support": [
+      "ics-safety (P1, 이 분야의 핵심)",
+      "mpc-optimization (제안 1·2)",
+      "crowd-freezing (P1 의 non-braking-ICS 불변량)"
+     ],
+     "depends_on": [
+      "R3",
+      "R4"
+     ]
+    },
+    {
+     "rank": 7,
+     "title": "R6. 창 중심에 실행된 속도를 되먹인다 (독립 진단 실험, R1 과 병행 가능)",
+     "mechanism": "dwa_controller.cpp:543 `v_last_ = res.v` 는 **게이트를 거치지 않은 계획기 자신의 출력**을 다음 주기 창 중심으로 되먹인다(windowCenter, dwa.cpp:97). 파이프라인이 cmd_vel_nav → velocity_profiler → safety_node → cmd_vel 이므로, 게이트가 0 으로 깎는 동안 모든 후보의 롤아웃이 반사실(counterfactual)이다. 또 창 붕괴의 실제 기제는 여러 제안서가 쓴 'v_meas 중심' 이 아니라 window_reset_v=0.3 문턱이 튀는 것이다 — 게이트가 STOP 을 충분히 오래 물어 |v_last - v_meas| 가 0.3 을 넘긴 뒤에야 중심이 0 으로 스냅한다. 이 사실은 '창 리셋 임계를 올린다' 는 값싼 대안이 왜 안 되는지도 설명한다.",
+     "files": [
+      "src/amr_navigation/src/ros/dwa_controller.cpp",
+      "src/amr_navigation/src/core/dwa.cpp",
+      "src/amr_navigation/test/test_dwa.cpp"
+     ],
+     "contracts": [
+      "TEST(Dwa, WindowCenterTracksExecutedNotCommandedVelocity): 계획기가 0.5 를 명령하고 게이트가 0 으로 깎은 다음 주기에, 창 중심이 0.5 가 아니라 측정값 근처다.",
+      "기존 TEST(Dwa, WindowRecoversFromTinyNegativeSpeed) 를 깨지 않는다 — 측정이 -1e-4 일 때 창이 [v_c, 0] 으로 붙지 않아야 한다는 계약은 dynamicWindow 쪽이므로 무관하다."
+     ],
+     "falsifier": "이것은 **의도적으로 가장 싼 반증 실험**이다. 되먹임을 고쳤는데 saturation_fraction 과 'DWA 자체가 v=0 출력 27건' 이 전혀 안 움직이면, 창 중심의 반사실성은 접촉 기제가 아니었고 R1·R2 의 창 관련 논거 중 이 부분은 빼야 한다. 반대로 유의하게 움직이면 R1·R2 의 우선순위가 올라간다. 어느 쪽이든 하루 안에 답이 나온다.",
+     "expected_effect": "직접 배수 주장 없음. 값어치는 **R1·R2 에 큰 비용을 쓰기 전에 창 가설을 싸게 검정하는 것**이다. 부수적으로, 계획기가 자기가 실제로는 내지 못한 명령을 전제로 롤아웃하는 일관성 결함 자체를 없앤다.",
+     "effort": "S",
+     "risk": "낮음. 되돌리기 1줄. 다만 게이트가 자주 깎는 구간에서 창이 더 자주 낮게 붙을 수 있어 단독으로는 거동이 **보수적인 쪽으로** 갈 수 있다 — 그래서 R2 이후에는 창이 표본 필터가 아니라 방출 클램프가 되므로 이 부작용이 사라진다.",
+     "domain_support": [
+      "vo-multiagent (경고 2 — 아무도 지적하지 않은 더 싼 결함)",
+      "crowd-freezing (P2 blocking_issues 의 windowCenter 정정)"
+     ],
+     "depends_on": [
+      "R0"
+     ]
+    }
+   ],
+   "rejected": [
+    "**tau(vo_time_horizon) 2.0 → 3.0 증가** — 방향이 거꾸로다. velocity_obstacle.cpp:66 `return t <= tau ? max(0,t) : kInf` 이므로 VO^tau 는 tau 에 대해 포함 관계로 단조 증가한다: tau 를 키우면 기각이 **늘어난다**. 게다가 실측 접촉 시 ||p|| 중앙 0.594 m 가 R_vo=0.911 m 안이라 `pn2 < R*R` 조기 반환이 걸려 **tau 를 읽지도 않는다**. 지배 실패 경로를 건드리지 못한다. (ics-safety P4 의 기각이 옳다.)",
+    "**침투 깊이를 수용 기준으로 쓰는 모든 제안** — logs/**/contacts.csv 148건 전수에서 |distance_m| 이 |v_rel|x0.020 s 를 넘는 표본이 0건, 비율 분포가 균등(중앙 0.269). 50 Hz ground truth 샘플링의 검열 산물이며 여유 부족과 무관하다. 이에 근거한 geometry 분야의 '이득 > 침투 14/16(87.5 %)' 과 footprint_reach.hpp 의 '84.8 %' 주석은 무효다.",
+    "**min_distance 꼬리의 EVT/GPD 외삽으로 P(M<0) 추정 (prediction-reachability P6)** — 그 제안의 자체 반증 조건을 실행해 기각했다. 146 실행 4309 시행에서 실측 접촉률 3.435 % 인데 u=0.12~0.30 전 구간 GPD 외삽은 0.017~0.080 % (40~200배 과소). 형상모수가 전 구간 음수(xi=-0.43~-0.63)라 적합 분포가 유한 끝점을 갖는다 — 꼬리가 0 을 규칙적으로 가로지르지 않는다. 물리적 이유: actor 에 충돌체가 없어 실패가 0 을 스치지 않고 불연속으로 깊은 음수로 점프한다.",
+    "**근접 밴드 계수 frac(0 < M < 0.35) 를 대리 지표로 쓰기** — 141 실행에서 접촉률과 r=-0.038, Cohen d=-0.01. 신호가 전혀 없다.",
+    "**전역 A* 의 SIPP / 시공간 확장 (spacetime-planning P1, geometry P4, prediction-reachability P1)** — XL 노력에 효과 미정이고 저장소에 없는 것을 전제한다: astar_planner.cpp 는 nav2_core::GlobalPlanner 플러그인으로 **구독이 0건**이고, dwa_controller.cpp 는 nav_msgs/Path 의 **포즈별 header.stamp 를 읽는 코드가 없다**(L313·L379 는 메시지 전체 stamp 만). 일정 소비자가 없으면 SIPP 는 '어떤 셀을 어떤 시각에 거부하는 A*' 로 퇴화한다. 더 결정적으로 nav2_params.yaml:104 max_vel_x=1.0 대 보행자 1.000 m/s 라 **'먼저 지나가기' 분기가 존재하지 않는다** — 남는 해는 '대기' 뿐이고 그것이 정확히 4.0 %→10~12 % 로 악화된 crossing_gate 다.",
+    "**crossing_yield 를 st_schedule 로 교체 (spacetime-planning P2)** — 진단 전제가 코드와 어긋난다. crossing_yield.hpp 는 **이미** t_in/t_out vs t_robot_in/t_robot_out 을 비교하고 통로를 |u|·horizon 으로 자른다. '시간 없는 무한 원기둥' 은 거짓이다. 또 배포 설정이 yield_decision=false·yield_gate=false 라 dec 는 항상 kNone 이므로, 여러 제안서가 인용한 go/hold/retreat 분기 서술은 **죽은 코드**를 가리킨다.",
+    "**왕복(shuttle) 운동모델 IMM 추가 (spacetime-planning P4)** — gen_warehouse_world.py:652 의 시험 액터 구조 그 자체를 겨냥하므로 평가 시나리오 적합(overfitting)이다. 게다가 트랙 연속성이 미확인이다(max_misses_occluded 15 스캔 = 1.5 s, 랙 가림에서 트랙이 죽고 새 id 로 재생성). worker_random 20건에는 무효.",
+    "**Contingency(2분기) MPC, 보행자 정지/양보 가설 (mpc-optimization 제안 6)** — H2('보행자가 비킨다')의 확률이 0 이다. contacts.csv 실측 128/148 이 정확히 1.000 m/s 이고 스크립트상 로봇을 인지조차 하지 않는다. 확률 0 인 가설로 명목 비용을 매기는 것은 실패 모드 쪽 편향이다.",
+    "**reach-avoid HJ 값함수 테이블 (prediction-reachability P2)** — XL 이고 플랜트 모형이 실제 게이트와 위험한 방향으로 다르다. 제안은 '부호거리 0.3 이하에서 v ≡ 0' 을 가정하지만 safety_gate.hpp:100 stop_release_distance=0.50 이고 yield_escape/ttc_retreat 면제가 있어 게이트는 **흡수 상태가 아니다**. 영구 v≡0 플랜트로 푼 V 는 좁은 통로 전체를 탈락시켜 상시 비상 기동 → crossing_gate 와 같은 악화 서명.",
+    "**J_dyn 의 min(1.0, ·) 클리핑 제거 (mpc-optimization 제안 5의 일부)** — 비구속임이 코드로 확인된다. J_dyn = min(1, excess + 0.3·urgency) 이고 urgency <= 1 이므로 클립이 걸리려면 excess > 0.7, 즉 |v| - v_safe > 0.7 m/s 여야 한다. 그런데 접촉의 52 %는 v < 0.05 라 **excess ≡ 0** 이다. 접촉을 만드는 영역에서 클립은 한 번도 걸리지 않는다.",
+    "**비용함수 항만 바꾸는 모든 제안** (geometry P2 J_dyn 재정식화, crowd-freezing P3 통과 위상 래치, prediction-reachability P3 의 J_dyn 정지 위험항, mpc-optimization 제안 5의 사전식 정렬) — 실측으로 기각한다. 접촉 전 2 s 창의 n_vo_rejected 중앙값이 342 = n_samples 전부이고 마지막 주기의 78 %가 >=300 이므로, 주 선택 루프가 nullptr 을 내고 **비용함수가 순위를 매기지 않는다**. 이 인구에서 비용항 변경의 기대효과는 0 이다. R3 이 포화를 제거한 **뒤에** 재심사할 가치는 있다.",
+    "**ttc.hpp TtcParams::robot_radius 또는 min_robot_speed 변경** — obstacle_tracker_node.cpp:137·323 → safety_node.cpp:409 → 게이트의 TTC 속도 상한(v <= a·(TTC - t_react))으로 흐른다. 건드리면 게이트의 거부권이 직접 약해진다. **절대 제약 위반으로 즉시 탈락.**",
+    "**VO 합성 반경(dwa.cpp:552)을 방위 의존으로 만들기 (geometry P5 A부의 일부, vo-multiagent P4)** — 불건전하다. 그 자리는 chordVelocity 로 tau 구간을 하나의 등가 직선 속도로 압축하는 속도공간 시험이라 **단계별 요가 없다**. 순시 reach 를 꽂으면 tau 안에 모서리를 장애물 쪽으로 돌리는 경우를 놓쳐 회피 시험을 실제로 느슨하게 만든다. 게다가 vo-multiagent P4 가 제안한 공식 footprintReach(hl,hw,th)+r_obs 는 rect⊕disc 의 방사 반경이 **아니다** — th=50°에서 참값 0.5748 vs 제안 0.5111, 오차 64 mm 이고 부호가 위험 쪽이다. (R3 이 이 경로를 통째로 삭제하므로 문제 자체가 소멸한다.)",
+    "**후진을 DWA 표본에 추가 (vo-multiagent P6)** — 이미 구현되어 있다. dwa.cpp 의 escaping 분기가 `res.window.v_lo = max(-yield_escape_speed, ...)` 로 min_vel_x 클램프를 우회하고, nav2_params.yaml:216 yield_escape_speed=0.5 로 켜져 있으며 test_dwa.cpp:958 이 거동을 고정하고 있다. 또 근거로 든 Shigemoto 외 JRM 37(6) 2025 는 '보행자 뒤로 지나가기' 이지 자기 경로 후진이 아니다 — 오귀속.",
+    "**yieldEscapeAllowed 에 두 번째 면제 경로 추가 (crowd-freezing P1 의 게이트 조항)** — safety_gate.cpp:582 가 이미 정확히 그 검사를 하며, 후자는 distanceToRectangle(0.60, 0.40)로 **이미 직사각형 발자국**을 쓴다. 면제 경로를 늘리는 것은 순수한 위험 증가이고 거부권 단방향성에 저촉된다.",
+    "**T_sim 만 늘리기 (ics-safety P4 의 잔여물)** — sim_time_min/max 는 nav2_params.yaml:112-113 의 평범한 파라미터이고 116 구성 x 3480 시행 스윕이 단조 반응을 못 낸 바로 그 종류의 손잡이다. R1 없이 지평만 늘리면 창이 붕괴한 등속 원호를 더 오래 적분할 뿐이다."
+   ]
+  },
+  {
+   "measurement_design": "## 전제: 접촉률은 1차 지표가 될 수 없다 — 그리고 침투 깊이는 **지표조차 아니다**\n\n**(A) 침투 6 mm 를 즉시 폐기하라 — 내가 직접 재검증했다.**\n`collision_monitor_node.py:_on_robot` 은 `d < 0` 이 되는 **첫 표본**의 d 를 이벤트에 기록한다. ground truth odom 은 50 Hz (`dynamic_obstacles.yaml:21` 이 \"로봇 ground_truth/odom 과 같은 주기\" 로 명시). 따라서 |v_rel| = 1.0 m/s 에서 기록 가능한 침투의 **상한은 20.0 mm** 다.\n내 집계 (logs/**/contacts.csv 84파일 148행 전수):\n- 전체 침투: 중앙 5.9 / 평균 6.7 / p90 14.9 / **최대 18.8 mm**\n- 정지 중 접촉 77건 (v_rel = 정확히 1.0): 중앙 4.8 / 최대 18.8 mm, **20.0 mm 를 넘는 표본 0개**\n\n즉 \"경계 포화\" 는 없다. 이 분포는 샘플링 산물이다. **기하·MPC 분야가 세운 \"19 mm 만 더 있으면 된다\", footprint_reach.hpp 주석의 \"84.8 %\", 그리고 \"균일 여유 증가가 왜 실패했나 = 평형이 옮겨가서\" 라는 설명은 전부 무효다.** (여유 증가가 실패한 진짜 이유는 근본 원인 항목에 적었다.) footprint_reach.hpp:19-25 주석을 S0 에서 정정해야 한다.\n\n**(B) 이미 있는 연속 지표를 쓴다 — 새 계측 불필요.**\n- `avoidance.csv` 에 시행별 `min_distance_m` 이 **이미 기록되어 있다** (헤더 확인). Bernoulli(0.04) 대신 연속량이다.\n- `/<robot>/collision_monitor/min_distance` 가 50 Hz 로 발행된다 → 조우 단위 분해 가능. (`per_obstacle_min` 은 실행 누적 최소라 조우 단위로 쓰면 안 된다.)\n- 좌측 꼬리 주의: actor 에 물리 충돌체가 없어 접촉 시 d 가 깊게 음수로 간다. GPD 는 **양의 초과분에만** 적합하고 0 을 가로질러 외삽하며, 임계 u 에 대한 형상모수 안정성 그림을 반드시 첨부한다. **EVT 추정치는 선별(screening) 도구이지 수용 기준이 아니다.** 수용 기준은 끝까지 명세의 30시행 무접촉이다.\n\n**(C) 오프라인 재생(replay) 이 주 검증 수단이다 — 신규 시행 0회.**\n저장소에 `stats_trial*.csv` **197 파일** (주기당 t, cmd_v, cmd_w, yield_state, vo_rejected, ttc, yield_obstacle, decision; 파일당 ~600 주기 ⇒ **약 12만 주기**) 와 `tracks_trial*.csv` (t, track_id, x, y, vx, vy, is_dynamic) 가 이미 있다. 이 둘을 먹여 `DwaPlanner::compute` 를 오프라인으로 재실행하는 하네스가 S0 의 산출물이고, S1~S4 의 1차 판정은 전부 여기서 난다.\n\n## 단계별 계측 사다리 (각 변경은 자기 층에서만 판정한다)\n\n| 층 | 표본 수 | 관측량 | 무엇을 판정하나 |\n| --- | --- | --- | --- |\n| **T0 단위** | 0 시행 | 계약 시험 (아래 각 항목 contracts) | 기제가 코드에 실재하는가. 결정론적, 즉시 |\n| **T1 재생** | 12만 주기 (기존 로그) | ① v<0.05 구간 **후보 비용 최대−최소** (현재 ≈0 이라는 것이 평탄 argmin 주장의 직접 관측량) ② 롤아웃 종점 변위/요 분산 ③ `\\|v\\|+0.361·\\|ω\\| < 0.05` 명령 비율 ④ `vo_saturated` 진입률 ⑤ **게이트 수용률** (아래 D) | 기제가 실제 조우에서 작동하는가 |\n| **T2 폐루프 연속** | 30~60 시행 | 조우별 최소 부호거리 분포 (Mann–Whitney + 하위 꼬리 이동), 이탈 p95, 복귀 p95 | 거동 변화가 안전 쪽인가 |\n| **T3 수용** | 30 시행 | 접촉 0건, 이탈 ≤1 m, 복귀 ≤5 s | 명세 통과 (T2 통과분만 올린다) |\n\n**(D) 게이트 수용률 — 가장 중요한 선행 지표이고 아무도 제안하지 않았다.**\n내가 집계한 결과: gate 열이 있는 142행 중 `cmd_v > 0.05` 인데 `gate_out_v < 0.05` 인 접촉이 **24건 (16.9 %)**. 즉 계획기가 살아 있는 명령을 냈는데 게이트가 죽였다. (`gate_out == 0` 은 39건이고 그중 18건은 DWA 자신이 0 을 냈다 — **mpc 분야의 \"61건/34건, 계획기 상한 0.9 %\" 는 틀렸다.**)\n따라서 T1 에 반드시 포함할 관측량: **\"탈출 의도 명령 중 `yieldEscapeAllowed` 를 통과하는 비율\"**. 어떤 변경이 탈출 명령을 늘렸는데 이 비율을 못 올렸다면 그 변경은 **거동을 0 만큼 바꾼 것**이다. 이 한 줄이 S1~S3 의 헛발질을 조기에 잡는다.\n\n## 검정력 정직성\n- 접촉률 A/B 는 팔당 633 시행이 필요하다 — **이 계획의 어느 단계도 접촉률 A/B 를 판정 근거로 쓰지 않는다.**\n- T1 의 주기 표본은 자기상관이 있다 (20 Hz × 조우 ~1.4 s = 28표본이 사실상 한 사건). 유효 n 은 **조우 수**다. 그래서 T1 은 \"효과 크기 추정\" 이 아니라 **\"기제가 켜졌는가/꺼졌는가\" 의 이진 판정**에만 쓴다 — 그 용도에는 검정력이 충분하다.\n- T2 의 이득은 표본 수가 아니라 **Bernoulli → 연속량 전환**에서 온다. 이것만이 정직한 논거다.\n- 30시행 무접촉 1회 통과는 0.3 % 를 **입증하지 않는다**. 최종 보고에 이 한계를 명기한다.",
+   "root_cause": "**회피 기동이 계획기의 후보 집합·비용·안전 판정 어디에도 표현되지 않으며, 표현되지 않은 그 자리를 \"정지\" 가 메우고 있다. 그런데 이 기하에서 정지는 회피가 아니라 충돌 그 자체다.**\n\n세 겹이 같은 순간(v_meas → 0)에 동시에 무너지며, 셋 다 코드로 확인했다.\n\n**(1) 후보 집합의 붕괴 — 자기 모형 오차.** `dwa.cpp:107` `dynamicWindow` 는 1주기 도달집합 [v_c ± 1.0×0.05] × [w_c ± 2.0×0.05] 인데, `dwa.cpp:165` `rollout` 은 `integrateArc(start, v, w, k·dt)` 로 **그 속도를 T_sim 1.5~2.5 s 등속 유지**한다. v=0 에서 342개 후보 전체의 1.5 s 종점 변위가 0.075 m 안에 갇힌다 — 실제 도달거리(저크 2.0 포함) 0.75 m 의 1/10. \"돌고 나서 가속해 빠져나간다\" 는 기동이 **후보로 존재하지 않는다.**\n\n**(2) 비용의 영공간 — 장애물 모형 오차.** `dwa.cpp:408/428`(in_body), `:552`(VO 반경), `:667`(TTC 반경), `:686/706`(통로 반폭) 이 전부 스칼라 `config_.robot_radius = 0.361`(외접원)을 쓴다. 외접원은 SO(2) 불변이다. 그런데 v=0 에서 차동 구동이 온전히 가진 유일한 입력이 바로 그 회전이다. 즉 **로봇에게 남은 마지막 제어 채널이, 보행자를 아는 유일한 비용항의 정확히 영공간에 놓인다.** (`footprint_reach.hpp` 는 이 문제를 풀려고 작성되어 시험까지 통과하는데, grep 결과 **프로덕션 호출 0건** — 죽은 코드다.)\n\n(1)+(2) 의 결과: argmin 이 평탄해지고 선택이 전부 tie-break 로 떨어진다. `dwa.cpp:734` 주 선택 루프가 비면 `vo_saturated` 분기로 가고, 그 tie-break(`c.vo_time > best->vo_time`)는 **정의상 가장 늦게 VO 에 들어가는 후보 = 정지·제자리회전**을 뽑는다.\n\n**(3) 안전 판정 집합이 틀렸다.** 시스템은 \"지금 이 순간이 안전한가\" 만 검정하고 \"안전한 연속(continuation)이 존재하는가\" 는 한 번도 검정하지 않는다. 암묵 백업 정책은 정지 하나뿐이다. 이것은 Fraichard/Bouraine 의 passive motion safety(\"충돌하면 로봇은 정지해 있다\")를 정확히 구현한 것이고, 명세가 요구하는 active safety(접촉 0)가 아니다. 1.0 m/s 로 양보 없이 걸어오는 보행자 앞에서 정지 상태는 braking-ICS 이므로 **종단 집합 {v=0} 이 제어불변이 아니다** — recursive feasibility 가 원리적으로 존재하지 않는다.\n\n**결정적 정정 — 이것이 일곱 분야의 판정을 가른다.** 기하·MPC 분야는 \"침투가 6 mm 에 몰린 것 = 경계 포화 = 시스템이 경계를 정확히 찾았고 19 mm 만 모자란다\" 위에 효과 크기를 세웠다. **틀렸다.** 내가 재검증했다: 접촉 판정은 50 Hz ground-truth 표본의 **첫 음수 표본**을 기록하므로 |v_rel| = 1.0 m/s 에서 침투 상한이 **20.0 mm** 이고, 정지 중 접촉 77건의 최대가 18.8 mm 로 **한 번도 상한을 넘지 않는다**. 6 mm 는 물리적 평형이 아니라 샘플링 격자다. 따라서 이 접촉들은 \"아슬아슬하게 스친 것\" 이 아니라 **회피 기동이 아예 생성되지 않은 정면 실패**다. 여유 문제가 아니라 표현력 문제라는 진단이 여기서 확정된다.\n\n**따라서 단일 근본 원인은 \"여유 부족\" 도 \"예측 실패\" 도 \"시간축 부재\" 도 아니다.** (인지 실패는 yield_state=clear 접촉 0건으로 이미 배제됐고, 시간축은 `crossing_yield.cpp:271-281` 이 이미 [t_in,t_out] vs [t_r_in,t_r_out] 를 비교하므로 \"없다\" 는 것도 사실이 아니다 — 없는 것은 시간축 위의 **탐색**이다.) 근본 원인은 **계획기의 자기 모형과 장애물 모형이 둘 다 회피 기동을 소거하고, 그렇게 비워진 자리를 안전 아키텍처가 \"정지\" 로 채운다는 것**이다.",
+   "why_previous_attempts_failed": "다섯 가지 실패가 모두 같은 한 가지로 설명된다: **전부 \"임계가 어디에 있는가\" 또는 \"경로가 어디를 지나는가\" 를 바꿨고, \"후보 집합이 무엇을 표현할 수 있는가\" 와 \"안전한 연속이 존재하는가\" 는 아무도 건드리지 않았다.**\n\n**1. 파라미터 스윕 116구성 × 3480시행 — 단조 반응 없음.**\n두 가지 독립된 이유로 결과가 나올 수 없었다. (a) v≈0 에서 창은 [0,0.05]×[±0.1] 이고 롤아웃은 등속이라 342개 후보의 종점이 7.5 cm 안에 모여 있으며, 동적 항은 외접원 때문에 ω 전체에 대해 **상수**다. 평탄한 argmin 은 어떤 임계에도 단조 반응하지 않는다 — 임계가 옮겨도 뽑히는 후보가 그대로다. (b) 그 실험 자체가 Bernoulli(0.04) 를 팔당 90~120 시행으로 재고 있었다. 즉 **신호가 없었고 동시에 자도 없었다.**\n\n**2. 보행자 차선 비용 밴드 (전역 코스트맵 필터) — 안전 이득 0, 이탈·복귀·시간 악화.**\n자유측도가 5.7 % 인 좌표(공간)에 비용을 더 얹었을 뿐이다. 전역 경로를 휘게 만들 수는 있어도 **지역 계획기가 표현할 수 없는 기동을 만들어 내지는 못한다.** 그래서 안전은 그대로이고 이탈 예산만 소모했다 — 관측된 결과와 정확히 일치한다.\n\n**3. 횡단 게이트(노출 구역 + 대기점 + commit 판정) — 4.0 % → 10~12 % 로 악화.**\n두 겹으로 악화시켰고 둘째가 결정적인데 아무도 지적하지 않았다.\n(a) 게이트의 처방은 \"대기\" 이고 대기는 정지다. 정지가 지배적 실패 기제이므로 게이트는 그 기제를 **더 자주, 더 일찍** 발동시켰다 — 로봇에 아직 속도가 남아 있던 시점에.\n(b) **코드 수준 기제:** `dwa.cpp:404` 의 `escaping` 판정이 `!gate_on` 을 요구한다. 게이트를 켜는 순간 `escaping` 이 false 로 고정되고, 그러면 `in_body`·후진 창 개방·escape 비용항·`drop_spin` 이 **한꺼번에 전부 비활성화**된다. 게이트는 나쁜 행동을 더한 것이 아니라 **기존 탈출 로직을 통째로 껐다.** 610개 출발 위상 개루프 시뮬레이션이 0/610 을 낸 것과 폐루프가 3배 악화된 것 사이의 간극이 여기서 설명된다.\n\n**4. \"한 조우 안에서 통로 결정을 보수적인 쪽으로만\" — 기존 계약과 충돌해 되돌림.**\n같은 계열이다. 결정 층의 임계를 한쪽으로 묶었을 뿐 후보 집합은 그대로였고, 정지선 준수 계약과 정면 충돌했다. 표현력이 없는 곳에서 임계를 조이면 남는 것은 정지뿐이다.\n\n**5. 탐욕적 제자리 회전 허용 — 종료하지 않음 (이탈 4.8 m, 복귀 251 s).**\n두 가지가 겹쳤다. (a) 동적 비용이 회전 불변이므로 회전에 대한 기울기가 애초에 0 이었고, 탐욕 규칙은 다른 항(주로 heading)의 기울기를 따라갔다. (b) 설령 방위 의존 도달거리를 넣었더라도 `reach(ψ) = min(hl/|cosψ|, hw/|sinψ|)` 는 **단봉이 아니다** — ψ*=33.69°(모서리)에서 최대 0.3606 이다. 실측 지배 기하의 상대 방위(내 집계: 계측 16건의 |방위| 중앙 58.3°)는 그 언덕 근처이므로 순시 기울기를 탐욕적으로 따르면 정횡(진짜 이득)이 아니라 정면 쪽으로 간다. **따라서 방위 이득은 절대로 순시 기울기(CBF-QP 형)로 구현하면 안 되고, 롤아웃 종점/최솟값으로만 써야 한다.** 이 제약이 이번 계획의 S2 를 S1 에 종속시킨다.\n\n**그리고 침투 6 mm 해석이 왜 모두를 잘못된 길로 보냈는가.**\n\"여유를 키우면 평형이 새 경계로 옮겨갈 뿐\" 이라는 설명은 틀렸다 (침투는 평형이 아니라 샘플링 산물이다). 옳은 설명은 훨씬 단순하다: **균일 여유 증가는 임계를 옮기지만, 회피 기동이 표현 불가능한 상태에서 임계를 옮기면 로봇이 더 일찍 멈출 뿐이다.** 그리고 더 일찍 멈추는 것은 (3번이 보여주듯) 개선이 아니라 악화다. 이것이 \"여유 계열이 전부 실패했다\" 와 \"게이트가 오히려 3배 악화됐다\" 를 하나로 설명하는 유일한 진술이다.",
+   "plan": [
+    {
+     "rank": 1,
+     "title": "S0. 계측 정정 + 오프라인 재생 하네스 — 런타임 무변경, 모든 판정의 전제",
+     "mechanism": "두 가지를 동시에 한다. (a) 침투 깊이를 '필요 여유 추정치'로 읽는 모든 경로를 끊는다 — 50 Hz ground-truth 의 첫 음수 표본이므로 |v_rel|=1.0 에서 상한 20.0 mm 인 샘플링 격자이고, 내 집계로 정지 접촉 77건 최대 18.8 mm 가 한 번도 이 상한을 넘지 않음을 확인했다. 대신 avoidance.csv 에 이미 있는 min_distance_m 과 50 Hz /collision_monitor/min_distance 토픽으로 조우별 최소 부호거리를 쓴다. (b) 이미 저장된 stats_trial*.csv 197파일(약 12만 주기)과 tracks_trial*.csv 를 먹여 DwaPlanner::compute 를 오프라인 재실행하고 후보별 비용·종점·게이트 수용 여부를 덤프하는 하네스를 만든다. S1~S4 의 1차 판정이 전부 여기서 나며 신규 시행이 0회다.",
+     "files": [
+      "tools/replay_dwa.py (신규, scratchpad 또는 tools/ — src/ 런타임 무변경)",
+      "src/amr_evaluation/amr_evaluation/metrics.py (조우별 최소거리 집계 + 양의 초과분 GPD, 형상모수 안정성 그림 포함)",
+      "src/amr_evaluation/test/test_metrics.py",
+      "tests/integration/test_08_dynamic_obstacles.py (distance_m 을 여유 추정치로 읽는 경로 제거)",
+      "src/amr_navigation/include/amr_navigation/core/footprint_reach.hpp (19-25행 '84.8 %' 근거 주석 정정 — 침투 6 mm 를 필요 여유로 본 계산이라 무효)"
+     ],
+     "contracts": [
+      "TEST(CollisionMonitorModel, PenetrationIsSamplingArtifact): 20 ms 간격 1.0 m/s 상대 접근에서 기록되는 |distance| 상한이 0.0200 m 이고, 같은 조우의 최소 부호거리와 상관이 없다.",
+      "TEST(ReplayHarness, ReproducesRecordedCommands): stats_trial*.csv 의 기록된 cmd_v/cmd_w 를 재생 하네스가 주기의 95 % 이상에서 1e-6 안으로 재현한다.",
+      "TEST(Metrics, TailEstimatorIsFiniteWithZeroContacts): 모든 M_j > 0 인 표본에서도 유한한 P(M<0) 점추정과 신뢰구간을 낸다 (이항 추정은 0 만 낸다)."
+     ],
+     "falsifier": "재생 하네스가 기록된 명령을 95 % 재현하지 못한다 → 하네스가 배포 시스템을 측정하고 있지 않은 것이고, S1~S4 의 T1 증거가 전부 무효다. 이 경우 즉시 멈추고 하네스를 고친다. 두 번째: 정지 중 접촉(v_rel=1.000)에서 |distance| > 0.0200 m 인 표본이 하나라도 나오면 샘플링 산물 설명이 틀렸고 경계 포화 해석이 되살아난다 (현재 78건 최대 18.80 mm 로 상한의 94 %, 초과 0건).",
+     "expected_effect": "접촉 0건 감소 (계측·진단 전용). 그러나 이것 없이는 S1~S4 의 효과를 실현 가능한 시행 수 안에서 판정할 수 없고, 잘못된 양(6 mm)을 목표로 삼아 또 평탄한 스윕을 돈다. 148건 집계표에서 '침투 깊이' 행을 통째로 무효화하고 '게이트 수용률'(내 집계 24/142 = 16.9 %)을 새 1차 지표로 세운다.",
+     "effort": "S",
+     "risk": "낮음 — 런타임 코드 무변경, 되돌리기는 파일 삭제. 유일한 위험은 하네스 충실도이고 그것 자체가 계약으로 고정된다.",
+     "depends_on": [],
+     "domain_support": [
+      "ics-safety (P5a: 샘플링 산물 실측 확인)",
+      "prediction-reachability (P6: EVT + 데이터가 이미 있음을 확인)",
+      "crowd-freezing (묶음 출하 금지 — 귀속 불가 경고)"
+     ]
+    },
+    {
+     "rank": 2,
+     "title": "S1. 롤아웃을 가속 실현 가능(램프)으로 — 후보 변별력 복원",
+     "mechanism": "dwa.cpp:165 rollout 이 integrateArc(start, v, w, k·dt) 로 후보 속도를 T_sim 내내 등속 유지한다. v_meas=0 에서 창이 [0,0.05]×[±0.1] 이므로 342개 후보 전체의 1.5 s 종점 변위가 0.075 m, 요 변화가 0.15 rad 안에 갇힌다 — 실제 도달(저크 2.0 반영) 0.75 m / ~97° 의 1/10 수준이다. 비용 항의 해상도 이하라 argmin 이 평탄해지고 선택이 tie-break 로 떨어지며, 그 tie-break 가 정지·제자리회전을 뽑는다. rollout 을 (start, v0, w0, v_cmd, w_cmd, T) 램프 적분으로 바꾸면 '돌고 나서 가속해 빠져나간다'가 처음으로 후보로 존재한다. 이것 하나로는 기동을 만들지 않는다 — S2·S3 의 필요조건이다.",
+     "files": [
+      "src/amr_navigation/src/core/dwa.cpp:165 (rollout 본체, 램프 적분; 적분기는 RK2 명시 — Euler 는 sim_dt 0.1 s·60스텝에서 오차 누적이 무시 못 할 크기)",
+      "src/amr_navigation/src/core/dwa.cpp:519 (후보 롤아웃), :646 (prediction_time 5 s TTC 예측), :454 (게이트 후진 검사, v0=v_meas)",
+      "src/amr_navigation/src/core/dwa.cpp:524 (s_k = |c.v|·k·dt) 와 :600 (s_ref) — 호길이 색인이 등속을 전제하므로 누적 호길이로 교체 필수",
+      "src/amr_navigation/src/core/dwa.cpp:59 simTime (롤아웃 최고 속도로 재키잉 — dwa.hpp §4 의 T_sim(v)·v ≥ s_stop(v) 불변식 유지)",
+      "src/amr_navigation/include/amr_navigation/core/dwa.hpp (rollout 시그니처·주석)"
+     ],
+     "contracts": [
+      "TEST(Dwa, RampRolloutSeparatesEscapeFromFreeze): v_meas=0·창 [0,0.05] 에서 v_cmd=0.05 후보의 1.5 s 종점 변위가 ≥ 0.60 m 이고 v_cmd=0 후보는 0.0 m 다 (현재는 0.075 m 대 0.0 m 로 같은 자릿수라 비용 항이 구별하지 못한다).",
+      "TEST(Dwa, FirstStepStaysInsideTheOneCycleWindow): 모든 호출에서 |res.v − in.v_meas| ≤ acc_lim_x·control_period + 1e-9 이고 |res.w − in.w_meas| ≤ acc_lim_theta·control_period + 1e-9 다 — 방출 명령은 sim_dt(0.1 s)가 아니라 control_period(0.05 s)에서 뽑아야 한다.",
+      "TEST(Dwa, RolloutIsExactArc 유지): v0=v_cmd 로 부르는 등속 경로가 남아 기존 시험 172행이 그대로 통과한다.",
+      "TEST(Dwa, CycleTimeBudget): 50 ms 상한을 **완화하지 않는다** (출하 조건)."
+     ],
+     "falsifier": "재생 하네스에서 램프 롤아웃 적용 후에도 v<0.05 구간의 **후보 비용 최대−최소가 1e-6 이하**로 남으면 평탄 argmin 진단이 틀린 것이고, 그러면 원인은 표본화가 아니라 J_path/J_off 의 지배다 (그 경우 S2·S3 를 중단하고 비용 구조로 방향을 바꾼다). 부차: `vo_saturated` 진입률과 v=0 출력 주기 비율이 안 줄면 같은 결론.",
+     "expected_effect": "접촉 직접 감소는 주장하지 않는다 (변별력 회복이지 기동 생성이 아니다). 148건 집계표에서 겨냥하는 항목은 'DWA 자체가 v=0 을 출력 27건' 과 '접촉 시 속도 < 0.05 m/s 77건(52 %)' 의 **전제 조건**이다. T1 관측량: 종점 변위 분산 10배 이상 증가, 후보 비용 분산 0 → 유한. 이것이 안 나오면 S2·S3 는 의미가 없다.",
+     "effort": "M",
+     "risk": "중간. 호길이 색인 2곳을 놓치면 J_clear 기준점이 어긋나 여유 항이 통째로 뜻을 잃는다 (제안서 3건이 이 결함을 놓쳤다). 되돌리기는 rollout 시그니처 복원 한 커밋. 계약 재협상 필요: test_dwa.cpp:172 RolloutIsExactArc(위임 경로로 보존), :134 SamplingGridZeroColumnAndBrake.",
+     "depends_on": [
+      "S0"
+     ],
+     "domain_support": [
+      "ics-safety (P3)",
+      "vo-multiagent (P1, 저크 2.0 반영해 13.3배→10배 정정)",
+      "crowd-freezing (P2)",
+      "mpc-optimization (제안 4, 단 '증분 0' 주장은 기각)"
+     ]
+    },
+    {
+     "rank": 3,
+     "title": "S2. 동적 장애물 기하를 방위 의존으로 — 단, 롤아웃 최솟값으로만 (순시 기울기 금지)",
+     "mechanism": "dwa.cpp 의 동적 술어가 전부 스칼라 외접원 0.361 을 쓴다. 외접원은 SO(2) 불변이므로 v=0 에서 차동 구동이 가진 유일한 입력(회전)이 보행자를 아는 유일한 비용항의 영공간에 놓인다. footprint_reach.hpp 가 이미 있고 test_footprint_reach.cpp 로 시험까지 통과하는데 grep 결과 **프로덕션 호출 0건** — 구현이 아니라 배선만 없다. 반드시 지켜야 할 제약: reach(ψ)=min(hl/|cosψ|, hw/|sinψ|) 는 ψ*=33.69° 에서 **최대**(0.3606)라 단봉이 아니다. 내 집계로 계측 16건의 |상대방위| 중앙이 58.3° 로 그 언덕 근처이므로, 순시 기울기를 탐욕적으로 따르면 정면으로 간다 — 과거 '탐욕 회전이 종료하지 않음'의 정확한 설명이다. 따라서 **롤아웃 전 구간 최솟값으로만** 평가하며, 이것이 S2 를 S1 에 종속시킨다.",
+     "files": [
+      "src/amr_navigation/src/core/dwa.cpp:408, :428 (in_body β 판정 → footprintReachTo, 현재 자세 하나라 방위가 정확하다)",
+      "src/amr_navigation/src/core/dwa.cpp:667 (TTC 접촉 반경 R → 자세별 reach; firstContactTime 의 구간별 2차 근이 무효가 되므로 **구간 양 끝 reach 의 min** 을 쓰는 보수 근사 오버로드를 velocity_obstacle.hpp/cpp 에 추가)",
+      "src/amr_navigation/src/core/velocity_obstacle.cpp (자세 열을 받는 firstContactTime 오버로드; 기존 스칼라 오버로드는 test_collision.cpp:164 회귀 보존용으로 남긴다)",
+      "src/amr_navigation/include/amr_navigation/core/dwa.hpp (DwaConfig 에 footprint_half_length 0.30 / footprint_half_width 0.20)",
+      "src/amr_navigation/src/ros/dwa_controller.cpp:206 근방 (footprintOf(*costmap_ros_) 의 max|x|·max|y| 로 채우는 3줄 헬퍼 — 유일한 신규 API)"
+     ],
+     "contracts": [
+      "TEST(Dwa, YawTowardNarrowFaceRaisesInternalTtc): v_meas=0, 상대 방위 ψ=45°·거리 0.55 m 의 1.0 m/s 트랙에 대해 정횡 쪽으로 도는 후보의 DWA 내부 TTC 가 반대로 도는 후보보다 엄격히 크고, 외접원 모델에서는 두 값이 1e-9 안에서 같다 (= 현재는 구별 불가임을 같은 시험이 못박는다).",
+      "TEST(Dwa, ReachIsEvaluatedOverTheRolloutNotInstantaneously): 꼬리가 장애물 쪽으로 휘두르는 후보(종점 reach 는 좋지만 중간에 나빠지는)가 기각된다 — 종점만 보면 통과하는 기하를 시험이 포함한다.",
+      "TEST(Dwa, ReachNeverGoesBelowTheGuaranteedMinimum): 어떤 방위·어떤 롤아웃에서도 쓰이는 반경이 footprintReachMin(0.30,0.20)=0.200 미만으로 내려가지 않는다."
+     ],
+     "falsifier": "S2 적용 후 재생에서 좁은 면을 향한 회전을 실제로 **명령**했는데 그 조우의 조우별 최소 부호거리가 개선되지 않는다 → 회전 권한이 게이트 ω 상한(safety_gate.cpp:857 `angular_limit = min(1.5, u_cap/0.361)`, CRITICAL 존에서 0.554 rad/s)에 먹혔거나, 회전에 드는 시간 동안 보행자가 그만큼 좁혀 이득이 상쇄된 것이다. 그러면 S2 의 독립 효과는 0 이고 S3 의 백업 검증 안에서만 의미가 있다. 두 번째: 접촉 시 |상대방위| 분포가 정횡 쪽으로 이동하지 **않으면** 계획기가 회전을 고르지 않은 것이다.",
+     "expected_effect": "'기하 표현 손실'(집계표 기제 4)을 제거한다. 방위 여유 자체는 실재한다 — 내 집계로 계측 16건의 요 이득(현재 자세 reach − reach_min) 중앙 37.1 mm / 최대 110.9 mm, 정횡 밴드(≥66°)는 5/16 뿐이라 대부분 구제 가능 방위다. **다만 이것을 침투 6 mm 와 비교하면 안 된다 (S0 에서 무효화됨)** — 비교 대상은 조우별 최소 부호거리이고 그 값은 S0 이후에야 나온다. 단독 접촉 감소는 추정 불가: 회전을 비용 함수에 **보이게** 만드는 필요조건이지 그 자체가 기동을 만들지 않는다. S1 없이 넣으면 효과 0 을 예상한다.",
+     "effort": "M",
+     "risk": "중간. **절대 하면 안 되는 3곳을 명시한다:** (a) ttc.hpp TtcParams::robot_radius — obstacle_tracker_node → safety_node → 게이트 TTC 속도 제한으로 가므로 줄이면 게이트 거부권이 직접 약해진다(절대 제약 위반). (b) dwa.cpp:552 VO 합성 반경 — chordVelocity 가 τ 구간을 하나의 등가 직선으로 압축해 단계별 요가 없으므로 순시 reach 를 꽂으면 회피 시험이 **느슨해진다**. (c) crossing_yield.cpp:162 통로 반폭 — 요가 정지선을 움직이고 정지선이 요를 움직이는 되먹임(결정 진동 s8a 31회/410주기)을 새로 만든다. 계약 재협상: test_dwa.cpp:1010 InsideTheBodyCylinderDoesNotPickAPureSpin 을 '무조건 회전 금지' 에서 '정확 여유가 엄격히 증가할 때만 허용' 으로 재작성해야 한다.",
+     "depends_on": [
+      "S0",
+      "S1"
+     ],
+     "domain_support": [
+      "geometry (P1/P2)",
+      "mpc-optimization (제안 3 — 게이트가 이미 직사각형을 쓰는데 계획기만 원이라는 모형 불일치 지적)",
+      "prediction-reachability (경고 3: 죽은 코드 배선이 XL 대안보다 싸다)",
+      "ics-safety (P2, 단 기각 3곳 동일)"
+     ]
+    },
+    {
+     "rank": 4,
+     "title": "S3. 정지 백업을 검증된 회피 백업으로 교체 — gatekeeper 방식 커밋 궤적 필터",
+     "mechanism": "안전 판정 집합 자체가 틀렸다는 부분을 고치는 유일한 항목이다. 현재 암묵 백업 정책은 정지 하나인데, 1.0 m/s 비협조 보행자 앞의 정지는 braking-ICS 이므로 종단 집합 {v=0} 이 제어불변이 아니고 recursive feasibility 가 존재하지 않는다. 매 주기 '공칭 궤적 접두부 + 백업 기동 접미부'를 짧은 유한 지평으로 전방 적분해 검증하고, 검증 통과 후보만 남긴다. 검증 실패 시 직전 커밋 궤적을 계속 실행한다. 안전 게이트는 한 줄도 건드리지 않는다 — 필터는 게이트 **상류**에서 후보 집합을 좁히기만 하므로 거부권 단방향성이 유지된다.",
+     "files": [
+      "src/amr_navigation/include/amr_navigation/core/commit_filter.hpp (신규, ROS 비의존)",
+      "src/amr_navigation/src/core/commit_filter.cpp (신규)",
+      "src/amr_navigation/src/core/dwa.cpp (VO 판정 :556 과 비용 계산 사이에 인증 단계; DwaCandidate 에 backup_min_d)",
+      "src/amr_navigation/src/ros/dwa_controller.cpp:482-484 근방 (직전 커밋 궤적 상태를 DWAController 멤버로 — DwaPlanner::compute 는 const 이고 config_ 만 들고 있다)",
+      "src/amr_navigation/src/ros/dwa_controller.cpp:560 (dwa/stats 배열 뒤에 icsFlag, ics_margin 2칸 append — 기존 인덱스 불변)"
+     ],
+     "contracts": [
+      "TEST(CommitFilter, StopBackupFailsAgainstCrossingPedestrian): 로봇 v=0, 1.0 m/s 보행자가 β=0.30 m·거리 1.2 m 로 접근 — 제동·정지 유지 백업은 검증 실패하고, 백업 집합 중 최소 1개가 통과하며, 선택된 명령이 |v| + 0.361·|ω| ≥ 0.05 로 정지가 아니다.",
+      "TEST(CommitFilter, BackupIsIntegratedUnderTheGatesActualLimits): 백업 롤아웃이 존 거리 → u_cap → ω 상한(safety_gate.cpp:857 의 min(1.5, u_cap/0.361), CRITICAL 에서 0.554 rad/s)을 함께 적분한다 — ω=1.5 로 검증한 백업이 게이트에서 0.554 로 깎이면 '검증한 궤적'과 '실행되는 궤적'이 달라져 증명이 무효가 된다.",
+      "TEST(CommitFilter, BackupIsCheckedAgainstTheStaticCostmapToo): 백업이 가속하며 랙 포켓(축~랙 0.99 m)으로 들어가는 기하에서 기각된다 — 보행자 부호거리만 보면 통과한다.",
+      "TEST(Dwa, CycleTimeBudget): 50 ms 상한 유지. top-K 제한(K=32)은 선택이 아니라 **필수** — 백업마다 footprint_cost 코스트맵 조회가 들어 전수 인증은 현재 부하의 배가 된다."
+     ],
+     "falsifier": "**이 계획 전체의 사활이 걸린 반증이다.** 조우 첫 주기부터 백업 집합 전체가 검증 실패하는 주기 비율이 committed 구간의 80 % 를 넘으면 → recursive feasibility 의 초기 조건이 경로 위에 존재하지 않는다는 뜻이고 (경로 9.00 m 중 8.49 m 가 보행자 밴드 안, 최장 공백 0.25 m), 이는 이미 3배 악화로 반증된 '횡단 게이트'와 **같은 벽**이다. 그 경우 S3 는 상시 대체 경로로 떨어져 게이트 실험을 되풀이하므로 즉시 되돌리고, 전역 경로를 손대지 않는 한 백업 계열 전체를 포기해야 한다. 두 번째 반증: icsFlag 가 한 번도 참이 아니었는데 접촉이 나면 실패 원인이 백업 집합 크기가 아니라 검증 술어의 모형(등속 예측 / 기하 / 게이트 상한 미반영)이다.",
+     "expected_effect": "148건 집계표의 지배 항목을 직접 겨냥한다: '접촉 시 로봇 속도 < 0.05 m/s 77건(52 %)' 과 'yield_state=committed 128건(86.5 %)'. worker_crossing 128건은 속도가 109건 정확히 1.000 / 19건 0.998 m/s 로 예측 오차가 사실상 0 이라 논증이 성립하지만, worker_random 20건에는 같은 논증이 서지 않는다. **정직한 기대치는 2~5배이고, 목표 10~20배는 S1+S2+S3 가 모두 들어갔을 때만 논의 가능하다.** 문헌 어디에도 10~20배를 뒷받침하는 근거는 없다 (ICRA 2025 의 0 %/100 % 는 12에이전트 상호회피 QP 의 실행불가능성이지 1:1 비협조 기하의 접촉률이 아니다).",
+     "effort": "L",
+     "risk": "높음 — 이 계획에서 가장 위험한 단계이고 그래서 마지막에서 두 번째다. 과보수로 인한 상시 개입이 이탈 1 m·복귀 5 s 예산을 깨뜨릴 수 있으며, 인용 문헌 자신이 이를 예고한다 (Kim 외 arXiv:2604.02401: '안전을 백업 기동의 실행 가능성으로 판정하는 것이 보수성의 주된 원인'; Backup CBF 의 공칭 정책 유지율 28.8 % 는 reach-avoid 에서 목표 도달 실패). 백업이 무충돌 이동 후보를 하나도 남기지 않을 때 **제동 후보를 제거해서는 안 된다** (no_valid_patience 10 주기 뒤 BT 예외로 빠진다).",
+     "depends_on": [
+      "S0",
+      "S1",
+      "S2"
+     ],
+     "domain_support": [
+      "ics-safety (P1)",
+      "mpc-optimization (제안 1·2)",
+      "crowd-freezing (P1)",
+      "vo-multiagent (진단: 정지는 항상 VO 안 → passive safety 만 남는다)"
+     ]
+    },
+    {
+     "rank": 5,
+     "title": "S4. 게이트 수용성을 계획기의 tie-break 선호로 — 계획기 상한을 올리는 유일한 문",
+     "mechanism": "일곱 분야 중 아무도 제안하지 않았고, 내 실측이 필요성을 확정한 항목이다. gate 열이 있는 접촉 142건 중 **24건(16.9 %)이 cmd_v > 0.05 인데 gate_out_v < 0.05** — 계획기가 살아 있는 탈출 명령을 냈는데 게이트가 죽였다. 게이트가 합법적으로 열어 주는 유일한 문은 safety_gate.cpp:582 yieldEscapeAllowed 이고 그 증명 조건은 (i) 명령 예측 구간 동안 트랙 진행선까지 가로거리가 한 단계도 줄지 않고 끝에서 min_gain 이상 늘 것, (ii) distanceToRectangle 로 잰 **직사각형** 몸 여유가 서 있을 때보다 나빠지지 않을 것이다. 차동 구동의 최대 선회는 뒤 모서리를 장애물 쪽으로 휘두르므로 (ii)에 계통적으로 걸린다. 이 두 술어를 계획기 안에서 **하드 필터가 아니라 tie-break 선호**로 평가하면, 계획기가 고르는 후보와 게이트가 승인하는 후보가 처음으로 같은 기하 위에 놓인다. 게이트는 한 줄도 바꾸지 않는다.",
+     "files": [
+      "src/amr_navigation/src/core/commit_filter.cpp (S3 의 백업 인증 안에 게이트 수용성 술어를 추가 — 별도 모듈을 만들지 않는다)",
+      "src/amr_navigation/src/core/dwa.cpp:734 근방 주 선택 루프와 :795 근방 vo_saturated tie-break (동률 시 게이트 수용 후보 우선)",
+      "src/amr_navigation/src/ros/dwa_controller.cpp:560 (dwa/stats 에 gate_admissible 비율 1칸 append)"
+     ],
+     "contracts": [
+      "TEST(Dwa, PrefersCommandsTheGateWillActuallyAdmit): 여유가 같은 두 후보 중 (i) 진행선 가로거리 단조 증가 (ii) 직사각형 몸 여유 비감소 를 만족하는 쪽이 선택된다.",
+      "TEST(Dwa, GateAdmissibilityIsAPreferenceNotAHardFilter): 게이트 수용 후보가 하나도 없을 때 제동 후보가 남아 no_valid_patience 예외로 빠지지 않는다.",
+      "TEST(Dwa, NoBehaviourChangeWithoutADynamicTrackInTheBodyCylinder): 동적 트랙이 몸 원통 밖이면 선택 결과가 S3 시점과 비트 단위로 같다 (A/B 환원성)."
+     ],
+     "falsifier": "재생에서 게이트 수용률(탈출 의도 명령 중 yieldEscapeAllowed 통과 비율)이 올랐는데 접촉 시 gate_out < 0.05 비율이 안 떨어지면 → 감쇠의 출처가 TTC 채널이 아니라 존 상한(u_cap)이나 STOP 래치이고, 계획기 쪽 형상 조정으로는 닿을 수 없다. 그러면 S4 는 되돌리고 남은 24건은 계획기 사거리 밖으로 확정 기록한다. 두 번째: 게이트 수용률은 올랐는데 조우별 최소 부호거리가 나빠지면 수용 가능한 명령이 곧 안전한 명령은 아니라는 뜻이고, tie-break 우선순위를 비용 아래로 내려야 한다.",
+     "expected_effect": "148건 집계표에 없는 항목을 새로 겨냥한다 — 내가 집계한 **24/142(16.9 %)의 '게이트가 살아 있는 명령을 죽인' 접촉**. 이것이 계획기 전용 변경의 실효 상한을 결정한다. mpc 분야는 이 상한을 '61건/34건 → 계획기 상한 4.0 %→0.9 %' 로 봤는데 **실측은 그보다 훨씬 유리하다**: S1~S3 의 사거리가 83 % 이지 60 % 가 아니다. 다만 이 24건이 고정된 벽은 아니다 — 게이트의 증명을 통과하는 탈출을 계획기가 내면 열린다. 그것이 S4 의 전부다.",
+     "effort": "M",
+     "risk": "중간. tie-break 우선순위를 잘못 두면 게이트 친화적이지만 여유가 나쁜 후보를 고를 수 있다 — 반드시 **하드 필터가 아니라 동률 판정**으로만 넣고, 비용/여유 기준 아래에 둔다. 되돌리기는 tie-break 조건 한 줄. 안전 게이트를 건드리지 않으므로 거부권 단방향성은 정의상 유지된다.",
+     "depends_on": [
+      "S0",
+      "S3"
+     ],
+     "domain_support": [
+      "mpc-optimization (경고: '게이트를 합법적으로 통과하는 유일한 문' 분석 — 다만 상한 수치는 내 실측으로 정정)",
+      "ics-safety (P1 blocking_issues: 백업이 게이트에 계통적으로 걸린다)",
+      "geometry (게이트는 이미 직사각형을 쓰는데 계획기만 원이다)"
+     ]
+    }
+   ],
+   "rejected": [
+    "**전역 SIPP / 시공간 A\\* (spacetime P1, prediction-reachability P1, geometry P4)** — XL 이고 저장소에 두 개의 전제가 없다: (a) astar_planner.cpp 는 nav2_core::GlobalPlanner 플러그인으로 create_subscription 이 0건이라 동적 트랙 입력이 없다, (b) 일정(도착시각 스케줄)을 읽는 소비자가 하류에 없다 — dwa_controller.cpp 는 메시지 전체의 header.stamp 만 쓰고 포즈별 stamp 를 읽는 코드가 없다. 게다가 nav2_params.yaml:104 max_vel_x = 1.0 이므로 '앞서 통과'(1.22 m/s 필요) 분기가 **존재하지 않는다** — 남는 유일한 해는 '대기'이고 그것이 정확히 3배 악화로 반증된 횡단 게이트다. 시간축 진단 자체도 부정확하다: crossing_yield.cpp:271-281 이 이미 [t_in,t_out] vs [t_r_in,t_r_out] 를 비교한다.",
+    "**VO 를 하드 기각에서 슬랙 비용으로 (vo-multiagent P2)** — 마지막 방어선을 완화하는 변경인데, 남는 유일한 하드 제약이 여전히 현(chord) 근사(dwa.cpp:552 chordVelocity)와 회전 불변 외접원이다. 순 안전 퇴행이다. 통과 중인 계약 2개(test_dwa.cpp:319 VelocityObstacleSaturationKeepsVoAndBrakes, :982 VoSaturatedEscapeStaysInsideTheDeviationBudget)를 무효화하며, 근거로 든 ICRA 2025 의 hVO 0 %/제안 100 % 는 12에이전트 홀로노믹 **상호회피 QP** 의 실행불가능성이라 구조적 유비는 전이되어도 효과 크기는 전이되지 않는다.",
+    "**vo_time_horizon 2.0 → 3.0 (ics-safety P4)** — 방향이 거꾸로다. velocity_obstacle.cpp:66 `return t <= tau ? max(0.0, t) : kInf` 를 직접 읽었다: τ 를 키우면 유한 판정(= VO 기각)이 **단조로 늘어난다**. 게다가 포화가 실제로 일어나는 영역에서는 τ 가 무관하다 — 같은 파일 55행이 ‖p‖ < R 이면 τ 를 보지 않고 `closing > 0 ? 0.0 : kInf` 를 낸다. 128건의 committed 접촉은 전부 그 안쪽이다.",
+    "**ttc.hpp TtcParams::robot_radius 축소 (geometry P2 의 일부)** — 즉시 탈락. 추적: obstacle_tracker_node.cpp:137 이 이 값으로 TrackTtc 를 만들고 safety_node.cpp:409 가 gate_->setTracks 로 넣어 게이트의 TTC 속도 제한(v ≤ a·(TTC − t_react))을 만든다. 0.361 → 0.200 은 게이트의 거부권을 직접 약화시킨다 = 절대 제약 위반.",
+    "**drop_spin 단독 제거 (geometry P1(f), mpc 제안 3(f), crowd P5 C부)** — 세 분야가 '필수 동반 수정'이라고 했지만 코드를 읽으면 긴급도가 다르다: drop_spin 은 `if (best == nullptr && n_valid > 0)` 의 **vo_saturated 분기 안에만** 있다. 주 선택 루프에서는 후보가 비용으로 순위가 매겨지므로 S2 의 방위 의존 기하는 drop_spin 과 무관하게 선택을 바꾼다. 따라서 '고치지 않으면 거동이 0 만큼 바뀐다'는 과장이다. 그러나 **단독 제거는 금지** — 실측된 접촉 기제(reg1 시행 12/13, v=0.000·w=+0.4~1.0 의 순수 제자리 회전)를 되살린다. S2 의 '정확 여유가 엄격히 증가할 때만 허용'으로 조건화한 뒤에만 손댄다. 정확히 어느 인구가 saturated 분기에 있는지는 S0 재생이 측정한다 — 가정하지 않는다.",
+    "**Contingency MPC 2분기 (mpc 제안 6)** — H2 가 '보행자가 정지하거나 비킨다'인데 우리 actor 는 contacts.csv 실측 128/148 이 정확히 1.000 m/s 이고 스크립트상 로봇을 전혀 피하지 않는다. 확률 0 인 가설로 명목 비용을 매기는 것은 보수화가 아니라 실패 모드 쪽 편향이다. 살릴 것은 t_post 계측 하나뿐이고 그것은 S3 의 ics_margin 에 흡수된다.",
+    "**IMM 왕복(shuttle) 운동모델 (spacetime P4)** — gen_warehouse_world.py 의 `shuttle((-6,-7),(6,-7),1.0)` 을 정조준하므로 평가 시나리오 적합(overfitting)의 경계선이다. 더해서 전제가 미검증: max_misses 5 스캔(0.5 s)·max_misses_occluded 15 스캔(1.5 s) 이라 랙에 1.5 s 넘게 가리면 트랙이 죽고 새 id 로 태어나 '반전 두 번'을 한 트랙에서 못 본다. worker_random 20건에는 원천적으로 무효.",
+    "**HJ reach-avoid 값함수 테이블 (prediction-reachability P2)** — XL 이고 플랜트 모델이 실제 게이트와 위험한 방향으로 다르다. 제안은 '부호거리 ≤ 0.3 에서 v ≡ 0 흡수'를 가정하지만 safety_gate.hpp 는 stop_release_distance 0.50 으로 '운동이 바뀌어 멀어지면 바로 해제 — 갇힘 없음'을 계약으로 명시하고, escapeAllowed/yieldEscapeAllowed 가 여유를 늘리는 명령을 이미 면제한다. 영구 v≡0 플랜트로 푼 V 는 랙 통로(여유 1.202 m) 전체를 V<q 로 만들어 상시 비상 기동 = 횡단 게이트의 실패 서명을 재현한다.",
+    "**보수적 전진(CA) 기반 연속시간 TOI 를 독립 항목으로 (geometry P3)** — 근거였던 '154.1 mm 이산 검사 맹점'은 동적 경로에 해당하지 않는다. velocity_obstacle.cpp:82-100 을 직접 읽었다: firstContactTime 은 구간마다 상대 위치를 선형 보간해 2차 근을 푸는 **연속** 판정이고, 그 선형화 오차는 현 오차 (v/ω)(1−cos(ωΔt/2)) 로 v=0.5·ω=1.5·Δt=0.1 에서 약 0.9 mm 다. 독립 효과 0. 다만 S2 가 R 을 자세 의존으로 만들 때 구간별 2차 근이 무효가 되므로, 그 자리는 CA 가 아니라 **구간 양 끝 reach 의 min 보수 근사**로 닫는다 (더 싸고 결정론적 실행시간).",
+    "**in_body 임계를 지지함수로 낮추기 (geometry P5)** — 부호가 서로 반대인 두 거동을 동시에 바꾼다. in_body 가 참이면 후진 창이 열리는 동시에 dwa.cpp:437-444 의 `if (!in_body) v_hi = min(v_hi, max(v_meas,0))` 클램프가 **꺼져 가속 권한이 살아난다**. 임계를 낮추면 덫 진입도 줄지만 가속 권한도 같이 준다 — 순효과의 부호가 선험적으로 정해지지 않는다. S1~S4 가 접촉을 실제로 줄인 뒤 **독립 변경으로** 따로 측정해야 하며, 이번 주기에 넣으면 귀속이 불가능해진다.",
+    "**IGP / ORCA / social force 계열 전부** — 협조 가정 위에 서 있는데 Gazebo actor 는 결정론적 스플라인을 따라가며 로봇을 인지조차 하지 않는다. 명세의 'Velocity Obstacle 또는 ORCA' 문언은 현재 구현(velocity_obstacle.cpp 의 상호성 없는 Fiorini–Shiller 절단 VO)으로 이미 충족되며 — 오히려 비반응 보행자에게는 ORCA 가 틀린 선택이다 (회피 부담의 남은 절반을 아무도 지지 않는다). 이 근거를 docs 에 문서화할 것을 권고한다 (코드 변경 아님)."
+   ]
+  }
+ ],
+ "refutations": [
+  {
+   "verdict": "수정필요",
+   "best_single_first_step": "**R1+R2 를 하나의 분리 불가 변경으로 착수한다: 롤아웃을 가속 실현 가능(램프) 적분으로 바꾸고, 동시에 표본을 1주기 도달 속도가 아니라 지속 목표 명령 [0, v_cap] x [±max_vel_theta] 으로 잡는다 (방출은 control_period 0.05 s 시점의 램프 상태 → 하류 계약 불변). 단 판정은 p05 가 아니라 기제 지표로만 한다.**\n\n왜 이것인가 — 콘 기하로 계산한 결손 배수가 이 항목만을 가리킨다.\nv_meas=0 에서 achievable v_eff 는 |v_eff| <= 0.05 m/s 이므로, w_rel = v_eff − o_v (|o_v|=1.000, 실측 128/148) 는 −o_v 둘레 반경 0.05 의 원반이다. 즉 후보 전체가 만드는 상대속도 **방향 스팬이 ±asin(0.05/1.0) = ±2.87°** 다. 반면 VO 콘 반각은 asin(R_vo/d):\n- d=1.6 m (접촉 1.0 s 전, 정지 로봇 기준): 34.7° → 탈출에 |v_eff| >= R/d = **0.569 m/s** 필요 (창의 11.4배)\n- d=2.6 m (2.0 s 전): 20.5° → **0.350 m/s** 필요 (7.0배)\n- d<=0.911 m: 콘이 아니라 조기 반환 영역 — 어떤 속도로도 탈출 불가\n\n**여유(margin)를 0 으로 해도 (R=0.611) 필요치는 0.382 / 0.235 m/s 로 여전히 창의 4.7~7.6배다.** 따라서 결손은 술어의 *모양*(현↔호, 원↔직사각형)이 아니라 achievable set 의 *크기*(스칼라 |v_eff|)에 있고, 이를 바꾸는 항목은 두 계획 통틀어 R2 뿐이다. (계획 2 에는 R2 에 해당하는 항목이 아예 없다 — 이것이 두 계획의 결정적 차이다.)\n\n착수 조건 3가지 (아래 required_fixes 와 연동):\n1. 판정은 **saturation_fraction = (n_vo_rejected == n_valid)** — n_samples 가 아니다 (dwa.cpp:741 및 test_dwa.cpp:332 의 기존 계약) — 과 **후보 |v_eff| 스팬**으로만 한다. p05 는 쓰지 마라 (반증됨).\n2. 같은 커밋에서 J_dyn 을 고쳐라. 안 고치면 R2 가 만든 빠른 후보가 dwa.cpp:675 에서 정확히 최대 벌점을 받아 효과가 상쇄된다.\n3. 성공 기준은 \"접촉 감소\" 가 아니라 \"명령된 |v_eff| 가 0.35~0.57 m/s 대역에 **도달하는가**\" 다. 저크 2.0·가속 1.0 에서 0.35~0.57 m/s 까지 램프에 0.35~0.57 s 가 걸리고 포화 개시~접촉이 1.0~1.5 s 이므로 시간 예산은 아슬아슬하게 있다. 도달 자체가 안 되면(게이트가 램프 중 깎으면) R1+R2 도 독립 효과 0 이고, 그때 남는 길은 R5/S3 가 아니라 **게이트 수용성**(S4 계열) 이다.\n\n관련 파일 (모두 절대경로):\n- /tmp/claude-0/-home-CAPYI/c8bfdadc-8698-4d09-aac1-e3c1224c9abc/scratchpad/wt-integ/src/amr_navigation/src/core/dwa.cpp (59 simTime, 107 dynamicWindow, 135 sampleVelocities, 165 rollout, 524/600 호길이 색인, 675 J_dyn, 741 포화 판정)\n- .../src/amr_navigation/src/core/velocity_obstacle.cpp (18 chordVelocity, 51 및 80 조기 반환)\n- .../src/amr_navigation/config/nav2_params.yaml (109-113 표본·지평, 158-162 dynamic_margin 0.5 / vo_margin 0.3)\n- .../src/amr_navigation/test/test_dwa.cpp (319 VelocityObstacleSaturationKeepsVoAndBrakes, 893 CycleTimeBudget)",
+   "attacks": [
+    {
+     "target": "계획 1 R3 (핵심 항목): \"chordVelocity+velocityObstacleTime 하드 판정을 삭제하고 하드 제약을 램프 롤아웃 위 firstContactTime 하나로 통일하면 포화가 사라진다\"",
+     "attack": "대체 술어가 **같은 축퇴를 더 큰 반경으로** 갖는다. 제안된 firstContactTime 은 velocity_obstacle.cpp:80 에서 `if (r0.x*r0.x + r0.y*r0.y < R*R) return 0.0;` 를 실행한다. r0 = traj[0] − obs.predict(0) 은 **후보 (v,w) 와 무관한 현재 상대 위치**이므로, 이 분기가 걸리면 342개 후보 전부가 동일하게 0.0 을 받는다 — velocityObstacleTime(velocity_obstacle.cpp:51)의 조기 반환과 구조적으로 동일하다. 게다가 호출 반경이 더 크다: dwa.cpp:667 은 R = robot_radius + o.radius + dynamic_margin = 0.361+0.25+0.50 = **1.111 m** 인 반면 VO 는 dwa.cpp:552 에서 0.361+0.25+0.30 = **0.911 m** 다. 즉 R3 는 눈먼 구간을 없애는 것이 아니라 **반경 0.20 m 만큼 바깥으로 넓힌다.** R3 자신이 사활 조건으로 건 \"saturation_fraction 이 20 % 아래로\" 는 구성상 달성 불가다.",
+     "evidence": "velocity_obstacle.cpp:79-82 (조기 반환, 후보 독립). dwa.cpp:667-668 (R=1.111), dwa.cpp:552 (R=0.911). 실측 logs/**/contacts.csv 148행 중 유한 ||p|| 147건: 중앙 0.594 m, **최대 0.659 m** → 147/147 (100 %) 가 0.911 과 1.111 **양쪽 모두 안쪽**. 두 술어의 눈먼 비율이 동일(99.3 %, nan 1건 제외 시 100 %)하다.",
+     "survives": false
+    },
+    {
+     "target": "계획 1 진단 기둥 (3): \"접촉 시 ||p|| 가 R_vo 안이라 조기 반환이 걸려 모든 접근 후보가 vo_time=0 으로 동률 기각된다 = 포화의 원인\"",
+     "attack": "포화는 조기 반환이 **물리적으로 불가능한 거리에서 이미 전면적**이다. 접촉 시각 기준 시간 구간별로 vo_rejected 를 집계하면 t−1.0 s 에서 이미 48.3 % 가 완전 포화(342 또는 353 = 전 샘플)다. 접촉의 52 % 가 로봇 정지 상태이고 보행자가 1.000 m/s 이므로 t−1.0 s 의 중심간 거리는 약 1.6 m — R_vo=0.911 의 1.8배이고 R_ttc=1.111 의 1.4배라 **어느 조기 반환도 걸릴 수 없다.** 저장소 자신의 시험이 이를 못박는다: test_dwa.cpp:319 VelocityObstacleSaturationKeepsVoAndBrakes 는 **정면 3.0 m** 기하에서 vo_saturated=true, n_vo_rejected==n_valid 를 단언하며 주석이 원인을 \"좁은 창(±0.05 m/s)의 모든 샘플이 VO 안\" 이라고 이미 적어 두었다. 즉 포화의 원인은 술어가 아니라 **achievable set 의 크기**이고, R3 는 증상을 고치는 항목이다. R3 가 R4·R5 의 선행조건으로 걸려 있으므로 계획 1 의 순위 구조 전체가 이 오진 위에 서 있다.",
+     "evidence": "접촉↔stats 조인 129건, 구간별 완전포화율: t−0.0 s 78.8 %, t−0.5 s 70.5 %, t−1.0 s **48.3 %**, t−1.5 s 35.0 %, t−2.0 s 24.4 %, t−2.5 s 8.9 %. logs/**/stats_trial*.csv 126,716 주기에서 vo_rejected 의 최빈 비영값이 정확히 342(4,171회)와 353(427회) = n_samples 두 값. test_dwa.cpp:321-326 (d=3.0 m 에서 포화 단언).",
+     "survives": false
+    },
+    {
+     "target": "계획 1 R0 / 측정 설계 2층 전체: \"p05(min_distance) 는 가정이 아니라 검증된 대리 지표다 (r=−0.826, Cohen d=1.48). 팔당 633 시행이 아니라 90~120 시행이면 좌측 꼬리 이동을 가른다\"",
+     "attack": "**상관이 순환이다.** 시행 단위 접촉률이 2.98 % 인데 p05 는 5분위수다. 즉 접촉이 있는 실행에서 p05 는 접촉 그 자체(음수 min_distance)를 읽고 있다. 접촉 시행을 제외하고 무접촉 시행만으로 p05 를 다시 계산하면 상관이 **r = −0.842 → r = +0.091 로 붕괴**한다 (부호까지 뒤집힌다, n=141). p10 도 +0.006 이다. 따라서 p05 는 접촉률의 **선행 지표가 아니라 재기술**이며, 계획 1 이 주장하는 \"Bernoulli → 연속량 전환\" 은 일어나지 않았다. 검정력 이득이 0 이므로 \"90~120 시행\" 논거는 성립하지 않고, 오히려 5분위수 추정은 접촉 계수를 버리는 만큼 원 접촉률보다 **검정력이 낮다.** 결정적으로 계획 1 은 이 실패의 물리적 이유를 **자기가 이미 적어 두고도** 같은 함정에 빠졌다: \"actor 에 충돌체가 없어 실패는 0 을 스치는 것이 아니라 불연속으로 깊은 음수로 점프한다\" — 접촉이 근접 분포의 꼬리가 아니라면 그 꼬리의 분위수도 접촉을 예측하지 못한다. GPD 를 기각한 바로 그 논거가 p05 도 기각한다. R0 는 계획 1 의 rank-1 이고 R1~R6 전부가 depends_on 으로 걸려 있다.",
+     "evidence": "logs/**/avoidance.csv 141개 실행 4,230 시행 (min_distance_m, contacts 열). 음수 min_distance 126건 = 2.98 %. r(p05 전체 시행, 접촉률) = −0.842 / r(p05 **무접촉 시행만**, 접촉률) = **+0.091** / r(p10 무접촉만) = +0.006. 계획 1 자신이 보고한 frac(0<M<0.35) r=−0.038 과 같은 결론이다.",
+     "survives": false
+    },
+    {
+     "target": "계획 1 R0 계측 계약: \"dwa/stats 배열 [28] saturation_flag(n_vo_rejected==n_samples)\"",
+     "attack": "코드의 포화 조건과 다르다. dwa.cpp:741 의 실제 조건은 `best == nullptr && res.n_valid > 0` 이고, n_vo_rejected 는 dwa.cpp:733-737 에서 **충돌 후보를 건너뛴 뒤** n_valid 와 함께 증가한다. 따라서 충돌 후보가 하나라도 있으면 n_valid < n_samples 가 되어, 계획기가 실제로 포화했는데도 제안된 플래그는 false 를 읽는다. 랙 포켓·좁은 통로에서 충돌 후보는 흔하고, 하필 그 기하가 접촉이 몰리는 곳이다. 저장소 자신의 기존 시험(test_dwa.cpp:332)이 `EXPECT_EQ(r.n_vo_rejected, r.n_valid)` 로 올바른 불변식을 이미 쓰고 있어, R0 는 **같은 문서 안에서 자기 인용과 모순**한다. 이 플래그가 R1·R2·R3 전부의 1차 종점이므로 잘못된 정의는 모든 단계의 판정을 오염시킨다.",
+     "evidence": "dwa.cpp:733-741 (`++res.n_valid; if (c.vo_rejected) ++res.n_vo_rejected;` 가 충돌 continue 뒤), test_dwa.cpp:332 `EXPECT_EQ(r.n_vo_rejected, r.n_valid)`. 실측상 n_samples 는 342(4,171주기)와 353(427주기) 두 값을 오가므로 상수로 박을 수도 없다 (sampleVelocities 의 ω=0 열 조건부 추가, dwa.cpp:141-146).",
+     "survives": false
+    },
+    {
+     "target": "계획 1 (1) 시간 붕괴: \"Ögren·Leonard 2005 가 **정확히** 이 1-step 창 / 다단계 롤아웃 불일치를 DWA 의 수렴성 파괴 원인으로 지목한다\"",
+     "attack": "**논문이 그 주장을 하지 않는다.** 원문 PDF 를 받아 전문 추출로 확인했다. 수렴 실패를 다루는 절은 II-D \"Example of Convergence Failure of Previous Approach\" 이고, 거기서 지목하는 대상은 Brock·Khatib 의 **가중합 효용함수** Ω_g(p,v,a) = α·nf1 + β·vel + γ·goal + δ·Δnf1 이 목표 도달을 보장하지 못한다는 것이다. 논문의 처방은 MPC 를 CLF(Rimon–Koditschek 항법함수) 하강 제약 아래 두는 것 — 즉 **종단/불변 조건의 부재**가 진단이지, 창과 롤아웃의 운동학적 불일치가 아니다. 부수적 귀결이 더 중요하다: 이 논문이 실제로 지지하는 항목은 R1 이 아니라 **R5(커밋 궤적 필터 = 종단 조건 부과)** 다. 계획 1 은 정본 논문을 자기 rank-2 항목에 잘못 붙였고, 그 때문에 \"창/롤아웃 불일치\" 가 문헌적 뒷받침을 받는 것처럼 보이게 만들었다. (R1+R2 자체는 다른 근거로 살아남는다 — 아래 참조.)",
+     "evidence": "Ögren & Leonard, \"A Convergent Dynamic Window Approach to Obstacle Avoidance\", IEEE T-RO 21(2):188-195, 2005. **전문 PDF 를 열어 텍스트 추출로 확인**(csc.kth.se 저자 사본, 36,725자). 초록: \"Viewing the DWA as a Model Predictive Control (MPC) method and using the Control Lyapunov Function (CLF) framework of [4]... to propose a version of the DWA that is tractable and convergent.\" II-D: \"The Utility function of [2] that is to be maximized is Ω_g(p,v,a) = α·nf1(p,v) + β·vel(v) + γ·goal(p,v) + δ·Δnf1(p,v,a)\". 'constant velocity', 'one time step', 'single time step' 어구의 진단적 용례는 전문에 **없다**.",
+     "survives": false
+    },
+    {
+     "target": "계획 1 R4 / 계획 2 S2: \"footprint_reach 를 배선하면 omega_discrimination 이 0 에서 벗어난다 / 기하 표현 손실이 제거된다\" (두 계획 공통)",
+     "attack": "배선해도 **여유가 방위 변동폭을 20~30배로 압도**해 술어가 축퇴 상태를 벗어나지 못한다. 적용처로 지목된 dwa.cpp:667 의 반경은 R = reach + o.radius + dynamic_margin 이고 dynamic_margin = 0.5 (nav2_params.yaml:159) 이다. reach ∈ [0.200, 0.3606] 이므로 R ∈ [**0.950, 1.111**] m. 실측 접촉 기하의 ||p|| 최대가 0.659 m 이므로 **어떤 방위에서도 R 을 넘지 못하고**, velocity_obstacle.cpp:80 의 후보 독립 조기 반환이 그대로 걸려 모든 후보가 0.0 을 받는다. 즉 omega_discrimination 은 여전히 정확히 0 이고, 두 계획이 각자 건 falsifier(\"omega_discrimination 이 0 에서 벗어나야 한다 — 안 벗어나면 배선이 안 된 것\")는 **배선이 되어도 발화한다.** 두 계획 모두 ttc.hpp robot_radius 를 만지는 것을 절대 금지로 못박아 두었으므로(게이트 거부권), 여유를 줄이는 탈출로도 자기 제약으로 닫혀 있다. 실측 요 이득 중앙 37.1 mm 는 여유 500 mm 의 7.4 % 에 불과하다.",
+     "evidence": "nav2_params.yaml:159 `dynamic_margin: 0.5`, :161 `vo_margin: 0.3`. dwa.cpp:667. velocity_obstacle.cpp:80. footprint_reach.hpp:45-55 (reach ∈ [min(hl,hw), hypot] = [0.200, 0.3606]). 실측: contacts.csv 계측 16행의 (footprint_reach_m − footprint_reach_min_m) 중앙 **37.1 mm**, 최대 110.9 mm. 유한 ||p|| 147건 최대 **0.659 m**.",
+     "survives": false
+    },
+    {
+     "target": "계획 2 S1 계약: \"TEST(Dwa, RampRolloutSeparatesEscapeFromFreeze): v_meas=0·창 [0,0.05] 에서 **v_cmd=0.05 후보의 1.5 s 종점 변위가 >= 0.60 m**\"",
+     "attack": "**산술적으로 불가능하고, 계획 2 자신의 기제 서술과 모순한다.** S1 의 기제는 rollout 을 (start, v0, w0, v_cmd, w_cmd, T) 램프 적분으로 바꾸는 것뿐이다. v0=0 에서 v_cmd=0.05 로 램프하면 1.5 s 변위의 상한은 0.05 x 1.5 = **0.075 m** 이며, 0.60 m 에 도달하려면 평균 속도 0.40 m/s 가 필요해 목표 명령을 8배 초과해야 한다. 이 계약을 만족시키는 유일한 길은 표본을 1주기 창에서 떼어 내는 것 — 즉 계획 1 의 R2 — 인데 **계획 2 에는 그 항목이 없다.** S1 의 파일 목록(dwa.cpp:165/519/646/454/524/600/59)에 sampleVelocities(:135) 도 dynamicWindow(:107) 도 없다. 계획 2 는 근본 원인 (1) 에서 창 붕괴를 정확히 진단해 놓고(\"창이 [0,0.05]×[±0.1] 이므로 342개 후보 전체의 1.5 s 종점 변위가 0.075 m\") **그 창을 건드리는 처방을 한 항목도 내놓지 않았다.** 따라서 S1→S2→S3→S4 전 사슬이 0.05 m/s 로 묶인 방출 명령 위에 서 있고, 위 콘 계산이 요구하는 0.35~0.57 m/s 에 7~11배 미달한다.",
+     "evidence": "계획 2 S1 mechanism 및 contracts 본문. dwa.cpp:107 dynamicWindow (win.v_hi = min(max_vel_x, v_cap, v_c + acc_lim_x·control_period) = 0 + 1.0x0.05 = 0.05), dwa.cpp:135 sampleVelocities — 둘 다 S1 files 목록에 부재. nav2_params.yaml:105 min_vel_x 0.0.",
+     "survives": false
+    },
+    {
+     "target": "계획 2 S4 및 측정 설계 (D): \"gate 열이 있는 142행 중 cmd_v > 0.05 인데 gate_out_v < 0.05 인 접촉이 **24건 (16.9 %)**. 이것이 계획기 전용 변경의 실효 상한을 결정한다\"",
+     "attack": "실측 재집계로 **17건 (12.0 %)** 이다. 계획 2 가 41 % 부풀렸다. 같은 문단의 다른 두 수치(gate_out == 0 이 39건, 그중 18건은 DWA 자신이 0 을 냈다)는 정확히 재현되므로 산출 실수는 이 한 항목에 한정되지만, 하필 **S4 전체와 \"mpc 분야의 상한 추정이 틀렸다\" 는 정정 주장 전부가 이 숫자 하나에 걸려 있다.** 계획 2 는 이 수치를 근거로 \"S1~S3 의 사거리가 83 % 이지 60 % 가 아니다\" 라고 상한을 재설정하는데, 올바른 수치로는 88 % 이고 방향은 같지만 그 정정을 근거로 다른 분야 추정을 기각한 논증의 신뢰도가 떨어진다. 더 중요한 것은 S4 의 표적 인구가 17건(전체 148건의 11.5 %)에 불과해 **10~20배 감소 목표에 대해 원리적으로 1.13배 이상 기여할 수 없다**는 점이다 — rank-5 항목으로서도 비용 대비가 나쁘다.",
+     "evidence": "logs/**/contacts.csv 중 gate 열이 있는 142행 재집계: `cmd_v_mps > 0.05 AND gate_out_v_mps < 0.05` = **17건 (12.0 %)**. 대조 검증: `gate_out_v_mps == 0` = 39건 ✓(계획 2 와 일치), 그중 `cmd_v_mps == 0` = 18건 ✓(일치). cmd_v > 0.05 인 행은 58건, gate_out >= 0.05 는 53건.",
+     "survives": false
+    },
+    {
+     "target": "계획 2 S2 및 이전 실패 설명 5: \"실측 지배 기하의 상대 방위(내 집계: 계측 16건의 |방위| **중앙 58.3°**)는 그 언덕(ψ*=33.69°) 근처이므로 순시 기울기를 탐욕적으로 따르면 정횡이 아니라 정면 쪽으로 간다\"",
+     "attack": "**중앙값을 잘못 읽었다.** 계측 16건의 |상대 방위| 를 정렬하면 [15.2, 48.3, 52.8, 58.3, 76.9, 95.2, 102.8, 108.9, 112.5, 119.1, 120.0, 123.3, 123.7, 129.8, 131.4, 134.0]° 이고 중앙은 (108.9+112.5)/2 = **110.7°** 다. 58.3° 는 4번째 값(25분위 근처)이지 중앙이 아니다. 계획 1 은 같은 자료에서 110.7° 를 정확히 보고했다 — **두 계획이 같은 16건에서 서로 다른 중앙값을 주장하고 있고, 계획 2 가 틀렸다.** 결과적으로 계획 2 가 \"탐욕 회전이 왜 종료하지 않았는가\" 에 대해 제시한 유일한 기하 논거(방위가 언덕 근처라 기울기가 정면으로 간다)는 근거를 잃는다. 실제 방위는 접힘 기준 69.3° 로 언덕 **반대편**이라, 순시 기울기는 오히려 정횡 쪽으로 간다. 순시 기울기를 금지하라는 결론 자체는 다른 이유(회전이 vo_time 을 바꾸지 못함)로 살아남을 수 있지만, 계획 2 가 제시한 증거로는 지지되지 않는다. 그리고 이 오독 위에 S2 가 S1 에 종속된다는 순서 논거가 세워져 있다.",
+     "evidence": "logs/**/contacts.csv 중 obstacle_bearing_rel_rad 열이 있는 **16행 전수**(10개 실행). |deg| 정렬값 위와 같음, 중앙 **110.7°**. 계획 1 의 \"실측 계측 16건의 |방위| 중앙은 110.7°\" 가 옳다.",
+     "survives": false
+    },
+    {
+     "target": "계획 2 이전 실패 설명 3(b): \"게이트를 켜면 escaping 이 false 로 고정되어 in_body·후진 창·escape 비용항·drop_spin 이 한꺼번에 꺼진다 — **코드 수준 기제이고 아무도 지적하지 않았다**\"",
+     "attack": "기제 자체는 맞다(dwa.cpp:390 `escaping = !gate_on && ...`). 그러나 \"아무도 지적하지 않았다\" 가 거짓이다. **저장소의 배포 설정 파일이 바로 그 문장을 이미 적어 두었고, 그것이 yield_gate 를 false 로 되돌린 명시적 사유로 기록되어 있다.** 즉 이것은 계획 2 의 신규 발견이 아니라 이미 반영되어 폐기된 기제이며, 그 기제로 설명된 실패는 **이미 되돌려진 구성**의 실패다. 계획 2 는 이를 \"둘째가 결정적인데 아무도 지적하지 않았다\" 며 진단의 차별점으로 내세우는데, 배포 설정이 yield_gate: false 인 이상 현재 148건 접촉에는 이 경로가 **전혀 기여하지 않는다.** 근본 원인 설명력에서 이 항목은 0 이다.",
+     "evidence": "nav2_params.yaml:275-280: \"원인: 게이트가 켜지면 escaping 이 꺼지고(dwa.cpp `escaping = !gate_on && …`) 커밋된 트랙은 VO·TTC 에서도 면제되어, 예방이 실패한 순간 물러설 곳이 없다. ... yield_gate: false\". dwa.cpp:390. dwa_controller.cpp:176 `c.gate.enable = param(node, p + \"yield_gate\", false)`.",
+     "survives": false
+    },
+    {
+     "target": "계획 2 S3 위험 문단: \"ICRA 2025 의 0 %/100 % 는 12에이전트 상호회피 QP 의 실행불가능성이지 1:1 비협조 기하의 접촉률이 아니다\"",
+     "attack": "**출처를 확인할 수 없다.** 저자·제목·정확한 수치 맥락이 전혀 제시되지 않았고, 웹 검색으로도 해당 특성(12 에이전트, 0 %/100 %, ORCA/RVO QP 실행불가능성, ICRA 2025)을 가진 논문을 찾지 못했다. 관련 분야의 ICRA 2025 실물(예: Zhang·Lyu 외, \"Adaptive Deadlock Avoidance for Decentralized Multi-Agent Systems via CBF-Inspired Risk Measurement\")은 존재하지만 인용된 수치와 대응하지 않는다. 임무 문언이 \"논문 제목·저자·연도를 지어내지 마라\" 를 명시했으므로, 저자·제목 없이 수치만 든 이 인용은 형식 요건 위반이며 **검증 불가로 기각한다.** (반대로 두 계획이 공유하는 arXiv:2604.02401 인용은 실재하고 수치까지 정확하다 — 아래 별도 항목.)",
+     "evidence": "WebSearch 다회: 해당 조합의 논문 **찾지 못함**. 계획 2 본문에 저자·제목·DOI 없음. 대비: 두 계획이 인용한 Kim, Menon, Trivedi, Panagou, \"Backup-Based Safety Filters: A Comparative Review of Backup CBF, Model Predictive Shielding, and gatekeeper\", arXiv:2604.02401 (2026-04-02 투고, v2 2026-09-18) 는 실재하며 Table II 의 reach-avoid 공칭 정책 유지율 Backup CBF **28.8 %** / gatekeeper **87.5 %**, 그리고 보수성 원인 문장까지 두 계획의 서술과 일치한다(초록 및 본문 확인).",
+     "survives": false
+    },
+    {
+     "target": "계획 1 R6: \"dwa_controller.cpp:543 v_last_ = res.v 를 실행된 속도로 고치는 것이 창 가설을 가르는 **가장 싼 반증 실험**이다. 안 움직이면 R1·R2 의 창 관련 논거를 빼야 한다\"",
+     "attack": "**변화의 방향이 가설을 검정할 수 없는 쪽이다.** min_vel_x = 0 이므로 res.v >= 0 이고, 게이트가 깎는 국면에서는 항상 v_last >= v_meas 다. windowCenter(dwa.cpp:97-104)는 |v_last − v_meas| <= window_reset_v(0.3) 일 때만 v_last 를 중심으로 쓰므로, 현재 되먹임은 창 중심을 측정값보다 **최대 0.3 m/s 높게** 잡아 주고 있다 — 즉 지금 상태가 더 관대하다. R6 를 적용하면 창 중심이 v_meas 로 내려가 창이 **더 좁아진다.** 따라서 (a) saturation_fraction 이 안 움직여도 \"창이 기제가 아니다\" 를 함의하지 않고(관대한 쪽을 없앴을 뿐), (b) 오히려 접촉이 늘 수 있다. R6 는 반증 실험이 아니라 **한 방향 보수화**이며, 그 결과를 R1·R2 우선순위 판단에 쓰면 잘못된 기각을 낳는다. 계획 1 도 부작용은 인정했으나(\"단독으로는 보수적인 쪽으로\") 그 부작용이 falsifier 의 추론 타당성 자체를 무효화한다는 점은 놓쳤다. 1일 예산을 여기 쓰는 것은 낭비다.",
+     "evidence": "dwa_controller.cpp:543 `v_last_ = res.v`. dwa.cpp:97-104 windowCenter (window_reset_v 0.3, nav2_params.yaml:119). dwa.cpp:107-112 dynamicWindow (win.v_hi = v_c + acc_lim_x·control_period). nav2_params.yaml:105 `min_vel_x: 0.0`.",
+     "survives": false
+    },
+    {
+     "target": "계획 1 R5 / 계획 2 S3 (백업 인증 커밋 궤적 필터): \"정직한 기대치 2~3배(R5) / 2~5배(S3)\"",
+     "attack": "두 계획이 각자 건 사활 falsifier 가 **이미 알려진 사실로 참이다.** 두 falsifier 는 모두 \"조우 첫 주기부터 백업 집합 전체가 검증 실패하면 재귀 가능성의 초기 조건이 경로 위에 없다는 뜻이고, 이미 3배 악화로 반증된 횡단 게이트와 같은 벽\" 이라고 쓴다. 그런데 그 조건이 성립한다는 증거가 이미 임무 문언에 있다: 공칭 경로 9.00 m 중 8.49 m(94 %)가 보행자 몸통 실린더 안이고 최장 공백이 0.25 m 다. 로봇 발자국 반길이만 0.30 m 이므로 **0.25 m 공백에는 정지 백업이 들어갈 자리조차 없다.** 게다가 인증은 게이트 실제 상한 아래에서 적분해야 하는데(safety_gate.cpp:857 `angular_limit = min(1.5, u_cap/circumscribedRadius())` → CRITICAL 존에서 0.554 rad/s) 그 제약 하의 백업 집합은 더 좁다. 실시간 비용도 두 계획이 스스로 \"top-K 는 선택이 아니라 필수\" 라고 적었는데, 현재 이미 후보당 prediction_time 5.0 s 롤아웃(50 스텝)이 342개 x 트랙수로 돌고 있다(dwa.cpp:646-668) — 여기에 백업당 footprint_cost 코스트맵 조회를 더하면 test_dwa.cpp:893 CycleTimeBudget 50 ms 를 5대 동시 기준으로 지키기 어렵다. **인용 문헌 자신도 반대 방향을 가리킨다**: 백업 기반 필터의 주된 보수성 원인이 바로 \"공칭 정책의 계속 안전한 실행이 아니라 백업 기동의 실현 가능성으로 안전을 판정하는 것\" 이라고 명시한다. Trautman·Krause 계열 결과도 같은 방향이다 — 안전 우선순위화는 보행자 주위의 금지 영역을 부풀려 freezing 을 낳고, 여기 보행자는 명세상 **비협조**(1.000 m/s 정속 횡단)라 협조 모형이라는 탈출로가 구성상 닫혀 있다. 즉 R5/S3 는 이미 3배 악화로 실패한 횡단 게이트를 더 정교한 형태로 재시도하는 것이다.",
+     "evidence": "임무 문언 실측: 경로 9.00 m 중 8.49 m(94 %) 보행자 실린더 내, 최장 공백 0.25 m < 발자국 반길이 0.30 m. safety_gate.cpp:857. dwa.cpp:646-668 (prediction_time 5.0, nav2_params.yaml:158), test_dwa.cpp:893 CycleTimeBudget. Kim 외, arXiv:2604.02401 초록: \"safety is often evaluated through the feasibility of a backup maneuver, rather than through the nominal policy's continued safe execution\" — 이것을 보수성의 핵심 원인으로 지목. 같은 논문 Table II: Backup CBF 는 reach-avoid 에서 목표 도달 실패.",
+     "survives": false
+    },
+    {
+     "target": "두 계획 공통: \"침투 6 mm = 경계 포화\" 기각 (계획 1 R0-(A), 계획 2 S0-(A))",
+     "attack": "공격했으나 **버텼다.** 148건 전수로 재검증했다: |distance_m| 가 (v_obs + v_robot)x0.020 s 상한을 넘는 표본이 **0/148**, 상한 대비 비율 중앙 0.330 으로 사실상 균등. 50 Hz 표본화(collision_monitor_node.py:18-20, :79 odom 구독) 하에서 첫 음수 표본을 기록하는 구조(:127 `if d < 0.0 and not self.in_contact...`)와 정확히 일치한다. 따라서 footprint_reach.hpp:19-25 주석의 \"침투 중앙 6.0 mm\" 기반 \"접촉의 84.8 %가 최적 방위였다면 일어나지 않았다\" 계산은 무효이고, 두 계획이 이를 삭제 대상으로 지목한 것은 옳다. **두 계획이 완전히 일치하고 내 재검증을 통과한 유일한 항목이다.** 다만 이것이 함의하는 바를 두 계획 모두 끝까지 밀지 않았다: 침투가 검열된 관측량이라는 것은 접촉이 \"아슬아슬한 스침\" 이 아니라 **불연속 사건**이라는 뜻이고, 그렇다면 근접 거리 분포의 어떤 분위수도(p05 포함) 접촉률의 대리가 될 수 없다.",
+     "evidence": "logs/**/contacts.csv 148행 전수: 0.020·|v_rel| 초과 **0건**, 비율 중앙 0.330. 침투 중앙 5.9 / 평균 6.7 / p90 14.9 / 최대 **18.8 mm**. collision_monitor_node.py:18 (ground_truth/odom 50 Hz), :79, :125-127. footprint_reach.hpp:19-25 (삭제 대상 주석).",
+     "survives": true
+    },
+    {
+     "target": "두 계획 공통: R1/S1 (램프 롤아웃) + 계획 1 R2 (지속 명령 표본화)",
+     "attack": "공격했고 **명시된 근거는 무너졌으나 항목 자체는 다른 근거로 버텼다.** 계획 1 이 댄 문헌 근거(Ögren·Leonard)는 오인용이고, 두 계획이 댄 수치 근거(\"실제 도달 0.75 m 의 1/10\")는 단순 비교라 왜 그것이 접촉으로 이어지는지 설명하지 못한다. 그러나 콘 기하로 다시 세우면 항목이 정확히 지지된다: v_meas=0 에서 achievable w_rel 의 방향 스팬이 ±asin(0.05/1.000) = **±2.87°** 인 반면 VO 콘 반각은 d=1.6 m 에서 34.7°, d=2.6 m 에서 20.5° 다. 탈출에 필요한 |v_eff| = R_vo/d 는 각각 **0.569 / 0.350 m/s** 로 창의 **7.0~11.4배**다. 여유를 0 으로 해도(R=0.611) 0.382 / 0.235 m/s 로 4.7~7.6배가 남는다. 즉 결손은 술어의 모양이 아니라 achievable set 의 크기이며, 이를 바꾸는 항목은 R2 하나다 — 그리고 R1 없이는 R2 를 적분할 수 없다. **단, 계획 1 R1 의 기대효과 서술(\"DWA 자체가 v=0 출력 27건을 겨냥\")은 재집계로 틀렸다**: gate 열 142행 중 cmd_v 가 정확히 0 인 접촉은 41건, gate_out 이 정확히 0 인 접촉은 39건으로, 문언의 27/61 과 맞지 않는다. 표적 인구 재산정이 필요하다.",
+     "evidence": "dwa.cpp:107 dynamicWindow, :135 sampleVelocities, :165 rollout(등속 integrateArc), :543 chordVelocity, :552 R_vo=0.911. nav2_params.yaml:109-110 (11x31), :112 sim_time_min 1.5. 콘 계산: |o_v|=1.000(실측 128/148), 접촉 전 거리 추정은 접촉 시 ||p|| 중앙 0.594 + 1.0 m/s x Δt. 실측 cmd_v==0: **41/142**, gate_out==0: **39/142** (문언의 27/61 과 불일치).",
+     "survives": true
+    },
+    {
+     "target": "두 계획 공통 사각지대 (내가 새로 찾은 것, 어느 계획도 언급하지 않음): 근접 구간에서 J_dyn 이 **omega 무관한 순수 속도 벌점**으로 붕괴하며, R2 를 넣으면 이 항이 넓힌 후보를 정확히 최대로 벌한다",
+     "attack": "dwa.cpp:667-668 이 R = 1.111 m 로 firstContactTime 을 부르므로, ||p|| <= 0.659 m 인 접촉 기하에서는 velocity_obstacle.cpp:80 조기 반환으로 **모든 후보의 ttc 가 0.0** 이다. 그러면 dwa.cpp:672-675 에서 v_safe = decel·max(0, 0 − t_lag) = 0, urgency = 1.0 이 되어 `c.terms.dynamic = min(1.0, |c.v|/v_span + 0.3·1.0)` 이다. v_span = max_vel_x − min_vel_x = 1.0 이므로 이것은 **명령 속도에 선형인 벌점이고 ω 에 완전히 무관**하다. 가중치는 dynamic_weight = **1.5** 로 8항 중 path(2.0) 다음으로 크다. 즉 접촉 직전 DWA 의 유일한 동적 장애물 인지 비용항이 \"느릴수록 좋다\" 로 퇴화한다 — 정지를 **능동적으로 보상**한다. 두 계획은 freeze 의 원인을 창(계획 1·2 공통)과 현 근사(계획 1)와 외접원(계획 2)에 돌렸을 뿐 이 항을 한 번도 보지 않았다. 더 나쁜 것은 상호작용이다: R2 가 v_cmd 를 1.0 까지 열면 excess = 1.0 이 되어 terms.dynamic 이 **1.0 에 포화**하고, 탈출 후보가 정지 후보 대비 1.5 x 0.7 = 1.05 의 추가 비용을 진다. 다른 어느 항도 그만한 이득을 주지 못한다(escape 항 가중치 미확인, off_path 는 벌점). 결과적으로 **R1+R2 를 J_dyn 수정 없이 넣으면 넓힌 후보가 비용함수에서 도로 배제되어 관측 효과가 0 이 될 수 있다.** 이것은 두 계획 어느 쪽의 falsifier 로도 잡히지 않는다 — 두 계획 다 candidate_spread(기하량)만 보고 후보 **비용** 순위는 R3 이후에나 본다.",
+     "evidence": "dwa.cpp:667 (R = robot_radius + o.radius + dynamic_margin = 1.111), :668, :672-675 (`v_safe = L.decel_lim_x * max(0, ttc - t_lag)`, `excess = max(0, |c.v| - v_safe)/v_span`, `urgency = max(0, 1 - ttc/prediction_time)`, `c.terms.dynamic = min(1.0, excess + 0.3*urgency)`). velocity_obstacle.cpp:80. nav2_params.yaml:130 `dynamic_weight: 1.5`, :104-105 (max_vel_x 1.0, min_vel_x 0.0 → v_span=1.0), :172 `dynamic_steer_gain: 0.3`. 실측 접촉 시 best.ttc == 0 이 마지막 주기의 **69.8 %**(129건 조인), 접촉 전 2 s 창의 21.4 %.",
+     "survives": false
+    }
+   ],
+   "required_fixes": [
+    "**계획 1 R0 의 p05 대리 지표를 폐기하라.** 무접촉 시행만으로 재계산하면 r = −0.842 → +0.091 (p10 은 +0.006) 로 붕괴한다. p05 는 접촉률의 5분위수 재기술이지 선행 지표가 아니며, 검정력 이득은 0 이다. 계획 1 이 GPD 를 기각한 논거(\"actor 에 충돌체가 없어 실패는 불연속 점프\")가 p05 도 똑같이 기각한다. 2층(연속 대리 지표) 층 전체를 삭제하고, 판정은 1층(기제 지표) + 3층(수용 시험)의 2층 구조로 가라. 표본 수 문제는 \"연속량 전환\" 으로 풀리지 않는다 — 정직하게 남겨 두고 기제 지표로 판정하라.",
+    "**saturation_fraction 의 정의를 (n_vo_rejected == n_valid) 로 고쳐라.** dwa.cpp:741 의 실제 포화 조건이고 test_dwa.cpp:332 가 이미 그렇게 단언한다. n_samples 는 (a) 로깅되지 않고 (b) 342/353 을 오가며 (c) 충돌 후보가 있으면 포화를 놓친다. 계측 append 는 [28] saturated(=n_vo_rejected==n_valid && n_valid>0), [29] candidate v_eff span, [30] candidate cost max−min 으로 하라 — 기하 스팬만 보면 J_dyn 이 후보를 도로 배제하는 것을 못 잡는다.",
+    "**R3 를 현재 형태로 착수하지 마라 (계획 1 rank-4, R4·R5 의 선행조건).** 대체 술어 firstContactTime 이 velocity_obstacle.cpp:80 에서 동일한 후보 독립 조기 반환을 갖고, 호출 반경이 1.111 m 로 VO 의 0.911 m 보다 크다. 실측 접촉 ||p|| 최대 0.659 m 이므로 100 % 가 양쪽 안이다. R3 의 사활 조건(saturation_fraction < 20 %)은 구성상 달성 불가다. 고쳐야 할 대상은 술어 종류가 아니라 **후보 독립 조기 반환 자체**이거나, 그보다 먼저 achievable set 의 크기다.",
+    "**dynamic_margin 0.5 / vo_margin 0.3 을 진단 대상에 올려라.** 물리 접촉 반경은 0.361+0.25 = 0.611 m (정횡에서는 0.200+0.25 = 0.450 m) 인데 술어 반경은 1.111 / 0.911 m 다. 이 여유가 방위 의존 reach 의 전 변동폭(0.161 m)을 3배 이상 압도하므로, 줄이지 않는 한 R4/S2(footprint_reach 배선)는 omega_discrimination 을 0 에서 꺼낼 수 없다. 단 ttc.hpp TtcParams::robot_radius 는 게이트 거부권 경로이므로 손대지 마라 — 두 계획의 절대 금지 3곳은 옳다. 손댈 곳은 dwa.cpp:552 와 :667 의 계획기 내부 반경뿐이다.",
+    "**R1/S1 과 같은 커밋에서 J_dyn(dwa.cpp:672-675)을 고쳐라.** ttc=0 에서 terms.dynamic = min(1, |c.v| + 0.3) 은 ω 무관한 순수 속도 벌점(w=1.5)이라 정지를 능동 보상한다. R2 가 v_cmd 를 1.0 까지 열면 이 항이 1.0 에 포화해 탈출 후보를 최대로 벌하므로, 고치지 않으면 R1+R2 의 관측 효과가 0 이 될 수 있다. 최소 수정: ttc 를 조기 반환 0 이 아니라 롤아웃 상의 실제 최근접 시각/거리로 대체하고, excess 항을 명령 속도가 아니라 **롤아웃이 예측하는 최근접 거리**로 다시 키잉하라.",
+    "**계획 2 S1 의 계약(v_cmd=0.05 후보의 1.5 s 변위 >= 0.60 m)을 철회하거나, 계획 1 R2(지속 명령 표본화)를 계획 2 에 추가하라.** 램프 적분만으로는 상한이 0.075 m 라 산술적으로 불가능하다. 계획 2 는 근본 원인에서 창 붕괴를 진단해 놓고 창을 건드리는 항목을 하나도 내지 않았다 — 이것이 두 계획의 결정적 차이이며, 이대로면 S1~S4 전 사슬이 0.05 m/s 방출 상한 위에 서서 필요치의 1/7~1/11 에 머문다.",
+    "**계획 1 의 Ögren·Leonard 2005 인용을 R1 에서 떼어라.** 전문 확인 결과 그 논문의 수렴 실패 진단(II-D)은 가중합 효용함수에 CLF/종단 조건이 없다는 것이고, 창/롤아웃 불일치가 아니다. 그 논문이 실제로 지지하는 항목은 R5(종단 조건 부과)다. R1+R2 는 문헌이 아니라 콘 기하(±2.87° vs 20.5~34.7°, 결손 7~11배)로 정당화하라 — 그쪽이 훨씬 강하다.",
+    "**계획 2 의 두 실측 수치를 정정하라**: (a) 게이트가 죽인 접촉은 24건(16.9 %)이 아니라 **17건(12.0 %)** — S4 의 표적 인구가 전체의 11.5 % 라 10~20배 목표에 1.13배 이상 기여 불가다. (b) 계측 16건의 |상대 방위| 중앙은 58.3° 가 아니라 **110.7°** — 계획 1 이 맞다. 이 오독 위에 세운 \"탐욕 기울기가 정면으로 간다\" 논거를 다시 세워라 (결론은 다른 근거로 유지 가능하다: 회전은 chordVelocity≡0 때문에 vo_time 을 바꾸지 못한다).",
+    "**계획 2 의 ICRA 2025 인용(12에이전트 QP 0 %/100 %)을 저자·제목과 함께 제시하거나 삭제하라.** 검색으로 확인하지 못했다. 반면 두 계획이 공유하는 Kim, Menon, Trivedi, Panagou, arXiv:2604.02401 인용은 제목·저자·수치(Backup CBF 28.8 %, gatekeeper 87.5 %)·보수성 원인 문장까지 모두 실재하고 정확하다 — 이 수준으로 맞춰라.",
+    "**R5/S3(백업 인증)를 현재 순위에서 내려라.** 두 계획이 스스로 건 사활 falsifier(\"조우 첫 주기부터 백업 전체 검증 실패 = 이미 3배 악화된 횡단 게이트와 같은 벽\")가 이미 참일 근거가 있다: 경로 9.00 m 중 8.49 m 가 보행자 밴드 안, 최장 공백 0.25 m < 발자국 반길이 0.30 m. 인용 문헌 자신이 백업 실현가능성 기반 판정을 보수성의 주된 원인으로 지목하고, 보행자가 명세상 비협조(1.000 m/s 정속)라 협조 모형 탈출로도 닫혀 있다. 착수 전에 **기존 로그만으로** 백업 집합 비공집합률을 오프라인 계산해 벽의 존부를 먼저 판정하라 (계획 2 S0 의 재생 하네스가 이 용도로는 정당하다).",
+    "**R6(창 중심 되먹임)를 반증 실험으로 쓰지 마라.** min_vel_x=0 이라 게이트가 깎는 국면에서 v_last >= v_meas 이고, window_reset_v=0.3 안이면 현재 되먹임이 창을 오히려 **관대하게** 잡아 준다. R6 는 창을 좁히는 한 방향 보수화라, 결과가 무엇이든 창 가설을 검정하지 못한다. 굳이 한다면 R2 **이후**에, 창이 표본 필터가 아니라 방출 클램프가 된 뒤에 일관성 결함 정리 목적으로만 하라."
+   ]
+  },
+  {
+   "attacks": [
+    {
+     "target": "계획 1 — 근본 원인 기둥 (3) \"판정 붕괴\": 주 선택 루프가 nullptr 을 내면 8항 비용함수가 순위를 매기지 않는다 / \"순위 자체가 없다\"",
+     "attack": "코드로 거짓이다. VO 포화 시 모든 후보의 vo_time 이 동일하게 0.0 이 되므로, 대체 분기의 tiebreak 는 정확히 **비용 argmin 으로 환원된다**. 즉 포화 구간에서 8항 가중 비용함수는 (VO 필터를 뺀) 평소와 **동일하게 순위를 매기고 있다**. 이 기둥 위에 세운 '스윕이 측정 대상에 연결조차 안 되어 있었다'(실패설명 1) 와 R3 의 기대효과('비용함수가 다시 작동하는 것 자체가 가장 큰 단일 변화')가 함께 무너진다.",
+     "evidence": "src/amr_navigation/src/core/dwa.cpp:813-814 — `(c.vo_time > best->vo_time + config_.vo_time_tie || (std::abs(c.vo_time - best->vo_time) <= config_.vo_time_tie && c.cost < best->cost))`. vo_time_tie = 0.02 (nav2_params.yaml:166). 모든 vo_time 이 0.0 이면 |0−0| = 0 ≤ 0.02 → 조건은 `c.cost < best->cost` 하나만 남는다. leave_lane 경로(dwa.cpp:808-812)에서도 동률 시 `c.cost < best->cost` 다.",
+     "survives": false
+    },
+    {
+     "target": "계획 1 — R3 핵심 처방: chordVelocity+velocityObstacleTime 하드 기각을 삭제하고 하드 제약을 firstContactTime 하나로 통일",
+     "attack": "firstContactTime 에 **완전히 동일한 축퇴 조기 반환**이 있고, 반경이 더 크다. 이전하면 포화가 없어지는 게 아니라 **더 일찍·더 넓게** 시작된다. R3 의 사활 반증조건('saturation_fraction 이 20 % 아래로 떨어져야 한다')은 구조적으로 도달 불가능하다. R3 는 dynamic_margin 을 건드린다고 쓰지 않았다.",
+     "evidence": "src/amr_navigation/src/core/velocity_obstacle.cpp:79-82 — `Point2D r0 = rel(0); if (r0.x*r0.x + r0.y*r0.y < R*R) { return 0.0; }`. 호출부 dwa.cpp:690 의 R = robot_radius 0.361 + o.radius 0.25 + dynamic_margin **0.5** = **1.111 m**, 반면 R_vo = 0.361+0.25+vo_margin 0.3 = 0.911 m (nav2_params.yaml:159,161). 접촉 시점 ‖p‖ 실측(logs/**/contacts.csv 의 hypot(lane_lateral_m, lane_along_m), n=147): min 0.487 / median 0.593 / p90 0.650 / **max 0.659 m**. 147/147 이 0.911 안이고 **147/147 이 1.111 안**이다.",
+     "survives": false
+    },
+    {
+     "target": "계획 1 — R4 / 계획 2 — S2: footprint_reach 를 동적 접촉 판정 반경에 배선",
+     "attack": "같은 조기 반환에 먹힌다. 방위 의존 reach 는 R 을 0.950~1.111 m 사이에서만 움직이는데, 관측된 최대 ‖p‖ 가 0.659 m 라 **어떤 방위에서도 r0 < R 이 성립**한다 → firstContactTime 은 모든 요, 모든 후보에 대해 정확히 0.0 을 돌려준다. omega_discrimination 은 배선해도 0 에서 안 움직인다. S2 의 간판 계약은 자기 수치로 계산해도 통과 불가능하다.",
+     "evidence": "footprintReach(0.30,0.20,45°) = min(0.30/0.7071, 0.20/0.7071) = 0.283 → R = 0.283+0.25+0.5 = **1.033 m** > S2 계약이 지정한 거리 **0.55 m** (계획 2 S2 contracts, YawTowardNarrowFaceRaisesInternalTtc). 최소 reach(정횡) 0.200 에서도 R = **0.950 m** > 0.659 m = 실측 최대 ‖p‖. footprint_reach.hpp:44-53, velocity_obstacle.cpp:79-82, nav2_params.yaml:159.",
+     "survives": false
+    },
+    {
+     "target": "계획 1 — R3: \"dwa.cpp:741~820 의 vo_saturated 대체 분기(3중 tiebreak, leave_lane, drop_spin)는 통째로 제거된다 — 포화 자체가 사라지므로\"",
+     "attack": "전제(포화 소멸)가 위 공격으로 깨졌으므로, 이 삭제는 실패를 남긴 채 보호장치만 없앤다. 없어지는 것 둘: (a) 이탈 예산의 **유일한 하드 상한** dev_cap, (b) 몸 원통 안 순수 제자리 회전 배제 drop_spin. 둘 다 저장소가 실측 접촉을 근거로 **나중에 추가한** 것이고, 저장소 주석이 제거 시 무슨 일이 나는지 이미 기록해 두었다. 명세의 '이탈 1 m 이내' 가 직접 위험해진다.",
+     "evidence": "dev_cap: dwa.cpp:776 `const double dev_cap = config_.max_path_offset_hard;` (0.95 m). nav2_params.yaml:139-142 — \"두 곳에 쓴다 … VO 포화 시 통로 탈출 후보의 자격. **후자가 없으면 탈출 순위가 비용(=이탈 벌점)을 보지 않아 통로 반폭까지 밀려난다**\". dwa.cpp:768-772 가 그 실측을 기록한다(e8b 이탈 **1.39 m**, 복귀 9.66 s, 명세 상한 1.0). drop_spin: dwa.cpp:795, 근거 주석 dwa.cpp:783-786 — \"접촉 2건이 모두 VO 포화 중 v = 0.000 · w = +0.4~1.0 의 순수 제자리 회전이었다\".",
+     "survives": false
+    },
+    {
+     "target": "계획 2 — S0: 오프라인 재생 하네스 (\"신규 시행 0회\", \"S1~S4 의 1차 판정은 전부 여기서 난다\")",
+     "attack": "저장소의 로그로는 원리적으로 만들 수 없다. `DwaPlanner::compute` 의 지배적 입력인 **코스트맵(point_cost/footprint_cost), 로봇 자세, 지역 경로가 어디에도 기록되어 있지 않다**. 이 셋 없이는 J_clear·J_path·하드 충돌검사가 재현되지 않는다. 따라서 S0 자신의 계약 `ReproducesRecordedCommands`(95 % @1e-6)가 통과할 수 없고, S0 자신의 정지 규칙에 따라 **T1 증거 전체가 무효**가 된다. 고치려면 계측을 넣고 **새 폐루프 시행**을 돌려야 하므로 \"신규 시행 0회\" 도 거짓이다. 계획 2 는 0단계에서 멈춘다.",
+     "evidence": "실행 디렉토리 전수: `logs/itest_rep1/08_dynamic_obstacles/` = avoidance.csv, contacts.csv, junit.xml, launch.log, result.json. tracks_trial*.csv 헤더 = `t,track_id,x,y,vx,vy,heading_deg,is_dynamic` (자세 없음). logs/ 전체 파일명 집합에 pose/path/costmap 계열 없음(cte_amr_N.csv·harness_pose_error.csv 는 요약 지표). 코스트맵 의존부: dwa.cpp:617(`point_cost`), dwa.cpp:519-521(`footprint_cost` 하드 충돌), dwa.cpp:637-641(J_clear 기준점).",
+     "survives": false
+    },
+    {
+     "target": "두 계획 공통 — \"dwa/stats 배열 뒤에 append, 기존 인덱스 불변\" 이면 계측이 끝난다는 전제 (R0 contracts, S3 files, S4 files)",
+     "attack": "배열에 붙여도 디스크에 안 남는다. 통합시험 하네스가 dwa/stats 에서 **고정 인덱스만 뽑아 10열 CSV** 로 쓴다. 두 계획의 계측 항목(saturation_flag, candidate_disp_spread, omega_dyn_spread, icsFlag, ics_margin, gate_admissible) 은 하네스 열 목록을 함께 고치지 않으면 한 건도 관측되지 않는다. 게다가 이 토픽에는 스탬프가 없어 정렬이 벽시계 대응이고, 두 계획이 공통으로 쓰는 \"접촉 전 2 s 창\" 분석의 정확도가 그만큼 제한된다.",
+     "evidence": "tests/integration/test_08_dynamic_obstacles.py:290 — `['t','cmd_v','cmd_w','yield_state','stop_distance_m','vo_rejected','collisions','ttc_s','zone_entry_m','yield_obstacle']`. 같은 파일 32행 — \"dwa/stats 에는 스탬프가 없어 지면 진실 오도메트리의 (수신 벽시계, sim 스탬프) 대응으로 맞춘다\". 발행부는 src/amr_navigation/src/ros/dwa_controller.cpp:558~ (28원소).",
+     "survives": false
+    },
+    {
+     "target": "계획 1 — R0: \"saturation_fraction 은 이미 stats_trial*.csv 의 vo_rejected 열에 있다 — 새 로깅 불필요\"",
+     "attack": "분모 n_samples 가 그 파일에 없고, 상수도 아니다. 342 를 가정하면 완전 포화 주기를 체계적으로 오분류한다. R0 의 계약 `SampleCountIsUnchanged: n_samples == 342` 도 배포 거동을 고정하지 못한다 — ω 창이 0 에 대해 비대칭이면 linspace 가 0 을 포함하지 않아 여분 열이 붙어 353 이 된다.",
+     "evidence": "126,716 주기 전수(logs/**/stats_trial*.csv 6열) 중 vo_rejected ≥ 342 인 값의 분포: **342 → 4171건, 353 → 427건**, 그 외 344/345/346/347/350/352 → 10건. n_samples 는 dwa/stats[1] 인데 하네스 열 목록(test_08_dynamic_obstacles.py:290)에 없다. 생성 경로: dwa.cpp:135-160 (`linspace(w_lo,w_hi,31)` + 0열 보정 + 제동 후보).",
+     "survives": false
+    },
+    {
+     "target": "두 계획 공통 — \"접촉 시 로봇 속도 < 0.05 m/s 77건(52 %)\" 을 계획기 변경(R1·R2·R3·R4 / S1·S2)의 사거리로 잡은 것",
+     "attack": "그 인구의 40 % 는 계획기가 이미 비정지 명령을 냈고 **하류가 그것을 0 으로 깎은** 경우다. 후보 집합의 표현력을 넓혀도 닿지 않는다. 계획기 쪽 실효 상한은 52 % 가 아니라 **29.8 %** 다. 계획 1 R2 의 '이 52 % 부분집합의 절반 이상을 닫는 것이 현실적 상한' 은 이 교차표를 보지 않은 수치다.",
+     "evidence": "게이트 열이 있는 접촉 141건 교차표(logs/**/contacts.csv): robot_speed<0.05 & |cmd_v|<0.05 = **42**; robot_speed<0.05 & |cmd_v|≥0.05 = **29**, 그중 |gate_out_v|<0.05 인 것이 **28**. 즉 28건은 계획기가 살아 있는 명령을 냈는데 정지한 채 받혔다. 42/141 = 29.8 %.",
+     "survives": false
+    },
+    {
+     "target": "두 계획 공통 — 단일 근본원인 완결성 주장 (계획 1: \"근본 원인 하나로 다섯 실패가 전부 설명된다. 설명되지 않는 것이 남으면 진단이 틀린 것\")",
+     "attack": "자기 기준으로 실패한다. 접촉의 40 % 는 로봇이 움직이고 있었고 **동시에** 계획기가 비정지 명령을 내고 있었다. 20건은 계획기가 **후진**을 명령하고 있었다 — 탈출 기제가 켜져서 실행 중이었는데도 받혔다. \"회피 기동이 후보로 존재하지 않는다\" 는 이 인구를 전혀 설명하지 못한다. (공정을 기하면 움직인 70건 중 39건은 0.05~0.2 m/s 의 기어가는 속도라 '준정지' 로 볼 여지가 있고, 0.2 m/s 이상은 31/148 = 21 % 다. 그래도 계획기가 후진을 명령 중이던 20건은 남는다.)",
+     "evidence": "logs/**/contacts.csv 141행(게이트 열 보유): robot_speed≥0.05 & |cmd_v|≥0.05 = **56 (39.7 %)**. cmd_v < −0.05 (후진 명령) = **20**. 속도 분포 148건: <0.05 → 78, 0.05–0.2 → 39, 0.2–0.5 → 30, ≥0.5 → 1. 후진 창은 dwa.cpp:432-434 (`res.window.v_lo = max(-yield_escape_speed, …)`, yield_escape_speed 0.5, nav2_params.yaml:216).",
+     "survives": false
+    },
+    {
+     "target": "계획 2 — S4 의 간판 실측 \"gate 열 142건 중 cmd_v > 0.05 인데 gate_out_v < 0.05 인 접촉이 24건(16.9 %)\"",
+     "attack": "자기 술어를 그대로 돌리면 24 가 아니라 **17 (12.1 %)** 이다. 24 는 |cmd_v| 를 써야 나오고, 그러면 후진 명령 7건이 섞인다 — 후진은 게이트가 '죽인' 것이 아니라 게이트가 허용한 기동일 수 있으므로 성질이 다르다. 게다가 S4 자신의 반증조건(감쇠 출처가 TTC 채널인가, u_cap·STOP 래치인가)을 가르려면 게이트 사유·존·ttc 열이 필요한데 **contacts.csv 에 그 열이 없다**. S4 의 기대효과('사거리가 83 % 이지 60 % 가 아니다')는 크기도 귀속도 현재 자료로 뒷받침되지 않는다.",
+     "evidence": "logs/**/contacts.csv 헤더 = `trial,time,obstacle,distance_m,robot_speed_mps,robot_moving,obstacle_speed_mps,obstacle_heading_deg,lane_lateral_m,lane_along_m,yield_state,stop_distance_m,cmd_v_mps,gate_in_v_mps,gate_out_v_mps` — 게이트 사유·존·min_ttc 없음. 게이트 열 보유 행은 142 가 아니라 **141**. 술어별 집계: `cmd_v>0.05 && gate_out_v<0.05` → **17**; `|cmd_v|>0.05 && |gate_out_v|<0.05` → 24.",
+     "survives": false
+    },
+    {
+     "target": "계획 2 — S4: \"게이트 수용성을 계획기의 tie-break 선호로 — 게이트는 한 줄도 바꾸지 않는다\"",
+     "attack": "코드를 안 고쳐도 거부권이 약해진다. yieldEscapeAllowed 는 중립적 수용성 판정이 아니라 **TTC 속도 상한의 면제 조건**이고, 게이트는 '상한이 실제로 올라갈 때만' 그것을 특례로 친다. 계획기가 이 술어를 통과하는 후보를 선호하도록 만드는 것은, 게이트가 보수적 비상구로 열어 둔 문을 **계획기의 최적화 목적함수로 승격**시키는 것이다. 결과적으로 TTC 거부권이 t.ttc ≤ ttc_critical 이라는 바로 그 순간에 덜 물린다 — 절대 제약이 금지한 '구역/속도 제한 완화' 의 우회 형태다. (공정하게: 술어 자체는 건전하다 — 진행선 가로거리 단조 증가 + 직사각형 몸 여유 비감소라는 증명의무를 진다. 반대하는 것은 통과를 부수효과로 받는 것이 아니라 목적으로 삼는 것이다.)",
+     "evidence": "src/amr_perception/src/safety_gate.cpp:941-960 — `if (t.ttc <= p.ttc_critical && yieldEscapeAllowed(t, v_in, w_in, now)) { exempt = true; continue; }` … `v_yield = std::min(v_rest, p.yield_escape_speed); yield_escape = v_yield > v_ttc;   // 상한이 실제로 올라갈 때만 특례다` (959행). 술어 본문 safety_gate.cpp:582-...",
+     "survives": false
+    },
+    {
+     "target": "계획 1 — R3 의 \"부수 수정: in_body 가 escaping(kCommitted) 안에서만 계산되므로 kYield 19건에서 안 켜졌다 — 이 게이팅을 푼다\"",
+     "attack": "escaping 은 in_body 만 게이팅하지 않는다. **후진 창 개방**(v_lo 를 −0.5 m/s 까지 여는 것)도 같이 게이팅한다. 이것을 kYield 로 확장하면 저장소가 이미 실측으로 되돌린 상태를 재도입한다. '이전에 악화를 만든 시도를 이름만 바꿔 되살리는' 부류에 정확히 해당하고, 계획 자신이 금지 목록에 올린 '탐욕적 제자리 회전 / 되돌림' 계열과 같은 실패면이다.",
+     "evidence": "dwa.cpp:390(`escaping = !gate_on && res.yield.state == YieldState::kCommitted && …`) → dwa.cpp:403(`if (escaping)` 안에서 in_body) → dwa.cpp:432-434(같은 escaping 이 `res.window.v_lo = std::max(-config_.yield_escape_speed, …)`). 근거 주석 dwa.cpp:381-384 — \"주행 중에도 열어 두었더니 후진↔전진이 되풀이되어 'Failed to make progress' **58 건**과 작업 시간 초과 1 건이 났다 (같은 구성의 앞 실행은 0 건)\".",
+     "survives": false
+    },
+    {
+     "target": "계획 2 — \"게이트를 켜면 escaping 이 꺼진다\" 를 두 겹 악화의 결정적 기제로 제시하며 \"아무도 지적하지 않았다\" 고 한 것",
+     "attack": "기제 자체는 맞지만 새 발견이 아니다. 저장소의 배포 설정 주석이 **문장 단위로 같은 결론을 이미 적어 두었고**, 그 결론에 따라 게이트가 이미 꺼져 있다. 새로운 진단 공로로 계상하면 계획 2 의 진단 신뢰도가 부풀려진다. 실제로 새로운 것은 '기존 탈출 로직을 통째로 껐다' 는 표현뿐이다.",
+     "evidence": "src/amr_navigation/config/nav2_params.yaml:275-277 — \"원인: 게이트가 켜지면 escaping 이 꺼지고(dwa.cpp `escaping = !gate_on && …`) 커밋된 트랙은 VO·TTC 에서도 면제되어, 예방이 실패한 순간 물러설 곳이 없다. 접촉 9 건 전부 로봇 정지(8/9) 중 작업자가 걸어 들어온 모양이다.\" 같은 파일 280행 `yield_gate: false`.",
+     "survives": false
+    },
+    {
+     "target": "계획 1 — R6 / 계획 2 — windowCenter 관련 주장: dwa_controller.cpp:543 이 게이트를 거치지 않은 계획기 출력을 창 중심으로 되먹인다",
+     "attack": "공격했으나 **살아남았다**. 결함은 실재하고 1줄이며 반증이 하루 안에 난다. 다만 고치는 방향이 보수적이라는 점을 계획 1 이 스스로 적은 대로다: 게이트가 0 으로 깎는 28건에서 되먹임을 고치면 창 중심이 v_meas = 0 으로 붙어 **창이 더 일찍 붕괴한다**. 따라서 단독 출하 금지, 진단 실험으로만 쓰고 되돌릴 것. 계획 1 이 이것을 R2 이후 부작용 소멸로 처리한 것은 정확하다.",
+     "evidence": "src/amr_navigation/src/ros/dwa_controller.cpp:543-544 `v_last_ = res.v; w_last_ = res.w;` (게이트는 하류 safety_node 에 있다). 소비처 dwa.cpp:439-447 `windowCenter` — `|v_last − v_meas| <= window_reset_v` 이면 v_last 를 중심으로 쓴다. window_reset_v = 0.3, window_reset_w = 0.5 (nav2_params.yaml:119-120). 관련 인구: 정지 & 계획기 비정지 명령 & 게이트 0 = 28/141.",
+     "survives": true
+    },
+    {
+     "target": "두 계획 공통 — 침투 6 mm 를 '경계 포화' 로 읽던 해석의 폐기 (R0 (A) / S0 (a)), 및 footprint_reach.hpp 주석 무효화",
+     "attack": "무너뜨리려 했으나 **양쪽 다 옳다**. 코드와 데이터로 재확인했고, footprint_reach.hpp:19-25 의 '84.8 %' 와 '이득 > 침투' 논증은 검열된 관측량 위에 서 있으므로 삭제가 맞다. 두 계획이 공유하는 이 정정은 유지한다.",
+     "evidence": "src/amr_simulation/amr_simulation/collision_monitor_node.py:18 (ground_truth/odom **50 Hz**), :79 (그 토픽 구독), :127 (`if d < 0.0 and not self.in_contact…` — **첫 음수 표본**을 기록). 정지 중 접촉 78건(robot_speed<0.05, v_rel = 1.0 m/s) 침투: median **4.8 mm** / mean 6.6 / **max 18.8 mm**, 상한 20.0 mm 초과 **0건**. 전체 148건 최대도 18.8 mm.",
+     "survives": true
+    },
+    {
+     "target": "계획 1 — R5 / 계획 2 — S3 (gatekeeper 식 커밋 궤적 필터) 의 위치와 인용",
+     "attack": "항목 자체는 살아남는다 — 인용이 정확하고(내가 원문 Table II 로 확인했다), 안전 게이트 상류에서 후보만 좁히므로 거부권 단방향성이 유지되며, 정직한 기대치(2~5배)와 3배 악화 재현 위험을 자기 반증조건으로 달아 두었다. 그러나 **순서가 죽어 있다**: R5 는 [R3, R4] 에, S3 는 [S0, S1, S2] 에 의존하는데 위 공격으로 R3·R4·S2·S0(명세대로) 가 전부 떨어진다. 유일하게 기제가 포화되지 않은 항목이 무너진 세 항목 뒤에 갇혀 있다. 재배치가 필요하지 항목 폐기는 아니다.",
+     "evidence": "인용 검증: arXiv:2604.02401 = Taekyung Kim, Aswin D. Menon, Akshunn Trivedi, Dimitra Panagou, \"Backup-Based Safety Filters: A Comparative Review of Backup CBF, Model Predictive Shielding, and gatekeeper\" (2026). 원문 Table II (reach-avoid): Backup CBF **28.8 %** (목표 미달성), MPS 55.3 % (미달성), gatekeeper **87.5 %** (달성) — 두 계획이 인용한 두 수치가 정확하다. 의존 관계: 계획 1 R5 depends_on [R3, R4]; 계획 2 S3 depends_on [S0, S1, S2]. 게이트 상한 반영 요구(safety_gate.cpp:857 `st.angular_limit = std::min(p.max_angular_velocity, u_cap / circumscribedRadius())`)도 실제 코드와 일치한다.",
+     "survives": true
+    }
+   ],
+   "best_single_first_step": "**R0 을, 내 공격이 드러낸 항목으로 고쳐서 먼저 한다 — 동적 술어 자체의 계측.** 런타임 거동은 한 줄도 바꾸지 않고(배열 append + 하네스 열 목록 확장), 기존 30시행 하네스 한 번으로 세 가지를 확정한다: (1) 포화 구간에서 비용함수가 이미 순위를 매기고 있는가 — `best == nullptr` 여부와 후보 비용 max−min 을 주기마다 기록해 dwa.cpp:814 의 환원(모든 vo_time = 0 → `c.cost < best->cost`)을 폐루프에서 확인한다. (2) firstContactTime 이 이미 포화인가 — 현재 R = 1.111 m 에서 `min_k firstContactTime` 과 가장 가까운 동적 트랙까지의 ‖p‖ 를 기록한다. 실측 접촉 ‖p‖ 가 max 0.659 m 이므로 **R3·R4·S2·S3 가 전부 '거짓' 이라고 암묵 가정하는 명제**(= 이 술어가 반경 안에서 정보를 준다)를 하루 만에 판정한다. (3) 사거리 분할 — cmd_v 와 gate_out_v 를 접촉 시점이 아니라 **주기마다** 기록해, 계획기가 닿는 인구(42/141)와 하류가 지운 인구(28/141)를 조우 단위로 가른다. 함께 넣을 것: n_samples(현재 342/353 혼재라 포화 판정의 분모가 없다), escaping / leave_lane / drop_spin 플래그. 반드시 tests/integration/test_08_dynamic_obstacles.py:290 의 열 목록을 같이 고친다 — 안 고치면 배열에 붙여도 디스크에 안 남는다. 침투 폐기와 p05 채택, footprint_reach.hpp:19-25 주석 삭제는 그대로 가져간다(검증 완료). **이 한 단계가 끝나기 전에는 R1/R2/S1 에 한 줄도 쓰지 마라** — 그 항목들의 값어치는 전적으로 (2)의 답이 '아직 포화가 아니다' 일 때만 성립한다.",
+   "required_fixes": [
+    "R3/R4/S2 착수 금지 — 선행 항목을 먼저 만들어라. 두 계획이 옮겨 가려는 firstContactTime 은 velocity_obstacle.cpp:79-82 에서 `if (r0² < R²) return 0.0` 로 같은 축퇴를 가지며, 반경이 1.111 m 로 더 크다(dynamic_margin 0.5, nav2_params.yaml:159). 실측 접촉 ‖p‖ 는 최대 0.659 m 다. 필요한 선행 작업은 '술어를 바꾸기' 가 아니라 '반경 안에서 정보를 내게 만들기' 다 — 반경 안에서 0.0 대신 (a) 분리거리가 다시 증가로 돌아서는 시각, 또는 (b) 원이 아니라 직사각형 부호거리가 처음 음수가 되는 시각을 돌려주는 등급형 반환. 이것 없이는 R3 도 R4 도 S2 도 거동을 0 만큼 바꾼다.",
+    "R3 에서 'vo_saturated 분기 통째 삭제' 를 철회하라. 최소한 dev_cap(dwa.cpp:776, max_path_offset_hard 0.95)과 drop_spin(dwa.cpp:795)은 보존해야 한다. 전자는 명세의 이탈 1 m 를 지키는 유일한 하드 상한이고(nav2_params.yaml:139-142, 제거 시 e8b 1.39 m 기록), 후자는 'VO 포화 중 순수 제자리 회전' 접촉 2건을 근거로 추가된 것이다(dwa.cpp:783-786).",
+    "계획 1 의 근본원인 기둥 (3)을 다시 써라. '비용함수가 순위를 매기지 않는다' 는 dwa.cpp:813-814 로 거짓이다. 포화 시 모든 vo_time 이 0 이면 tiebreak 는 `c.cost < best->cost` 로 환원된다. 이 기둥에 매달린 '스윕이 측정 대상에 연결 안 됐다'(실패설명 1)와 R3 의 기대효과도 함께 수정하라.",
+    "S0 의 재생 하네스를 '신규 시행 0회' 로 약속하지 마라. 코스트맵·자세·경로가 로그에 없어(실행 디렉토리 = avoidance.csv, contacts.csv, junit.xml, launch.log, result.json; tracks csv 에 자세 없음) `ReproducesRecordedCommands` 95 % 계약이 통과 불가능하다. 재생을 하려면 먼저 계측 실행을 새로 돌려야 하고, 그러면 T1 이 '기존 데이터로 공짜' 라는 계획 2 의 측정 구조 전체를 다시 세워야 한다.",
+    "두 계획 모두, 계측 항목에 tests/integration/test_08_dynamic_obstacles.py:290 의 10열 목록 확장을 명시적으로 포함하라. 'dwa/stats 배열 뒤에 append, 기존 인덱스 불변' 만으로는 새 필드가 한 건도 디스크에 남지 않는다.",
+    "R0 의 'saturation_fraction 은 새 로깅 불필요' 를 철회하라. 분모 n_samples 가 stats_trial*.csv 에 없고 상수도 아니다(포화 버킷 실측: 342 → 4171, 353 → 427, 기타 10). n_samples 를 함께 기록하고, `SampleCountIsUnchanged: n_samples == 342` 계약은 배포 조건을 고정하지 못하므로 다시 쓰라.",
+    "두 계획의 '사거리' 수치를 교차표로 교체하라. 정지 접촉 인구에서 계획기가 닿는 부분은 42/141 = 29.8 % 이고, 28/141 은 계획기가 이미 비정지 명령을 냈는데 게이트가 0 으로 깎은 경우다. R2 의 '52 % 부분집합의 절반 이상' 과 S4 의 '사거리 83 %' 를 이 분할로 다시 계산하라.",
+    "S4 의 24건을 17건으로 정정하고(자기 술어 cmd_v>0.05 && gate_out_v<0.05 의 실제 값), 감쇠 출처(TTC 채널 vs u_cap vs STOP 래치)를 가를 열 — 게이트 사유·존·min_ttc — 을 contacts.csv 에 먼저 추가하라. 지금 자료로는 S4 의 기대효과를 세울 수 없다.",
+    "S4 를 하드 필터가 아닌 tie-break 로 두는 것으로는 부족하다. yieldEscapeAllowed 는 safety_gate.cpp:949-959 에서 TTC 상한의 **면제** 를 트리거한다. 채택한다면 (a) 비용과 여유 **아래** 의 엄격한 동률 판정으로만 두고, (b) 면제 발동률(st.yield_escaping) 자체를 회귀 지표로 감시해 상승 시 자동 탈락시키는 조건을 계약에 넣어라. 그 두 가지 없이는 거부권 우회다.",
+    "R3 의 'in_body 게이팅 해제' 를 철회하거나, 후진 창 개방(dwa.cpp:432-434)을 in_body 해제와 분리하라. 현재 escaping 하나가 둘 다 게이팅하며, 주행 중 개방은 'Failed to make progress' 58 건으로 이미 되돌려진 상태다(dwa.cpp:381-384).",
+    "R5/S3 의 의존 순서를 다시 짜라. 유일하게 포화되지 않은 기제가 R3·R4(S0·S1·S2) 뒤에 갇혀 있다. 위 1번 선행 작업 뒤에 R5/S3 를 R1/R2 와 나란히 두는 배치를 검토하라 — 다만 S3/R5 의 첫 주기 백업 전무 반증조건(committed 구간의 80 %)은 그대로 유지하라.",
+    "계획 1 의 Ögren·Leonard 2005 인용을 정확히 하라. 그 논문(IEEE T-RO 21(2):188-195)이 지목한 것은 CLF/종단 제약 부재로 인한 **목표 수렴성** 결함이고 처방은 CLF 기반 종단 제약이지, '1주기 창 대 다단계 롤아웃 불일치' 와 램프 적분이 아니다. 대신 R4/S2 가 원하는 것(외접원 손실 없는 형상 인지 VO)에 직접 대응하는 정본은 arXiv:2304.07954 (Velocity Obstacle for Polytopic Collision Avoidance, 최적화 불필요 폴리토프 VO) 계열이며 두 계획 어디에도 인용이 없다."
+   ],
+   "verdict": "수정필요"
+  }
+ ],
+ "first_steps": [
+  "**R1+R2 를 하나의 분리 불가 변경으로 착수한다: 롤아웃을 가속 실현 가능(램프) 적분으로 바꾸고, 동시에 표본을 1주기 도달 속도가 아니라 지속 목표 명령 [0, v_cap] x [±max_vel_theta] 으로 잡는다 (방출은 control_period 0.05 s 시점의 램프 상태 → 하류 계약 불변). 단 판정은 p05 가 아니라 기제 지표로만 한다.**\n\n왜 이것인가 — 콘 기하로 계산한 결손 배수가 이 항목만을 가리킨다.\nv_meas=0 에서 achievable v_eff 는 |v_eff| <= 0.05 m/s 이므로, w_rel = v_eff − o_v (|o_v|=1.000, 실측 128/148) 는 −o_v 둘레 반경 0.05 의 원반이다. 즉 후보 전체가 만드는 상대속도 **방향 스팬이 ±asin(0.05/1.0) = ±2.87°** 다. 반면 VO 콘 반각은 asin(R_vo/d):\n- d=1.6 m (접촉 1.0 s 전, 정지 로봇 기준): 34.7° → 탈출에 |v_eff| >= R/d = **0.569 m/s** 필요 (창의 11.4배)\n- d=2.6 m (2.0 s 전): 20.5° → **0.350 m/s** 필요 (7.0배)\n- d<=0.911 m: 콘이 아니라 조기 반환 영역 — 어떤 속도로도 탈출 불가\n\n**여유(margin)를 0 으로 해도 (R=0.611) 필요치는 0.382 / 0.235 m/s 로 여전히 창의 4.7~7.6배다.** 따라서 결손은 술어의 *모양*(현↔호, 원↔직사각형)이 아니라 achievable set 의 *크기*(스칼라 |v_eff|)에 있고, 이를 바꾸는 항목은 두 계획 통틀어 R2 뿐이다. (계획 2 에는 R2 에 해당하는 항목이 아예 없다 — 이것이 두 계획의 결정적 차이다.)\n\n착수 조건 3가지 (아래 required_fixes 와 연동):\n1. 판정은 **saturation_fraction = (n_vo_rejected == n_valid)** — n_samples 가 아니다 (dwa.cpp:741 및 test_dwa.cpp:332 의 기존 계약) — 과 **후보 |v_eff| 스팬**으로만 한다. p05 는 쓰지 마라 (반증됨).\n2. 같은 커밋에서 J_dyn 을 고쳐라. 안 고치면 R2 가 만든 빠른 후보가 dwa.cpp:675 에서 정확히 최대 벌점을 받아 효과가 상쇄된다.\n3. 성공 기준은 \"접촉 감소\" 가 아니라 \"명령된 |v_eff| 가 0.35~0.57 m/s 대역에 **도달하는가**\" 다. 저크 2.0·가속 1.0 에서 0.35~0.57 m/s 까지 램프에 0.35~0.57 s 가 걸리고 포화 개시~접촉이 1.0~1.5 s 이므로 시간 예산은 아슬아슬하게 있다. 도달 자체가 안 되면(게이트가 램프 중 깎으면) R1+R2 도 독립 효과 0 이고, 그때 남는 길은 R5/S3 가 아니라 **게이트 수용성**(S4 계열) 이다.\n\n관련 파일 (모두 절대경로):\n- /tmp/claude-0/-home-CAPYI/c8bfdadc-8698-4d09-aac1-e3c1224c9abc/scratchpad/wt-integ/src/amr_navigation/src/core/dwa.cpp (59 simTime, 107 dynamicWindow, 135 sampleVelocities, 165 rollout, 524/600 호길이 색인, 675 J_dyn, 741 포화 판정)\n- .../src/amr_navigation/src/core/velocity_obstacle.cpp (18 chordVelocity, 51 및 80 조기 반환)\n- .../src/amr_navigation/config/nav2_params.yaml (109-113 표본·지평, 158-162 dynamic_margin 0.5 / vo_margin 0.3)\n- .../src/amr_navigation/test/test_dwa.cpp (319 VelocityObstacleSaturationKeepsVoAndBrakes, 893 CycleTimeBudget)",
+  "**R0 을, 내 공격이 드러낸 항목으로 고쳐서 먼저 한다 — 동적 술어 자체의 계측.** 런타임 거동은 한 줄도 바꾸지 않고(배열 append + 하네스 열 목록 확장), 기존 30시행 하네스 한 번으로 세 가지를 확정한다: (1) 포화 구간에서 비용함수가 이미 순위를 매기고 있는가 — `best == nullptr` 여부와 후보 비용 max−min 을 주기마다 기록해 dwa.cpp:814 의 환원(모든 vo_time = 0 → `c.cost < best->cost`)을 폐루프에서 확인한다. (2) firstContactTime 이 이미 포화인가 — 현재 R = 1.111 m 에서 `min_k firstContactTime` 과 가장 가까운 동적 트랙까지의 ‖p‖ 를 기록한다. 실측 접촉 ‖p‖ 가 max 0.659 m 이므로 **R3·R4·S2·S3 가 전부 '거짓' 이라고 암묵 가정하는 명제**(= 이 술어가 반경 안에서 정보를 준다)를 하루 만에 판정한다. (3) 사거리 분할 — cmd_v 와 gate_out_v 를 접촉 시점이 아니라 **주기마다** 기록해, 계획기가 닿는 인구(42/141)와 하류가 지운 인구(28/141)를 조우 단위로 가른다. 함께 넣을 것: n_samples(현재 342/353 혼재라 포화 판정의 분모가 없다), escaping / leave_lane / drop_spin 플래그. 반드시 tests/integration/test_08_dynamic_obstacles.py:290 의 열 목록을 같이 고친다 — 안 고치면 배열에 붙여도 디스크에 안 남는다. 침투 폐기와 p05 채택, footprint_reach.hpp:19-25 주석 삭제는 그대로 가져간다(검증 완료). **이 한 단계가 끝나기 전에는 R1/R2/S1 에 한 줄도 쓰지 마라** — 그 항목들의 값어치는 전적으로 (2)의 답이 '아직 포화가 아니다' 일 때만 성립한다."
+ ]
+}

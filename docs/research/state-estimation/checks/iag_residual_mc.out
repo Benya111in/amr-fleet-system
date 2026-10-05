@@ -1,0 +1,17 @@
+(a) closed forms and chi2_2 calibration (bias residual included as random constant per run)
+ v=2.0 w=0.0: sigma_rw=0.0248 rad/s, sigma_rv=0.0200 m/s, corr=+0.000; mean s=2.008 (chi2_2: 2), P(s>13.8)=0.0009 (0.001); diag-only P=0.0009
+    gate thresholds (sqrt(13.8) sigma): |r_v| >= 0.074 m/s, |r_w| >= 0.092 rad/s
+ v=1.0 w=1.5: sigma_rw=0.0129 rad/s, sigma_rv=0.0104 m/s, corr=+0.112; mean s=1.995 (chi2_2: 2), P(s>13.8)=0.0009 (0.001); diag-only P=0.0012
+    gate thresholds (sqrt(13.8) sigma): |r_v| >= 0.039 m/s, |r_w| >= 0.048 rad/s
+ v=0.5 w=1.39: sigma_rw=0.0069 rad/s, sigma_rv=0.0056 m/s, corr=+0.177; mean s=2.002 (chi2_2: 2), P(s>13.8)=0.0012 (0.001); diag-only P=0.0014
+    gate thresholds (sqrt(13.8) sigma): |r_v| >= 0.021 m/s, |r_w| >= 0.026 rad/s
+ v=0.0 w=1.5: sigma_rw=0.0034 rad/s, sigma_rv=0.0028 m/s, corr=+0.000; mean s=2.016 (chi2_2: 2), P(s>13.8)=0.0011 (0.001); diag-only P=0.0011
+    gate thresholds (sqrt(13.8) sigma): |r_v| >= 0.010 m/s, |r_w| >= 0.012 rad/s
+
+(b)/(c) residual-based R_ww estimator, W = 50, v = 1 m/s straight
+ true per-sample R_ww = 1.543e-03, R_vv = 5.000e-05
+ doc  C_rw - sg^2/20 (windowed)        : mean/true = 0.083, relative sd = 0.04
+ fix  10(C_rw - sg^2/20) (windowed)    : mean/true = 0.829, relative sd = 0.43
+ per-sample e_w, W=50                  : mean/true = 1.004, relative sd = 0.20
+ per-sample 1-step dv -> R_vv, W=50    : mean/true = 1.012, relative sd = 0.25
+ iid W=50 theory sqrt(2/49) = 0.20

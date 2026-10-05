@@ -1,0 +1,12 @@
+BRIEF dt=0.01: t(v>=1.999)=2.390s  max|a|=1.000  max|j|=5.78  overshoot=1.42e-02  final a=0.00e+00  jerk sign changes t>3s: 0
+BRIEF dt=0.01: 2.0->1.1 undershoot=1.42e-02 max|j|=5.78 final v=1.1000
+BRIEF dt=0.01: reversal (ref 2.0 then 0.5 at t=0.8): max|j|=5.48 min v=0.0002 final v=0.5000 final a=0.00e+00
+FIXED dt=0.01: t(v>=1.999)=2.470s  max|a|=1.000  max|j|=2.00  overshoot=0.00e+00  final a=0.00e+00  jerk sign changes t>3s: 0
+FIXED dt=0.01: 2.0->1.1 undershoot=0.00e+00 max|j|=2.00 final v=1.1000
+FIXED dt=0.01: reversal (ref 2.0 then 0.5 at t=0.8): max|j|=2.00 min v=0.0001 final v=0.5000 final a=0.00e+00
+BRIEF dt=0.02: t(v>=1.999)=2.360s  max|a|=1.000  max|j|=8.89  overshoot=2.76e-02  final a=0.00e+00  jerk sign changes t>3s: 0
+BRIEF dt=0.02: 2.0->1.1 undershoot=2.76e-02 max|j|=8.89 final v=1.1000
+BRIEF dt=0.02: reversal (ref 2.0 then 0.5 at t=0.8): max|j|=4.52 min v=0.0008 final v=0.5000 final a=0.00e+00
+FIXED dt=0.02: t(v>=1.999)=2.480s  max|a|=1.000  max|j|=2.00  overshoot=0.00e+00  final a=0.00e+00  jerk sign changes t>3s: 0
+FIXED dt=0.02: 2.0->1.1 undershoot=0.00e+00 max|j|=2.00 final v=1.1000
+FIXED dt=0.02: reversal (ref 2.0 then 0.5 at t=0.8): max|j|=2.00 min v=0.0004 final v=0.5000 final a=0.00e+00

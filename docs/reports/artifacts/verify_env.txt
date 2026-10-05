@@ -1,0 +1,65 @@
+=== ROS2 코어 ===
+  [OK]   ROS2 CLI (humble)
+  [OK]   rclpy import
+  [OK]   colcon
+
+=== 컨테이너 환경변수 (.env → compose environment) ===
+  [OK]   ROS_DOMAIN_ID 는 0~101 정수 (현재: 77)
+
+=== 시뮬레이터 ===
+  [OK]   Gazebo Fortress (ign gazebo)
+  [OK]   ros_gz_bridge
+
+=== 내비게이션 / 위치추정 ===
+  [OK]   navigation2
+  [OK]   nav2_bringup
+  [OK]   slam_toolbox
+  [OK]   robot_localization
+  [OK]   nav2_costmap_2d
+  [OK]   nav2_amcl
+  [OK]   nav2_navfn_planner
+  [OK]   nav2_smac_planner
+  [OK]   nav2_dwb_controller
+  [OK]   nav2_regulated_pure_pursuit_controller
+  [OK]   nav2_collision_monitor
+
+=== Behavior Tree ===
+  [OK]   behaviortree_cpp
+  [OK]   nav2_behavior_tree
+
+=== 모니터링 (명세 4.9) ===
+  [OK]   foxglove_bridge
+
+=== Python 수치 스택 (numpy 1.x ABI 정합) ===
+  [OK]   numpy < 2 (설치: 1.26.4)
+  [OK]   scipy.optimize.linear_sum_assignment
+  [OK]   matplotlib (Agg 렌더링)
+  [OK]   pandas DataFrame
+  [OK]   tf_transformations (transforms3d 0.4.2)
+  [OK]   pip check (의존성 정합)
+
+=== 인지 (AI) ===
+  [OK]   PyTorch import (2.11.0+cu128)
+  [OK]   CUDA 사용 가능 + GPU matmul
+  [OK]   ultralytics (YOLOv8)
+  [OK]   OpenCV import (4.11.0)
+  [OK]   cv2.aruco.ArucoDetector 검출
+  [OK]   cv2.aruco.estimatePoseSingleMarkers
+  [OK]   cv_bridge 왕복 (bgr8 / rgb8→bgr8 / 32FC1)
+
+=== 테스트 도구 ===
+  [OK]   pytest-cov import
+  [OK]   pytest-timeout import
+  [OK]   pytest 8.3.5 수집+실행 (launch_testing 플러그인 포함)
+  [OK]   pytest --cov / --timeout 옵션 동작
+
+=== GPU 상세 ===
+  device       : NVIDIA GeForce RTX 5090
+  capability   : sm_120
+  torch        : 2.11.0+cu128
+  torch cuda   : 12.8
+  matmul 검증  : torch.Size([1000, 1000]) OK
+
+============================================
+결과: 37개 통과 / 0개 실패
+============================================

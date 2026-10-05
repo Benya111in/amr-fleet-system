@@ -1,0 +1,17 @@
+digraph tf {
+  rankdir=TB;
+  node [shape=box, fontsize=10];
+  "base_footprint" -> "base_link" [label="static", fontsize=8];
+  "base_link" -> "camera_link" [label="static", fontsize=8];
+  "base_link" -> "cargo_link" [label="static", fontsize=8];
+  "base_link" -> "front_caster_link" [label="static", fontsize=8];
+  "base_link" -> "imu_link" [label="static", fontsize=8];
+  "base_link" -> "left_wheel_link" [label="20.0 Hz", fontsize=8];
+  "base_link" -> "lidar_link" [label="static", fontsize=8];
+  "base_link" -> "rear_caster_link" [label="static", fontsize=8];
+  "base_link" -> "right_wheel_link" [label="20.0 Hz", fontsize=8];
+  "camera_link" -> "camera_depth_optical_frame" [label="static", fontsize=8];
+  "camera_link" -> "camera_optical_frame" [label="static", fontsize=8];
+  "map" -> "odom" [label="50.0 Hz", fontsize=8];
+  "odom" -> "base_footprint" [label="50.0 Hz", fontsize=8];
+}

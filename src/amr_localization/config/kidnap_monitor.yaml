@@ -1,0 +1,94 @@
+# kidnap_monitor_node 파라미터 (명세 4.3 "납치 시 제자리 회전 등으로 스스로 위치 복구")
+# 감지·복구 설계와 측정: docs/algorithms/slam.md §5
+/**/kidnap_monitor_node:
+  ros__parameters:
+    # --- 감지 ---
+    cov_thresh: 0.5               # [m²] AMCL var(x)+var(y) 상한. 추적 중 1e-3 수준, 발산 시 수 m² → 0.5 (σ≈0.5 m)
+    yaw_cov_thresh: 0.5           # [rad²] AMCL var(yaw) 상한 (σ ≈ 40°)
+    jump_thresh: 1.0              # [m] 연속 AMCL 갱신 사이 AMCL 상대 이동 − odom 상대 이동. 정상 보정은 수 cm
+    jump_yaw_thresh: 0.5          # [rad]
+    match_thresh: 0.5             # 스캔-맵 인라이어 비율 하한. 정상 0.85~0.98 (동적 장애물 가림만큼 감소).
+                                  # 비율은 "지도를 뚫고 간 빔" 만 불일치로 세므로 미지 장애물에는 떨어지지
+                                  # 않는다 (통합 시나리오 11: 통로를 막은 6 m 벽에서 거짓 LOST 가 났다)
+    match_window: 5               # 연속 저하 판정 수 (match_rate 2 Hz → 2.5 s). 지나가는 작업자 가림 오경보 억제
+    min_match_beams: 30           # 판정에 쓴 빔이 이보다 적으면 판정 보류 (빈 공간, 또는 미지 장애물이
+                                  # 시야를 거의 다 막은 경우 — scan_map_match.match_ratio 는 지도에 없는
+                                  # 물체에 막혀 일찍 끝난 빔을 분자·분모에서 뺀다)
+    # 스캔 정합기(scan_matcher_node) 거부율 — LiDAR 쪽에서 "옆 통로로 옮겨졌다"를 보는 유일한 신호.
+    # 위 match_thresh 경로는 통로를 막은 미지 장애물 앞의 거짓 LOST 를 없애려고 "지도보다 일찍 끝난
+    # 빔"을 분모에서 빼는 비대칭 지표라(scan_map_match.match_ratio), 옆 통로 이동은 거의 못 본다.
+    # 통합 11 실측 18회: LOST 235 건 중 cov 0 · jump 0 · inlier 1 뿐이고 234 건이 마커 보정이었다.
+    # 정합기 신호의 분리도: 정상 주행(6 m 벽 앞 정지 포함) 283~300/300 수락, 납치 뒤 0/300 이
+    # 600 s 연속(reg1), 복구 직후 288/300. 임계는 그 사이 어디든 되지만 여유를 크게 둔다.
+    reg_reject_ratio: 0.8         # 창 안 거부 비율이 이보다 크면 경보
+    reg_window: 20                # 판정 창 (스캔 수). 10 Hz 스캔이면 2 s
+    reg_min_samples: 10           # 창에 이만큼 차야 판정 (기동 직후·재개 직후 오경보 방지)
+    # 마커 보정으로 LOST 를 선언하려면 정합기도 동의해야 한다. 창 안 거부 비율이 이보다 낮으면
+    # (= 정합기가 "여기 맞다") 마커 쪽 오검출로 보고 무시한다. ArUco 오검출은 실재한다 —
+    # 통합 12 reg1: 정지한 로봇이 36 m 밖 마커를 2.15 m 앞으로 읽어 30.32 m 어긋난 자세를 냈고
+    # 그 LOST 가 안 풀려 548 s 동안 작업을 205 회 거절했다 (s12 는 1873 회). 그 시각 정합기는
+    # 86 ok / 1 rejected 였다. 진짜 납치는 반대로 정합기가 거부한다 (통합 11: 0/300, 600 s).
+    reg_marker_veto_ratio: 0.5
+    inlier_dist: 0.2              # [m] 인라이어 거리 (σ_lidar 0.03 + 맵 오차 + 보간 오차 여유)
+    max_beams: 180                # 일치도 계산 빔 수 (AMCL 과 같게)
+    occupied_thresh: 65           # OccupancyGrid 점유 판정 값 (map_server 0.65)
+    suspect_time: 1.0             # [s] 경보가 이만큼 지속되면 LOST 확정
+    match_rate: 2.0               # [Hz]
+    tick_rate: 5.0                # [Hz]
+
+    # --- 복구 ---
+    seed_attempts: 3              # 전역 가설 탐색 상위 3 개를 차례로 initialpose 로 시도, 그 뒤 AMCL 전역 재초기화
+    seed_cov_xy: 0.0625           # [m²] 시드 initialpose 분산 (σ 0.25 m = coarse 격자 반폭)
+    seed_var_yaw: 0.01            # [rad²] (σ ≈ 5.7°, coarse 헤딩 격자 5°)
+    reinit_retry: 4               # 재초기화 시도 총 횟수 (시드 3 + 전역 1)
+    spin_retry: 1                 # 시도당 회전 횟수
+    spin_angle: 6.283185307       # [rad] 한 바퀴: 360° LiDAR 라도 회전은 AMCL 갱신·리샘플(update_min_a)을 구동한다
+    spin_time_allowance: 30.0     # [s]
+    converge_cov: 0.1             # [m²] 수렴: AMCL var(x)+var(y) < 0.1 (σ ≈ 0.22 m) 이고
+    converge_match: 0.7           #       인라이어 비율 ≥ 0.7 이고
+    converge_margin: 0.05         #       다른 전역 가설(별칭, 탐색 이후 odom 이동만큼 옮긴 자세)의 같은 스캔
+                                  #       인라이어 비율보다 0.05 이상 높은 것이 (점대칭·주기 별칭 ρ 0.70~0.93,
+                                  #       정답 대비 차 0.07 이상 — slam.md §5.2; 못 가르면 lost 유지)
+    converge_count: 5             #       5 회 연속 (≈ 2.5 s)
+    recovery_timeout: 120.0       # [s] 이 안에 수렴 못 하면 FAILED (lost 유지, 수렴하면 언제든 복귀)
+    cooldown: 3.0                 # [s] 복구 직후 재감지 유예
+
+    # --- 마커 보정 (localization/marker_fix, amr_behavior docking_server_node) ---
+    # 스캔-맵 정합은 같은 형태의 평행 통로를 구분하지 못한다 (통합 시나리오 11: 6 m 옆으로 옮겨도
+    # inlier·공분산·점프 어디에도 걸리지 않았다 → lost 미선언 → 잘못된 자세로 주행). ArUco 마커는
+    # 지도에서 유일하므로, 도크 앞에서 다른 도크의 마커를 보면 그 관측만으로 자세가 정해진다.
+    # 그 자세가 현재 추정과 이만큼 이상 어긋나면 LOST 를 선언하고 그 자세를 그대로 시드한다
+    # (전역 가설 탐색을 건너뛴다 — 별칭 가설로 다시 수렴할 위험도 없앤다).
+    # 도크 간격이 4 m 이므로 1 m 면 오검출(연속 3 관측 필요)과 정상 오차(≤ 0.3 m)를 안전하게 가른다.
+    marker_fix_min_error: 2.5     # [m] 마커 역산 자세가 이보다 멀면 위치 추정이 틀렸다고 본다.
+                                  # 역산 자세 자체의 오차(σ 12.8° × 5 m ≈ 1.1 m)보다 넉넉해야
+                                  # 한다 — 1.0 이면 정상 주행 중 보정 오차가 잘못된 씨앗을 심는다
+    marker_fix_persist: 0.6       # [s] 불일치가 이만큼 이어져야 납치로 본다 (한 프레임만 보고
+                                  # 움직이면 로봇을 옮기고 초기 자세를 알려 주는 전이 구간을
+                                  # 납치로 오판한다 — 진짜 납치는 불일치가 사라지지 않는다)
+
+    # --- 정지 직후 AMCL 무이동 갱신 (정지 정확도 3 cm) ---
+    # AMCL 은 움직일 때만 갱신 → 정지하면 마지막 갱신 오차(주행 중 2~6 cm)가 굳는다. 정지 0.5 s 후
+    # request_nomotion_update 를 1 s 간격 3 회 호출해 같은 자세 스캔으로 파티클을 다시 모은다.
+    # 횟수를 늘리면 운동 잡음 없는 리샘플이 반복되어 파티클이 고갈되므로 3 회로 제한 (brief §2.4).
+    nomotion_updates_on_stop: 3   # 0 = 끔
+    nomotion_period: 1.0          # [s]
+    nomotion_service: request_nomotion_update
+
+    # --- 인터페이스 ---
+    amcl_pose_topic: amcl_pose
+    odom_topic: odometry/filtered
+    scan_topic: scan_filtered
+    map_topic: /map
+    lost_topic: localization/lost
+    status_topic: localization/kidnap_status
+    initial_pose_topic: initialpose
+    map_frame: map
+    reinit_service: reinitialize_global_localization
+    spin_action: spin
+    ekf_set_pose_service: ''      # launch 가 map EKF 의 set_pose 서비스 이름을 넣는다 ('' = 사용 안 함)
+    fallback_cmd_vel_topic: ''    # spin 서버 없는 단독 시험에서만 'cmd_vel' (운용 시 cmd_vel 발행자는 safety_node 하나)
+    fallback_angular_speed: 0.5   # [rad/s]
+    lidar_offset: [0.15, 0.0, 0.0]  # [m, m, rad] base_footprint→lidar_link 2D (launch 가 sensors.yaml extrinsic 으로 덮어씀;
+                                    # 스캔 평면 높이 0.20 m 는 2D 일치도에 쓰이지 않는다)
+    event_log: ''                 # 이벤트 CSV 경로 ('' = 기록 안 함)

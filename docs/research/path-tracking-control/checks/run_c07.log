@@ -1,0 +1,20 @@
+brake_dist(2.0,0.0->1.1): closed 2.1700 m, filter-simulated 2.1711 m
+brake_dist(1.5,0.8->1.1): closed 2.1055 m, filter-simulated 2.1066 m
+brake_dist(1.8,-0.5->1.0): closed 1.4897 m, filter-simulated 1.4902 m
+brake_dist(1.2,1.0->0.3): closed 2.1271 m, filter-simulated 2.1274 m
+brake_dist(2.0,0.0->0.0): closed 2.5000 m, filter-simulated 2.5000 m
+brake_dist(0.4,0.0->0.0): closed 0.1789 m, filter-simulated 0.1789 m
+2-rate A rest->3 m straight->R1.5 arc delay 0: max(v - v_cap) +0.039 m/s at s=12.00; excluding last 0.1 m +0.0006; stop at s=12.005 (goal 12.00), T=10.80 s
+2-rate A rest->3 m straight->R1.5 arc delay 1: max(v - v_cap) +0.039 m/s at s=12.00; excluding last 0.1 m +0.0006; stop at s=12.005 (goal 12.00), T=10.82 s
+2-rate A rest->3 m straight->R1.5 arc delay 3: max(v - v_cap) +0.410 m/s at s=12.01; excluding last 0.1 m +0.0505; stop at s=12.102 (goal 12.00), T=10.40 s
+2-rate B cruise 20 m->R1.5 arc delay 0: max(v - v_cap) +0.002 m/s at s=30.00; excluding last 0.1 m +0.0000; stop at s=30.000 (goal 30.00), T=19.76 s
+2-rate B cruise 20 m->R1.5 arc delay 1: max(v - v_cap) +0.046 m/s at s=30.00; excluding last 0.1 m +0.0000; stop at s=30.005 (goal 30.00), T=20.06 s
+2-rate B cruise 20 m->R1.5 arc delay 3: max(v - v_cap) +0.390 m/s at s=30.00; excluding last 0.1 m +0.0042; stop at s=30.091 (goal 30.00), T=19.44 s
+2-rate C step down to slowly decreasing cap delay 0: max(v - v_cap) +0.047 m/s at s=30.00; excluding last 0.1 m +0.0079; stop at s=30.006 (goal 30.00), T=24.56 s
+2-rate C step down to slowly decreasing cap delay 1: max(v - v_cap) +0.097 m/s at s=30.01; excluding last 0.1 m +0.0008; stop at s=30.028 (goal 30.00), T=24.84 s
+2-rate C step down to slowly decreasing cap delay 3: max(v - v_cap) +0.390 m/s at s=30.00; excluding last 0.1 m +0.0028; stop at s=30.089 (goal 30.00), T=23.94 s
+DWA output = window-clamped output v_f + a*dT (ramp semantics): t(v>=1.999) = 5.52 s (jerk-limited optimum 2.47 s)
+DWA output = target semantics (step to v*): t(v>=1.999) = 2.46 s (jerk-limited optimum 2.47 s)
+2-rate A rest->3 m straight->R1.5 arc delay 3, margin 0.11 s: max(v - v_cap) +0.080 m/s at s=12.00; excluding last 0.1 m +0.0505; stop at s=12.011, T=10.96 s
+2-rate B cruise 20 m->R1.5 arc delay 3, margin 0.11 s: max(v - v_cap) +0.162 m/s at s=30.02; excluding last 0.1 m +0.0000; stop at s=30.067, T=20.66 s
+2-rate C step down to slowly decreasing cap delay 3, margin 0.11 s: max(v - v_cap) +0.135 m/s at s=30.00; excluding last 0.1 m +0.0002; stop at s=30.034, T=25.00 s

@@ -1,0 +1,28 @@
+<?xml version="1.0" ?>
+<!--
+  소형 화물 상자: 0.30 x 0.20 x 0.15 m, 2.0 kg. 모델 원점 = 바닥 중심.
+  관성: 균일 직육면체 I = m/12 * (a^2 + b^2)
+    ixx = 2/12*(0.20^2+0.15^2) = 0.010417, iyy = 2/12*(0.30^2+0.15^2) = 0.018750, izz = 2/12*(0.30^2+0.20^2) = 0.021667
+-->
+<sdf version="1.8">
+  <model name="box_small">
+    <link name="link">
+      <pose>0 0 0.075 0 0 0</pose>
+      <inertial>
+        <mass>2.0</mass>
+        <inertia><ixx>0.010417</ixx><iyy>0.018750</iyy><izz>0.021667</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+      </inertial>
+      <collision name="collision">
+        <geometry><box><size>0.30 0.20 0.15</size></box></geometry>
+        <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+      </collision>
+      <visual name="visual">
+        <geometry><box><size>0.30 0.20 0.15</size></box></geometry>
+        <material>
+          <ambient>0.80 0.62 0.38 1</ambient>
+          <diffuse>0.80 0.62 0.38 1</diffuse>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>

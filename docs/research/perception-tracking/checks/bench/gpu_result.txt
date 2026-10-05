@@ -1,0 +1,30 @@
+WARNING ⚠️ 'half' is deprecated and will be removed in the future. Use 'quantize' instead.
+WARNING ⚠️ 'half' is deprecated and will be removed in the future. Use 'quantize' instead.
+WARNING ⚠️ 'half' is deprecated and will be removed in the future. Use 'quantize' instead.
+{
+ "torch": "2.11.0+cu128",
+ "cuda": true,
+ "gpu": "NVIDIA GeForce RTX 5090",
+ "gpu_fp16_forward_b1": {
+  "median_ms": 13.66,
+  "p95_ms": 33.46
+ },
+ "gpu_fp16_forward_b5": {
+  "median_ms": 12.57,
+  "p95_ms": 51.91
+ },
+ "gpu_predict_b1_full": {
+  "median_ms": 4.38,
+  "p95_ms": 6.51
+ },
+ "gpu_predict_b5_full": {
+  "median_ms": 41.46,
+  "p95_ms": 86.57
+ },
+ "gpu_mem_alloc_MB": 68.4,
+ "host_loadavg": [
+  47.1884765625,
+  47.205078125,
+  50.10693359375
+ ]
+}

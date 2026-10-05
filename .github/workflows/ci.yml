@@ -1,0 +1,199 @@
+# CI: 커밋 메시지 검사 + colcon 빌드/테스트 (명세 4.1 conventional commits, 7장 colcon build 무경고)
+#
+# - commit-lint : PR 범위(base..head)의 모든 커밋 메시지 원문과 PR 제목("Squash and merge" 시 커밋 첫 줄)을
+#                 scripts/check_commit_msg.sh 로 검사 — 로컬 commit-msg 훅과 같은 입력, 같은 판정
+# - build-test  : 공식 ros:humble 이미지에서 rosdep → colcon build(-Werror) → colcon test
+#                 (프로젝트 GPU 이미지는 12GB 라 GitHub 러너(디스크 ~14GB)에서 쓸 수 없다)
+# 룰셋의 필수 상태 검사 이름은 job name 과 같다: "commit-lint", "build-test"
+name: CI
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+
+# 같은 PR 에 새 push 가 오면 이전 실행은 취소. develop/main 으로의 push 는 병합 커밋마다 결과를 남겨야 하므로
+# 취소하지 않는다 (연달아 병합해도 앞 커밋의 검사가 사라지지 않는다)
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  ROS_DISTRO: humble
+
+jobs:
+  commit-lint:
+    name: commit-lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # base..head 범위를 보려면 전체 히스토리가 필요
+
+      - name: 검사 범위 결정
+        id: range
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_HEAD: ${{ github.sha }}
+        run: |
+          if [ "$EVENT_NAME" = pull_request ]; then
+            base=$PR_BASE; head=$PR_HEAD
+          else
+            base=$PUSH_BEFORE; head=$PUSH_HEAD
+          fi
+          # 새 브랜치(before = 0000…)이거나 base 를 찾을 수 없으면 head 커밋 하나만 검사
+          if git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            range="${base}..${head}"
+          else
+            range="${head}^!"
+          fi
+          echo "range=$range" | tee -a "$GITHUB_OUTPUT"
+
+      - name: 검사 스크립트 자체 검증 (수용/거부 표)
+        # 아래 단계는 저장소에 이미 있는(= 통과하는) 메시지만 먹이므로, 규칙이 느슨해지는 회귀를
+        # 잡지 못한다. 이 표가 그 자리를 메운다 — 규칙을 바꾸면 표가 먼저 깨진다.
+        run: bash scripts/test_check_commit_msg.sh
+
+      - name: 커밋 메시지 검사 (Conventional Commits)
+        env:
+          RANGE: ${{ steps.range.outputs.range }}
+        run: |
+          # 커밋마다 메시지 원문(%B)을 그대로 넘긴다. %s 는 첫 단락을 한 줄로 합쳐 버려서
+          # 본문이 둘째 줄에 바로 붙은 커밋이 훅은 통과하고 CI 만 '72자 초과'로 떨어진다.
+          shas=$(git rev-list --reverse "$RANGE")
+          echo "검사 대상 커밋: $(git rev-list --count "$RANGE")개 ($RANGE)"
+          fail=0
+          for sha in $shas; do
+            subject=$(git show -s --format=%B "$sha" | sed -n '1p')
+            subject=${subject//::/: :}   # 커밋 메시지 속 '::' 가 워크플로 명령으로 해석되지 않게
+            if git show -s --format=%B "$sha" | bash scripts/check_commit_msg.sh; then
+              printf '  ok   %s %s\n' "${sha:0:7}" "$subject"
+            else
+              printf '::error::커밋 메시지 형식 위반: %s %s\n' "${sha:0:7}" "$subject"
+              fail=1
+            fi
+          done
+          exit "$fail"
+
+      - name: PR 제목 검사 ("Squash and merge" 시 커밋 첫 줄이 된다)
+        if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # squash 병합이 만드는 커밋 첫 줄은 제목 그대로가 아니라 **제목 + " (#N)"** 이다.
+          # 제목만 검사하면 72자 상한을 7~9자 모자라게 재서, 제목은 통과하는데 squash 결과가
+          # 상한을 넘는 구멍이 생긴다. 그래서 squash 가 실제로 쓸 첫 줄을 검사한다.
+          # (README 4장: 저장소 설정에서 Squash and merge 를 끄거나, 제목을 커밋 형식으로 쓴다)
+          squashed="${PR_TITLE} (#${PR_NUMBER})"
+          shown=${squashed//::/: :}
+          if printf '%s\n' "$squashed" | bash scripts/check_commit_msg.sh; then
+            printf '  ok   squash 첫 줄: %s\n' "$shown"
+          else
+            printf '::error::squash 병합 시 커밋 첫 줄이 규칙에 어긋난다 (제목 + " (#%s)"): %s\n' \
+              "$PR_NUMBER" "$shown"
+            exit 1
+          fi
+
+  build-test:
+    name: build-test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container:
+      image: ros:humble-ros-base-jammy   # == ros:humble (Ubuntu 22.04, rosdep/colcon/ament_lint 포함)
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 의존성 설치 (rosdep)
+        # ros_gz_* 는 시뮬레이션 런타임 전용(Gazebo/Qt/OGRE ~300 deb)이라 헤드리스 CI 에서 제외.
+        # 나머지 선언 의존성(nav2, cv_bridge, robot_localization …)은 향후 C++ 빌드와
+        # 파이썬 테스트의 msg/srv import 에 필요하므로 그대로 설치한다 (측정: 약 400MB 다운로드).
+        run: |
+          apt-get update -qq
+          rosdep update --rosdistro "$ROS_DISTRO"
+          rosdep install --from-paths src --ignore-src -y --rosdistro "$ROS_DISTRO" \
+            --skip-keys "ros_gz_sim ros_gz_bridge ros_gz_image"
+
+      - name: 저장소 고정 버전 설치 (docker/constraints.txt)
+        # rosdep 이 깔아 주는 것은 Jammy apt 버전(2022년)인데, 이 저장소가 선언한 런타임은
+        # docker/constraints.txt 의 고정 버전이다. 그 차이 때문에 CI 가 "프로젝트가 쓰지 않는
+        # 스택"을 검사하고 있었다 — 실측으로 26 errors + 41 failures 가 나오고, 고정 버전을
+        # 걸면 0 errors + 7 failures(전부 torch 부재, 그 6 개 시험은 skip 으로 가드)가 된다.
+        #   flask 2.0.1 -> 3.1.3        (Flask.json 없음: 20건)
+        #   pytest 6.2.5 -> 8.3.5       (nose-style setup() 충돌: 18건)
+        #   opencv 4.5.4 -> 4.11.0.86   (cv2.aruco API: 16건)
+        #   jsonschema 3.2.0 -> 4.26.0  (Draft202012Validator 없음: 1건)
+        # torch / torchvision / ultralytics 는 수 GB + CUDA 라 깔지 않는다 — 실추론 시험은
+        # 런타임 부재로 skip 된다 (src/amr_perception/test/test_yolo_backend.py 의 requires_torch).
+        # numpy/scipy/matplotlib/pandas 는 실패 원인이 아니므로 apt 판을 그대로 둔다.
+        # PIP_CONSTRAINT 로 버전을 고정하므로 아래 목록에 버전을 중복해 적지 않는다 (단일 출처).
+        env:
+          PIP_CONSTRAINT: docker/constraints.txt
+        run: |
+          apt-get install -y -qq python3-pip
+          pip3 install --no-cache-dir \
+            opencv-contrib-python-headless \
+            pytest pytest-cov pytest-timeout \
+            flask flask-socketio eventlet jsonschema
+          # 고정이 실제로 걸렸는지 못박는다 — 조용히 실패하면 아래 결과가 검사가 아니게 된다
+          python3 - <<'PY'
+          import importlib
+          want = {'flask': '3.1.3', 'jsonschema': '4.26.0', 'pytest': '8.3.5', 'cv2': '4.11'}
+          bad = [f'{m}: {getattr(importlib.import_module(m), "__version__", "?")} != {v}'
+                 for m, v in want.items()
+                 if not str(getattr(importlib.import_module(m), '__version__', '')).startswith(v)]
+          if bad:
+              raise SystemExit('고정 버전이 걸리지 않았다: ' + '; '.join(bad))
+          print('고정 버전 일치:', ', '.join(f'{m}=={v}' for m, v in want.items()))
+          PY
+
+      - name: colcon build (경고 = 에러)
+        run: |
+          # shellcheck source=/dev/null
+          source "/opt/ros/$ROS_DISTRO/setup.bash"
+          colcon build \
+            --event-handlers console_direct+ \
+            --cmake-args \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_CXX_FLAGS="-Wall -Wextra -Wpedantic -Werror"
+
+      - name: colcon test
+        run: |
+          # shellcheck source=/dev/null
+          source "/opt/ros/$ROS_DISTRO/setup.bash"
+          # shellcheck source=/dev/null
+          source install/setup.bash
+          # 패키지 순차 실행: 같은 ROS_DOMAIN_ID 에서 여러 패키지의 ROS 통신 시험이 동시에 돌면 서로 간섭한다
+          # (scripts/test.sh 와 같은 이유)
+          colcon test --executor sequential --event-handlers console_direct+
+
+      - name: 테스트 결과 요약 (실패가 하나라도 있으면 job 실패)
+        if: always()
+        run: |
+          # shellcheck source=/dev/null
+          source "/opt/ros/$ROS_DISTRO/setup.bash"
+          colcon test-result --verbose
+
+      - name: 테스트 결과 업로드
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ github.run_id }}
+          path: |
+            build/*/test_results/**
+            log/latest_test/**
+          if-no-files-found: warn
+          retention-days: 14

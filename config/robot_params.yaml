@@ -1,45 +1,150 @@
 # AMR 로봇 물리/동역학 파라미터 (명세 4장 1절 "로봇 모델링")
-# 이 값들은 URDF(xacro), 컨트롤러, 플래너가 공통으로 참조한다.
+# 이 값들은 URDF(xacro), 컨트롤러, 플래너, 안전 노드가 공통으로 참조한다.
 # 파라미터 변경 시 재빌드가 필요 없도록 YAML 로 외부화한다 (명세 9장 평가 항목).
+#
+# 프레임 규약 (docs/architecture/README.md TF 트리)
+# - base_footprint: base_link 의 지면 투영. base_footprint -> base_link 는 z = robot.base_link_height 인 고정 조인트.
+# - base_link: 차체 박스의 기하 중심. config/sensors.yaml 의 extrinsic 은 모두 이 원점 기준.
+# - 차동 구동 축은 base_link 바로 아래(x = 0) → 회전 중심 = base_link 의 지면 투영.
 
 /**:
   ros__parameters:
 
     robot:
-      # 실제 물류 AMR 규격 참고: 600mm x 400mm x 300mm
+      # 실제 물류 AMR 규격 참고: 600mm x 400mm x 300mm (차체 박스)
       footprint_length: 0.60      # [m]
       footprint_width: 0.40       # [m]
       height: 0.30                # [m]
-      base_mass: 45.0             # [kg] 공차 중량
+      base_mass: 45.0             # [kg] 차체 공차 중량 (바퀴·캐스터 제외; 총 공차 = 45 + 2×1.0 + 2×0.3 = 47.6)
+      ground_clearance: 0.03      # [m] 차체 바닥 ~ 지면
+      base_link_height: 0.18      # [m] = ground_clearance + height/2 (base_footprint -> base_link 의 z)
+      # 차체 박스는 base_link 중심, z 범위 지면 +0.03 ~ +0.33. 상면(+0.33)이 적재 데크다.
+      # LiDAR 는 차체 안 슬롯(스캔 평면 지면 +0.20), 카메라는 전면 데크 아래(+0.25) — 적재물이 센서를 가리지 않는다
+      # (config/sensors.yaml extrinsic 주석). 자기 차체 제외 방식은 urdf/amr_gazebo.xacro 참조.
 
       # 차동 구동 파라미터 — 순기구학 계산의 기준값
       wheel_radius: 0.0825        # [m]
       wheel_separation: 0.36      # [m] 좌우 바퀴 중심 간 거리
+      wheel_width: 0.035          # [m]
+      # 기하 정합: 바퀴 바깥면 |y| = wheel_separation/2 + wheel_width/2 = 0.18 + 0.0175 = 0.1975 < footprint_width/2 = 0.20
+      #   → 바퀴가 풋프린트 안에 들어간다 (여유 2.5 mm). wheel_width 가 0.04 를 넘으면 차체 밖으로 나온다.
+      # 바퀴 조인트 원점 (base_link 기준): (0, ±0.18, wheel_radius - base_link_height = -0.0975), 축 = y.
+      #   바퀴 상단(지면 +0.165)이 차체 바닥(+0.03) 안으로 0.135 들어오므로 URDF 에서 self_collide 를 끄거나 휠하우스를 판다.
+      wheel_mass: 1.0             # [kg] 바퀴 1개
+      wheel_friction_coeff: 1.0   # [무차원] 구동륜 mu (Gazebo <friction><ode><mu>)
+
+      # 캐스터: 구형, 차체 중심선 위 전/후 각 1개
+      caster_radius: 0.03         # [m] = ground_clearance → 캐스터 상단이 차체 바닥에 닿는다
+      caster_mass: 0.3            # [kg] 캐스터 1개
+      caster_x_offset: 0.24       # [m] 캐스터 중심 |x|. 조인트 원점: (±0.24, 0, caster_radius - base_link_height = -0.15)
+      caster_friction_coeff: 0.05 # [무차원] 미끄러지는 구 캐스터 근사 (mu 를 낮게)
+
+      # 관성 (URDF <inertial>). 비대각 성분은 0.
+      # 차체 = 균질 박스 (l=0.60, w=0.40, h=0.30, m=45): m/12 = 3.75
+      #   Ixx = m/12 (w^2 + h^2) = 3.75 × 0.25 = 0.9375
+      #   Iyy = m/12 (l^2 + h^2) = 3.75 × 0.45 = 1.6875
+      #   Izz = m/12 (l^2 + w^2) = 3.75 × 0.52 = 1.95
+      base_inertia: [0.9375, 1.6875, 1.95]     # [kg m^2] ixx, iyy, izz
+      # 바퀴 = 축(y) 방향 원통 (m=1.0, r=0.0825, w=0.035)
+      #   I_axis = m r^2 / 2            = 0.0034
+      #   I_perp = m (3 r^2 + w^2) / 12 = 0.0018
+      wheel_inertia: [0.0018, 0.0034, 0.0018]  # [kg m^2] ixx, iyy(축), izz
+      # 캐스터 = 구 (m=0.3, r=0.03): I = 2/5 m r^2 = 0.000108
+      caster_inertia: 0.000108                 # [kg m^2] ixx = iyy = izz
 
     # 동역학 제한 (명세: 최대속도 2.0, 최대가속도 1.0, 최대회전 1.5)
     limits:
       max_linear_velocity: 2.0        # [m/s]
       min_linear_velocity: -0.5       # [m/s] 후진
-      max_linear_acceleration: 1.0    # [m/s^2]
+      max_linear_acceleration: 1.0    # [m/s^2] 가속·감속 프로파일 공통 (safety 의 제동 거리 계산도 이 값을 쓴다)
       max_angular_velocity: 1.5       # [rad/s]
       max_angular_acceleration: 2.0   # [rad/s^2]
       max_linear_jerk: 2.0            # [m/s^3] 적재물 안정성 (명세 5장)
+      # 비상 감속 [m/s^2] (명세 4.7 "E-Stop 시 즉시 물리적 정지"). Gazebo DiffDrive 의 min_linear_acceleration(= -이 값)
+      # 이 된다 — 정상 감속 1.0 은 velocity_profiler_node 가 프로파일로 지키고, E-Stop 때 safety_node 가 프로파일을 우회해
+      # 0 을 내면 제동은 이 한계와 구동 토크(drive.wheel_effort_limit) 중 작은 쪽으로 걸린다.
+      #  근거: 접지 한계 μ·g·(구동륜 하중 비율) ≈ 0.8 × 9.8 × 0.7 ≈ 5.5 m/s^2 보다 작고, 적재물(박스 바닥 μ 0.6)이
+      #  데크에서 미끄러지는 한계 0.6 × 9.8 = 5.9 보다 작다. 실제로는 토크 한계가 먼저 걸린다
+      #  (실측 E-Stop 감속 0 kg 1.65 / 10 kg 1.39 / 25 kg 1.13 m/s^2 — drive 주석 표). 이 값은 컨트롤러가 물리보다
+      #  먼저 제동을 묶지 않게 하는 상한이다.
+      #  주의: DiffDrive 가속 제한은 부호 기준이라(속도 감소 방향 전체) 후진 가속도 이 값까지 허용된다 — 후진 상한 -0.5 m/s.
+      emergency_deceleration: 3.0
 
-    # 적재 용량별 질량 — 동역학에 반영 (명세 8장 물품 표)
+    # 구동 모터·감속기 모델 (명세 4.1 "적재 질량 변화가 동역학에 반영"). 바퀴 조인트의 <limit effort velocity> 가 된다.
+    # DiffDrive 는 바퀴 속도를 서보로 지령하므로, 토크 한계가 없으면 질량과 무관하게 지령 램프를 그대로 따라간다
+    # (리뷰 실측: 0 / 25 / 200 kg 가속 곡선 동일). 토크 한계를 두면 낼 수 있는 가속도 = (2·T/r − 구름 저항) / 총 질량 이
+    # 적재 질량에 따라 줄어든다. limits.* 는 컨트롤러 한계(envelope)로 그대로 두고, 그 안에서 물리가 못 따라가면 그만큼 느려진다.
+    #  가정한 구동계: 24 V BLDC 100 W 급 (정격 0.30 N·m / 3200 rpm 최대), 감속비 12, 효율 0.85, 드라이버 전류 제한 = 정격.
+    #   바퀴 토크 = 0.30 × 12 × 0.85 = 3.06 → 3.0 N·m,  바퀴 최고 속도 = 3200 rpm / 12 = 27.9 rad/s → 28.0
+    #  근거 (총 질량 = 47.6 공차 + 적재, 구동 2륜 F = 2 × 3.0 / 0.0825 = 72.7 N):
+    #   - 공차·중형(57.6 kg)까지는 명세 1.0 m/s^2 를 낸다 → 정상 운행 프로파일은 적재 질량과 무관하게 지켜진다.
+    #   - 대형(72.6 kg)은 1.0 에 못 미친다 → 적재 질량이 가속 응답에 드러난다 (명세 8장 "대형 적재 시 질량 변화 반영").
+    #   - 대형 적재 제동도 ≥ 1.0 m/s^2 → safety 제동 거리 계산(a = 1.0) 이 모든 적재 조건에서 보수적이다.
+    #  Gazebo 실측 (Fortress 6.18, 평지, 1 ms 스텝, cmd_vel 스텝 지령, ground_truth/odom 50 Hz):
+    #    적재        가속 0→2.0 m/s          2.0 m/s 에서 0 지령 (E-Stop, 반응 지연 제외)   -1.0 m/s^2 램프 추종 최대 오차
+    #    0 kg        1.000 m/s^2 (한계)      1.65 m/s^2, 1.23 s, 1.23 m                     0.015 m/s
+    #    10 kg       1.000 m/s^2 (한계)      1.39 m/s^2, 1.45 s, 1.46 m                     0.016 m/s
+    #    25 kg       0.843 m/s^2             1.13 m/s^2, 1.79 s, 1.79 m                     0.017 m/s
+    #   가속 < 제동 인 것은 캐스터 마찰(구름 저항 근사, 25 kg 에서 약 11 N)이 가속을 빼고 제동을 돕기 때문이다.
+    #   제자리 회전 가속은 모든 적재에서 한계 2.0 rad/s^2 (토크 여유).
+    #  대안(기록): 토크를 5.5 N·m 이상으로 올리면 0 kg E-Stop 이 3.0 m/s^2 에 닿지만(25 kg ≈ 2.0) 모든 적재에서 가속이
+    #   1.0 한계에 걸려 정상 운행 중 적재 질량이 드러나지 않는다 → 명세 4.1 을 우선해 3.0 N·m 로 둔다.
+    #  바퀴 최고 속도는 최고 선속도 + 최고 각속도 동시 지령의 바깥 바퀴 (2.0 + 1.5 × 0.18) / 0.0825 = 27.5 rad/s 를 덮는다.
+    drive:
+      wheel_effort_limit: 3.0         # [N·m] 바퀴 1개 최대 토크 (가속·제동 대칭, 드라이버 전류 제한)
+      wheel_velocity_limit: 28.0      # [rad/s] 바퀴 최고 각속도 (= 2.31 m/s)
+
+    # 적재 용량별 질량·크기 — 동역학에 반영 (명세 8장 물품 표). 적재 시 총 질량 = 47.6 (공차) + payload.<type>.mass
+    # size = [x(로봇 전후), y(좌우), z] [m]. 데크(차체 상면) 중앙에 놓인 균질 박스로 모델링한다 → 질량 중심 높이가
+    # 실제와 같다 (대형: 지면 +0.53 m). 대형은 폭 0.50 이라 차체(0.40) 좌우로 0.05 씩 튀어나온다 (충돌체 포함).
     payload:
       small:
         mass: 2.0                 # [kg]
+        size: [0.30, 0.20, 0.15]  # [m] 명세 30 x 20 x 15 cm
         load_time: 5.0            # [s]
       medium:
         mass: 10.0
+        size: [0.50, 0.40, 0.30]
         load_time: 10.0
       large:
         mass: 25.0
+        size: [0.60, 0.50, 0.40]
         load_time: 15.0
 
     # 안전 (명세 7장)
     safety:
-      emergency_stop_distance: 0.30   # [m] 이내 접근 시 즉시 정지
-      warning_zone_distance: 1.00     # [m] Warning Zone
+      # 거리 기준: 모든 구역 거리는 풋프린트 모서리(0.60 × 0.40 사각형)에서 장애물까지의 최단 거리다.
+      # LiDAR 원점은 base_link 전방 0.15 m 에 있으므로 전방 빔은 range 에서 0.15 (전면 모서리까지), 측방 빔은
+      # 0.20 을 빼야 풋프린트 기준이 된다 → 안전 노드는 스캔 점을 base_link 로 변환한 뒤 풋프린트 다각형까지의
+      # 거리를 계산한다 (range 를 그대로 쓰지 않는다).
+      distance_reference: footprint_edge
+      emergency_stop_distance: 0.30   # [m] (명세) 이내 접근 시 즉시 정지: 속도 지령 0, 프로파일러 우회
       critical_zone_distance: 0.50    # [m] Critical Zone
-      sensor_timeout: 0.5             # [s] 초과 시 센서 고장으로 판단
+      warning_zone_distance: 1.00     # [m] Warning Zone
+
+      # 제동 거리 d(v) = v · reaction_latency + v^2 / (2 · limits.max_linear_acceleration)
+      #   reaction_latency 0.15 s = LiDAR 1 주기(0.10) + 처리·제어 1 주기(0.05), a = 1.0 m/s^2 (프로파일 한계, 보수적 —
+      #   구동 토크 한계에서의 실측 제동은 대형 적재 25 kg 에서도 1.13 m/s^2, drive 주석)
+      #   v = 2.0 → 0.30 + 2.00 = 2.30 m : 고정 구역 1.0 / 0.5 / 0.3 m 만으로는 최고속에서 제때 정지할 수 없다.
+      # 그래서 구역마다 속도 상한을 두어 "구역 진입 속도로 다음 구역 경계 전에 정지" 가 성립하게 한다:
+      #   warning (1.0 m) → critical (0.5 m) 까지 여유 0.5 m : d(0.5) = 0.075 + 0.125 = 0.20 m ≤ 0.5 ✓ (허용 한계 0.86 m/s)
+      #   critical(0.5 m) → e-stop  (0.3 m) 까지 여유 0.2 m : d(0.2) = 0.030 + 0.020 = 0.05 m ≤ 0.2 ✓ (허용 한계 0.50 m/s)
+      #   e-stop  (0.3 m) : 0.2 m/s 에서 0.05 m 에 정지 → 0.25 m 여유
+      warning_zone_max_speed: 0.5     # [m/s]
+      critical_zone_max_speed: 0.2    # [m/s]
+      reaction_latency: 0.15          # [s]
+      # 구역 밖(여유 D ≥ 1.0 m)에서는 여유 거리 기반 연속 제한을 건다 (구역 상한이 더 낮으면 구역 상한 우선):
+      #   v_max(D) = -a·t + sqrt((a·t)^2 + 2·a·(D - emergency_stop_distance)),  t = reaction_latency
+      #   D = 2.6 → 2.0 m/s, D = 1.0 → 1.04, D = 0.5 → 0.50. 즉 최고속 2.0 m/s 는 전방 여유 2.6 m 이상일 때만 허용.
+      clearance_speed_limit_enabled: true
+
+      # 센서 고장 판정: 토픽별 타임아웃 ≈ 3 주기 (config/sensors.yaml 의 update_rate 기준)
+      sensor_timeouts:
+        lidar: 0.3            # [s] 10 Hz × 3
+        depth_camera: 0.2     # [s] 15 Hz × 3
+        rgb_camera: 0.1       # [s] 30 Hz × 3
+        imu: 0.05             # [s] 100 Hz × 5 — 3 주기(0.03)는 DDS 지터로 오탐 가능해 5 주기로 완화
+        wheel_encoder: 0.06   # [s] 50 Hz × 3
+      # 고장 시 대응 (명세: 안전 정지 또는 저속 운행): LiDAR·휠 엔코더 고장 → 안전 정지,
+      # IMU·카메라 고장 → 아래 상한으로 저속 운행
+      degraded_mode_max_speed: 0.2    # [m/s]

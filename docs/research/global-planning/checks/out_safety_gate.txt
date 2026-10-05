@@ -1,0 +1,21 @@
+robot_params examples: v_cont(2.6)=2.000 v_cont(1.0)=1.043 v_cont(0.5)=0.500
+v_gate non-decreasing on [0,4] m: True
+config A: min over achievable c of v_lim(c) - v_gate(d_hi-r_ins) = 0.200 (c=248, v_lim=0.20, v_gate=0.00)
+config B: min over achievable c of v_lim(c) - v_gate(d_hi-r_ins) = 0.200 (c=248, v_lim=0.20, v_gate=0.00)
+
+brake rule vs safety gate at lateral edge distance D:
+  D=0.1: sqrt(2aD)=0.45  v_gate=0.00
+  D=0.3: sqrt(2aD)=0.77  v_gate=0.00
+  D=0.5: sqrt(2aD)=1.00  v_gate=0.20
+  D=0.8: sqrt(2aD)=1.26  v_gate=0.50
+  D=1.0: sqrt(2aD)=1.41  v_gate=1.04
+  D=1.3: sqrt(2aD)=1.61  v_gate=1.27
+  D=2.0: sqrt(2aD)=2.00  v_gate=1.70
+  D=2.6: sqrt(2aD)=2.28  v_gate=2.00
+  aisle 0.6 m centred: D=0.10 -> v_gate=0.00 m/s
+  aisle 1.2 m centred: D=0.40 -> v_gate=0.20 m/s
+  aisle 2.4 m centred: D=1.00 -> v_gate=1.04 m/s
+  aisle 3.0 m centred: D=1.30 -> v_gate=1.27 m/s
+  aisle 4.0 m centred: D=1.80 -> v_gate=1.59 m/s
+
+3 m aisle, 20 m straight: time at v_lim=2.0: 10.0 s ; at gate 1.27: 15.7 s ; under-prediction 36 %

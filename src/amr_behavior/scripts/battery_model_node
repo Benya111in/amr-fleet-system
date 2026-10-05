@@ -1,0 +1,7 @@
+#!/usr/bin/env python3
+"""battery_model_node 실행 파일 (ros2 run amr_behavior battery_model_node). 구현: amr_behavior/battery_model_node.py."""
+
+from amr_behavior.battery_model_node import main
+
+if __name__ == '__main__':
+    main()

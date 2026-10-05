@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/amr-fleet-system/amr_fleet/task_schema.json",
+  "title": "AMR Task Description",
+  "description": "명세 4.8 작업 관리: /fleet/task_request (std_msgs/String) 로 들어오는 JSON 작업 정의. amr_msgs/msg/Task 와 1:1 대응한다. draft-07 로 적는다: rosdep 이 설치하는 Ubuntu 22.04 python3-jsonschema 3.2.0 에는 2019-09/2020-12 검증기가 없다.",
+  "type": "object",
+  "required": ["pickup", "dropoff", "item_type"],
+  "additionalProperties": false,
+  "properties": {
+    "task_id": {
+      "description": "작업 식별자. 생략하면 fleet_manager 가 task_<8hex> 로 생성한다.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "priority": {
+      "description": "0(낮음) ~ 255(높음). 생략 시 0.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 255
+    },
+    "deadline": {
+      "description": "마감. ISO-8601 문자열(절대 벽시계 시각, 예: 2026-09-22T10:30:00+09:00) 또는 현재로부터의 초(0 ~ 30일). 접수 시 노드 시계로 바꾼다. 절대 시각도 접수 시각 ±30일 안이어야 한다. 생략 시 마감 없음.",
+      "oneOf": [
+        {"type": "string", "minLength": 1, "maxLength": 64},
+        {"type": "number", "minimum": 0, "maximum": 2592000}
+      ]
+    },
+    "pickup": {"$ref": "#/definitions/pose2d"},
+    "dropoff": {"$ref": "#/definitions/pose2d"},
+    "item_type": {
+      "description": "물품 유형. 질량은 config/robot_params.yaml payload 표(2/10/25 kg)에서 채운다.",
+      "type": "string",
+      "enum": ["small", "medium", "large"]
+    },
+    "robot_id": {
+      "description": "특정 로봇에 고정 할당할 때만 지정 (예: amr_03). 등록된 로봇이어야 한다. 생략/빈 문자열이면 자동 할당.",
+      "type": "string",
+      "maxLength": 32,
+      "pattern": "^[A-Za-z0-9_]*$"
+    }
+  },
+  "definitions": {
+    "pose2d": {
+      "type": "object",
+      "required": ["x", "y"],
+      "additionalProperties": false,
+      "properties": {
+        "x": {"type": "number", "minimum": -10000, "maximum": 10000, "description": "[m]"},
+        "y": {"type": "number", "minimum": -10000, "maximum": 10000, "description": "[m]"},
+        "yaw": {"type": "number", "minimum": -6.2832, "maximum": 6.2832, "description": "[rad], 생략 시 0"},
+        "frame_id": {"type": "string", "minLength": 1, "maxLength": 64, "description": "생략 시 map"}
+      }
+    }
+  }
+}

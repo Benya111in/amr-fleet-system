@@ -1,0 +1,11 @@
+accel check: {'cmd_centre': {'t_to_1p95': 2.21, 't_to_29p7m': 16.3}, 'meas_centre': {'t_to_1p95': 7.03, 't_to_29p7m': 18.54}}
+F    S2 estop_runs=0/8 crit_runs=0 coll=0 reached=8/8 minEdge=0.59 maxDev=0.70 ret_max=2.39 freeze_max=0.0 t_end_mean=20.0
+F    S3 estop_runs=0/8 crit_runs=0 coll=0 reached=8/8 minEdge=1.08 maxDev=0.70 ret_max=3.89 freeze_max=0.0 t_end_mean=17.9
+A    S2 estop_runs=0/8 crit_runs=0 coll=0 reached=8/8 minEdge=0.57 maxDev=0.68 ret_max=2.40 freeze_max=0.0 t_end_mean=20.0
+A    S3 estop_runs=0/8 crit_runs=0 coll=0 reached=8/8 minEdge=1.07 maxDev=0.71 ret_max=3.92 freeze_max=0.0 t_end_mean=17.8
+B    S2 estop_runs=5/8 crit_runs=7 coll=2 reached=8/8 minEdge=0.00 maxDev=0.80 ret_max=6.47 freeze_max=3.4 t_end_mean=25.2
+B    S3 estop_runs=0/8 crit_runs=0 coll=0 reached=8/8 minEdge=1.03 maxDev=0.69 ret_max=4.07 freeze_max=0.0 t_end_mean=18.2
+C    S2 estop_runs=0/8 crit_runs=0 coll=0 reached=8/8 minEdge=0.58 maxDev=0.71 ret_max=2.37 freeze_max=0.0 t_end_mean=20.3
+C    S3 estop_runs=0/8 crit_runs=0 coll=0 reached=0/8 minEdge=1.53 maxDev=0.65 ret_max=- freeze_max=1.1 t_end_mean=70.0
+ABC  S2 estop_runs=0/8 crit_runs=1 coll=0 reached=8/8 minEdge=0.41 maxDev=0.69 ret_max=2.62 freeze_max=0.6 t_end_mean=21.0
+ABC  S3 estop_runs=0/8 crit_runs=0 coll=0 reached=0/8 minEdge=1.40 maxDev=0.64 ret_max=- freeze_max=2.0 t_end_mean=70.0

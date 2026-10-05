@@ -1,0 +1,328 @@
+{
+ "slug": "local-planning",
+ "doc_path": "docs/research/local-planning/local-planning.md",
+ "web_tools_available": true,
+ "papers": [
+  {
+   "title": "Long-Term Dynamic Window Approach for Kinodynamic Local Planning in Static and Crowd Environments",
+   "authors": "Jian, Zhang, Sun, Zhan, Zheng, Tomizuka",
+   "venue_year": "RA-L 2023 (arXiv 2310.02648)",
+   "url": "https://arxiv.org/abs/2310.02648",
+   "status": "VERIFIED",
+   "relevance": "Closest recent DWA extension (long horizon + graph optimisation); complementary to our probabilistic prediction."
+  },
+  {
+   "title": "Gradient Field-Based Dynamic Window Approach for Collision Avoidance in Complex Environments (GF-DWA)",
+   "authors": "Zhang, Xue, Figueroa, Akesson",
+   "venue_year": "IROS 2025 (arXiv 2504.03260)",
+   "url": "https://arxiv.org/abs/2504.03260",
+   "status": "VERIFIED",
+   "relevance": "Adds obstacle-distance gradient cost to DWA; candidate replacement for our static clearance term."
+  },
+  {
+   "title": "Adaptive Social Force Window Planner with Reinforcement Learning",
+   "authors": "Martini, Perez-Higueras, Ostuni, Chiaberge, Caballero, Merino",
+   "venue_year": "arXiv 2024 (2404.13678)",
+   "url": "https://arxiv.org/abs/2404.13678",
+   "status": "VERIFIED",
+   "relevance": "DRL-tuned DWA cost weights; we use rule-based weight scheduling instead."
+  },
+  {
+   "title": "Goal-Oriented Semantic Communication for ISAC-Enabled Robotic Obstacle Avoidance (Mahalanobis-distance DWA)",
+   "authors": "Liu, Deng, Wymeersch",
+   "venue_year": "IEEE TWC 2026 (arXiv 2603.02291)",
+   "url": "https://arxiv.org/abs/2603.02291",
+   "status": "VERIFIED",
+   "relevance": "Closest 'covariance-aware DWA' (UAV, static); lacks time-parameterised rollout, TTC and VO."
+  },
+  {
+   "title": "Predictive Collision Avoidance for the Dynamic Window Approach",
+   "authors": "Missura, Bennewitz",
+   "venue_year": "ICRA 2019",
+   "url": "https://www.hrl.uni-bonn.de/papers/icra19missura.pdf",
+   "status": "VERIFIED",
+   "relevance": "Deterministic dynamic collision model in DWA; direct predecessor that we extend probabilistically (abstract obtained via search index, PDF body not parsed)."
+  },
+  {
+   "title": "Fast-Replanning Motion Control for Non-Holonomic Vehicles with Aborting A*",
+   "authors": "Missura, Roychoudhury, Bennewitz",
+   "venue_year": "IROS 2022 (arXiv 2109.07775)",
+   "url": "https://arxiv.org/abs/2109.07775",
+   "status": "VERIFIED",
+   "relevance": "Beats predictive DWA with short-horizon A*; documents DWA horizon limits."
+  },
+  {
+   "title": "Safe Gap-based Planning in Dynamic Settings",
+   "authors": "Asselmeier, Zaro, Ahuja, Zhao, Vela",
+   "venue_year": "arXiv 2025 (2509.07239)",
+   "url": "https://arxiv.org/abs/2509.07239",
+   "status": "VERIFIED",
+   "relevance": "Alternative dynamic local planner (gap propagation + pursuit guidance)."
+  },
+  {
+   "title": "Safe Human Robot Navigation in Warehouse Scenario",
+   "authors": "Farrell, Li, Yu, Yoshimitsu, Gao, Christensen",
+   "venue_year": "arXiv 2025 (2503.21141)",
+   "url": "https://arxiv.org/abs/2503.21141",
+   "status": "VERIFIED",
+   "relevance": "Warehouse/pedestrian CBF safety with OpenRMF; informs scenario design."
+  },
+  {
+   "title": "Beyond Collision Cones: Dynamic Obstacle Avoidance for Nonholonomic Robots via Dynamic Parabolic CBFs",
+   "authors": "Park, Kim, Panagou",
+   "venue_year": "ICRA 2026 (arXiv 2510.01402)",
+   "url": "https://arxiv.org/abs/2510.01402",
+   "status": "VERIFIED",
+   "relevance": "Shows VO/collision cones are over-conservative in dense scenes; motivates VO as pre-filter only."
+  },
+  {
+   "title": "From NLVO to NAO: Reactive Robot Navigation using Velocity and Acceleration Obstacles",
+   "authors": "Stern, Shiller",
+   "venue_year": "arXiv 2025 (2506.06255)",
+   "url": "https://arxiv.org/abs/2506.06255",
+   "status": "VERIFIED",
+   "relevance": "Acceleration obstacles; our narrow dynamic window already embeds acceleration limits."
+  },
+  {
+   "title": "Dynamic Collision Avoidance Using Velocity Obstacle-Based Control Barrier Functions",
+   "authors": "Huang, Zeng, Chi, Sreenath, Liu, Su",
+   "venue_year": "IEEE TCST 2025 (arXiv 2503.00606)",
+   "url": "https://arxiv.org/abs/2503.00606",
+   "status": "VERIFIED",
+   "relevance": "VO in velocity space as CBF (MIQP); we use discrete sample tests instead."
+  },
+  {
+   "title": "GeoPro-VO: Dynamic Obstacle Avoidance with Geometric Projector Based on Velocity Obstacle",
+   "authors": "Huang, Chi, Zeng, Liu, Su",
+   "venue_year": "arXiv 2024 (2403.10043)",
+   "url": "https://arxiv.org/abs/2403.10043",
+   "status": "VERIFIED",
+   "relevance": "VO-cone projection to simplify MPC."
+  },
+  {
+   "title": "AVOCADO: Adaptive Optimal Collision Avoidance driven by Opinion",
+   "authors": "Martinez-Baselga, Sebastian, Montijano, Riazuelo, Sagues, Montano",
+   "venue_year": "T-RO 2025 (arXiv 2407.00507)",
+   "url": "https://arxiv.org/abs/2407.00507",
+   "status": "VERIFIED",
+   "relevance": "Adaptive cooperation in VO; we use class-based fixed responsibility (human 1.0 / AMR 0.5)."
+  },
+  {
+   "title": "Monte Carlo Tree Search with Velocity Obstacles for safe and efficient motion planning in dynamic environments",
+   "authors": "Bonanni, Meli, Castellini, Farinelli",
+   "venue_year": "arXiv 2025 (2501.09649)",
+   "url": "https://arxiv.org/abs/2501.09649",
+   "status": "VERIFIED",
+   "relevance": "Ablation shows VO pruning improves search efficiency; motivates VO-pruned dynamic window."
+  },
+  {
+   "title": "Dynamic Risk-Aware MPPI for Mobile Robots in Crowds via Efficient Monte Carlo Approximations",
+   "authors": "Trevisan, Mustafa, Notten, Wang, Alonso-Mora",
+   "venue_year": "IROS 2025 (arXiv 2506.21205)",
+   "url": "https://arxiv.org/abs/2506.21205",
+   "status": "VERIFIED",
+   "relevance": "Joint collision probability by MC in MPPI; our analytic upper bound is the deterministic counterpart."
+  },
+  {
+   "title": "Decentralized Uncertainty-Aware Multi-Agent Collision Avoidance with Model Predictive Path Integral",
+   "authors": "Dergachev, Yakovlev",
+   "venue_year": "IROS 2025 (arXiv 2507.20293)",
+   "url": "https://arxiv.org/abs/2507.20293",
+   "status": "VERIFIED",
+   "relevance": "Probabilistic ORCA + MPPI on differential-drive robots in Gazebo; comparison for our fleet ORCA term."
+  },
+  {
+   "title": "Topology-Driven Parallel Trajectory Optimization in Dynamic Environments",
+   "authors": "de Groot, Ferranti, Gavrila, Alonso-Mora",
+   "venue_year": "T-RO 2024 (arXiv 2401.06021)",
+   "url": "https://arxiv.org/abs/2401.06021",
+   "status": "VERIFIED",
+   "relevance": "Multi-homotopy parallel MPC; DWA sample grid naturally covers several homotopies."
+  },
+  {
+   "title": "Scenario-Based Motion Planning with Bounded Probability of Collision (Safe Horizon MPC)",
+   "authors": "de Groot, Ferranti, Gavrila, Alonso-Mora",
+   "venue_year": "arXiv 2023 / IJRR 2025 (2307.01070)",
+   "url": "https://arxiv.org/abs/2307.01070",
+   "status": "VERIFIED",
+   "relevance": "Joint collision probability over the plan horizon; source of our J_risk definition."
+  },
+  {
+   "title": "Enhanced Probabilistic Collision Detection for Motion Planning Under Sensing Uncertainty",
+   "authors": "Wang, Ruan, Meng, Chirikjian",
+   "venue_year": "arXiv 2025 (2502.15525)",
+   "url": "https://arxiv.org/abs/2502.15525",
+   "status": "VERIFIED",
+   "relevance": "General PCD with position+orientation error; our 2-circle 2D case is a special case."
+  },
+  {
+   "title": "Time-aware Motion Planning in Dynamic Environments with Conformal Prediction",
+   "authors": "Liang, Luo, Wang, Cai, Vasile",
+   "venue_year": "arXiv 2025 (2511.18170)",
+   "url": "https://arxiv.org/abs/2511.18170",
+   "status": "VERIFIED",
+   "relevance": "Distribution-free adaptive safety quantiles; future work for auto-calibrating delta."
+  },
+  {
+   "title": "Reactive Collision Avoidance for Safe Agile Navigation",
+   "authors": "Saviolo, Picello, Mao, Verma, Loianno",
+   "venue_year": "arXiv 2024 (2409.11962)",
+   "url": "https://arxiv.org/abs/2409.11962",
+   "status": "VERIFIED",
+   "relevance": "Min-TTC point selection as NMPC/CBF constraint."
+  },
+  {
+   "title": "Empirical Pedestrian Safety Assessment in a Mobile Robot Using a Predictive Social Force Model",
+   "authors": "Jafari, Tsai, Liu",
+   "venue_year": "IEEE/ASME AIM 2026 (arXiv 2607.09192)",
+   "url": "https://arxiv.org/abs/2607.09192",
+   "status": "VERIFIED",
+   "relevance": "TTC integration improves objective safety metrics with real pedestrians."
+  },
+  {
+   "title": "DS-MPEPC: Safe and Deadlock-Avoiding Robot Navigation in Cluttered Dynamic Scenes",
+   "authors": "Arul, Park, Manocha",
+   "venue_year": "arXiv 2023 (2303.10133)",
+   "url": "https://arxiv.org/abs/2303.10133",
+   "status": "VERIFIED",
+   "relevance": "Collision-probability cost plus time-to-goal/TTC terminal cost against deadlock."
+  },
+  {
+   "title": "Motion Planning in Dynamic Environments: A Survey from Classical to Modern Methods",
+   "authors": "Shen, Ou, Gupta, et al.",
+   "venue_year": "arXiv 2026 (2606.02677)",
+   "url": "https://arxiv.org/abs/2606.02677",
+   "status": "VERIFIED",
+   "relevance": "138-paper survey; confirms VO/DWA remain local/fallback modules in hybrid stacks."
+  },
+  {
+   "title": "Hybrid Motion Planning with Deep Reinforcement Learning for Mobile Robot Navigation",
+   "authors": "Kolomeytsev, Golembiovsky",
+   "venue_year": "arXiv 2025 (2512.24651)",
+   "url": "https://arxiv.org/abs/2512.24651",
+   "status": "VERIFIED",
+   "relevance": "Entity-aware safety margins by semantic class; parallels our class table (r_j, q)."
+  },
+  {
+   "title": "Adaptive Trajectory Refinement for Optimization-based Local Planning in Narrow Passages",
+   "authors": "Lee, Kim",
+   "venue_year": "arXiv 2025 (2510.26142)",
+   "url": "https://arxiv.org/abs/2510.26142",
+   "status": "VERIFIED",
+   "relevance": "Narrow-passage handling reference (robot width + 20 cm aisle requirement)."
+  },
+  {
+   "title": "From the Desks of ROS Maintainers: A Survey of Modern & Capable Mobile Robotics Algorithms in ROS 2",
+   "authors": "Macenski, Moore, Lu, Merzlyakov, Ferguson",
+   "venue_year": "RAS 2023 (arXiv 2307.15236)",
+   "url": "https://arxiv.org/abs/2307.15236",
+   "status": "VERIFIED",
+   "relevance": "Nav2 controller ecosystem overview (DWB/TEB/MPPI/RPP)."
+  },
+  {
+   "title": "The Dynamic Window Approach to Collision Avoidance",
+   "authors": "Fox, Burgard, Thrun",
+   "venue_year": "IEEE RAM 1997",
+   "url": "https://doi.org/10.1109/100.580977",
+   "status": "RECALLED",
+   "relevance": "Baseline DWA definition (Vs, Vd, Va, cost terms)."
+  },
+  {
+   "title": "Motion Planning in Dynamic Environments using Velocity Obstacles",
+   "authors": "Fiorini, Shiller",
+   "venue_year": "IJRR 1998",
+   "url": "https://doi.org/10.1177/027836499801700706",
+   "status": "RECALLED",
+   "relevance": "Velocity obstacle definition used in Stage A."
+  },
+  {
+   "title": "Reciprocal n-Body Collision Avoidance (ORCA)",
+   "authors": "van den Berg, Guy, Lin, Manocha",
+   "venue_year": "ISRR 2011",
+   "url": "https://gamma.cs.unc.edu/ORCA/",
+   "status": "RECALLED",
+   "relevance": "ORCA half-plane constraint for fleet robots."
+  },
+  {
+   "title": "Optimal Reciprocal Collision Avoidance for Multiple Non-Holonomic Robots (NH-ORCA)",
+   "authors": "Alonso-Mora, Breitenmoser, Rufli, Beardsley, Siegwart",
+   "venue_year": "DARS 2010",
+   "url": "https://la.disneyresearch.com/wp-content/uploads/alonsomora10dars_paper1.pdf",
+   "status": "VERIFIED",
+   "relevance": "Nonholonomic-to-holonomic mapping (effective centre); we use chord velocity instead (title/venue verified, abstract not extractable)."
+  },
+  {
+   "title": "Reflective Navigation: Individual Behaviors and Group Behaviors (Probabilistic Velocity Obstacles)",
+   "authors": "Kluge, Prassler",
+   "venue_year": "ICRA 2004",
+   "url": "https://doi.org/10.1109/ROBOT.2004.1302491",
+   "status": "RECALLED",
+   "relevance": "Origin of probabilistic VO."
+  },
+  {
+   "title": "Chance-Constrained Collision Avoidance for MAVs in Dynamic Environments",
+   "authors": "Zhu, Alonso-Mora",
+   "venue_year": "RA-L 2019",
+   "url": "https://doi.org/10.1109/LRA.2019.2893494",
+   "status": "RECALLED",
+   "relevance": "Linearised (half-plane) Gaussian chance constraint that our closed-form collision-probability upper bound uses."
+  },
+  {
+   "title": "Integrated online trajectory planning and optimization in distinctive topologies (TEB)",
+   "authors": "Rosmann, Hoffmann, Bertram",
+   "venue_year": "RAS 2017",
+   "url": "https://doi.org/10.1016/j.robot.2016.11.007",
+   "status": "RECALLED",
+   "relevance": "TEB principle for the required comparison."
+  },
+  {
+   "title": "Information-Theoretic MPC for Model-Based Reinforcement Learning (MPPI)",
+   "authors": "Williams et al.",
+   "venue_year": "ICRA 2017",
+   "url": "https://doi.org/10.1109/ICRA.2017.7989202",
+   "status": "RECALLED",
+   "relevance": "MPPI principle behind Nav2 MPPI baseline."
+  }
+ ],
+ "baseline_summary": "Baseline = classic DWA derived for the diff-drive AMR: state (x,y,theta,v,omega); Vs=[-0.5,2.0] m/s x [-1.5,1.5] rad/s; dynamic window Vd = v_a +/- a_v*dt_c, omega_a +/- alpha_w*dt_c with dt_c=0.05 s (a_v=1.0 m/s^2, alpha_w=2.0 rad/s^2 from config/robot_params.yaml) giving +/-0.05 m/s and +/-0.10 rad/s; admissibility replaced by collision-free rollout over T_sim = clip(v/a_v+0.5, 1.5, 3.0) s (braking distance v^2/2a = 2 m at 2 m/s). Sampling 11 x 31 = 341 + brake + spin candidates; exact arc integration with dt_s=0.1 s (<=30 poses); 3-stage costmap footprint check (centre cost >=253 -> collision; < circumscribed cost -> free; else FootprintCollisionChecker::footprintCostAtPose over the 0.60x0.40 m polygon, LETHAL=254). Cost J = w_h*heading + w_c*clearance + w_v*velocity + w_p*path + w_o*oscillation, each normalised to [0,1] (heading to a speed-dependent lookahead point; clearance from inflation cost inverted to distance; path = mean cross-track / 0.8 m band). Complexity O(M*N_t*P) ~ 4e5 cell reads worst case, ~2-3 ms per 20 Hz cycle on one core. Verified in the image: Nav2 1.1.20 nav2_core::Controller API (configure/setPlan/computeVelocityCommands/setSpeedLimit), only nav2_core::PlannerException exists in Humble, DWB critics and MPPI ObstaclesCritic/CostCritic are costmap-only (no obstacle velocity), teb_local_planner has no Humble binary (must be source-built), collision monitor stop/slowdown/approach semantics, BT replanning at 1 Hz, cmd_vel chain cmd_vel_nav -> velocity_smoother -> cmd_vel, Gazebo Sim 6.18 actors have no physics collisions (GT-based collision metric needed).",
+ "proposals": [
+  {
+   "name": "PVT-DWA (Probabilistic Velocity-obstacle & Time-to-collision DWA) — full plugin",
+   "idea": "Three-stage nav2_core::Controller: (A) prune the sampled dynamic window with truncated VO (humans/forklifts) and ORCA half-planes (fleet AMRs, responsibility 1/2) using the exact chord velocity v*sinc(omega*tau/2) of each arc sample; (B) for every rollout pose, propagate each tracked obstacle with a CV model and covariance Sigma_j(t)=Sigma_pp + t^2 Sigma_vv + q t^3/3 I, and evaluate a closed-form collision-probability upper bound P_kj <= Phi((R_j - |mu|)/sigma_a), sigma_a = sqrt(a^T Sigma a), against a 2-circle robot cover; hard-reject samples with P >= delta_hard, and add a probabilistic TTC cost (first time P >= delta_ttc) plus joint-risk cost 1 - prod(1-P_kj); (C) standard normalised DWA costs plus a 0.8 m cross-track hard band (spec: <=1 m deviation), an always-present braking candidate, and weight scheduling for <=5 s return. Safety layering via setSpeedLimit (Warning zone), nav2_collision_monitor (0.3 m stop / 0.5 m slowdown / approach TTC) and an E-stop mux downstream; replanning via PlannerException after 5 invalid cycles plus the BT 1 Hz replanner.",
+   "closest_prior_work": "Missura & Bennewitz ICRA 2019 (deterministic predictive DWA) + Zhu & Alonso-Mora RA-L 2019 (linearised Gaussian chance constraint); DRA-MPPI IROS 2025 (MC joint collision probability in MPPI); MD-DWA IEEE TWC 2026 (Mahalanobis-distance DWA for UAV); MCTS-VO 2025 (VO pruning); NH-ORCA DARS 2010.",
+   "novelty_claim": "new_combination",
+   "expected_gain": "Versus Nav2 DWB/MPPI (costmap-only, react to current occupancy): earlier and smaller avoidance manoeuvres against 1.0-1.5 m/s obstacles, expected to meet 0 collisions / <=1 m deviation / <=5 s return; versus deterministic predictive DWA: fewer near-misses when prediction uncertainty grows (sigma ~0.6 m at 2 s) without freezing, because margins scale with covariance instead of fixed inflation; deterministic runtime and per-term explainability for peer review.",
+   "risks": "Depends on tracker publishing covariance and radius (amr_msgs/TrackedObstacle lacks them today); over-conservatism if q or delta are mis-tuned (freezing in S4 random-walk scenario); VO pruning may remove all samples (mitigated by fallback to full set); TEB comparison may fail if source build against Nav2 1.1.20 breaks; actor lack of physics in gz-sim 6 forces a ground-truth geometric collision metric.",
+   "realtime_budget": "343 samples x <=25 poses x 2 circles x <=10 tracks ~ 1.7e5 erfc evaluations (3-5 ms) + static footprint checks (1-2 ms) + VO (<0.1 ms) ~ 5-8 ms per 20 Hz cycle on one core (<=16% of the 50 ms budget); five robots ~ one core total."
+  },
+  {
+   "name": "Analytic probabilistic-TTC critic (Stage B alone)",
+   "idea": "Standalone cost/validity term that can be added to the baseline DWA (or ported as a DWB TrajectoryCritic): time-parameterised Gaussian collision-probability upper bound along the rollout with CV covariance propagation and latency compensation, yielding TTC_delta and a joint-risk cost; no VO stage.",
+   "closest_prior_work": "Missura & Bennewitz 2019 with Sigma=0 is the deterministic special case; Zhu & Alonso-Mora 2019 chance constraint; Safe Horizon MPC (de Groot 2023/IJRR 2025) for the joint-probability idea.",
+   "novelty_claim": "variant_of_prior",
+   "expected_gain": "Most of the collision-avoidance gain of PVT-DWA at ~3-5 ms extra per cycle; serves as ablation A1 and as a drop-in for the team's baseline DWA if Stage A proves unnecessary.",
+   "risks": "Half-plane bound saturates at 0.5 when the mean is inside the collision disc (handled by the hard check); independence assumption in the joint-risk product over-estimates risk for slowly varying errors.",
+   "realtime_budget": "~3-5 ms per cycle (1.7e5 normal-CDF evaluations); scales linearly with number of tracks, capped at the 10 nearest."
+  },
+  {
+   "name": "Chord-velocity VO/ORCA pruning of the dynamic window (Stage A alone)",
+   "idea": "Map each (v, omega) sample's arc to the holonomic velocity of its chord over horizon tau (direction theta + omega*tau/2, magnitude v*sinc(omega*tau/2)), test membership in truncated VO cones (humans/forklifts, radius inflated by kappa*sigma) or ORCA half-planes (fleet AMRs), and skip rollouts for members; fall back to the full set if everything is pruned.",
+   "closest_prior_work": "Fiorini & Shiller 1998 VO; van den Berg 2011 ORCA; NH-ORCA (Alonso-Mora 2010) effective-centre mapping; MCTS-VO (Bonanni 2025) showing VO pruning speeds search.",
+   "novelty_claim": "engineering_adaptation",
+   "expected_gain": "Satisfies the spec's 'VO or ORCA reactive avoidance' requirement explicitly, removes 20-60% of rollouts in crowded scenes (compute headroom), and provides a geometric explanation for reviewers; not expected to improve safety on its own beyond Stage B.",
+   "risks": "Over-conservative in dense scenes (Park et al. ICRA 2026) — hence pre-filter only; chord mapping is exact only at the horizon endpoint.",
+   "realtime_budget": "343 x 10 quadratic root evaluations, <0.1 ms per cycle."
+  }
+ ],
+ "evaluation_plan": "Metrics mapped to the spec: collisions (30 runs, 0) measured geometrically from ground-truth poses (robot footprint polygon vs actor circle / forklift-AMR box, 10 Hz, because gz-sim 6 actors have no physics contacts); path deviation (<=1 m) as max cross-track error vs the global path during avoidance; return time (<=5 s) from t_clear (all TTC_delta = inf) to 1 s sustained cross-track < 0.10 m; CTE 5 cm straight / 10 cm curved on obstacle-free segments; response time; compute time p50/p99 of computeVelocityCommands; jerk RMS and sign reversals. Log formats follow the spec's tables. Scenarios (6 x 5 seeds = 30 runs per algorithm): S1 perpendicular crossing person 1.0 m/s; S2 head-on forklift 1.5 m/s in 3 m aisle; S3 overtaking person 0.3 m/s; S4 two random-walk persons 0.5-1.2 m/s; S5 forklift on 4 m radius curve; S6 person crossing before a 0.6 m (robot width + 20 cm) narrow aisle. Baselines: Nav2 DWB, Nav2 MPPI, TEB source-built (ros2-master, include_dynamic_obstacles on/off if costmap_converter builds), and the team's static-only DWA. Ablations: no VO stage, deterministic TTC (Sigma=0, reproduces Missura 2019), no hard chance check, no deviation band. Success: PVT-DWA meets all three spec thresholds and shows significantly larger minimum distance than ablations (paired Wilcoxon per scenario, alpha 0.05); report mean +/- std, failure videos/logs. Tuning order documented: straight-line CTE (w_p, N_omega) -> curves (lookahead, w_h) -> S1 (delta_hard, w_t) -> S4 (q person) -> S6 (inflation, margin) -> 5-robot CPU <= 80%.",
+ "implementation_plan": "Language C++17 in src/amr_navigation (ament_cmake, currently Python-only skeleton). Pure library amr_dwa_core (ROS-independent, gtest-covered): dynamic_window.hpp, rollout.hpp (exact arc integration, adaptive T_sim), footprint_checker.hpp (3-stage check on Costmap2D*), obstacle_model.hpp (CV prediction, covariance propagation, 2-circle cover, class table), velocity_obstacle.hpp (chord velocity, truncated VO, ORCA half-plane), collision_prob.hpp (Phi upper bound, TTC_delta, joint risk), critics.hpp (normalised heading/clearance/velocity/path/oscillation). Plugin library pvt_dwa_controller implementing nav2_core::Controller (verified Humble 1.1.20 signature), exported via pluginlib (plugins/pvt_dwa_plugin.xml, PLUGINLIB_EXPORT_CLASS(amr_navigation::PvtDwaController, nav2_core::Controller)); configured as controller_server FollowPath plugin at controller_frequency 20 Hz. Interfaces: subscribe /<ns>/tracked_obstacles (amr_msgs/TrackedObstacleArray, map frame, transformed to the local costmap frame via tf2) and fleet robot states; publish debug dwb_msgs/Trajectory2D + MarkerArray + a status topic (avoidance_active, TTC_min, n_valid); consume speed_limit via setSpeedLimit; throw nav2_core::PlannerException after 5 consecutive invalid cycles (only exception type in Humble). Local costmap 12x12 m @0.05 m, obstacle_layer observation_keep_time 0.0, inflation 0.8 m / scale 3.0, rectangular footprint. cmd_vel chain: cmd_vel_nav -> velocity_smoother (same accel/jerk limits from robot_params.yaml) -> nav2_collision_monitor (stop 0.3 m polygon, slowdown 0.5 m x0.3, approach time_before_collision 1.5 s; must be added to launch since Humble bringup does not include it) -> estop mux -> /cmd_vel. Message change: add position_covariance[4], velocity_covariance[4], radius, class_name to amr_msgs/TrackedObstacle (fallback defaults sigma_p 0.1 m, sigma_v 0.3 m/s with a one-time warning). All weights/delta/q/r_j in config/pvt_dwa_params.yaml (no rebuild). Unit tests (>=70% coverage): dynamic window bounds and brake candidate; rollout vs analytic arc endpoint (1e-9); footprint 3-stage on synthetic costmaps; VO known-geometry TTC and chord sinc limit, ORCA symmetry; collision probability vs 1e5-sample Monte Carlo (upper bound holds, gap < 0.03) and TTC_delta monotonicity in Sigma; critic normalisation; timing test p99 < 15 ms for 343x25x10; pytest for evaluation metrics. Compute budget 5-8 ms per cycle on one core. Schedule: W1 core+tests, W2 plugin+static comparison vs DWB, W3 tracks + Stage B/A, W4 safety chain + scenario scripts, W5 TEB build + 30-run evaluation + tuning, W6 ablations + report + peer-review documentation.",
+ "open_questions": [
+  "TEB on Humble: teb_local_planner has no Humble binary (verified on index.ros.org and in the image); can the ros2-master branch plus costmap_converter be source-built against Nav2 1.1.20 in a separate Dockerfile stage, and if not, is MPPI acceptable as the optimisation-based baseline with a documented gap against the spec's TEB requirement?",
+  "Perception interface: will amr_msgs/TrackedObstacle gain position/velocity covariance, radius and class_name fields (or a parallel vision_msgs/Detection3D publication)? Without them PVT-DWA falls back to class defaults and the covariance-aware benefit cannot be evaluated honestly.",
+  "Dynamic-obstacle physics in Gazebo Sim 6.18: actors have no collision bodies (gz-sim issue #1364 open), so collision must be judged from ground-truth poses; should human obstacles instead be physical capsule models with a velocity plugin so contact sensors and LiDAR behave consistently?",
+  "Angular acceleration limit alpha_w = 2.0 rad/s^2 comes from config/robot_params.yaml, not the spec; it must match the URDF/DiffDrive plugin limits and the velocity_smoother configuration.",
+  "Fleet coordination: the ORCA responsibility-1/2 assumption requires all AMRs to run the same plugin; how does it interact with the fleet manager's intersection priority and deadlock resolution (option: raise responsibility to 1.0 for lower-priority robots)?",
+  "Where do the safety-zone manager (Warning zone -> speed_limit 50%) and E-stop mux live (which package/agent owns them), and is the collision monitor's 'approach' action allowed to slow the robot below the DWA's chosen speed without confusing the progress checker?",
+  "Missura & Bennewitz 2019 abstract was obtained through a search index rather than the PDF body; a team member should read the PDF to confirm the exact form of their dynamic collision model before the peer-review write-up."
+ ]
+}

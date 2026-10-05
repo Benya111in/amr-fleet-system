@@ -1,0 +1,41 @@
+WARNING ⚠️ user config directory '/root/.config/Ultralytics' is not writable, using '/tmp/Ultralytics'. Set YOLO_CONFIG_DIR to override.
+Creating new Ultralytics Settings v0.0.8 file ✅ 
+View Ultralytics Settings with 'yolo settings' or at '/tmp/Ultralytics/settings.json'
+Update Settings with 'yolo settings key=value', i.e. 'yolo settings runs_dir=path/to/dir'. For help see https://docs.ultralytics.com/usage/settings.
+YOLOv8n summary (fused): 72 layers, 3,151,904 parameters, 0 gradients, 8.7 GFLOPs
+{"pre_320": {"core_ms_median": 0.7, "core_ms_p90": 2.0, "wall_ms_median": 0.8, "n": 15}, "forward_320": {"core_ms_median": 117.0, "core_ms_p90": 144.5, "wall_ms_median": 334.8, "n": 15}, "post_320": {"core_ms_median": 1.1, "core_ms_p90": 1.6, "wall_ms_median": 1.1, "n": 15}, "pipeline_320": {"core_ms_median": 125.2, "core_ms_p90": 142.5, "wall_ms_median": 359.2, "n": 15}}
+{
+ "import_wall_s": 37.5,
+ "torch_threads_after_import": 1,
+ "pre_320": {
+  "core_ms_median": 0.7,
+  "core_ms_p90": 2.0,
+  "wall_ms_median": 0.8,
+  "n": 15
+ },
+ "forward_320": {
+  "core_ms_median": 117.0,
+  "core_ms_p90": 144.5,
+  "wall_ms_median": 334.8,
+  "n": 15
+ },
+ "post_320": {
+  "core_ms_median": 1.1,
+  "core_ms_p90": 1.6,
+  "wall_ms_median": 1.1,
+  "n": 15
+ },
+ "pipeline_320": {
+  "core_ms_median": 125.2,
+  "core_ms_p90": 142.5,
+  "wall_ms_median": 359.2,
+  "n": 15
+ },
+ "torch_threads_end": 1,
+ "host_loadavg": [
+  118.99658203125,
+  108.81005859375,
+  80.11669921875
+ ]
+}
+exit 0

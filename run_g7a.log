@@ -1,0 +1,21 @@
+=== 통합 테스트: 1 시나리오 (ROS_DOMAIN_ID=13, IGN_PARTITION=itest_72a1)
+    로그: /ros2_ws/logs/g7a   부하: 9.09 9.94 10.61 / 32 CPU, uptime 5075238.23 s
+    DDS: /ros2_ws/install/amr_bringup/share/amr_bringup/config/fastdds_multi_robot.xml   /dev/shm: 8.0G
+    07_path_tracking_cte       passed     263 s  (rc=0, 부하 13.03)
+
+--- 집계
+# 통합 테스트 결과
+
+로그 루트: `/ros2_ws/logs/g7a`  
+합계: passed 1  
+시나리오 1: 실행 1 (그중 일부 skip 0), 전부 skip 0, 실패로 센 skip 0 | 테스트 케이스 5: 실행 5, skip 0  
+하네스 단위 테스트: 실행 안 함  
+호스트 부하(집계 시점): [13.03, 11.95, 11.29] / 32 CPU
+
+| # | 시나리오 | 상태 | 구성 / 백엔드 | 케이스 실행/skip | 소요 [s] | 비고 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 7 | 경로 추종 CTE | passed | system / gazebo | 5/0 | 259.0 | lifecycle managers active=all active; map frame == world frame (SE(2) registration)={'t_m': 0.0, 'yaw_deg': -0.0293, 'median_m': 0.0062}; goals reached=5; no p… |
+
+JUnit 합계: tests 5, failures 0, errors 0, skipped 0 → /ros2_ws/logs/g7a/junit.xml
+시나리오 1: 실행 1 (그중 일부 skip 0), 전부 skip 0, 실패로 센 skip 0 | 테스트 케이스 5: 실행 5, skip 0
+총 소요: 263 s, 종료 시 부하: 13.03 11.95 11.29, uptime 5075500.75 s

@@ -1,0 +1,145 @@
+<?xml version="1.0" ?>
+<!--
+  지게차 형상 + 구동륜. 모델 원점 = 차체 바닥 중심(앞바퀴 축 뒤 0.35 m), +x 가 포크(전방) 방향.
+  - 차체 링크(2400 kg) + 앞 구동륜 2개(50 kg, revolute, 조인트 wheel_left_joint / wheel_right_joint). 총 2500 kg 은 실제
+    1.5 t 급 전동 지게차의 공차 중량과 비슷하며, 45~70 kg AMR 이 부딪혀도 진로가 거의 바뀌지 않는다.
+  - 뒷바퀴(실제로는 조향륜)는 저마찰 구 충돌체(mu 0.02)로 근사한다 — 캐스터처럼 끌려간다.
+  - 구동: 월드 파일이 include 안에 DiffDrive(바퀴 간격 1.1, 반지름 0.25, 가감속 제한 → 속도 램프) + PosePublisher +
+    OdometryPublisher + TriggeredPublisher 를 붙인다 (worlds/gen_warehouse_world.py VEHICLES).
+  - 차체 하단은 z = 0.15 m 부터라 지면 +0.20 m 의 2D LiDAR 스캔 평면이 차체·바퀴 외곽을 잡는다.
+    포크(z 0.05~0.10)는 스캔 평면 아래라 LiDAR 에 안 잡힌다 — 실제 저상 LiDAR 의 사각과 같은 상황(전방은 깊이 카메라).
+-->
+<sdf version="1.8">
+  <model name="forklift">
+    <link name="body">
+      <inertial>
+        <pose>-0.3 0 0.6 0 0 0</pose>
+        <mass>2400</mass>
+        <!-- 대략 2.4 x 1.2 x 1.2 m 직육면체 기준: I = m/12*(a^2+b^2) -->
+        <inertia><ixx>576</ixx><iyy>1440</iyy><izz>1440</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+      </inertial>
+
+      <!-- 차체 -->
+      <collision name="chassis_collision">
+        <pose>-0.3 0 0.60 0 0 0</pose>
+        <geometry><box><size>1.8 1.2 0.90</size></box></geometry>
+      </collision>
+      <visual name="chassis">
+        <pose>-0.3 0 0.60 0 0 0</pose>
+        <geometry><box><size>1.8 1.2 0.90</size></box></geometry>
+        <material><ambient>0.95 0.70 0.05 1</ambient><diffuse>0.95 0.70 0.05 1</diffuse><specular>0.3 0.3 0.3 1</specular></material>
+      </visual>
+
+      <!-- 운전석 보호 프레임 -->
+      <collision name="cage_collision">
+        <pose>-0.5 0 1.55 0 0 0</pose>
+        <geometry><box><size>1.0 1.1 1.0</size></box></geometry>
+      </collision>
+      <visual name="cage">
+        <pose>-0.5 0 1.55 0 0 0</pose>
+        <geometry><box><size>1.0 1.1 1.0</size></box></geometry>
+        <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+      </visual>
+
+      <!-- 마스트 -->
+      <collision name="mast_collision">
+        <pose>0.70 0 1.10 0 0 0</pose>
+        <geometry><box><size>0.20 1.0 2.20</size></box></geometry>
+      </collision>
+      <visual name="mast">
+        <pose>0.70 0 1.10 0 0 0</pose>
+        <geometry><box><size>0.20 1.0 2.20</size></box></geometry>
+        <material><ambient>0.25 0.25 0.28 1</ambient><diffuse>0.25 0.25 0.28 1</diffuse></material>
+      </visual>
+
+      <!-- 포크 2개 (z 0.05~0.10 m) -->
+      <collision name="fork_l_collision">
+        <pose>1.40 0.30 0.075 0 0 0</pose>
+        <geometry><box><size>1.2 0.12 0.05</size></box></geometry>
+      </collision>
+      <visual name="fork_l">
+        <pose>1.40 0.30 0.075 0 0 0</pose>
+        <geometry><box><size>1.2 0.12 0.05</size></box></geometry>
+        <material><ambient>0.3 0.3 0.3 1</ambient><diffuse>0.3 0.3 0.3 1</diffuse></material>
+      </visual>
+      <collision name="fork_r_collision">
+        <pose>1.40 -0.30 0.075 0 0 0</pose>
+        <geometry><box><size>1.2 0.12 0.05</size></box></geometry>
+      </collision>
+      <visual name="fork_r">
+        <pose>1.40 -0.30 0.075 0 0 0</pose>
+        <geometry><box><size>1.2 0.12 0.05</size></box></geometry>
+        <material><ambient>0.3 0.3 0.3 1</ambient><diffuse>0.3 0.3 0.3 1</diffuse></material>
+      </visual>
+
+      <!-- 뒷바퀴 2개: 저마찰 구 충돌체(끌려가는 조향륜 근사) + 시각 원통 -->
+      <collision name="wheel_rl_collision">
+        <pose>-0.95 0.55 0.25 0 0 0</pose>
+        <geometry><sphere><radius>0.25</radius></sphere></geometry>
+        <surface><friction><ode><mu>0.02</mu><mu2>0.02</mu2></ode></friction></surface>
+      </collision>
+      <collision name="wheel_rr_collision">
+        <pose>-0.95 -0.55 0.25 0 0 0</pose>
+        <geometry><sphere><radius>0.25</radius></sphere></geometry>
+        <surface><friction><ode><mu>0.02</mu><mu2>0.02</mu2></ode></friction></surface>
+      </collision>
+      <visual name="wheel_rl">
+        <pose>-0.95 0.55 0.25 1.5708 0 0</pose>
+        <geometry><cylinder><radius>0.25</radius><length>0.18</length></cylinder></geometry>
+        <material><ambient>0.05 0.05 0.05 1</ambient><diffuse>0.05 0.05 0.05 1</diffuse></material>
+      </visual>
+      <visual name="wheel_rr">
+        <pose>-0.95 -0.55 0.25 1.5708 0 0</pose>
+        <geometry><cylinder><radius>0.25</radius><length>0.18</length></cylinder></geometry>
+        <material><ambient>0.05 0.05 0.05 1</ambient><diffuse>0.05 0.05 0.05 1</diffuse></material>
+      </visual>
+    </link>
+
+    <!-- 앞 구동륜 (조인트 축 = 링크 y, 양의 회전 = 전진) -->
+    <link name="wheel_left">
+      <pose>0.35 0.55 0.25 0 0 0</pose>
+      <inertial>
+        <mass>50</mass>
+        <!-- 원통 m=50, r=0.25, L=0.18: 축 m r²/2 = 1.5625, 수직 m(3r²+L²)/12 = 0.916 -->
+        <inertia><ixx>0.916</ixx><iyy>1.5625</iyy><izz>0.916</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+      </inertial>
+      <collision name="collision">
+        <pose>0 0 0 1.5708 0 0</pose>
+        <geometry><cylinder><radius>0.25</radius><length>0.18</length></cylinder></geometry>
+        <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface>
+      </collision>
+      <visual name="visual">
+        <pose>0 0 0 1.5708 0 0</pose>
+        <geometry><cylinder><radius>0.25</radius><length>0.18</length></cylinder></geometry>
+        <material><ambient>0.05 0.05 0.05 1</ambient><diffuse>0.05 0.05 0.05 1</diffuse></material>
+      </visual>
+    </link>
+    <link name="wheel_right">
+      <pose>0.35 -0.55 0.25 0 0 0</pose>
+      <inertial>
+        <mass>50</mass>
+        <inertia><ixx>0.916</ixx><iyy>1.5625</iyy><izz>0.916</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+      </inertial>
+      <collision name="collision">
+        <pose>0 0 0 1.5708 0 0</pose>
+        <geometry><cylinder><radius>0.25</radius><length>0.18</length></cylinder></geometry>
+        <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface>
+      </collision>
+      <visual name="visual">
+        <pose>0 0 0 1.5708 0 0</pose>
+        <geometry><cylinder><radius>0.25</radius><length>0.18</length></cylinder></geometry>
+        <material><ambient>0.05 0.05 0.05 1</ambient><diffuse>0.05 0.05 0.05 1</diffuse></material>
+      </visual>
+    </link>
+    <joint name="wheel_left_joint" type="revolute">
+      <parent>body</parent>
+      <child>wheel_left</child>
+      <axis><xyz>0 1 0</xyz><limit><lower>-1e16</lower><upper>1e16</upper></limit></axis>
+    </joint>
+    <joint name="wheel_right_joint" type="revolute">
+      <parent>body</parent>
+      <child>wheel_right</child>
+      <axis><xyz>0 1 0</xyz><limit><lower>-1e16</lower><upper>1e16</upper></limit></axis>
+    </joint>
+  </model>
+</sdf>

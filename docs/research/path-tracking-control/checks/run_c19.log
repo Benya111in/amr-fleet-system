@@ -1,0 +1,4 @@
+(a) b=0.5, no FF, matched: max|r-y| 0.163 m/s (analytic a/omega_c = 0.167)
+(b) FF + b=1, matched: 0.001 m/s
+(b) FF + b=1, payload 25 kg unknown (Mhat 48.6, M 73.6): 0.023 m/s
+(b) FF + b=1, payload known via payload/mass: 0.001 m/s

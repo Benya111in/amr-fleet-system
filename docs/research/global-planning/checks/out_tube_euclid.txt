@@ -1,0 +1,4 @@
+L=6 angle= 0 rho=1.0: Linf cells=  6601 (max euclid dev 1.41 m) | Euclid cells=  6177 (max dev 1.00 m) | (2Lr+pi r^2)/r^2=6057 (2Lr+4r^2)/r^2=6400
+L=6 angle= 0 rho=3.0: Linf cells= 29161 (max euclid dev nan m) | Euclid cells= 25809 (max dev nan m) | (2Lr+pi r^2)/r^2=25710 (2Lr+4r^2)/r^2=28800
+L=6 angle=45 rho=1.0: Linf cells=  8566 (max euclid dev 1.41 m) | Euclid cells=  6102 (max dev 1.00 m) | (2Lr+pi r^2)/r^2=6057 (2Lr+4r^2)/r^2=6400
+L=6 angle=45 rho=3.0: Linf cells= 35126 (max euclid dev nan m) | Euclid cells= 25654 (max dev nan m) | (2Lr+pi r^2)/r^2=25710 (2Lr+4r^2)/r^2=28800

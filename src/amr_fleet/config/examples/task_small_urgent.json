@@ -1,0 +1,8 @@
+{
+  "task_id": "order_1001",
+  "priority": 200,
+  "deadline": 120,
+  "pickup": {"x": 12.5, "y": 8.0, "yaw": 1.5708, "frame_id": "map"},
+  "dropoff": {"x": 52.0, "y": 30.0, "yaw": 0.0},
+  "item_type": "small"
+}
