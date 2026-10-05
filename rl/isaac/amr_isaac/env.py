@@ -161,6 +161,10 @@ class AmrNavEnv(DirectRLEnv):
         self.stat_cost_sum = torch.zeros(C.N_COSTS, dtype=F64, device=dev)
         self.stat_episodes = torch.zeros((), dtype=torch.long, device=dev)
         self.ep_cost = torch.zeros(N, C.N_COSTS, dtype=F64, device=dev)
+        self.ep_return = torch.zeros(N, dtype=F64, device=dev)
+        self.stat_return_sum = torch.zeros((), dtype=F64, device=dev)
+        self.stat_len_sum = torch.zeros((), dtype=F64, device=dev)
+        self.stat_path_len_sum = torch.zeros((), dtype=F64, device=dev)
         W = cfg.stats_window
         self.win = torch.zeros(W, len(OUTCOMES), dtype=torch.float32, device=dev)
         self.win_ptr = torch.zeros((), dtype=torch.long, device=dev)
@@ -289,6 +293,7 @@ class AmrNavEnv(DirectRLEnv):
         self.v_cmd = self._v1.clone()
         self.w_cmd = self._w1.clone()
         self.ep_cost += out.cost
+        self.ep_return += out.reward
         t = self.episode_length_buf.to(F64) * C.DT
         moved = torch.hypot(self.pose[:, 0] - self.stall_xy[:, 0],
                             self.pose[:, 1] - self.stall_xy[:, 1]) >= C.STALL_RADIUS
@@ -309,6 +314,10 @@ class AmrNavEnv(DirectRLEnv):
         self.stat_counts += (res & done.unsqueeze(1)).sum(0)
         self.stat_cost_sum += (self.ep_cost * done.unsqueeze(1)).sum(0)
         self.stat_episodes += n
+        dm = done.to(F64)
+        self.stat_return_sum += (self.ep_return * dm).sum()
+        self.stat_len_sum += (self.episode_length_buf.to(F64) * dm).sum()
+        self.stat_path_len_sum += (self.path_len * dm).sum()
         # 최근 창 (동기화 없이: 끝난 env 를 차례로 원형 버퍼에)
         W = self.win.shape[0]
         ids = torch.nonzero(done, as_tuple=False).squeeze(-1)
@@ -365,6 +374,7 @@ class AmrNavEnv(DirectRLEnv):
         self.v_cap[env_ids] = self.cfg.v_cap
         self.stall_xy[env_ids] = pts[:, 0]
         self.ep_cost[env_ids] = 0.0
+        self.ep_return[env_ids] = 0.0
         self.profiler.reset(env_ids)
         self._sample_dr(env_ids)
         self._write_root_pose(env_ids)
@@ -455,7 +465,10 @@ class AmrNavEnv(DirectRLEnv):
             out[o] = int(self.stat_counts[i])
         for i, name in enumerate(C.COST_NAMES):
             out[f'cost_{name}'] = float(self.stat_cost_sum[i])
-        self.stat_counts.zero_()
-        self.stat_cost_sum.zero_()
-        self.stat_episodes.zero_()
+        out['return_sum'] = float(self.stat_return_sum)
+        out['len_steps_sum'] = float(self.stat_len_sum)
+        out['path_len_sum'] = float(self.stat_path_len_sum)
+        for t in (self.stat_counts, self.stat_cost_sum, self.stat_episodes, self.stat_return_sum,
+                  self.stat_len_sum, self.stat_path_len_sum):
+            t.zero_()
         return out
