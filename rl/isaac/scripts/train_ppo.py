@@ -36,6 +36,9 @@ ap.add_argument('--bc_noise', type=float, default=0.15)
 ap.add_argument('--bc_updates', type=int, default=3000)
 ap.add_argument('--critic_warmup', type=int, default=20, help='BC 뒤 actor 를 얼려 둘 PPO 반복 수')
 ap.add_argument('--init_std', type=float, default=None)
+ap.add_argument('--lr', type=float, default=None)
+ap.add_argument('--schedule', default=None, help="'fixed' 또는 'adaptive'")
+ap.add_argument('--clip', type=float, default=None)
 ap.add_argument('--curriculum', default='',
                 help="경로 길이 상한 커리큘럼 'L0:L1:N' — 반복 N 까지 L0→L1 m 선형, 빈 값 = 끔")
 ap.add_argument('--root', default='/home/CAPYI_AI/runs/r1-isaac/train')
@@ -146,6 +149,12 @@ def main():
     agent.device = 'cuda:0'
     if args.entropy is not None:
         agent.algorithm.entropy_coef = args.entropy
+    if args.lr is not None:
+        agent.algorithm.learning_rate = args.lr
+    if args.schedule is not None:
+        agent.algorithm.schedule = args.schedule
+    if args.clip is not None:
+        agent.algorithm.clip_param = args.clip
     t0 = time.time()
     env = AmrNavEnv(env_cfg)
     venv = RslRlVecEnvWrapper(env, clip_actions=agent.clip_actions)
@@ -250,7 +259,9 @@ def main():
                'vcap_curriculum': args.vcap_curriculum, 'lagrange': args.lagrange,
                'lagrange_final': [float(x) for x in env.lagrange.tolist()],
                'entropy_coef': agent.algorithm.entropy_coef, 'bc_steps': args.bc_steps,
-               'critic_warmup': args.critic_warmup, 'init_std': args.init_std}
+               'critic_warmup': args.critic_warmup, 'init_std': args.init_std,
+               'lr': agent.algorithm.learning_rate, 'schedule': agent.algorithm.schedule,
+               'clip': agent.algorithm.clip_param}
     with open(os.path.join(out, 'summary.json'), 'w') as f:
         json.dump(summary, f, indent=1)
     print('TRAIN_DONE ' + json.dumps(summary), flush=True)
