@@ -14,6 +14,7 @@
 - event   : 이벤트 구동 방송(부정 대조군) 대 주기 재방송
 - burst   : Gilbert 버스트 손실(rho 0.8) 대 Bernoulli
 - burstlock: 버스트 손실에서 낙관 대 배타 잠금 (K=2·3 전원 수신, H=5)
+- strict  : 배타 잠금(허가 1 라운드 지연) 아래 K × 전원 수신 × 손실 × 버스트 — 엄격 모드 파라미터 선택
 - cost    : 유클리드 대 격자 A* 비용에서 CBAA·중앙 탐욕·Hungarian 비용 비 (스폰·흩어진 배치)
 
 사례는 연구 계산과 같은 시드(사례 55·nt + k, 링크 시드 13·k + 1)를 써서 셀 사이가 쌍비교가 된다.
@@ -61,6 +62,7 @@ class Cell:
     liveness: str = 'direct'
     rule: str = 'cbba'
     lock: str = 'optimistic'          # optimistic | exclusive
+    lock_delay: int = 0               # 배타 잠금 허가까지 라운드 (정족수 왕복 흉내)
     mode: str = 'scatter'
     burst: float = 0.0
     event: bool = False
@@ -117,7 +119,8 @@ def _one(cell: Cell, case, cost, k: int) -> dict:
     cfg = AgentConfig(rule=cell.rule, stable_rounds=cell.K, require_all_heard=cell.all_heard,
                       heartbeat_timeout=cell.H, liveness=cell.liveness)
     ch = PerLinkChannel(seed=13 * k + 1, p_loss=cell.loss, burst_rho=cell.burst)
-    lock = ExclusiveTaskLock() if cell.lock == 'exclusive' else OptimisticTaskLock()
+    lock = (ExclusiveTaskLock(grant_delay=cell.lock_delay) if cell.lock == 'exclusive'
+            else OptimisticTaskLock())
     sim = SimConfig(max_rounds=120, event_driven=cell.event)
     drops, health = None, None
     if cell.fault != 'none':
@@ -302,6 +305,16 @@ def cells_burstlock() -> Iterable[Cell]:
                         yield Cell('burstlock', nt, loss, K, True, 5, live, lock=lock, burst=0.8)
 
 
+def cells_strict() -> Iterable[Cell]:
+    for nt in TASKS:
+        for loss in LOSSES:
+            for burst in (0.0, 0.8):
+                for K in (1, 2, 3):
+                    for heard in (False, True):
+                        yield Cell('strict', nt, loss, K, heard, 5, 'indirect', lock='exclusive',
+                                   lock_delay=1, burst=burst)
+
+
 def cells_cost() -> Iterable[Cell]:
     for cost in ('euclid', 'grid'):
         for mode in ('spawn', 'scatter'):
@@ -313,7 +326,8 @@ def cells_cost() -> Iterable[Cell]:
 EXPERIMENTS = {
     'commit': cells_commit, 'rule': cells_rule, 'dropout': cells_dropout,
     'commitdie': cells_commitdie, 'health': cells_health, 'event': cells_event,
-    'burst': cells_burst, 'burstlock': cells_burstlock, 'cost': cells_cost,
+    'burst': cells_burst, 'burstlock': cells_burstlock, 'strict': cells_strict,
+    'cost': cells_cost,
 }
 
 
