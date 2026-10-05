@@ -236,6 +236,23 @@ class VoteMachine(RuleBasedStateMachine):
     def restart(self, r):
         self.c.restart(r)
 
+    @precondition(lambda self: type(self).CRASH and self.crashes < type(self).MAX_CRASHES)
+    @rule(r=robots)
+    def crash_corrupt(self, r):
+        """
+        크래시 + 저장소 손상. 재시작하면 기억 상실 투표자(영구 기권)가 된다.
+
+        몸체가 자원 안에 있거나 허가를 쥔 로봇은 고르지 않는다 — 그 로봇은 자기 허가를 잊으므로 I3 가
+        정의상 깨진다 (남의 확정 표가 남아 다른 로봇은 여전히 못 들어간다. REPORT 범위 밖 절 참고).
+        """
+        a = self.c.agents.get(r)
+        if a is None or self.c.inside[r] or a.authorized() or a.attempt is not None:
+            return
+        self.crashes += 1
+        self._count('crash_corrupt')
+        self.c.crash(r)
+        self.c.stores[r].corrupt()
+
     # ---- 불변식
     @invariant()
     def safety(self):

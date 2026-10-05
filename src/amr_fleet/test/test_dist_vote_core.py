@@ -90,6 +90,14 @@ def test_enter_after_expiry_is_nacked():
     assert 'z' not in v.votes
 
 
+def test_enter_for_vote_bound_to_other_request_is_nacked():
+    v, _, _ = boot('a')
+    v.handle(req_msg('b', 'a', R1, ['z']), 1.0)
+    out = v.handle(VoteMsg(m.ENTER, 'c', 'a', 0, R2, frozenset({'z'})), 1.0)
+    assert [(x.kind, x.reason) for x in out] == [(m.NACK, m.R_NOT_TENTATIVE)]
+    assert v.votes['z'].req == R1 and not v.votes['z'].committed
+
+
 def test_release_frees_committed_and_tombstones():
     v, _, _ = boot('a')
     v.handle(req_msg('b', 'a', R1, ['z0', 'z1']), 1.0)

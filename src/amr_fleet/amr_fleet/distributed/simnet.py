@@ -10,7 +10,8 @@ check() 가 매 단계 확인하는 불변식 (protocol.md 2 절):
 - I1 허가 배타: 자원마다 허가받은 로봇 ≤ 1 (크래시한 로봇은 디스크의 HELD 로 센다)
 - I2 물리 배타: 자원마다 몸체가 안에 있는 로봇 ≤ 1
 - I3 점유 ⊆ 허가: 안에 있는 로봇은 그 자원을 허가받고 있다
-- I4 허가 ⇒ 과반 확정: 허가 (로봇, 요청, 자원) 마다 그 요청의 확정 표를 가진 투표자 ≥ 정족수 (strict 일 때)
+- I4 허가 ⇒ 과반 확정: 허가 (로봇, 요청, 자원) 마다 그 요청의 확정 표를 가진 투표자 + 기억 상실(영구 기권)
+     투표자 ≥ n − q + 1 (= 5 대 3 정족수에서 3). 기억 상실이 없으면 "확정 표 ≥ 정족수" 와 같다 (strict 일 때)
 - I5 낮은 epoch 수용 0: 받는 쪽 max_epoch 보다 낮은 epoch 메시지가 상태를 바꾼 횟수
 """
 
@@ -270,6 +271,24 @@ class Cluster:
                     out[v] = {}
         return out
 
+    def amnesic(self) -> Set[str]:
+        """기억 상실 투표자 (살아 있으면 플래그, 크래시했으면 저장소 손상) — 영구 기권."""
+        out: Set[str] = set()
+        for v in self.members:
+            a = self.agents.get(v)
+            if a is not None:
+                if getattr(a, 'amnesic', False):
+                    out.add(v)
+                continue
+            try:
+                st = self.stores[v].load()
+            except Exception:    # noqa: B902 — 손상 = 다시 기동하면 기억 상실
+                out.add(v)
+                continue
+            if st and st.get('amnesic'):
+                out.add(v)
+        return out
+
     def check(self) -> List[str]:
         """불변식 위반 목록 (빈 목록 = 통과)."""
         bad: List[str] = []
@@ -294,13 +313,17 @@ class Cluster:
             if zs - have:
                 bad.append(f'I3 허가 없이 안에 있음: {r} {sorted(zs - have)}')
         if self.check_i4:
+            # 기억 상실 투표자는 표를 잊었지만 영구 기권하므로 여전히 남의 과반을 막는다:
+            # 다른 요청이 쓸 수 있는 투표자 = n - 확정 - 기권 < q  ⇔  확정 + 기권 ≥ n - q + 1
             com = self.committed()
+            gone = self.amnesic()
+            need = len(self.members) - self.cfg.quorum + 1
             for r, reqs in auth.items():
                 for req, zones in reqs.items():
                     for z in zones:
-                        n = sum(1 for v in self.members if com[v].get(z) == req)
-                        if n < self.cfg.quorum:
-                            bad.append(f'I4 허가 {r} {req} {z} 의 확정 표 {n} < {self.cfg.quorum}')
+                        n = sum(1 for v in self.members if com[v].get(z) == req or v in gone)
+                        if n < need:
+                            bad.append(f'I4 허가 {r} {req} {z} 의 확정 표 + 기권 {n} < {need}')
         if self.low_epoch_accepted:
             bad.append(f'I5 낮은 epoch 수용 {self.low_epoch_accepted} 회')
         return bad
