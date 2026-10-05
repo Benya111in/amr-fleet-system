@@ -22,8 +22,7 @@ GROUPS = [
     ('6.3 QuorumVote 가드 변이',
      ['QV_N3_Z1_R2_C1_forget', 'QV_N5_Z1_R2_C1_forget_view', 'QV_N3_Z1_R2_C0_expireCommitted',
       'QV_N3_Z1_R2_C0_smallQuorum', 'QV_N3_Z1_R2_C0_onePhase', 'QV_N3_Z1_R3_C0_noRidCheck',
-      'QV_N3_Z1_R3_C1_volatileInc', 'QV_N3_Z2_R2_C0_overwriteTentative',
-      'QV_N3_Z2_R3_C1_overwriteTentative_view']),
+      'QV_N3_Z1_R3_C1_volatileInc', 'QV_N3_Z2_R2_C0_overwriteTentative']),
     ('6.4 QuorumVote 활성 결함 (ABANDON 처리)',
      ['QV_N3_Z1_R2_C1_strand_report_view', 'QV_N3_Z1_R2_C1_strand_fixA_view',
       'QV_N3_Z1_R2_C1_strand_fixB_view', 'QV_N3_Z1_R2_C1_dead_report_view',
@@ -33,10 +32,15 @@ GROUPS = [
      ['TL_N3_T1_R2_C1', 'TL_N3_T1_R2_C1_view', 'TL_N5_T1_R2_C1_view', 'TL_N3_T2_R3_C1_view',
       'TL_N3_T1_R2_C1_forget', 'TL_N3_T1_R2_C0_expireCommitted',
       'TL_N3_T1_R2_C0_releaseAfterDone']),
-    ('6.6 중단한 실행 (결과로 쓰지 않는다)',
+    ('6.6 무작위 시뮬레이션 (전수 아님 — 감도 확인과 함께 읽는다)',
+     ['QV_N5_Z2_R3_C2_sim', 'QV_N5_Z2_R3_C2_forget_sim',
+      'QV_N5_Z2_R3_C2_forget_sim.MEonly-stopped', 'TL_N5_T2_R3_C2_sim',
+      'TL_N5_T2_R3_C2_releaseAfterDone_sim']),
+    ('6.7 중단한 실행 (결과로 쓰지 않는다)',
      ['QV_N3_Z2_R3_C1.noview-killed', 'QV_N3_Z2_R3_C0_noRidCheck.outer-timeout-killed',
       'QV_N3_Z2_R3_C1_volatileInc.outer-timeout-killed', 'TL_N3_T2_R3_C1.noview-killed',
-      'TL_N5_T1_R2_C1.noview-killed', 'QV_N3_Z2_R3_C1_fixB_view.reprioritized-killed']),
+      'TL_N5_T1_R2_C1.noview-killed', 'QV_N3_Z2_R3_C1_fixB_view.reprioritized-killed',
+      'QV_N3_Z2_R3_C1_overwriteTentative_view.reprioritized-killed']),
 ]
 
 HEAD = """## 6. 결과
@@ -46,11 +50,11 @@ HEAD = """## 6. 결과
 cfg 이름: `<모델>_N<로봇>_Z<구역>|T<작업>_R<전체 요청 상한>_C<전체 크래시 상한>[_<변이/변형>][_view]`.
 "wall s" 는 공유 서버(32 코어, 시작 1 분 loadavg 열 참고) 위 4 작업자 기준 **예비값**이다.
 "깊이" 는 위반이면 반례까지의 BFS 깊이, 위반 없음이면 상태 그래프 전체의 깊이다.
-spec sha256 열의 스펙 판은 커밋으로 찾을 수 있다 (§6.7).
+spec sha256 열의 스펙 판은 커밋으로 찾을 수 있다 (§6.8).
 
 """
 
-MEMO = """### 6.7 스펙 판과 실행 메모
+MEMO = """### 6.8 스펙 판과 실행 메모
 
 | spec sha256[:12] | 파일 @ 커밋 | 앞 판과의 차이 |
 |---|---|---|
@@ -77,6 +81,12 @@ QuorumVote·TaskLock 판 사이의 차이는 `git diff` 로 확인했고 지운 
 - VIEW 없이 돌린 `QV_N3_Z1_R2_C1`(136,276) 과 VIEW 판(30,223)은 둘 다 위반 없음이다.
   깊이가 32 → 29 로 줄어드는 것은 VIEW 가 같다고 본 상태를 합치기 때문이다.
 - `*.reprioritized-killed` 는 더 중요한 실행에 CPU 를 넘기려고 직접 멈춘 것이다.
+- §6.6 시뮬레이션의 "states generated" 열은 TLC 의 "states checked" 마지막 값이고, 깊이 열은 경로 길이
+  상한(`-depth 100`)이다. 시드는 1 로 고정했다. **감도가 낮다**: 같은 범위·같은 예산에서 TaskLock 의
+  `releaseAfterDone` 버그를 못 찾았고(BFS 는 N=3 에서 19 상태로 찾음), QuorumVote `forget` 은 보조
+  불변식 `InsideBacked` 로는 7 초 만에 잡았지만 `MutualExclusion` 만 볼 때는 10 분(5 억 상태) 동안
+  못 찾았다. 그래서 설계 시뮬레이션의 "위반 없음" 은 N=5·구역 2·요청 3·크래시 2 범위의 **약한 보조
+  증거**일 뿐이다.
 - 동작 커버리지 (`-coverage`, cfg `*_coverage`): 설계 모델에서 새 상태를 하나도 못 만든 동작은
   QuorumVote `EnterOnePhase`(onePhase 변이 전용이라 꺼짐)·`HandleAbandon`, TaskLock `HandleAbandon`,
   RA 원형 대조군 `ChangeView`(견해 고정이라 꺼짐)뿐이다. QuorumVote 의 `HandleAbandon` 은 보고서 표대로

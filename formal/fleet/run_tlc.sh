@@ -12,7 +12,9 @@
 #   IMAGE    : 컨테이너 이미지 (기본 amr-ai/rl:0.3)
 #   TLC_TIMEOUT : 컨테이너 안 TLC 시간 상한(초, 기본 3000). 넘으면 TLC 를 멈추고 rc=124
 #                 (그때는 마지막 Progress 줄만 남는다 -- 전수 검사 미완)
-# 결과: $OUT_DIR/<cfg 이름>.log (TLC 원문), 첫 줄들에 판·명령·HEAD 를 남긴다.
+# 결과: $OUT_DIR/<cfg 이름>.log (TLC 원문), 첫 줄들에 판·명령·HEAD·추가 옵션을 남긴다.
+# 주의: 이 파일을 고칠 때는 새 파일로 바꿔치기(mv)한다 -- 같은 inode 를 덮어쓰면 돌고 있는
+#       실행의 bash 가 바뀐 내용을 엉뚱한 위치부터 읽는다 (2026-10-06 rc=127 사고).
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 mod="${1:?모듈 이름}"
@@ -35,6 +37,7 @@ jar_name="$(basename "$TLA_JAR")"
   echo "# jar=$TLA_JAR sha256=$(sha256sum "$TLA_JAR" | cut -d' ' -f1)"
   echo "# head=$(git -C "$here" rev-parse HEAD) dirty=$(git -C "$here" status --porcelain -- . | wc -l)"
   echo "# spec_sha256=$(sha256sum "$here/$mod.tla" | cut -d' ' -f1) cfg_sha256=$(sha256sum "$here/$cfg" | cut -d' ' -f1)"
+  echo "# tlc_opts=$*"
   echo "# start=$(date -Is) loadavg=$(cut -d' ' -f1-3 /proc/loadavg)"
 } > "$log"
 # 정확히 무엇을 돌렸는지 남긴다 (스펙·cfg 사본)

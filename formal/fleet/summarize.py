@@ -34,9 +34,25 @@ def summarize(path):
     dist = field(text, r'^[\d,]+ states generated, ([\d,]+) distinct')
     depth = field(text, r'depth of the complete state graph search is (\d+)')
     viol = field(text, r'^Error: Invariant (\w+) is violated')
+    sim = 'Running Random Simulation' in text
+    opts = field(text, r'^# tlc_opts=(.*)$')
+    if sim:
+        found = re.findall(r'^Progress: ([\d,]+) states checked', text, re.M)
+        checked = found[-1] if found else ''
+        checked = checked or field(text, r'^The number of states generated: ([\d,]+)', '')
+        gen = checked or '-'
+        dist = '(시뮬레이션: distinct 없음)'
+        depth = field(text, r'-depth (\d+)', '?')
+        depth = '경로 상한 ' + depth
     if viol:
         nstates = len(re.findall(r'^State \d+:', text, re.M))
         verdict = '위반 %s (트레이스 %d 상태)' % (viol, nstates)
+        if sim:
+            verdict = '시뮬레이션 ' + verdict
+    elif sim and end and rc == '0':
+        verdict = '시뮬레이션 위반 없음 (%s, 전수 아님)' % (opts.strip() or '옵션 미기록')
+    elif sim:
+        verdict = '시뮬레이션 중단, 그때까지 위반 못 찾음 (rc=%s; %s)' % (rc or '없음', opts.strip())
     elif 'No error has been found' in text:
         verdict = '위반 없음 (전수)'
     elif rc == '124' or not end or not gen:
