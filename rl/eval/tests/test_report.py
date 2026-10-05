@@ -204,3 +204,18 @@ def test_safety_alarm_threshold_three_vs_zero():
     pairs2 = [(dict(t, outcome='success', contacts=0) if t['exec_index'] == 239 else t, r)
               for t, r in pairs]
     assert not R.safety_alarm(pairs2)['fired']
+
+
+def test_gate_needs_both_conditions():
+    """접촉은 낮지만 성공률이 DWA 보다 크게 낮은 체크포인트 → 미달 (두 조건 AND)."""
+    rows = synth.make_dataset(seed=11, n_seeds=2, levels=20, eps_per_level=40, isaac=False,
+                              sim2d_skill={'C_hybrid': 0.80},
+                              sim2d_collision={'C_hybrid': 0.0, 'B_ppo': 0.05},
+                              gz_n=30, gz_secondary=False)
+    g = {x['policy_id']: x for x in R.gate_2d(rows)}
+    c = g['C_hybrid/s0/best']
+    assert c['cp_upper'] <= R.PREREG['gate_collision_cp_upper']     # 접촉 조건은 통과
+    assert c['tango_z'] > -1.96                                     # 성공률 NI 는 실패
+    assert c['verdict'] == R.NOT_MET
+    b = g['B_ppo/s0/best']
+    assert b['cp_upper'] > R.PREREG['gate_collision_cp_upper'] and b['verdict'] == R.NOT_MET
