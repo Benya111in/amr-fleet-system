@@ -43,6 +43,7 @@ PREREG = {
     'srcc_ci_lower_min': 0.5,      # 충족 = BW 95 % 하한과 시나리오 부트스트랩 95 % 하한이 모두 초과
     'min_seeds': 5,
     'spec_block': 30,
+    'spec_sets': ('gz_s08_actor42', 'gz_new600'),   # 명세 189–191행 점검 대상 (08 형 동적 장애물)
     'spec_dev_m': 1.0,
     'spec_return_s': 5.0,
     'alarm_test': 'barnard',
@@ -496,21 +497,28 @@ def srcc_table(rows, prereg=PREREG, reps=1000, seed=0):
 
 def spec_checks(rows, prereg=PREREG):
     """
-    명세 4.7 점검 (Gazebo, 비교군별) — 30 회 묶음 0 접촉·이탈 ≤ 1 m·복귀 ≤ 5 s.
+    명세 4.7 점검 (Gazebo 189–191행) — 30 회 묶음 0 접촉·이탈 ≤ 1 m·복귀 ≤ 5 s.
 
-    묶음 = exec_index(없으면 행 순서) 순서로 자른 30 회. 판정 문장의 OC(충돌률 2 % 도 54.5 % 통과)를 함께 싣는다.
+    (arm, policy_id, scenario_set) 마다 따로, 08 형 동적 장애물 묶음(PREREG spec_sets)에만 적용한다.
+    exec_index 는 (arm, simulator, scenario_set) 안의 순번이라 묶음·정책을 섞어 정렬하면 30 회 묶음이
+    서로 다른 시나리오 묶음의 시행으로 채워진다. 묶음 = 그 그룹 안에서 exec_index(없으면 행 순서)
+    순서로 자른 30 회. 판정 문장의 OC(충돌률 2 % 도 54.5 % 통과)를 함께 싣는다.
     """
     out = []
-    sub = select(rows, simulator='gazebo', safety_node='on')
-    for a in sorted({r['arm'] for r in sub}):
-        g, _ = _exec_order([r for r in select(sub, arm=a) if r['outcome'] != 'error'])
+    groups = defaultdict(list)
+    for r in select(rows, simulator='gazebo', safety_node='on'):
+        if r['scenario_set'] in prereg['spec_sets'] and r['outcome'] != 'error':
+            groups[(r['arm'], r['policy_id'], r['scenario_set'])].append(r)
+    for (a, pol, sset), rows_g in sorted(groups.items()):
+        g, _ = _exec_order(rows_g)
         k = prereg['spec_block']
         blocks = [g[i:i + k] for i in range(0, len(g) - k + 1, k)]
         clean = sum(all(not schema.collided(r) for r in b) for b in blocks)
         dev = _vals(g, 'max_dev_m')
         ret = _vals(g, 'return_max_s')
         out.append({
-            'arm': a, 'blocks': len(blocks), 'blocks_zero_contact': clean,
+            'arm': a, 'policy_id': pol, 'scenario_set': sset, 'n': len(g),
+            'blocks': len(blocks), 'blocks_zero_contact': clean,
             'contact_verdict': (UNDECIDABLE if not blocks else
                                 MET if clean == len(blocks) else NOT_MET),
             'dev_max': float(dev.max()) if dev.size else math.nan,
@@ -685,12 +693,18 @@ def render_markdown(res):
     w('')
     w('## 8. 명세 4.7 점검 (Gazebo)')
     w('')
-    w('| 비교군 | 30 회 묶음 | 0 접촉 묶음 | 판정 | 최대 이탈 [m] | 판정 | 최대 복귀 [s] | 판정 |')
-    w('| --- | ---: | ---: | --- | ---: | --- | ---: | --- |')
+    w('| 비교군 | 정책 | 시나리오 묶음 | n | 30 회 묶음 | 0 접촉 묶음 | 판정 | 최대 이탈 [m] | 판정 | '
+      '최대 복귀 [s] | 판정 |')
+    w('| --- | --- | --- | ---: | ---: | ---: | --- | ---: | --- | ---: | --- |')
     for s in res['spec']:
-        w(f'| {s["arm"]} | {s["blocks"]} | {s["blocks_zero_contact"]} | {s["contact_verdict"]} | '
+        w(f'| {s["arm"]} | `{s["policy_id"]}` | `{s["scenario_set"]}` | {s["n"]} | '
+          f'{s["blocks"]} | {s["blocks_zero_contact"]} | {s["contact_verdict"]} | '
           f'{_p(s["dev_max"], 3)} | {s["dev_verdict"]} | {_p(s["return_max"])} | '
           f'{s["return_verdict"]} |')
+    w('')
+    w(f'08 형 동적 장애물 묶음({", ".join("`" + x + "`" for x in res["prereg"]["spec_sets"])})만, '
+      '(비교군, 정책, 시나리오 묶음) 마다 따로 본다. 157행 CTE 점검(`gz_s07`)은 아직 이 표에 없다 — '
+      '결과 열에 직선·곡선 구분이 없다 (PROTOCOL.md §6.11).')
     if res['spec']:
         w('')
         w(f'"30 회 0 접촉" 은 판정 기준이지 안전 근거가 아니다 — 참 접촉률 2 % 정책도 '

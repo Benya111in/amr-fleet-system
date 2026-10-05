@@ -128,9 +128,39 @@ def test_srcc_few_policies_undecidable():
 
 def test_spec_checks(good):
     _, res = good
-    sp = {s['arm']: s for s in res['spec']}
-    assert sp['A_dwa']['blocks'] == 10 and sp['A_dwa']['contact_verdict'] == R.MET
-    assert sp['A_dwa']['oc_pass_at_2pct'] == pytest.approx(0.545, abs=1e-3)
+    sp = {(s['arm'], s['policy_id'], s['scenario_set']): s for s in res['spec']}
+    a = sp[('A_dwa', 'dwa@synthetic', 'gz_new600')]
+    assert a['blocks'] == 10 and a['contact_verdict'] == R.MET
+    assert a['oc_pass_at_2pct'] == pytest.approx(0.545, abs=1e-3)
+
+
+def test_spec_checks_do_not_mix_sets_or_policies():
+    """
+    명세 점검은 (비교군, 정책, 묶음) 마다 따로, 08 형 동적 장애물 묶음만 본다.
+
+    리뷰 반례: 기준선 CSV(gz_s08_actor42, exec 0–239) 와 A 의 gz_new600 을 함께 넣으면 exec_index 로
+    섞여 정렬돼 첫 30 묶음이 두 묶음 15 개씩으로 채워졌다.
+    """
+    base = os.path.join(os.path.dirname(SCRIPTS), 'baseline', 'dwa_gz_s08_episodes.csv')
+    rows = schema.read_csv(base)
+    new = [_ep('A_dwa', s, 'collision' if s == 45 else 'success') for s in range(60)]
+    for r in new:
+        r['max_dev_m'] = 0.5
+    s07 = [dict(_ep('A_dwa', g, 'success', sset='gz_s07'), scenario_id='07_path_tracking_cte',
+                max_dev_m=3.0, return_max_s=9.0) for g in range(5)]
+    sp = {(s['arm'], s['policy_id'], s['scenario_set']): s
+          for s in R.spec_checks(rows + new + s07)}
+    assert set(sp) == {('A_dwa', 'dwa@cebd351', 'gz_s08_actor42'),
+                       ('A_dwa', 'dwa@bcc2cca', 'gz_s08_actor42'),
+                       ('A_dwa', 'dwa@80874d3', 'gz_s08_actor42'),
+                       ('A_dwa', 'dwa@x', 'gz_new600')}
+    s08 = [sp[k] for k in sp if k[2] == 'gz_s08_actor42']
+    assert sorted(s['blocks'] for s in s08) == [2, 3, 3]
+    assert all(s['contact_verdict'] == R.MET for s in s08)
+    assert max(s['dev_max'] for s in s08) < 1.0 and max(s['return_max'] for s in s08) < 5.0
+    g = sp[('A_dwa', 'dwa@x', 'gz_new600')]
+    # 접촉은 두 번째 30 묶음에만 — 한 묶음이라도 접촉이 있으면 미달
+    assert (g['blocks'], g['blocks_zero_contact'], g['contact_verdict']) == (2, 1, R.NOT_MET)
 
 
 def test_secondary_is_exploratory(good):
