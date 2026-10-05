@@ -30,6 +30,12 @@ ap.add_argument('--vcap_curriculum', default='',
 ap.add_argument('--entropy', type=float, default=None)
 ap.add_argument('--lagrange', default='',
                 help="PPO-Lagrangian 'λ0,…,λ4/η0,…,η4/d1' — 초기 승수/쌍대 상승률/개입 예산, 빈 값 = 끔")
+ap.add_argument('--bc_steps', type=int, default=0,
+                help='0 보다 크면 전문가(경로 순수 추종) 시연으로 actor 를 BC 예열한다 (env step 수)')
+ap.add_argument('--bc_noise', type=float, default=0.15)
+ap.add_argument('--bc_updates', type=int, default=3000)
+ap.add_argument('--critic_warmup', type=int, default=20, help='BC 뒤 actor 를 얼려 둘 PPO 반복 수')
+ap.add_argument('--init_std', type=float, default=None)
 ap.add_argument('--curriculum', default='',
                 help="경로 길이 상한 커리큘럼 'L0:L1:N' — 반복 N 까지 L0→L1 m 선형, 빈 값 = 끔")
 ap.add_argument('--root', default='/home/CAPYI_AI/runs/r1-isaac/train')
@@ -46,6 +52,7 @@ from rsl_rl.runners import OnPolicyRunner  # noqa: E402
 from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper  # noqa: E402
 
 from amr_isaac import policy_export as PE  # noqa: E402
+from amr_isaac.expert import expert_u  # noqa: E402
 from amr_isaac.agents.rsl_rl_ppo_cfg import AmrNavPPORunnerCfg  # noqa: E402
 from amr_isaac.env import AmrNavEnv, OUTCOMES  # noqa: E402
 from amr_isaac.env_cfg import AmrNavEnvCfg  # noqa: E402
@@ -70,6 +77,52 @@ def swap_normalizers(policy):
         new.load_state_dict(old.state_dict())
         new.to(old._mean.device)
         setattr(policy, name, new)
+
+
+def bc_warm_start(env, venv, pol, out):
+    """전문가 시연 수집 (잡음 섞어 실행, 레이블은 깨끗한 행동) → 정규화 통계 → actor MSE(tanh 공간)."""
+    t0 = time.time()
+    obs = venv.get_observations()['policy']
+    xs, us = [], []
+    env.pop_stats()
+    for _ in range(args.bc_steps):
+        u = expert_u(env).to(torch.float32)
+        xs.append(obs.clone())
+        us.append(u.clone())
+        ue = (u + args.bc_noise * torch.randn_like(u)).clamp(-0.995, 0.995)
+        td, _r, _d, _e = venv.step(torch.atanh(ue))
+        obs = td['policy']
+    st = env.pop_stats()
+    X = torch.cat(xs)
+    U = torch.cat(us)
+    for nm in ('actor_obs_normalizer', 'critic_obs_normalizer'):
+        nz = getattr(pol, nm)
+        nz._mean[:] = X.mean(0, keepdim=True)
+        nz._var[:] = X.var(0, unbiased=False, keepdim=True)
+        nz._std[:] = torch.sqrt(nz._var)
+        nz.count.fill_(X.shape[0])
+    opt = torch.optim.Adam(pol.actor.parameters(), lr=1e-3)
+    n = X.shape[0]
+    losses = []
+    for k in range(args.bc_updates):
+        idx = torch.randint(0, n, (4096,), device=X.device)
+        x = PE.contract_normalize(X[idx], pol.actor_obs_normalizer._mean,
+                                  pol.actor_obs_normalizer._var)
+        loss = ((torch.tanh(pol.actor(x)) - U[idx]) ** 2).mean()
+        opt.zero_grad()
+        loss.backward()
+        opt.step()
+        if k % 500 == 0 or k == args.bc_updates - 1:
+            losses.append([k, float(loss)])
+    rec = {'bc_samples': n, 'bc_s': round(time.time() - t0, 1), 'bc_loss': losses,
+           'expert_noisy_episodes': st['episodes'],
+           'expert_noisy_success_rate': st['success'] / max(st['episodes'], 1),
+           'expert_noisy_collision_rate': st['collision'] / max(st['episodes'], 1)}
+    with open(os.path.join(out, 'bc.json'), 'w') as f:
+        json.dump(rec, f, indent=1)
+    print('BC ' + json.dumps(rec), flush=True)
+    del X, U, xs, us
+    torch.cuda.empty_cache()
 
 
 def gpu_mem_mib():
@@ -98,6 +151,21 @@ def main():
     venv = RslRlVecEnvWrapper(env, clip_actions=agent.clip_actions)
     runner = OnPolicyRunner(venv, agent.to_dict(), log_dir=out, device=agent.device)
     swap_normalizers(runner.alg.policy)
+    pol = runner.alg.policy
+    if args.init_std is not None:
+        with torch.no_grad():
+            pol.log_std.fill_(float(torch.log(torch.tensor(args.init_std))))
+    if args.bc_steps > 0:
+        bc_warm_start(env, venv, pol, out)
+        torch.save({'state_dict': {k: v.detach().cpu() for k, v in pol.state_dict().items()},
+                    'activation': agent.policy.activation,
+                    'hidden': agent.policy.actor_hidden_dims}, os.path.join(out, 'policy_bc.pt'))
+        venv.reset()
+        frozen = [p for p in list(pol.actor.parameters()) + [pol.log_std]]
+        for p in frozen:
+            p.requires_grad_(False)
+        sched = runner.alg.schedule
+        runner.alg.schedule = 'fixed'
     setup_s = time.time() - t0
     print(f'SETUP {setup_s:.1f}s policy {runner.alg.policy}', flush=True)
     env.pop_stats()
@@ -115,6 +183,11 @@ def main():
         env.lagrange[:] = torch.tensor([float(x) for x in l0.split(',')], dtype=torch.float64)
     while it < args.iterations:
         n = min(args.chunk, args.iterations - it)
+        if args.bc_steps > 0 and it >= args.critic_warmup and runner.alg.schedule == 'fixed':
+            for p in frozen:
+                p.requires_grad_(True)
+            runner.alg.schedule = sched
+            print(f'UNFREEZE actor at iteration {it}', flush=True)
         if cur:
             env.curriculum_lmax = cur[0] + (cur[1] - cur[0]) * min(1.0, it / cur[2])
         if vc:
@@ -176,7 +249,8 @@ def main():
                'dr': not args.no_dr, 'curriculum': args.curriculum,
                'vcap_curriculum': args.vcap_curriculum, 'lagrange': args.lagrange,
                'lagrange_final': [float(x) for x in env.lagrange.tolist()],
-               'entropy_coef': agent.algorithm.entropy_coef}
+               'entropy_coef': agent.algorithm.entropy_coef, 'bc_steps': args.bc_steps,
+               'critic_warmup': args.critic_warmup, 'init_std': args.init_std}
     with open(os.path.join(out, 'summary.json'), 'w') as f:
         json.dump(summary, f, indent=1)
     print('TRAIN_DONE ' + json.dumps(summary), flush=True)

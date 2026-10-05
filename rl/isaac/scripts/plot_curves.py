@@ -27,10 +27,12 @@ def main():
     ap.add_argument('--out', required=True)
     a = ap.parse_args()
     fig, axs = plt.subplots(2, 3, figsize=(15, 8))
-    panels = [('success_rate', '성공률 (끝난 에피소드)'), ('collision_rate', '충돌률'),
-              ('time_limit_rate', '시간 상한 비율'), ('stall_rate', '정체 비율'),
-              ('mean_return', '평균 에피소드 반환 (무할인)'),
-              ('chunk_env_steps_per_s', '처리량 env-steps/s (학습 포함)')]
+    # 컨테이너 matplotlib 에 한글 글꼴이 없어 그림 제목은 영어로 둔다
+    panels = [('success_rate', 'success rate (finished episodes)'),
+              ('collision_rate', 'collision rate'), ('time_limit_rate', 'time-limit rate'),
+              ('stall_rate', 'stall rate'),
+              ('mean_return', 'mean episode return (contract, undisc.)'),
+              ('chunk_env_steps_per_s', 'env-steps/s incl. PPO update')]
     for run in a.runs:
         rows = load(run)
         x = [r['env_steps'] / 1e6 for r in rows]
