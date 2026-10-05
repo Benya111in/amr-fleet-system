@@ -293,3 +293,60 @@ def test_whole_world_points_stay_inside_room(gen):
     area = 0.25 * 0.25
     assert counts['ceiling'] * area == pytest.approx(60 * 40, rel=1e-6)
     assert counts['floor'] * area < 60 * 40
+
+
+def _models(sdf_text):
+    import xml.etree.ElementTree as ET
+    world = ET.fromstring(sdf_text).find('world')
+    names = {m.get('name') for m in world.findall('model')}
+    names |= {i.findtext('name') for i in world.findall('include')}
+    return world, names
+
+
+@pytest.mark.parametrize('variant', ['s6-queue', 's6-queue2', 's6-wall'])
+def test_s6_variant_adds_only_blockers_matching_localizability(gen, variant):
+    """S6 변형 = 기본 월드 + 정적 블로커만. 블로커 기하는 localizability.s6_blockers 와 같다."""
+    from amr_evaluation.slam3d import localizability as L
+    base = gen.build_sdf()[0]
+    sdf = gen.build_sdf(variant)[0]
+    assert set(base.splitlines()) <= set(sdf.splitlines())
+    world, names = _models(sdf)
+    _, base_names = _models(base)
+    blockers = sorted(names - base_names)
+    assert blockers == [f's6_blocker_{i}' for i in range(len(blockers))] and blockers
+    prims, _ = gen.gt_primitives(sdf, [str(MODELS)], gen.GT_EXCLUDE)
+    blk = [p for p in prims if p.model.startswith('s6_blocker')]
+    # 월드 축 AABB (중심, 크기) — yaw ±π/2 AMR 은 x·y 크기가 바뀐다. SDF 자세는 소수 4 자리라 1e-4 허용
+    got = sorted(np.r_[p.t, 2 * np.abs(p.R) @ p.half()].tolist() for p in blk)
+    ref = L.s6_blockers(variant.split('-')[1])
+    want = sorted(np.r_[c, 2 * np.abs(r) @ h].tolist() for c, r, h in zip(ref.c, ref.R, ref.h))
+    assert np.allclose(got, want, atol=1e-4)
+
+
+def test_s1_variant_has_no_dynamic_obstacles(gen):
+    sdf = gen.build_sdf('s1')[0]
+    world, names = _models(sdf)
+    _, base_names = _models(gen.build_sdf()[0])
+    assert world.findall('actor') == []
+    assert base_names - names == set(gen.VEHICLES)
+    assert names <= base_names
+
+
+def test_variant_requires_out_and_gt_ignores_variant(tmp_path, gen):
+    with pytest.raises(SystemExit):
+        gen.main(['--variant', 's1'])
+    out = tmp_path / 'w.sdf'
+    gen.main(['--variant', 's6-wall', str(out), '--gt-dir', str(tmp_path / 'gt'),
+              '--gt-no-points', '--gt-res', '0.1'])
+    assert 's6_blocker_1' in out.read_text()
+    meta = json.loads((tmp_path / 'gt' / 'gt_meta.json').read_text())
+    assert meta['matches_committed_sdf'] is True          # GT 는 언제나 기본 월드
+    with pytest.raises(ValueError):
+        gen.build_sdf('s9')
+
+
+def test_blocker_overlapping_rack_is_rejected(gen):
+    racks = gen.rack_instances()
+    with pytest.raises(AssertionError):
+        gen.check_blockers(racks, [('wall', 0.0, -7.9, 0.0)])     # 입구 안쪽으로 15 cm → 좁은 통로 랙과 겹침
+    gen.check_blockers(racks, gen.S6_BLOCKERS['s6-wall'])         # 정의된 위치는 통과

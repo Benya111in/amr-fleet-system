@@ -1329,12 +1329,79 @@ def export_gt(out_dir, model_dirs, spacing=GT_SPACING, res=GT_RES, slices=GT_SLI
     return meta
 
 
-def build_sdf():
-    """월드 SDF 문자열과 (racks, specs). 호출마다 같은 결과 (seed 난수를 처음부터 다시 쓴다)."""
+def check_blockers(racks, blockers):
+    """블로커가 랙·기둥과 겹치지 않고 실내에 있는지 (블로커 AABB 대 랙·기둥 AABB, 닿는 것은 허용)."""
+    aabbs = _aabbs(racks)
+    for kind, x, y, yaw in blockers:
+        sx, sy = AMR_BLOCKER[:2] if kind == "amr" else WALL_BLOCKER[:2]
+        c, s = abs(math.cos(yaw)), abs(math.sin(yaw))
+        hx, hy = (c * sx + s * sy) / 2, (s * sx + c * sy) / 2
+        assert abs(x) + hx < HALF_X and abs(y) + hy < HALF_Y, (kind, x, y)
+        for name, x0, x1, y0, y1 in aabbs:
+            assert x + hx <= x0 or x - hx >= x1 or y + hy <= y0 or y - hy >= y1, \
+                f"블로커 ({x}, {y}) 가 {name} 과 겹침"
+
+
+# ---- 평가 시나리오용 월드 변형 — --variant 플래그로만 (docs/research/slam3d/evaluation.md §6) ---------
+# 기본 월드(변형 없음)는 위 build_sdf 출력 그대로다. 변형은 커밋하지 않고 기록할 때 만들어 쓴다.
+#   s1        : 동적 장애물(사람 actor 6 + 지게차·셔틀) 없음 — S1 정상
+#   s6-queue  : 좁은 통로 북쪽 토큰 대기 위치 (0, -5.5) 에 AMR 크기 정적 블로커 (traffic.yaml corridor_approach_m 2.5)
+#   s6-queue2 : 북 (0, -5.5) + 남 (0, -14.5) 양끝 대기
+#   s6-wall   : 양끝 입구 바로 앞 (0, -7.75)·(0, -12.25) 를 0.8 x 0.3 x 0.5 m 화물로 완전 차단 (최악)
+# 블로커는 정적 모델이라 GT(--gt-dir)에는 넣지 않는다 — 사전 지도에 없는 물체로 다룬다.
+# 같은 블로커 기하가 amr_evaluation/slam3d/localizability.py s6_blockers 에 있다 (시험이 둘을 대조한다).
+AMR_BLOCKER = (0.6, 0.4, 0.30, 0.03)        # 길이, 폭, 높이, 바닥 틈 [m] — config/robot_params.yaml 차체
+WALL_BLOCKER = (0.8, 0.3, 0.5)
+S6_BLOCKERS = {
+    "s6-queue": [("amr", 0.0, NARROW_CY + 4.5, -math.pi / 2)],
+    "s6-queue2": [("amr", 0.0, NARROW_CY + 4.5, -math.pi / 2),
+                  ("amr", 0.0, NARROW_CY - 4.5, math.pi / 2)],
+    "s6-wall": [("wall", 0.0, NARROW_CY + RACK_L + 0.25, 0.0),
+                ("wall", 0.0, NARROW_CY - RACK_L - 0.25, 0.0)],
+}
+VARIANTS = ("s1",) + tuple(S6_BLOCKERS)
+
+
+def blocker_xml(variant):
+    """S6 정적 블로커 모델들 (시각체 + 충돌체 상자)."""
+    out = f"    <!-- ===== 평가 변형 {variant}: 정적 블로커 (evaluation.md §6) ===== -->\n"
+    for i, (kind, x, y, yaw) in enumerate(S6_BLOCKERS[variant]):
+        if kind == "amr":
+            sx, sy, sz, gap = AMR_BLOCKER
+        else:
+            (sx, sy, sz), gap = WALL_BLOCKER, 0.0
+        geom = f"<geometry><box><size>{sx} {sy} {sz}</size></box></geometry>"
+        out += f"""    <model name="s6_blocker_{i}">
+      <static>true</static>
+      <pose>{pose(x, y, 0, 0, 0, yaw)}</pose>
+      <link name="link">
+        <collision name="collision"><pose>0 0 {gap + sz / 2:.3f} 0 0 0</pose>{geom}</collision>
+        <visual name="visual"><pose>0 0 {gap + sz / 2:.3f} 0 0 0</pose>{geom}
+          <material><ambient>0.2 0.3 0.6 1</ambient><diffuse>0.2 0.3 0.6 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+"""
+    return out
+
+
+def build_sdf(variant=None):
+    """
+    월드 SDF 문자열과 (racks, specs). 호출마다 같은 결과 (seed 난수를 처음부터 다시 쓴다).
+
+    variant 가 None 이면 커밋된 warehouse.sdf 와 바이트 단위로 같다. VARIANTS 의 값이면 평가용 변형.
+    """
+    if variant is not None and variant not in VARIANTS:
+        raise ValueError(f"variant {variant!r} (가능: {VARIANTS})")
     rng.seed(SEED)
     racks = rack_instances()
     dyn_xml, specs = dynamic_obstacles()
     check_layout(racks, specs)
+    if variant == "s1":
+        dyn_xml = "    <!-- ===== 평가 변형 s1: 동적 장애물 없음 (evaluation.md §6) ===== -->\n"
+    elif variant is not None:
+        check_blockers(racks, S6_BLOCKERS[variant])
+        dyn_xml = dyn_xml + blocker_xml(variant)
 
     n_loc_markers = 4 * len(PILLARS) + len(rack_marker_poses())
 
@@ -1401,6 +1468,8 @@ def _parse_args(argv):
         description="warehouse.sdf 생성 (기본). --gt-dir 를 주면 지면 진실(GT) 파일 세트를 쓴다.")
     ap.add_argument("out", nargs="?", default=None,
                     help="출력 SDF (기본: 같은 디렉토리 warehouse.sdf; --gt-dir 만 주면 SDF 를 쓰지 않는다)")
+    ap.add_argument("--variant", default=None, choices=VARIANTS,
+                    help="평가용 월드 변형 (out 경로를 반드시 줘야 한다 — 커밋된 warehouse.sdf 보호)")
     ap.add_argument("--gt-dir", default=None, help="GT 출력 디렉토리 (export_gt 독스트링 참고)")
     ap.add_argument("--gt-models", action="append", default=None,
                     help="model:// 검색 경로 (기본: 이 파일의 ../models)")
@@ -1424,13 +1493,16 @@ def _parse_args(argv):
 def main(argv=None):
     args = _parse_args(argv)
     here = os.path.dirname(os.path.abspath(__file__))
+    if args.variant is not None and args.out is None:
+        raise SystemExit("--variant 에는 출력 경로(out)를 줘야 한다 (커밋된 warehouse.sdf 를 덮어쓰지 않게)")
     if args.gt_dir is None or args.out is not None:
         out_path = args.out or os.path.join(here, "warehouse.sdf")
-        sdf, racks, specs = build_sdf()
+        sdf, racks, specs = build_sdf(args.variant)
         with open(out_path, "w") as f:
             f.write(sdf)
-        print(f"wrote {out_path}: racks={len(racks)} actors={len(specs)} vehicles={len(VEHICLES)} "
-              f"signs={len(SIGN_POSES)}")
+        n_act, n_veh = (0, 0) if args.variant == "s1" else (len(specs), len(VEHICLES))
+        print(f"wrote {out_path}: racks={len(racks)} actors={n_act} vehicles={n_veh} "
+              f"signs={len(SIGN_POSES)}" + (f" variant={args.variant}" if args.variant else ""))
         for name, v, wps, _ in specs:
             print(f"  {name:22s} {v} m/s loop={wps[-1][0]:.1f}s waypoints={len(wps)}")
     if args.gt_dir is not None:
