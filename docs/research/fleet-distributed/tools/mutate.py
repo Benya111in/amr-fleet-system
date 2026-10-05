@@ -161,7 +161,7 @@ MUTATIONS += [
 SUITES = {
     'unit': ['test/test_dist_vote_core.py', 'test/test_dist_store.py', 'test/test_dist_ordering.py',
              'test/test_dist_failure_detector.py', 'test/test_dist_wfg.py',
-             'test/test_dist_vote_stateful.py::test_rejected_variant_fixed_counterexample'],
+             'test/test_dist_rejected_variant.py'],
     'stateful': ['test/test_dist_vote_stateful.py::test_vote_core_state_machine'],
     'stateful_noI4': ['test/test_dist_vote_stateful.py::test_vote_core_state_machine'],
 }
