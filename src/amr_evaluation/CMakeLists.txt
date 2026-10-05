@@ -19,6 +19,7 @@ install(PROGRAMS
   scripts/response_time_logger
   scripts/cpu_sampler
   scripts/analyze
+  scripts/slam3d_eval
   DESTINATION lib/${PROJECT_NAME}
 )
 
