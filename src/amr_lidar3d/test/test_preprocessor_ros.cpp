@@ -149,7 +149,8 @@ TEST_F(PreprocessorRos, NonLazyFrameOverride)
 
 TEST_F(PreprocessorRos, DefaultSubscribesWithoutOutputSubscriber)
 {
-  // 기본(lazy false): 출력 구독자가 없어도 입력을 구독한다 → 스폰 때 센서가 켜져 따라잡기 렌더가 없다
+  // 기본(lazy false): 출력 구독자가 없어도 입력을 구독한다
+  // → 스폰 때 센서가 켜져 따라잡기 렌더가 없다
   const std::string ns = "/t_default";
   rclcpp::NodeOptions opts;
   opts.arguments({"--ros-args", "-r", "__ns:=" + ns, "-p", "report_period:=0.0"});

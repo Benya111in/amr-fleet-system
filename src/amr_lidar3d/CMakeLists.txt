@@ -49,6 +49,7 @@ install(PROGRAMS
   scripts/lidar3d_sensor_check.py
   scripts/make_static_world.py
   scripts/run_lidar3d_bench.sh
+  scripts/lidar3d_load_table.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

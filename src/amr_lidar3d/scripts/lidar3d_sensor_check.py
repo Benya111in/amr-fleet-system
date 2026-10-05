@@ -92,6 +92,35 @@ def describe_cloud(msgs):
     }
 
 
+def raw_cloud_facts(raw_msgs):
+    """원본 점군의 비유한 점 종류, 링별 고도각(중앙값), intensity 분포 — 마지막 스캔 기준."""
+    if not raw_msgs:
+        return {}
+    arr = cio.cloud_array(raw_msgs[-1][1])
+    p = cio.xyz(arr)
+    finite = np.all(np.isfinite(p), axis=1)
+    out = {'points': int(len(p)), 'finite': int(finite.sum()),
+           'any_nan': int(np.any(np.isnan(p), axis=1).sum()),
+           'any_inf': int(np.any(np.isinf(p), axis=1).sum()),
+           'inf_positive_range': int(np.sum(np.isinf(p).any(axis=1) & ~np.isnan(p).any(axis=1)))}
+    if 'ring' in arr.dtype.names:
+        ring = arr['ring'].astype(int)
+        elev = np.degrees(np.arctan2(p[:, 2], np.hypot(p[:, 0], p[:, 1])))
+        out['ring_elevation_deg'] = {int(r): round(float(np.median(elev[finite & (ring == r)])), 3)
+                                     for r in np.unique(ring) if np.any(finite & (ring == r))}
+        # 메모리 순서: 행(ring) 우선인지 — 연속한 점의 ring 이 바뀌는 횟수
+        out['ring_changes_in_memory_order'] = int(np.sum(np.diff(ring) != 0))
+        az = np.degrees(np.arctan2(p[:, 1], p[:, 0]))
+        first = finite & (ring == ring[0])
+        out['first_ring_azimuth_first_deg'] = (round(float(az[first][0]), 3)
+                                               if first.any() else None)
+    if 'intensity' in arr.dtype.names:
+        it = arr['intensity'][finite]
+        out['intensity'] = {'min': float(it.min()), 'max': float(it.max()),
+                            'unique': int(len(np.unique(it)))} if it.size else {}
+    return out
+
+
 def ray_box_hits(origin, dirs, boxes, planes):
     """각 단위 방향 광선이 처음 맞는 정답 면까지 거리 (없으면 inf). origin: [3], dirs: [N, 3]."""
     best = np.full(len(dirs), np.inf)
@@ -130,7 +159,7 @@ def sensor_error(raw_msgs, gt_msgs, ext, boxes, planes, max_scans):
     rot, trans, pos_std = gt_pose(gt_msgs)
     r_s, t_s = cio.pose_from_xyz_rpy(ext[:3], ext[3:])
     r_ws, t_ws = rot @ r_s, rot @ t_s + trans          # world ← sensor
-    dist_all, resid_all, ranges_all, rings_all = [], [], [], []
+    dist_all, resid_all, ranges_all, rings_all, zw_all = [], [], [], [], []
     for _, m in raw_msgs[-max_scans:]:
         arr = cio.cloud_array(m)
         p = cio.xyz(arr)
@@ -142,6 +171,7 @@ def sensor_error(raw_msgs, gt_msgs, ext, boxes, planes, max_scans):
         dirs = (p / rng[:, None]) @ r_ws.T
         expect = ray_box_hits(t_ws, dirs, boxes, planes)
         resid_all.append(rng - expect)
+        zw_all.append(pw[:, 2])
         ranges_all.append(rng)
         if ring is not None:
             rings_all.append(ring.astype(int))
@@ -169,6 +199,18 @@ def sensor_error(raw_msgs, gt_msgs, ext, boxes, planes, max_scans):
                 'n': int(sel.sum()), 'signed_median': float(np.median(resid[sel])),
                 'std': float(np.std(resid[sel])),
                 'abs_p95': float(np.percentile(np.abs(resid[sel]), 95))}
+    # 바닥(월드 z < 0.1 m) 점과 나머지 — 먼 바닥은 스치는 입사각이라 각도 양자화가 거리 오차로 커진다는 가설 확인
+    zw = np.concatenate(zw_all)
+    for name, part in (('floor', np.abs(zw) < 0.1), ('non_floor', np.abs(zw) >= 0.1)):
+        out[f'by_range_{name}'] = {}
+        for lo, hi in ((0.0, 5.0), (5.0, 10.0), (10.0, 20.0), (20.0, 31.0)):
+            sel = part & finite & (rng >= lo) & (rng < hi) & (np.abs(resid) < 0.5)
+            if sel.any():
+                out[f'by_range_{name}'][f'{lo:g}-{hi:g}m'] = {
+                    'n': int(sel.sum()), 'signed_median': float(np.median(resid[sel])),
+                    'std': float(np.std(resid[sel])),
+                    'dist_median': float(np.median(dist[sel])),
+                    'dist_p95': float(np.percentile(dist[sel], 95))}
     if rings_all:
         ring = np.concatenate(rings_all)
         out['ring_values'] = sorted(int(v) for v in np.unique(ring))
@@ -259,6 +301,7 @@ def main(argv=None) -> int:
     raw, flt, imu, gt = node.take()
     result['points_raw'] = describe_cloud(raw)
     result['points'] = describe_cloud(flt)
+    result['points_raw_facts'] = raw_cloud_facts(raw)
     if raw and gt:
         result['sensor_error'] = sensor_error(raw, gt, ext, boxes, planes, ns.scans)
     if imu:

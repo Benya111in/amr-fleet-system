@@ -194,9 +194,10 @@ def main(argv=None) -> int:
     print(json.dumps({'label': ns.label, 'rtf': result['rtf'],
                       'hz_sim': {t: v['hz_sim'] for t, v in result['topics'].items()},
                       'loadavg': result['loadavg'].get('median')}, ensure_ascii=False))
-    node.destroy_node()
-    rclpy.shutdown()
-    return 0
+    # spin 스레드가 도는 중에 rclpy.shutdown() 을 부르면 "terminate called without an active exception" 으로
+    # 프로세스가 죽는다 (s1_load_L0_a, rc 134 — 결과 파일은 이미 쓴 뒤). 결과를 다 쓴 뒤 바로 끝낸다
+    sys.stdout.flush()
+    os._exit(0)
 
 
 if __name__ == '__main__':

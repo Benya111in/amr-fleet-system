@@ -92,6 +92,9 @@ case "$MODE" in
     sleep 10
     python3 "$LIB/lidar3d_sensor_check.py" --robot amr_01 --world-sdf "$OUT/world/warehouse.sdf" \
       --models-dir "$SHARE_SIM/models" --out "$OUT/check.json" "$@" 2>&1 | tee "$OUT/check.log"
+    for t in /amr_01/lidar3d/points_raw /amr_01/lidar3d/points /amr_01/imu/data_raw; do
+      echo "== $t"; timeout 30 ros2 topic info -v "$t"
+    done > "$OUT/topic_info.txt" 2>&1 || true
     ;;
   *) echo "모르는 mode: $MODE" >&2; exit 2 ;;
 esac
