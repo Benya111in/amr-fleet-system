@@ -18,7 +18,7 @@ GROUPS = [
       'RA_fixed_N5_r3', 'RA_fixed_N3']),
     ('6.2 QuorumVote 설계 (Mutation none, Variant report) — 안전',
      ['QV_N3_Z1_R2_C1', 'QV_N3_Z1_R2_C1_view', 'QV_N3_Z1_R2_C2_view', 'QV_N3_Z2_R3_C1_view',
-      'QV_N5_Z1_R2_C1_view', 'QV_N5_Z2_R2_C1_view']),
+      'QV_N5_Z1_R2_C1_view', 'QV_N5_Z2_R2_C1_view.stopped-at-depth23']),
     ('6.3 QuorumVote 가드 변이',
      ['QV_N3_Z1_R2_C1_forget', 'QV_N5_Z1_R2_C1_forget_view', 'QV_N3_Z1_R2_C0_expireCommitted',
       'QV_N3_Z1_R2_C0_smallQuorum', 'QV_N3_Z1_R2_C0_onePhase', 'QV_N3_Z1_R3_C0_noRidCheck',
@@ -81,6 +81,9 @@ QuorumVote·TaskLock 판 사이의 차이는 `git diff` 로 확인했고 지운 
 - VIEW 없이 돌린 `QV_N3_Z1_R2_C1`(136,276) 과 VIEW 판(30,223)은 둘 다 위반 없음이다.
   깊이가 32 → 29 로 줄어드는 것은 VIEW 가 같다고 본 상태를 합치기 때문이다.
 - `*.reprioritized-killed` 는 더 중요한 실행에 CPU 를 넘기려고 직접 멈춘 것이다.
+- `QV_N5_Z2_R2_C1_view.stopped-at-depth23` 은 서버 1 분 loadavg 가 99–116 으로 오른 때 공유 CPU 를
+  돌려주려고 55 분 만에 멈췄다. 그때까지 distinct 4,992,666, BFS 깊이 23 에 이르렀고 위반은 없었다.
+  남은 대기열 66 만 상태라 **전수 검사가 아니다** — N=5·구역 2 는 미완이다.
 - §6.6 시뮬레이션의 "states generated" 열은 TLC 의 "states checked" 마지막 값이고, 깊이 열은 경로 길이
   상한(`-depth 100`)이다. 시드는 1 로 고정했다. **감도가 낮다**: 같은 범위·같은 예산에서 TaskLock 의
   `releaseAfterDone` 버그를 못 찾았고(BFS 는 N=3 에서 19 상태로 찾음), QuorumVote `forget` 은 보조

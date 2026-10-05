@@ -39,7 +39,13 @@
 formal/fleet/run_tlc.sh RA_LiveMembers cfg/RA_report_N5.cfg
 formal/fleet/run_tlc.sh QuorumVote cfg/QV_N3_Z2_R3_C1_view.cfg
 # 여러 설정을 차례로 (한 번에 하나)
-formal/fleet/run_queue.sh QuorumVote:cfg/QV_N5_Z1_R2_C1_view.cfg TaskLock:cfg/TL_N3_T2_R3_C1.cfg
+formal/fleet/run_queue.sh QuorumVote:cfg/QV_N5_Z1_R2_C1_view.cfg TaskLock:cfg/TL_N3_T2_R3_C1_view.cfg
+# 무작위 시뮬레이션 (전수 아님, §6.6): 설계 셋 + forget 감도 확인. 감도 확인 둘은 따로:
+N_TRACES=250000 formal/fleet/sim_queue.sh
+formal/fleet/run_tlc.sh TaskLock cfg/TL_N5_T2_R3_C2_releaseAfterDone_sim.cfg -simulate num=250000 -depth 100 -seed 1
+formal/fleet/run_tlc.sh QuorumVote cfg/QV_N5_Z2_R3_C2_forget_sim_MEonly.cfg -simulate num=1000000 -depth 100 -seed 1
+# 동작 커버리지
+formal/fleet/run_tlc.sh QuorumVote cfg/QV_N3_Z1_R2_C1_view_coverage.cfg -coverage 10
 # 위반 트레이스 뽑기 (traces/<cfg 이름>.txt — 바뀐 변수만 보이는 요약 + TLC 원문)
 formal/fleet/extract_trace.sh /home/CAPYI_AI/logs/agents/f2-tla/tlc/RA_report_N5.log
 # 결과 표 한 번 보기 / README §6 다시 만들기
@@ -48,7 +54,8 @@ python3 formal/fleet/update_readme_results.py
 ```
 
 환경 변수: `WORKERS`(≤ 4), `HEAP`, `TLC_TIMEOUT`(초), `TLA_JAR`, `OUT_DIR`, `IMAGE`. 로그 머리에
-jar sha256, `git rev-parse HEAD`, 스펙·cfg sha256, 시작·끝 시각과 loadavg 를 남긴다.
+jar sha256, `git rev-parse HEAD`, 스펙·cfg sha256, 추가 TLC 옵션(`# tlc_opts=`, 나중에 넣어 앞선 로그에는 없다),
+시작·끝 시각과 loadavg 를 남긴다.
 
 ## 2. 공통 가정 (세 모델)
 
@@ -80,7 +87,7 @@ jar sha256, `git rev-parse HEAD`, 스펙·cfg sha256, 시작·끝 시각과 load
 | `RA_dropOne_N5` | A·E 가 각자 남 **하나**까지만 빠뜨림 (최소 불일치) | 반례 | §6 |
 | `RA_dropOneSided_N5` | A 의 견해는 늘 전원, **E 만** 남 하나까지 빠뜨림 (한쪽 오탐) | 반례 | §6 |
 | `RA_any_N5` | r 포함, 크기 ≥ 3 인 아무 집합 | 반례 | §6 |
-| `RA_fixed_N5` | 늘 전원 (= RA 원형). 위 셋과 범위가 같다 — **대조군** | 위반 없음 | §6 |
+| `RA_fixed_N5` | 늘 전원 (= RA 원형). 반례 cfg 들과 범위가 같다 — **대조군** | 위반 없음 | §6 |
 | `RA_fixed_N5_r3`, `RA_fixed_N3` | 늘 전원, 요청자를 넓힘 | 위반 없음 | §6 |
 
 반례 cfg 넷은 모두 A(1)·E(5) 만 요청하고(다른 로봇은 응답만), 요청은 1 회씩이다. 견해가 바뀔 수 있는 로봇은 `ViewChangers` 로 고른다.
@@ -134,7 +141,7 @@ A·E 가 동시에 안에 있다. 보고서 본문의 장면과 같다.
 | `onePhase` | 과반 VOTE(잠정 표)만으로 진입 | 반례 |
 | `noRidCheck` | ENTER_ACK 를 rid 없이 로봇으로만 셈 (자기 펜싱 (2) 제거) | 반례 |
 | `volatileInc` | 재시작해도 incarnation 을 안 올림 (rid 재사용) | 반례 |
-| `overwriteTentative` | 투표자가 남의 **잠정** 표를 덮어씀 (C 가 아니면 부여) | 판정 대상 |
+| `overwriteTentative` | 투표자가 남의 **잠정** 표를 덮어씀 (C 가 아니면 부여) | 판정 대상 → 위반 없음 (N=3·구역 2·요청 2·크래시 0, §8-2) |
 
 결과는 §6.
 
@@ -162,8 +169,8 @@ ENTER 를 보낸 뒤 과반 ACK 를 기한 안에 못 받으면 ABANDON 한다 �
 | Variant | ABANDON 처리 | 기대 |
 |---|---|---|
 | `report` | T 만 회수 (보고서 표) | 위반 |
-| `fixA` | T·C 모두 회수 | 판정 대상 |
-| `fixB` | fixA + 투표자가 이미 끝난(RELEASE/ABANDON 을 처리한) rid 의 REQUEST/ENTER 를 거부 (`done`, 영속) | 판정 대상 |
+| `fixA` | T·C 모두 회수 | 판정 대상 → 위반 (늦은 REQUEST/ENTER 재부여, 9·12 상태) |
+| `fixB` | fixA + 투표자가 이미 끝난(RELEASE/ABANDON 을 처리한) rid 의 REQUEST/ENTER 를 거부 (`done`, 영속) | 판정 대상 → 위반 없음 (N=3 의 세 범위, §6.4) |
 
 ABANDON 이 C 를 풀어도 안전한 이유: 요청자는 그 rid 로 진입하지 않았고(진입했으면 ABANDON 이 아니라
 RELEASE 를 보낸다) 앞으로도 하지 않는다 (cur 이 앞으로만 간다). TLC 로는 `fixA`·`fixB` 에서도
@@ -181,7 +188,8 @@ RELEASE 를 보낸다) 앞으로도 하지 않는다 (cur 이 앞으로만 간�
   시작 전에는 내려놓을 수 있다 (`Drop` → RELEASE: 협상이 다른 로봇에게 준 경우).
 - 어느 로봇이 어느 작업을 잠그려 하는지는 비결정이다. 협상(CBAA)이 손실·지연으로 두 로봇에게 같은
   작업을 "낙찰" 시키는 경우, 늦게 도착한 옛 낙찰로 끝난 작업을 다시 청하는 경우를 모두 덮는다.
-- ABANDON 은 시작 전 요청에만 오므로 C 도 푼다 (§4.3 의 fixA 와 같음).
+- ABANDON 은 시작 전 요청에만 오므로 C 도 푼다 (§4.3 의 fixA 와 같음). 끝난 요청 거부(fixB)는 넣지 않았으므로
+  §4.3 과 같은 "풀리지 않는 잠금"(작업이 영영 잠김 — 활성)은 여기서도 생길 수 있다. 검사하지 않았다.
 - 불변식 `AtMostOnce`: 모든 작업에서 픽업 시작 횟수 ≤ 1 (같은 로봇이 두 번 시작하는 것도 센다).
 
 | Mutation | 되돌린 가드 | 기대 |
@@ -226,7 +234,7 @@ spec sha256 열의 스펙 판은 커밋으로 찾을 수 있다 (§6.8).
 | QV_N3_Z1_R2_C2_view | 위반 없음 (전수) | 930738 | 90981 | 30 | 8 | 36.85 | 1ab2620fb436 |
 | QV_N3_Z2_R3_C1_view | 위반 없음 (전수) | 410010263 | 26007001 | 42 | 1768 | 62.45 | 886be4a88678 |
 | QV_N5_Z1_R2_C1_view | 위반 없음 (전수) | 13523949 | 913764 | 41 | 402 | 35.28 | 1ab2620fb436 |
-| QV_N5_Z2_R2_C1_view | 미완 (시간 상한/중단, rc=없음) | - | >=4,936,900 | >=23 |  | 53.87 | 1ab2620fb436 |
+| QV_N5_Z2_R2_C1_view.stopped-at-depth23 | 미완 (시간 상한/중단, rc=143) | - | >=4,992,666 | >=23 | 3276 | 53.87 | 1ab2620fb436 |
 
 ### 6.3 QuorumVote 가드 변이
 
@@ -315,6 +323,9 @@ QuorumVote·TaskLock 판 사이의 차이는 `git diff` 로 확인했고 지운 
 - VIEW 없이 돌린 `QV_N3_Z1_R2_C1`(136,276) 과 VIEW 판(30,223)은 둘 다 위반 없음이다.
   깊이가 32 → 29 로 줄어드는 것은 VIEW 가 같다고 본 상태를 합치기 때문이다.
 - `*.reprioritized-killed` 는 더 중요한 실행에 CPU 를 넘기려고 직접 멈춘 것이다.
+- `QV_N5_Z2_R2_C1_view.stopped-at-depth23` 은 서버 1 분 loadavg 가 99–116 으로 오른 때 공유 CPU 를
+  돌려주려고 55 분 만에 멈췄다. 그때까지 distinct 4,992,666, BFS 깊이 23 에 이르렀고 위반은 없었다.
+  남은 대기열 66 만 상태라 **전수 검사가 아니다** — N=5·구역 2 는 미완이다.
 - §6.6 시뮬레이션의 "states generated" 열은 TLC 의 "states checked" 마지막 값이고, 깊이 열은 경로 길이
   상한(`-depth 100`)이다. 시드는 1 로 고정했다. **감도가 낮다**: 같은 범위·같은 예산에서 TaskLock 의
   `releaseAfterDone` 버그를 못 찾았고(BFS 는 N=3 에서 19 상태로 찾음), QuorumVote `forget` 은 보조
@@ -382,7 +393,8 @@ QuorumVote·TaskLock 판 사이의 차이는 `git diff` 로 확인했고 지운 
 - 로봇당 rid 여럿: 지금 모델은 로봇마다 진행 중 요청 하나(사슬은 S 로)다. f1-vote 처럼 "보유 여러 개 + 시도 1 개"
   (구역을 쥔 채 다음 사슬을 청하는 hold-and-wait)를 넣으면 VIEW 의 단조 전제도 다시 따져야 한다.
 - epoch·서버 권고 순서를 넣은 모델, 그리고 f1-vote 의 이벤트 로그를 이 스펙의 행동으로 재생하는 경량 trace 검사.
-- N = 5 범위 넓히기 (구역 2·요청 3): 상태 수가 커서 이번에는 못 했다.
+- N = 5 범위 넓히기: 구역 2·요청 2·크래시 1 은 55 분 동안 깊이 23·distinct 499 만에서 멈췄다 (공유 서버 과부하).
+  대칭 순열이 240 개(로봇 120 × 구역 2)라 상태 하나의 정규화 비용이 크다. 더 큰 머신이나 대칭 축약 방식 변경이 필요하다.
 
 ## 10. f1-vote 구현과의 이름 대응 (코드·문서 읽기, 검사 아님)
 
