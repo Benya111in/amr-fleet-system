@@ -6,7 +6,12 @@ traffic_manager_node — 중앙 교통 관리 · 교착 탐지/해소 (component
 - Sub  /amr_XX/plan (nav_msgs/Path), /amr_XX/odometry/filtered_map (nav_msgs/Odometry),
        /amr_XX/robot_state (amr_msgs/RobotState)                  로봇마다
 - Sub  /fleet/task_events (amr_msgs/Task)                         작업 우선순위 · 마감 (task_id 로 찾는다)
-- Pub  /amr_XX/traffic/hold (std_msgs/Bool, latched)              우선순위 양보 · 구역 대기 · 교차 양보
+- Pub  /amr_XX/traffic/hold (std_msgs/Bool, latched)              우선순위 양보 · 구역 대기 · 교차 양보.
+       평가한 값만 낸다: 기동 시 초기값을 내지 않고 그 로봇을 처음 관측한 주기에 처음 낸다 (실행기는 첫 값
+       전 대기 — amr_behavior traffic_hold.policy). 첫 주기부터 obs_timeout_s 동안 한 번도 관측하지 못한
+       로봇은 교통 관리 밖으로 보고 false 를 낸다 (그 로봇은 관리할 수 없다 — 영영 세우지 않는다).
+       재연결에 재발행은 필요 없다: 바뀔 때만 내므로 depth 1 이력 = 현재 값이다
+       (docs/research/fleet-traffic-deadlock/hold_failsafe.md)
 - Pub  /amr_XX/traffic/yield_pose (geometry_msgs/PoseStamped, latched)  대기 포켓. 새 포켓은 hold=true 보다
        한 주기 먼저 내고(hold=true 는 다음 주기), 양보가 끝나면 hold 뒤에 frame_id 가 빈 PoseStamped
        (= 포켓 없음)를 낸다. 실행기 규칙: hold=true 이고 frame_id 있는 포켓이 있으면 포켓으로, 없으면
@@ -174,6 +179,7 @@ class TrafficManagerNode(Node):
         self._tasks: 'collections.OrderedDict[str, Tuple[int, Optional[float]]]' = \
             collections.OrderedDict()
         self._map_warned = False
+        self._first_tick: Optional[float] = None    # 첫 주기 시각 (관측 못 한 로봇 해제 기준)
 
         self._pub_events = self.create_publisher(DiagnosticArray, '/fleet/traffic_events',
                                                  EVENTS_QOS)
@@ -263,8 +269,9 @@ class TrafficManagerNode(Node):
         info.base = 0.0
         info.multiplier = 1.0
         r.pub_info.publish(info)
-        self._publish_hold(r, False)          # 늦게 뜬 실행기도 확실한 초기값(false · 포켓 없음)을 받는다
-        self._publish_pose(r, None, info.header.stamp)
+        # hold 초기값은 내지 않는다: 평가 전 false 는 "허가" 다 — 재기동한 관리자가 이전 인스턴스가 세워 둔
+        # 로봇을 첫 주기까지 풀어 준다. 첫 값은 _on_tick 이 평가한 뒤에 낸다 (실행기는 그때까지 대기)
+        self._publish_pose(r, None, info.header.stamp)   # 포켓 없음 (latched)
 
     @_guarded
     def _on_plan(self, rid: str, msg: Path) -> None:
@@ -338,12 +345,32 @@ class TrafficManagerNode(Node):
     def _on_tick(self) -> None:
         t0 = time.perf_counter()
         now = self._now()
+        if self._first_tick is None:
+            self._first_tick = now
         res = self.tm.update(now, self.observations())
         for rid, cmd in res.commands.items():
             self._apply(self._robots[rid], cmd)
+        self._release_unobserved(now, res.commands)
         if res.events:
             self._publish_events(res.events)
         self.tick_ms.append((time.perf_counter() - t0) * 1e3)
+
+    def _release_unobserved(self, now: float, commanded) -> None:
+        """
+        첫 주기부터 obs_timeout_s 동안 한 번도 관측하지 못한(hold 를 낸 적 없는) 로봇에 false 를 낸다.
+
+        오도메트리(odometry/filtered_map)가 없는 로봇은 예측 · 구역 토큰에 들어오지 않으므로 이 관리자가
+        관리할 수 없다 (예: localization_mode slam · odom). 세워 두면 영영 못 움직인다 → 교통 관리 밖으로 둔다.
+        한 번이라도 관측한 로봇은 여기에 오지 않는다 (관측이 끊기면 stale · lost — fail closed).
+        """
+        if self._first_tick is None or now - self._first_tick < self.cfg.obs_timeout_s:
+            return
+        for rid, r in self._robots.items():
+            if r.hold is None and rid not in commanded:
+                self.get_logger().warn(
+                    f'{rid}: {self.cfg.obs_timeout_s:g} s 동안 관측 없음 (odometry/filtered_map) '
+                    f'→ hold=false, 교통 관리 밖')
+                self._publish_hold(r, False, 'unobserved')
 
     def _apply(self, r: _Robot, cmd: RobotCommand) -> None:
         stamp = self.get_clock().now().to_msg()
@@ -361,8 +388,10 @@ class TrafficManagerNode(Node):
         if cmd.yield_pose is not None and cmd.yield_pose != r.yield_pose:
             self._publish_pose(r, cmd.yield_pose, stamp)
             if hold and not r.hold:
-                hold = False      # 포켓 먼저: hold=true 는 다음 주기 (다른 토픽 간 전달 순서는 보장이 없다)
-        if hold != r.hold:
+                # 포켓 먼저: hold=true 는 다음 주기 (다른 토픽 간 전달 순서는 보장이 없다). 그동안 이전 값을
+                # 유지한다 — 아직 낸 적이 없으면(None) false 를 내지 않는다 (평가 전 false = 허가)
+                hold = r.hold
+        if hold is not None and hold != r.hold:
             self._publish_hold(r, hold, cmd.reason)
         if cmd.yield_pose is None and r.yield_pose is not None:
             self._publish_pose(r, None, stamp)       # 양보 끝: hold 뒤에 포켓 해제
@@ -383,8 +412,8 @@ class TrafficManagerNode(Node):
 
     def _publish_hold(self, r: _Robot, hold: bool, reason: str = '') -> None:
         r.pub_hold.publish(Bool(data=bool(hold)))
-        if r.hold is not None:
-            self.get_logger().info(f'{r.robot_id} hold={hold} {reason}')
+        first = '' if r.hold is not None else ' (첫 값)'
+        self.get_logger().info(f'{r.robot_id} hold={hold}{first} {reason}'.rstrip())
         r.hold = bool(hold)
 
     def _publish_events(self, events: List[TrafficEvent]) -> None:

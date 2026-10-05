@@ -6,6 +6,8 @@ traffic_manager_node ROS 배선 시험 (한 프로세스).
 /fleet/traffic_events(traffic/DEADLOCK) 를 fleet_manager_node 가 deadlock_count 로 센다 →
 비키면 RESOLVED + hold=false. latched 토픽(hold · yield_pose · keepout_mask · costmap_filter_info)은
 늦게 뜬 구독자가 받는지, yield_pose 가 hold=true 보다 먼저 나가고 양보가 끝나면 비워지는지 본다.
+hold 는 평가한 값만 낸다: 기동 시 초기값이 없고, 관측한 로봇은 첫 평가 뒤, 한 번도 관측 못 한 로봇은
+obs_timeout_s 뒤 false (hold_failsafe.md).
 rclpy·amr_msgs·nav2_msgs 가 없는 환경에서는 건너뛴다.
 """
 
@@ -17,6 +19,7 @@ import pytest
 
 try:
     from amr_fleet.fleet_manager_node import FleetManagerNode
+    from amr_fleet.traffic_manager import RobotCommand
     from amr_fleet.traffic_geometry import GridSpec
     from amr_fleet.traffic_manager_node import (
         TrafficManagerNode, default_zones_path, mask_to_msg, parse_ids, path_to_array,
@@ -199,6 +202,7 @@ def test_helpers():
 
 
 def test_latched_initial_state(ros):
+    # 픽스처가 두 로봇을 관측시킨 뒤다 → hold 는 첫 평가 값 (기동 시 초기값은 내지 않는다)
     info = _late_value(ros, CostmapFilterInfo, f'/{ROBOTS[1]}/costmap_filter_info')
     assert info is not None and info.type == 0
     assert info.filter_mask_topic == f'/{ROBOTS[1]}/keepout_mask'
@@ -251,6 +255,9 @@ def test_yield_pose_before_hold_and_cleared_after(ros):
     traffic = ros['traffic']
     traffic._add_robot('amr_x9')
     r = traffic._robots['amr_x9']
+    # 이미 hold=false 를 낸 로봇 (관리자는 기동 시 초기값을 내지 않는다 — 아직 낸 적 없는 로봇의 같은
+    # 경로는 test_first_hold_behind_new_pocket_is_deferred_not_false)
+    traffic._publish_hold(r, False)
     calls = []
     pose_pub, hold_pub = r.pub_yield.publish, r.pub_hold.publish
     r.pub_yield.publish = lambda m: (calls.append(('pose', m.header.frame_id)), pose_pub(m))
@@ -360,3 +367,102 @@ def test_bad_inputs_do_not_kill_node(ros):
     ros['pubs'][f'{ROBOTS[0]}/plan'].publish(wrong)          # 다른 프레임 plan 은 무시 (경고만)
     ros['spin'](lambda: False, 0.5)
     assert traffic.internal_errors == before + 1 and traffic.tm.tgrid is not None
+
+
+def _own_executor(nodes):
+    """픽스처 실행기와 따로 도는 실행기 + 조건 대기 (each: 매 반복 전에 부를 함수)."""
+    ex = SingleThreadedExecutor()
+    for node in nodes:
+        ex.add_node(node)
+
+    def spin(pred, timeout=5.0, each=None):
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            if each is not None:
+                each()
+            ex.spin_once(timeout_sec=0.02)
+            if pred():
+                return True
+        return False
+    return ex, spin
+
+
+def test_hold_published_only_after_evaluation(ros):
+    """
+    기동 시 hold 초기값을 내지 않는다 (평가 전 false = 허가).
+
+    관측한 로봇은 첫 평가 주기에 첫 값을 받고, 한 번도 관측 못 한 로봇은 첫 주기부터 obs_timeout_s 뒤
+    false 를 받는다 (관리할 수 없는 로봇을 영영 세우지 않는다).
+    """
+    ids = ('amr_w1', 'amr_w2')
+    node = TrafficManagerNode(namespace='/fleet_w', parameter_overrides=_params({
+        'robot_ids': ','.join(ids), 'update_rate_hz': 10.0, 'map_topic': '/traffic_test_w/map',
+        'zones.source': 'none', 'obs_timeout_s': 1.0,
+    }))
+    client = rclpy.create_node('traffic_test_w_client')
+    got = {rid: [] for rid in ids}
+    for rid in ids:     # (값, 받은 시각 — 관리자 시계)
+        client.create_subscription(
+            Bool, f'/{rid}/traffic/hold',
+            lambda m, rid=rid: got[rid].append((m.data, node._now())), _latched())
+    pose = []
+    client.create_subscription(PoseStamped, f'/{ids[1]}/traffic/yield_pose', pose.append,
+                               _latched())
+    odom = client.create_publisher(Odometry, f'/{ids[0]}/odometry/filtered_map', 10)
+
+    def publish_odom():
+        od = Odometry()
+        od.header.frame_id = 'map'
+        od.pose.pose.position.x = 3.0
+        od.pose.pose.orientation.w = 1.0
+        odom.publish(od)
+
+    ex, spin = _own_executor((node, client))
+    try:
+        assert spin(lambda: all(client.count_publishers(f'/{rid}/traffic/hold') == 1
+                                for rid in ids) and bool(pose))
+        assert pose[-1].header.frame_id == ''                      # 포켓 없음은 기동 시 latched
+        # 관측 전: 주기는 돌지만 hold 는 아무도 받지 않는다
+        assert spin(lambda: node._first_tick is not None)
+        assert not spin(lambda: any(got.values()), 0.5)
+        assert node._robots[ids[0]].hold is None and node._robots[ids[1]].hold is None
+        # 관측한 로봇: 첫 평가 값 (막을 것 없음 → false)
+        assert spin(lambda: bool(got[ids[0]]), 5.0, publish_odom)
+        assert [v for v, _ in got[ids[0]]] == [False]
+        # 관측 못 한 로봇: obs_timeout_s 를 채운 뒤에야 false
+        assert spin(lambda: bool(got[ids[1]]), 5.0, publish_odom)
+        assert [v for v, _ in got[ids[1]]] == [False]
+        assert got[ids[1]][0][1] - node._first_tick >= 1.0
+        assert node._robots[ids[1]].hold is False
+    finally:
+        ex.shutdown()
+        node.destroy_node()
+        client.destroy_node()
+
+
+def test_first_hold_behind_new_pocket_is_deferred_not_false(ros):
+    """포켓 먼저 규칙으로 hold=true 를 한 주기 미룰 때, 아직 hold 를 낸 적이 없으면 false 를 내지 않는다."""
+    node = TrafficManagerNode(namespace='/fleet_z', parameter_overrides=_params({
+        'robot_ids': 'amr_z1', 'update_rate_hz': 0.1, 'map_topic': '/traffic_test_z/map',
+        'zones.source': 'none',
+    }))
+    client = rclpy.create_node('traffic_test_z_client')
+    holds, poses = [], []
+    client.create_subscription(Bool, '/amr_z1/traffic/hold', holds.append, _latched())
+    client.create_subscription(PoseStamped, '/amr_z1/traffic/yield_pose', poses.append,
+                               _latched())
+    ex, spin = _own_executor((node, client))
+    try:
+        r = node._robots['amr_z1']
+        cmd = RobotCommand(hold=True, reason='yield:incident1', yield_pose=(18.0, 8.0, 0.0))
+        node._apply(r, cmd)
+        assert r.hold is None and r.yield_pose == (18.0, 8.0, 0.0)
+        assert spin(lambda: any(p.header.frame_id == 'map' for p in poses))
+        assert not spin(lambda: bool(holds), 0.3)
+        node._apply(r, cmd)                                         # 다음 주기: hold=true
+        assert spin(lambda: bool(holds))
+        assert [m.data for m in holds] == [True] and r.hold is True
+    finally:
+        ex.shutdown()
+        node.destroy_node()
+        client.destroy_node()
