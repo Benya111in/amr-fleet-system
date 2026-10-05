@@ -67,6 +67,28 @@ def test_track_selection_and_order():
     assert trk[0, 7] == 1.0 and trk[1, 7] == 1.0 and np.all(trk[2:] == 0.0)
 
 
+def test_select_tracks_rotates_velocity_into_robot_axes():
+    # θ = π/2: 로봇 전방 = 지도 +y, 로봇 왼쪽 = 지도 −x. 지도 속도 (vx, vy) → 로봇 (vy, −vx).
+    tracks = [Track(1, 1.0, 3.0, 1.0, 0.0, True),      # 지도 상대 (0, 2) → 로봇 (2, 0), 오른쪽으로
+              Track(2, 0.0, 1.0, 0.0, -0.8, True)]     # 지도 상대 (−1, 0) → 로봇 (0, 1), 뒤로
+    st = _state(pose=(1.0, 1.0, math.pi / 2), path=[(1.0, 1.0), (1.0, 6.0)], tracks=tracks)
+    sel = OB.select_tracks(st)
+    assert [r[1] for r in sel] == [2, 1]
+    assert sel[0][2] == pytest.approx((0.0, 1.0), abs=1e-12)
+    assert sel[0][3] == pytest.approx((-0.8, 0.0), abs=1e-12)
+    assert sel[1][2] == pytest.approx((2.0, 0.0), abs=1e-12)
+    assert sel[1][3] == pytest.approx((0.0, -1.0), abs=1e-12)
+    trk = OB.build_observation(st)[227:].reshape(C.K_TRACKS, C.TRACK_FEATS)
+    assert trk[0, 2:4] == pytest.approx((-0.8 / C.TRACK_VEL_NORM, 0.0), abs=1e-7)
+    assert trk[1, 2:4] == pytest.approx((0.0, -1.0 / C.TRACK_VEL_NORM), abs=1e-7)
+    # VO 도 같은 회전 속도를 쓴다
+    vo = M.vo_obstacles(st)
+    assert len(vo) == 2 and vo[1][1] == pytest.approx((0.0, -1.0), abs=1e-12)
+    # 나이만큼 외삽은 지도 좌표에서: 0.5 s 뒤 트랙 1 은 지도 (1.5, 3.0) → 로봇 (2.0, −0.5)
+    st.track_age = 0.5
+    assert OB.select_tracks(st)[1][2] == pytest.approx((2.0, -0.5), abs=1e-12)
+
+
 def test_rotated_frame():
     st = _state(pose=(1.0, 1.0, math.pi / 2), path=[(1.0, 1.0), (1.0, 6.0)])
     parts = OB.build_observation(st, return_parts=True)[1]

@@ -1,7 +1,7 @@
 {
  "kind": "decision",
  "name": "d06_vo_crossing",
- "description": "전방 3 m 를 1.0 m/s 로 횡단하는 작업자",
+ "description": "전방 3 m 지점을 1.0 m/s 로 횡단하는 작업자 — 상대 운동의 최근접 거리(셀별 1.05–1.26 m)가 합성 반경 0.961 m 보다 커서 VO 가 어떤 셀도 막지 않는 음성 사례 (VO 가 일부 셀을 막는 사례는 d16·d17)",
  "state": {
   "pose": [
    0.0,

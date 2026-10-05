@@ -97,6 +97,33 @@ def box(cx, cy, hx, hy):
             (cx + hx, cy + hy, cx - hx, cy + hy), (cx - hx, cy + hy, cx - hx, cy - hy)]
 
 
+def track_from_robot(pose, tid, p_r, v_r, age, dyn):
+    """
+    로봇 좌표로 정한 트랙(지금 위치 p_r, 속도 v_r)을 계약 입력(지도 좌표, 스탬프 시각 위치)으로.
+
+    지도 위치 = 자세 + R(θ)·p_r − v_map·age (select_tracks 가 나이만큼 외삽해 p_r 로 되돌린다),
+    지도 속도 = R(θ)·v_r. 값은 소수 4 자리로 반올림한다 (JSON 입력이 정확히 이 값).
+    """
+    x, y, th = pose
+    c, s = math.cos(th), math.sin(th)
+    vx, vy = c * v_r[0] - s * v_r[1], s * v_r[0] + c * v_r[1]
+    px, py = x + c * p_r[0] - s * p_r[1], y + s * p_r[0] + c * p_r[1]
+    return Track(tid, round(px - vx * age, 4), round(py - vy * age, 4), round(vx, 4),
+                 round(vy, 4), dyn)
+
+
+def walls_along(pose, lateral, x0, x1):
+    """로봇 진행 방향과 평행한 벽 (로봇 좌표 y = ±lateral, x ∈ [x0, x1]) 을 지도 선분으로."""
+    x, y, th = pose
+    c, s = math.cos(th), math.sin(th)
+    out = []
+    for ly in (lateral, -lateral):
+        a = (x + c * x0 - s * ly, y + s * x0 + c * ly)
+        b = (x + c * x1 - s * ly, y + s * x1 + c * ly)
+        out.append((a[0], a[1], b[0], b[1]))
+    return out
+
+
 def straight_path(x0, y0, x1, y1, step=0.05):
     """두 점 사이 0.05 m 간격 경로 (N:42 output_spacing)."""
     n = max(1, int(round(math.hypot(x1 - x0, y1 - y0) / step)))
@@ -148,6 +175,59 @@ def _assert_robust(state, res, name):
     for t in vt[np.isfinite(vt)]:
         if abs(t - C.VO_TIME_HORIZON) < ROBUST_EPS:
             raise AssertionError(f'{name}: VO τ 경계 민감')
+    # VO 의 모든 분기(안/밖·접근·접선·τ)가 양쪽(유한·inf) 모두에서 ROBUST_EPS 밖인가 (v1.1.0)
+    R = C.ROBOT_RADIUS + C.OBSTACLE_RADIUS + C.VO_MARGIN
+    obstacles = M.vo_obstacles(state)
+    for i in np.flatnonzero(res['fp_ok']):
+        cx, cy = G.chord_velocity(0.0, res['v_next'][i], res['w_next'][i], C.VO_TIME_HORIZON)
+        for p, vo in obstacles:
+            _vo_branch_margin(p, (cx - vo[0], cy - vo[1]), R, C.VO_TIME_HORIZON,
+                              f'{name}: 셀 {i} VO')
+    # 관측 트랙: 선별 문턱·거리 순서·TTC 분기 (TTC 는 min(t, 5)/5 라 τ 쪽은 연속이다)
+    for t in state.tracks:
+        sp = math.hypot(t.vx, t.vy)
+        for thr in (C.DYN_FAST_SPEED, C.DYN_SPEED_THRESHOLD):
+            if abs(sp - thr) < ROBUST_EPS:
+                raise AssertionError(f'{name}: 트랙 {t.id} 속력 문턱 경계 민감')
+    sel = OB.select_tracks(state, math.inf)
+    ds = [r[0] for r in sel]
+    for d in ds:
+        if min(abs(d - C.TRACK_RANGE), abs(d - C.VO_MAX_RANGE)) < ROBUST_EPS:
+            raise AssertionError(f'{name}: 트랙 거리 문턱 경계 민감')
+    if any(b - a < ROBUST_EPS for a, b in zip(ds, ds[1:])):
+        raise AssertionError(f'{name}: 트랙 거리 순서 경계 민감')
+    for _d, _i, p, v, _dyn, _sp in OB.select_tracks(state)[:C.K_TRACKS]:
+        _vo_branch_margin(p, (state.v_meas - v[0], -v[1]), C.ROBOT_RADIUS + C.OBSTACLE_RADIUS,
+                          None, f'{name}: 트랙 TTC')
+
+
+def _vo_branch_margin(p, w_rel, radius, tau, what):
+    """geometry.vo_time 의 분기 조건이 ROBUST_EPS 안이면 거부한다 (tau=None 이면 τ 분기는 안 본다)."""
+    px, py = p
+    wx, wy = w_rel
+    pn2 = px * px + py * py
+    closing = px * wx + py * wy
+    wn2 = wx * wx + wy * wy
+    if abs(pn2 - radius * radius) < ROBUST_EPS:
+        raise AssertionError(f'{what}: 반경 경계 민감')
+    if pn2 < radius * radius:
+        if abs(closing) < ROBUST_EPS:
+            raise AssertionError(f'{what}: 안쪽 접근 부호 경계 민감')
+        return
+    if wn2 < 1e-12:
+        return
+    if abs(closing) < ROBUST_EPS:
+        raise AssertionError(f'{what}: 접근 부호 경계 민감')
+    if closing <= 0.0:
+        return
+    disc = closing * closing - wn2 * (pn2 - radius * radius)
+    if abs(disc) < ROBUST_EPS * max(1.0, closing * closing):
+        raise AssertionError(f'{what}: 접선 경계 민감 (disc={disc})')
+    if disc <= 0.0 or tau is None:
+        return
+    t = (closing - math.sqrt(disc)) / wn2
+    if abs(t - tau) < ROBUST_EPS:
+        raise AssertionError(f'{what}: τ 경계 민감 (t={t})')
 
 
 # ------------------------------------------------------------------ 사례 → JSON
@@ -238,7 +318,10 @@ def build_cases():
     st = base_state(scan_ranges=raycast(pose, corridor), v_meas=0.8, v_cmd=0.8,
                     prev_actions=[(0.0, 0.0)] * 3,
                     tracks=[Track(7, 3.0, -2.0, 0.0, 1.0, True)], track_age=0.1)
-    cases.append(decision_case('d06_vo_crossing', '전방 3 m 를 1.0 m/s 로 횡단하는 작업자', st))
+    cases.append(decision_case(
+        'd06_vo_crossing',
+        '전방 3 m 지점을 1.0 m/s 로 횡단하는 작업자 — 상대 운동의 최근접 거리(셀별 1.05–1.26 m)가 합성 반경 '
+        '0.961 m 보다 커서 VO 가 어떤 셀도 막지 않는 음성 사례 (VO 가 일부 셀을 막는 사례는 d16·d17)', st))
 
     st = base_state(scan_ranges=raycast(pose, corridor), v_meas=0.6, v_cmd=0.6,
                     prev_actions=[(0.0, 0.0)] * 3,
@@ -309,6 +392,40 @@ def build_cases():
         'd15_vcap2_last_pose',
         'v_cap 2.0, v′ 1.95 (T_sim 2.45, n 25): 전방 5.15 m 점이 마지막 자세에만 닿는다 → 셀 94 충돌',
         st))
+
+    # 회전한 자세(θ ≠ 0)의 트랙: 지도 속도 → 로봇 축 회전이 관측(227–290)과 VO 마스크 둘 다에 걸린다.
+    # 트랙은 로봇 좌표로 정하고 track_from_robot 으로 지도 입력을 만든다 (vx·vy 모두 0 아님).
+    pose16 = (2.0, 1.0, 1.2)
+    age16 = 0.15
+    tr16 = [track_from_robot(pose16, 21, (2.85, 0.2), (-0.4, -0.15), age16, True),   # 비포화 VO
+            track_from_robot(pose16, 22, (-2.5, 1.8), (0.3, 0.45), age16, True),     # 뒤에서 멀어짐
+            track_from_robot(pose16, 23, (4.5, -2.0), (0.5, -0.45), age16, False),   # 정적 표시·빠름
+            track_from_robot(pose16, 24, (1.5, -1.2), (0.1, -0.07), age16, True),    # 느림: 관측만
+            track_from_robot(pose16, 25, (3.0, 1.5), (0.2, 0.1), age16, False)]      # 정적·느림: 제외
+    end16 = (round(2.0 + 10.0 * math.cos(1.2), 6), round(1.0 + 10.0 * math.sin(1.2), 6))
+    st = State(pose=pose16, path=straight_path(2.0, 1.0, *end16),
+               scan_ranges=raycast(pose16, walls_along(pose16, 2.5, -5.0, 15.0)),
+               v_meas=0.6, w_meas=0.2, v_cmd=0.6, w_cmd=0.2, prev_actions=[(0.0, 0.0)] * 3,
+               tracks=tr16, track_age=age16)
+    cases.append(decision_case(
+        'd16_rotated_tracks_vo_partial',
+        'θ 1.2 rad, 트랙 5 개(선별 4, VO 대상 3), 나이 0.15 s: 비스듬히 다가오는 작업자의 VO 진입 시각이 '
+        '셀 사이에서 τ 2.0 s 를 가로질러 9 셀 중 일부만 거부, 비포화', st))
+
+    pose17 = (-1.5, 3.0, -2.3)
+    age17 = 0.25
+    tr17 = [track_from_robot(pose17, 31, (1.1, -2.2), (-0.3, 0.6), age17, True),    # 오른쪽→왼쪽 횡단
+            track_from_robot(pose17, 32, (7.0, 0.8), (1.2, 0.3), age17, False),     # 앞에서 멀어지는 지게차
+            track_from_robot(pose17, 33, (-1.5, -3.0), (-0.3, -0.6), age17, True)]  # 뒤에서 멀어짐
+    end17 = (round(-1.5 + 10.0 * math.cos(-2.3), 6), round(3.0 + 10.0 * math.sin(-2.3), 6))
+    st = State(pose=pose17, path=straight_path(-1.5, 3.0, *end17),
+               scan_ranges=raycast(pose17, walls_along(pose17, 3.5, -4.0, 14.0)),
+               v_meas=0.8, w_meas=-0.35, v_cmd=0.8, w_cmd=-0.35,
+               prev_actions=[(0.2, -0.5), (0.2, -0.5), (0.0, 0.0)], tracks=tr17, track_age=age17)
+    cases.append(decision_case(
+        'd17_rotated_crossing_vo_partial',
+        'θ −2.3 rad (cos·sin 모두 음수), 오른쪽 옆에서 0.67 m/s 로 비스듬히 건너오는 작업자, 나이 0.25 s, '
+        '우회전 중: VO 원뿔의 접선이 셀 사이를 지나 일부만 거부 (거부 셀 진입 < 1.9 s), 비포화', st))
 
     # ---------------- step
     pre = base_state(v_meas=0.8, v_cmd=0.8, prev_actions=[(0.2, 0.0)] * 3)
