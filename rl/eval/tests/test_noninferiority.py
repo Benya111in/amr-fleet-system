@@ -231,3 +231,13 @@ def test_fm_degenerate_all_events_uses_fallback():
     pt, pr = N.fm_restricted(16, 16, 20, 20, 0.0)
     assert math.isfinite(pt) and math.isfinite(pr)
     assert pt == pytest.approx(1.0, abs=1e-4) and pr == pytest.approx(1.0, abs=1e-4)
+
+
+@pytest.mark.parametrize('k_t,n_t,k_r,n_r,p', [(5, 300, 0, 240, 0.0260), (4, 100, 0, 300, 0.0011)])
+def test_barnard_is_pooled(k_t, n_t, k_r, n_r, p):
+    """
+    합동 분산 Barnard 로 고정한다 — 군 크기가 다르고 기준이 0 사건이면 비합동 통계량은 퇴화한다.
+
+    (4/100 대 0/300: 합동 0.0011, 비합동 0.105). 같은 크기 짝(경보)에서는 둘이 같은 값을 냈다.
+    """
+    assert N.barnard_greater(k_t, n_t, k_r, n_r) == pytest.approx(p, abs=2e-4)

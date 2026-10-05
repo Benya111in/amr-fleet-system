@@ -219,3 +219,16 @@ def test_gate_needs_both_conditions():
     assert c['verdict'] == R.NOT_MET
     b = g['B_ppo/s0/best']
     assert b['cp_upper'] > R.PREREG['gate_collision_cp_upper'] and b['verdict'] == R.NOT_MET
+
+
+def test_safety_alarm_counts_reference_contacts():
+    """DWA 도 같은 만큼 부딪치면 경보가 울리지 않는다 (누적 k_r 을 센다)."""
+    def mk(arm, coll):
+        return {'arm': arm, 'outcome': 'collision' if coll else 'success', 'contacts': int(coll)}
+    pairs = []
+    for i in range(240):
+        t = mk('C_hybrid', i in (10, 50, 239))
+        t['exec_index'] = i
+        pairs.append((t, mk('A_dwa', i in (5, 60, 200))))
+    al = R.safety_alarm(pairs)
+    assert not al['fired'] and (al['k_t'], al['k_r']) == (3, 3)
