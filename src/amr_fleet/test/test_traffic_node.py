@@ -7,7 +7,7 @@ traffic_manager_node ROS 배선 시험 (한 프로세스).
 비키면 RESOLVED + hold=false. latched 토픽(hold · yield_pose · keepout_mask · costmap_filter_info)은
 늦게 뜬 구독자가 받는지, yield_pose 가 hold=true 보다 먼저 나가고 양보가 끝나면 비워지는지 본다.
 hold 는 평가한 값만 낸다: 기동 시 초기값이 없고, 관측한 로봇은 첫 평가 뒤, 한 번도 관측 못 한 로봇은
-obs_timeout_s 뒤 false (hold_failsafe.md).
+hold 구독자가 붙고 obs_timeout_s 뒤 false (hold_failsafe.md).
 rclpy·amr_msgs·nav2_msgs 가 없는 환경에서는 건너뛴다.
 """
 
@@ -391,13 +391,14 @@ def test_hold_published_only_after_evaluation(ros):
     """
     기동 시 hold 초기값을 내지 않는다 (평가 전 false = 허가).
 
-    관측한 로봇은 첫 평가 주기에 첫 값을 받고, 한 번도 관측 못 한 로봇은 첫 주기부터 obs_timeout_s 뒤
-    false 를 받는다 (관리할 수 없는 로봇을 영영 세우지 않는다).
+    관측한 로봇은 첫 평가 주기에 첫 값을 받고, 한 번도 관측 못 한 로봇은 hold 구독자가 붙은 주기부터
+    obs_timeout_s 뒤 false 를 받는다 (관리할 수 없는 로봇을 영영 세우지 않는다). 구독자가 없는 로봇은
+    기다리는 실행기가 없으므로 내지 않는다.
     """
     ids = ('amr_w1', 'amr_w2')
     node = TrafficManagerNode(namespace='/fleet_w', parameter_overrides=_params({
-        'robot_ids': ','.join(ids), 'update_rate_hz': 10.0, 'map_topic': '/traffic_test_w/map',
-        'zones.source': 'none', 'obs_timeout_s': 1.0,
+        'robot_ids': ','.join(ids + ('amr_w3',)), 'update_rate_hz': 10.0,
+        'map_topic': '/traffic_test_w/map', 'zones.source': 'none', 'obs_timeout_s': 1.0,
     }))
     client = rclpy.create_node('traffic_test_w_client')
     got = {rid: [] for rid in ids}
@@ -423,7 +424,7 @@ def test_hold_published_only_after_evaluation(ros):
                                 for rid in ids) and bool(pose))
         assert pose[-1].header.frame_id == ''                      # 포켓 없음은 기동 시 latched
         # 관측 전: 주기는 돌지만 hold 는 아무도 받지 않는다
-        assert spin(lambda: node._first_tick is not None)
+        assert spin(lambda: node._robots[ids[1]].listen_since is not None)
         assert not spin(lambda: any(got.values()), 0.5)
         assert node._robots[ids[0]].hold is None and node._robots[ids[1]].hold is None
         # 관측한 로봇: 첫 평가 값 (막을 것 없음 → false)
@@ -432,8 +433,14 @@ def test_hold_published_only_after_evaluation(ros):
         # 관측 못 한 로봇: obs_timeout_s 를 채운 뒤에야 false
         assert spin(lambda: bool(got[ids[1]]), 5.0, publish_odom)
         assert [v for v, _ in got[ids[1]]] == [False]
-        assert got[ids[1]][0][1] - node._first_tick >= 1.0
+        assert got[ids[1]][0][1] - node._robots[ids[1]].listen_since >= 1.0
         assert node._robots[ids[1]].hold is False
+        # 바뀔 때만 낸다: 해제 뒤에도, 평가 값이 그대로인 동안에도 다시 내지 않는다
+        spin(lambda: False, 0.6, publish_odom)
+        assert [v for v, _ in got[ids[0]]] == [False] and [v for v, _ in got[ids[1]]] == [False]
+        # 구독자가 없는 로봇: 기다리는 실행기가 없다 → 내지 않는다
+        w3 = node._robots['amr_w3']
+        assert w3.hold is None and w3.listen_since is None
     finally:
         ex.shutdown()
         node.destroy_node()

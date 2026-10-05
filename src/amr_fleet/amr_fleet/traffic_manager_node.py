@@ -8,8 +8,8 @@ traffic_manager_node — 중앙 교통 관리 · 교착 탐지/해소 (component
 - Sub  /fleet/task_events (amr_msgs/Task)                         작업 우선순위 · 마감 (task_id 로 찾는다)
 - Pub  /amr_XX/traffic/hold (std_msgs/Bool, latched)              우선순위 양보 · 구역 대기 · 교차 양보.
        평가한 값만 낸다: 기동 시 초기값을 내지 않고 그 로봇을 처음 관측한 주기에 처음 낸다 (실행기는 첫 값
-       전 대기 — amr_behavior traffic_hold.policy). 첫 주기부터 obs_timeout_s 동안 한 번도 관측하지 못한
-       로봇은 교통 관리 밖으로 보고 false 를 낸다 (그 로봇은 관리할 수 없다 — 영영 세우지 않는다).
+       전 대기 — amr_behavior traffic_hold.policy). hold 구독자(실행기)가 붙은 뒤 obs_timeout_s 동안 한 번도
+       관측하지 못한 로봇은 교통 관리 밖으로 보고 false 를 낸다 (그 로봇은 관리할 수 없다 — 영영 세우지 않는다).
        재연결에 재발행은 필요 없다: 바뀔 때만 내므로 depth 1 이력 = 현재 값이다
        (docs/research/fleet-traffic-deadlock/hold_failsafe.md)
 - Pub  /amr_XX/traffic/yield_pose (geometry_msgs/PoseStamped, latched)  대기 포켓. 새 포켓은 hold=true 보다
@@ -154,7 +154,8 @@ class _Robot:
         self.pub_yield = None
         self.pub_mask = None
         self.pub_info = None
-        self.hold: Optional[bool] = None            # 마지막으로 발행한 값
+        self.hold: Optional[bool] = None            # 마지막으로 발행한 값 (None = 아직 안 냄)
+        self.listen_since: Optional[float] = None    # hold 구독자를 처음 본 주기 시각 (관측 못 한 로봇 해제)
         self.yield_pose: Optional[Tuple[float, float, float]] = None
         self.keepout: Optional[KeepoutMask] = None
 
@@ -179,7 +180,6 @@ class TrafficManagerNode(Node):
         self._tasks: 'collections.OrderedDict[str, Tuple[int, Optional[float]]]' = \
             collections.OrderedDict()
         self._map_warned = False
-        self._first_tick: Optional[float] = None    # 첫 주기 시각 (관측 못 한 로봇 해제 기준)
 
         self._pub_events = self.create_publisher(DiagnosticArray, '/fleet/traffic_events',
                                                  EVENTS_QOS)
@@ -345,8 +345,6 @@ class TrafficManagerNode(Node):
     def _on_tick(self) -> None:
         t0 = time.perf_counter()
         now = self._now()
-        if self._first_tick is None:
-            self._first_tick = now
         res = self.tm.update(now, self.observations())
         for rid, cmd in res.commands.items():
             self._apply(self._robots[rid], cmd)
@@ -357,19 +355,26 @@ class TrafficManagerNode(Node):
 
     def _release_unobserved(self, now: float, commanded) -> None:
         """
-        첫 주기부터 obs_timeout_s 동안 한 번도 관측하지 못한(hold 를 낸 적 없는) 로봇에 false 를 낸다.
+        구독자(실행기)가 붙은 뒤 obs_timeout_s 동안 한 번도 관측 못 한(hold 를 낸 적 없는) 로봇에 false 를 낸다.
 
         오도메트리(odometry/filtered_map)가 없는 로봇은 예측 · 구역 토큰에 들어오지 않으므로 이 관리자가
         관리할 수 없다 (예: localization_mode slam · odom). 세워 두면 영영 못 움직인다 → 교통 관리 밖으로 둔다.
+        시계는 그 로봇의 hold 구독자(실행기)를 처음 본 주기부터 잰다: 로봇 스택은 관리자보다 늦게, 로봇마다
+        stack_stagger_s 간격으로 뜨므로 관리자 기동 시각을 기준으로 하면 늦게 뜬 로봇이 관측되기 전에 풀린다.
+        구독자가 없으면 기다리는 실행기도 없으므로 내지 않는다.
         한 번이라도 관측한 로봇은 여기에 오지 않는다 (관측이 끊기면 stale · lost — fail closed).
         """
-        if self._first_tick is None or now - self._first_tick < self.cfg.obs_timeout_s:
-            return
         for rid, r in self._robots.items():
-            if r.hold is None and rid not in commanded:
+            if r.hold is not None or rid in commanded:
+                continue
+            if r.listen_since is None:
+                if r.pub_hold.get_subscription_count() > 0:
+                    r.listen_since = now
+                continue
+            if now - r.listen_since >= self.cfg.obs_timeout_s:
                 self.get_logger().warn(
-                    f'{rid}: {self.cfg.obs_timeout_s:g} s 동안 관측 없음 (odometry/filtered_map) '
-                    f'→ hold=false, 교통 관리 밖')
+                    f'{rid}: hold 구독자가 붙은 뒤 {self.cfg.obs_timeout_s:g} s 동안 관측 없음 '
+                    f'(odometry/filtered_map) → hold=false, 교통 관리 밖 (관측되면 평가 값으로 바뀐다)')
                 self._publish_hold(r, False, 'unobserved')
 
     def _apply(self, r: _Robot, cmd: RobotCommand) -> None:
