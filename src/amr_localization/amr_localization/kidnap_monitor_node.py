@@ -318,7 +318,15 @@ class KidnapMonitorNode(Node):
         now = self.now_sec()
         if self.fallback_until is not None:
             self.fallback_step(now)
+        if not self.detector.spin_ready and self.rotation_available():
+            # 회전 수단이 생겼다 (보통 behavior_server 가 활성이 됐다) — 예산을 쓰지 않고 재개한다
+            self.get_logger().info('회전 수단이 생겼다: 복구를 재개한다')
+            self.execute(self.detector.set_spin_ready(now, True))
         self.execute(self.detector.tick(now))
+
+    def rotation_available(self) -> bool:
+        """회전 수단이 하나라도 있는가 (start_spin 이 고르는 둘과 같은 판정)."""
+        return self.spin_client.server_is_ready() or self.cmd_pub is not None
 
     # --------------------------------------------------------------- 동작
     def execute(self, actions: List[kd.Action]) -> None:
@@ -433,6 +441,8 @@ class KidnapMonitorNode(Node):
             f'marker fix seed: initialpose ({x:.2f}, {y:.2f}, {math.degrees(yaw):.0f} deg)')
 
     def start_spin(self, angle: float) -> None:
+        if self.rotation_available():
+            self.detector.note_spin_available(self.now_sec())   # 동작을 내지 않는다 (재귀 방지)
         if self.spin_client.server_is_ready():
             goal = Spin.Goal()
             goal.target_yaw = float(angle)
@@ -448,8 +458,11 @@ class KidnapMonitorNode(Node):
                 f'spin server unavailable: rotating via {self.cmd_pub.topic_name} '
                 f'at {self.fallback_speed:.2f} rad/s')
         else:
-            self.get_logger().error('spin 액션 서버도 fallback cmd_vel 도 없다: 회전 없이 대기')
-            self.execute(self.detector.on_spin_done(self.now_sec(), False))
+            # 예전에는 여기서 on_spin_done(False) 를 불렀다 — 로그는 "대기" 라고 적는데 실제로는
+            # 회전 한 번 없이 재시도 예산을 즉시 태워 FAILED 로 떨어뜨렸다 (logs/S12a: 4.7 ms).
+            # 이제는 수단이 없다고 알리고 쉰다. on_tick 이 수단이 생기면 다시 깨운다.
+            self.get_logger().error('spin 액션 서버도 fallback cmd_vel 도 없다: 회전 수단을 기다린다')
+            self.execute(self.detector.set_spin_ready(self.now_sec(), False))
 
     def on_spin_accepted(self, future) -> None:
         handle = future.result()

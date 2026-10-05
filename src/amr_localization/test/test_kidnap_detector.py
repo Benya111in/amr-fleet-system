@@ -594,6 +594,110 @@ def test_backend_ready_flag_does_not_change_the_normal_path():
     assert det.backend_ready and det.backend_down_time == 0.0
 
 
+def test_no_rotation_mechanism_does_not_burn_recovery_attempts():
+    """
+    회전 수단(spin 액션 / fallback cmd_vel)이 없는 동안에는 시도를 소진하지 않는다.
+
+    회귀 근거 (logs/S12a): behavior_server 가 아직 활성이 아니라 회전 수단이 없었는데,
+    kidnap_monitor_node 는 "회전 없이 대기" 라고 적고도 곧바로 on_spin_done(False) 를 불렀다.
+    회전·재관측이 한 번도 없이 re-init #1~#4 가 **4.7 ms** 에 소진되고 FAILED 로 떨어졌다
+    (1791194587.9375 → .9422). 51.6 s 뒤 behavior_server 가 활성이 되어서야 되살아났다.
+    """
+    p = KidnapParams(suspect_time=0.5, converge_count=2, reinit_retry=4, recovery_timeout=120.0)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 400.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 2.0, 0.1)
+    det.tick(1.6)
+    assert det.state == State.RECOVERING and det._reinits_done == 1
+
+    assert det.set_spin_ready(2.0, False) == []
+    assert not det.spin_ready
+    # 수단이 없는 동안 회전 종료가 들어와도 (두 겹 방어) 시도를 쓰지 않는다
+    for k in range(6):
+        assert det.on_spin_done(3.0 + k, False) == []
+    assert det._reinits_done == 1 and det.state == State.RECOVERING
+    # 복구 시한도 흐르지 않는다 — 돌 수 없던 시간으로 실패를 선언하면 가드의 뜻이 없다
+    det.tick(300.0)
+    assert det.state == State.RECOVERING, 'FAILED 로 떨어졌다 — 시한이 멈추지 않았다'
+
+
+def test_rotation_coming_back_resumes_without_spending_budget_and_shifts_the_deadline():
+    """수단이 돌아오면 예산을 쓰지 않고 회전을 재개하고, 기다린 만큼만 시한을 민다."""
+    p = KidnapParams(suspect_time=0.5, converge_count=2, reinit_retry=4, recovery_timeout=120.0)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 400.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 2.0, 0.1)
+    det.tick(1.6)
+    lost_since = det._lost_since
+    det.set_spin_ready(2.0, False)
+    det.tick(300.0)                          # 시한이 멈춰 있다
+    assert det.state == State.RECOVERING
+
+    actions = det.set_spin_ready(310.0, True)
+    assert det.spin_ready and det.spin_unavailable_time == pytest.approx(308.0)
+    # 예산은 그대로, 회전만 다시 시작한다 (REINITIALIZE 는 내지 않는다 — 시드는 이미 섰다)
+    assert kinds(actions) == [ActionType.SPIN], kinds(actions)
+    assert det._reinits_done == 1 and det.state == State.RECOVERING
+    # 시한 기준점은 기다린 만큼만 밀린다 (통째로 되돌리지 않는다)
+    assert det._lost_since == pytest.approx(lost_since + 308.0)
+    # 따라서 수단이 돌아온 직후에 시한이 즉시 터지지 않는다
+    det.tick(311.0)
+    assert det.state == State.RECOVERING
+    # 그래도 시한 자체는 살아 있다 — 돌 수 있게 된 뒤 120 s 가 지나면 실패한다
+    det.tick(lost_since + 308.0 + 121.0)
+    assert det.state == State.FAILED, '가드가 시한을 영구히 없애 버렸다'
+
+
+def test_spin_ready_flag_does_not_change_the_normal_path():
+    """회귀 방어: 회전 수단이 계속 있으면 예전과 똑같이 시도를 쓰고 시한도 흐른다."""
+    p = KidnapParams(suspect_time=0.5, converge_count=2, reinit_retry=2, recovery_timeout=50.0)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 400.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 2.0, 0.1)
+    det.tick(1.6)
+    assert det._reinits_done == 1
+    det.on_spin_done(3.0, True)
+    assert det._reinits_done == 2
+    det.on_spin_done(4.0, True)             # 소진
+    assert det.state == State.FAILED
+    assert det.spin_ready and det.spin_unavailable_time == 0.0
+
+
+def test_rotation_return_does_not_revive_a_failed_robot():
+    """수단 복귀는 FAILED 를 되돌리지 않는다 — 다른 원인으로 실패한 로봇을 가리면 안 된다."""
+    p = KidnapParams(suspect_time=0.5, converge_count=2, reinit_retry=1, recovery_timeout=120.0)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 400.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 2.0, 0.1)
+    det.tick(1.6)
+    det.on_spin_done(3.0, True)             # reinit_retry 1 소진 → FAILED (수단은 멀쩡했다)
+    assert det.state == State.FAILED
+
+    det.set_spin_ready(4.0, False)
+    actions = det.set_spin_ready(5.0, True)
+    assert actions == [] and det.state == State.FAILED, 'FAILED 를 되살렸다'
+
+
+def test_note_spin_available_marks_without_emitting_actions():
+    """start_spin 안에서 쓰는 경로: 깃발만 맞추고 동작을 내지 않는다 (재귀 방지)."""
+    p = KidnapParams(suspect_time=0.5, converge_count=2, reinit_retry=4)
+    det = KidnapDetector(p)
+    feed_odom(det, 0.0, 400.0)
+    det.on_amcl(1.0, (0.0, 0.0, 0.0), 2.0, 0.1)
+    det.tick(1.6)
+    det.set_spin_ready(2.0, False)
+    assert det.note_spin_available(12.0) is None
+    assert det.spin_ready and det.spin_unavailable_time == pytest.approx(10.0)
+
+    def n_available_events() -> int:
+        return sum(1 for e in det.events if e.reason == 'rotation mechanism available')
+
+    assert n_available_events() == 1
+    det.note_spin_available(13.0)           # 두 번째는 아무 일도 하지 않는다
+    assert det.spin_unavailable_time == pytest.approx(10.0)
+    assert n_available_events() == 1, '같은 사건을 두 번 기록했다 (이벤트 로그가 부풀어 오른다)'
+
+
 def test_external_pose_reset_clears_scan_history_from_the_old_pose():
     """
     순간 이동 **전** 스캔이 이동 **뒤** 판정에 섞이면 안 된다.

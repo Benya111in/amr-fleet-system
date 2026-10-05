@@ -246,6 +246,9 @@ class KidnapDetector:
         self.backend_ready = True                     # 측위 백엔드(AMCL)가 active 인가
         self._backend_down_since: Optional[float] = None
         self.backend_down_time = 0.0                  # 백엔드가 내려가 있던 누적 시간 [s]
+        self.spin_ready = True                        # 회전 수단(spin 액션 또는 cmd_vel)이 있는가
+        self._spin_down_since: Optional[float] = None
+        self.spin_unavailable_time = 0.0              # 회전 수단이 없던 누적 시간 [s]
         self._amcl_alarm = False      # 지속 경보: 공분산
         self._amcl_reason = ''
         self._match_alarm = False     # 지속 경보: 스캔-맵 불일치
@@ -389,6 +392,58 @@ class KidnapDetector:
             return self._reinitialize(t, 'localization backend came back')
         return []
 
+    def set_spin_ready(self, t: float, ready: bool) -> List[Action]:
+        """
+        회전 수단(Nav2 spin 액션 또는 fallback cmd_vel)이 있는지 알린다. 없는 동안 복구는 **쉰다**.
+
+        왜: 수단이 없을 때 kidnap_monitor_node 는 "회전 없이 대기" 라고 적고도 곧바로
+        on_spin_done(False) 를 불렀다. 그래서 회전·재관측이 한 번도 일어나지 않은 채 재시도
+        예산(spin + re-init)이 **밀리초 단위로** 소진되고 FAILED 로 떨어졌다
+        (logs/S12a: amr_04 가 4.7 ms 에 re-init #1~#4 를 태우고 recovery exhausted,
+        51.6 s 뒤 behavior_server 가 활성이 되어서야 backend 폴링이 되살렸다).
+
+        성질은 set_backend_ready 와 같다 — **재시도가 성공할 전제가 없을 때 유한한 예산을
+        깎아서는 안 된다**. 다만 여기서는 FAILED 를 되돌리지 않는다: 이 가드가 있으면 이 경로로
+        FAILED 에 도달하지 않고, "회전이 생겼다" 를 일반적인 복구 방아쇠로 만들면 다른 원인으로
+        실패한 로봇까지 되살려 진짜 고장을 가린다.
+        """
+        if ready == self.spin_ready:
+            return []
+        if not ready:
+            self.spin_ready = False
+            self._spin_down_since = t
+            # 돌고 있는 회전이 없다고 기록해 둔다 — 없는 목표에 CANCEL_SPIN 을 내지 않도록
+            self._spin_active = False
+            self.events.append(Event(t, self.state.value, 'rotation mechanism unavailable'))
+            return []
+        self.note_spin_available(t)
+        if self.state == State.RECOVERING and self.backend_ready:
+            # 예산을 쓰지 않고 멈춰 있던 회전을 **다시 시작한다** (여기서 깨우지 않으면
+            # on_spin_done 이 올 일이 없어 상태기가 멈춘다 — 77cbcf1 에서 낸 회귀와 같은 모양).
+            return self._spin(t, 'rotation mechanism came back')
+        return []
+
+    def note_spin_available(self, t: float) -> None:
+        """
+        회전을 지금 시작하므로 가용 표시만 한다 — **동작은 내지 않는다**.
+
+        start_spin 안에서 set_spin_ready 를 부르면 SPIN 동작이 또 나와 재귀한다. 지금 시작하는
+        회전이 곧 그 동작이므로 깃발과 누적 시간만 맞춘다.
+        """
+        if self.spin_ready:
+            return
+        self.spin_ready = True
+        if self._spin_down_since is not None:
+            waited = t - self._spin_down_since
+            self.spin_unavailable_time += waited
+            # 복구 시한은 **복구가 가능했던 시간**만 세야 한다. 기다린 만큼 기준점을 밀지 않으면
+            # 수단이 돌아온 그 tick 에 recovery_timeout 이 즉시 터져 가드를 넣은 뜻이 없어진다.
+            # (set_backend_ready 는 _lost_since = t 로 통째로 되돌리는데, 그러면 오르내림이
+            #  반복될 때 시한이 무한정 미뤄진다 — 여기서는 기다린 만큼만 민다)
+            self._lost_since += waited
+            self._spin_down_since = None
+        self.events.append(Event(t, self.state.value, 'rotation mechanism available'))
+
     def on_marker_fix(self, t: float, pose: Pose) -> List[Action]:
         """
         지도에 등록된 마커로 역산한 로봇 자세 (외부 증거, amr_behavior docking_server_node).
@@ -508,6 +563,10 @@ class KidnapDetector:
             # 백엔드가 inactive 면 어떤 시드도 적용되지 않는다 — 시도를 쓰지 않고 기다린다
             # (set_backend_ready 가 돌아올 때 다시 시작한다)
             return []
+        if not self.spin_ready:
+            # 회전 수단이 없으면 재관측이 없다 — 같은 이유로 시도를 쓰지 않는다.
+            # (monitor 는 이 경우 on_spin_done 을 부르지 않지만, 두 겹으로 막는다)
+            return []
         if self._spins_left > 0:
             self._spins_left -= 1
             actions += self._spin(t, 'spin finished without convergence' if succeeded
@@ -526,8 +585,12 @@ class KidnapDetector:
                 actions += self._declare_lost(t, self._alarm_reason)
             else:
                 self._set_state(t, State.TRACKING, 'alarm cleared')
-        elif (self.state == State.RECOVERING and self.backend_ready
+        elif (self.state == State.RECOVERING and self.backend_ready and self.spin_ready
               and t - self._lost_since > self.params.recovery_timeout):
+            # spin_ready 도 본다: 회전 수단이 없는 동안 흐른 시간으로 실패를 선언하면 예산 가드를
+            # 넣은 뜻이 없어진다. 대가는 수단이 영구히 없으면 RECOVERING 에 머문다는 것인데,
+            # 그래도 lost 가 서 있으니 fleet 는 그 로봇을 배정에서 뺀다(robot_status.py 의 lost→ERROR)
+            # 그리고 AMCL 단독 수렴 경로(_evaluate 의 _converged)는 회전 없이도 계속 열려 있다.
             actions += self._fail(t, f'recovery timeout {self.params.recovery_timeout:.0f} s')
         return actions
 
