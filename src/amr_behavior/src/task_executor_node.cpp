@@ -465,10 +465,15 @@ void TaskExecutorNode::refreshTrafficManagement()
   }
   const auto wall = std::chrono::steady_clock::now();
   if (!ctx_->trafficHoldReceived()) {
+    // count_publishers 는 rmw 그래프 캐시의 발행자를 모두 훑는다 (5 대 구성에서 수천 개)
+    // → 200 ms 마다만. 발행자가 나타난 것을 그만큼 늦게 알 뿐, 받은 값은 구독 콜백이 바로 반영한다
+    if (wall - last_publisher_count_ >= std::chrono::milliseconds(200)) {
+      last_publisher_count_ = wall;
+      publisher_count_ = count_publishers(traffic_hold_sub_->get_topic_name());
+    }
     const double since = std::chrono::duration<double>(wall - started_).count();
-    const size_t publishers = count_publishers(traffic_hold_sub_->get_topic_name());
     ctx_->setTrafficManaged(
-      trafficManaged(traffic_hold_policy_, since, traffic_hold_grace_s_, publishers));
+      trafficManaged(traffic_hold_policy_, since, traffic_hold_grace_s_, publisher_count_));
   }
   const TrafficHoldState state = ctx_->trafficHoldState();
   const TrafficHoldState prev = traffic_state_;
@@ -484,8 +489,7 @@ void TaskExecutorNode::refreshTrafficManagement()
         "traffic/hold 첫 값을 %.0f s 째 못 받았다 (발행자 %zu, QoS 맞는 것 %zu) → 정지 유지. "
         "traffic_manager 가 이 로봇을 관측하는지(odometry/filtered_map), "
         "발행 QoS 가 latched 인지 확인",
-        waited, count_publishers(traffic_hold_sub_->get_topic_name()),
-        traffic_hold_sub_->get_publisher_count());
+        waited, publisher_count_, traffic_hold_sub_->get_publisher_count());
     }
   }
   // 첫 값을 받기 전의 전이만 기록한다 (받은 뒤의 hold ↔ clear 는 traffic_manager 가 기록한다)
@@ -497,7 +501,7 @@ void TaskExecutorNode::refreshTrafficManagement()
       get_logger(),
       "traffic/hold: 첫 값을 받을 때까지 정지 (정책 %s, 발견 유예 %.1f s, 발행자 %zu)",
       traffic_hold_policy_ == TrafficHoldPolicy::kRequired ? "required" : "auto",
-      traffic_hold_grace_s_, count_publishers(traffic_hold_sub_->get_topic_name()));
+      traffic_hold_grace_s_, publisher_count_);
   } else if (state == TrafficHoldState::kUnmanaged) {
     RCLCPP_INFO(
       get_logger(),

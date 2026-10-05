@@ -90,6 +90,9 @@ private:
   double traffic_hold_grace_s_{2.0};   ///< [s] 벽시계 발견 유예 (auto)
   std::chrono::steady_clock::time_point started_{std::chrono::steady_clock::now()};
   std::chrono::steady_clock::time_point awaiting_since_{};
+  /// 마지막 발행자 수 조회 (그래프 캐시를 끝점 수만큼 훑으므로 tick 마다 하지 않는다)
+  std::chrono::steady_clock::time_point last_publisher_count_{};
+  size_t publisher_count_{0};
   TrafficHoldState traffic_state_{TrafficHoldState::kUnmanaged};   ///< 마지막으로 기록한 상태
   rclcpp::Clock steady_clock_{RCL_STEADY_TIME};                     ///< 경고 간격 제한용
 
