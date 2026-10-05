@@ -1,0 +1,518 @@
+# model=QuorumVote cfg=cfg/QV_N3_Z1_R3_C1_volatileInc.cfg workers=4 heap=8g image=amr-ai/rl:0.3 timeout=2400s
+# jar=/home/CAPYI_AI/downloads/tla/tla2tools-1.7.4.jar sha256=936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
+# head=e65d6b59d205470643dd509ae95e7851982bd3d9 dirty=5
+# spec_sha256=1ab2620fb436b6b706411d37df8a4ac338f80a633c63c9e2ad452ad08e226946 cfg_sha256=0a83a070392d99257ec63bebf6c0aefea1e755a79aed048b9aa9cd1ba0085e6d
+# start=2026-10-06T06:57:19+09:00 loadavg=42.48 42.31 43.81
+# end=2026-10-06T06:58:22+09:00 rc=12 loadavg=54.75 45.77 44.90
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+
+## 상태마다 바뀐 변수만 (trace_diff.py)
+State 1: Initial
+    cur = (r1 :> NoRid @@ r2 :> NoRid @@ r3 :> NoRid)
+    curS = (r1 :> {} @@ r2 :> {} @@ r3 :> {})
+    done = (r1 :> {} @@ r2 :> {} @@ r3 :> {})
+    inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+    msgs = {}
+    ncrash = 0
+    nreqs = 0
+    phase = (r1 :> "idle" @@ r2 :> "idle" @@ r3 :> "idle")
+    seq = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+    vote = ( r1 :> (z1 :> [st |-> "F", rid |-> NoRid]) @@ r2 :> (z1 :> [st |-> "F", rid |-> NoRid]) @@ r3 :> (z1 :> [st |-> "F", rid |-> NoRid]) )
+State 2: Request
+    cur = (r1 :> <<r1, 0, 1>> @@ r2 :> NoRid @@ r3 :> NoRid)
+    curS = (r1 :> {z1} @@ r2 :> {} @@ r3 :> {})
+    msgs + [rid |-> <<r1, 0, 1>>, type |-> "req", zs |-> {z1}]
+    nreqs = 1
+    phase = (r1 :> "voting" @@ r2 :> "idle" @@ r3 :> "idle")
+    seq = (r1 :> 1 @@ r2 :> 0 @@ r3 :> 0)
+State 3: GrantVote
+    msgs + [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1]
+    vote = ( r1 :> (z1 :> [st |-> "T", rid |-> <<r1, 0, 1>>]) @@ r2 :> (z1 :> [st |-> "F", rid |-> NoRid]) @@ r3 :> (z1 :> [st |-> "F", rid |-> NoRid]) )
+State 4: Request
+    cur = (r1 :> <<r1, 0, 1>> @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+    curS = (r1 :> {z1} @@ r2 :> {z1} @@ r3 :> {})
+    msgs + [rid |-> <<r2, 0, 1>>, type |-> "req", zs |-> {z1}]
+    nreqs = 2
+    phase = (r1 :> "voting" @@ r2 :> "voting" @@ r3 :> "idle")
+    seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+State 5: GrantVote
+    msgs + [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2]
+    vote = ( r1 :> (z1 :> [st |-> "T", rid |-> <<r1, 0, 1>>]) @@ r2 :> (z1 :> [st |-> "T", rid |-> <<r1, 0, 1>>]) @@ r3 :> (z1 :> [st |-> "F", rid |-> NoRid]) )
+State 6: SendEnter
+    msgs + [rid |-> <<r1, 0, 1>>, type |-> "enter", zs |-> {z1}]
+    phase = (r1 :> "entering" @@ r2 :> "voting" @@ r3 :> "idle")
+State 7: CommitVote
+    msgs + [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r1]
+    vote = ( r1 :> (z1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@ r2 :> (z1 :> [st |-> "T", rid |-> <<r1, 0, 1>>]) @@ r3 :> (z1 :> [st |-> "F", rid |-> NoRid]) )
+State 8: CommitVote
+    msgs + [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r2]
+    vote = ( r1 :> (z1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@ r2 :> (z1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@ r3 :> (z1 :> [st |-> "F", rid |-> NoRid]) )
+State 9: EnterZone
+    phase = (r1 :> "inside" @@ r2 :> "voting" @@ r3 :> "idle")
+State 10: Exit
+    cur = (r1 :> NoRid @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+    curS = (r1 :> {} @@ r2 :> {z1} @@ r3 :> {})
+    msgs + [rid |-> <<r1, 0, 1>>, type |-> "release"]
+    phase = (r1 :> "idle" @@ r2 :> "voting" @@ r3 :> "idle")
+State 11: CrashRestart
+    ncrash = 1
+    seq = (r1 :> 0 @@ r2 :> 1 @@ r3 :> 0)
+State 12: Request
+    cur = (r1 :> <<r1, 0, 1>> @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+    curS = (r1 :> {z1} @@ r2 :> {z1} @@ r3 :> {})
+    nreqs = 3
+    phase = (r1 :> "voting" @@ r2 :> "voting" @@ r3 :> "idle")
+    seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+State 13: SendEnter
+    phase = (r1 :> "entering" @@ r2 :> "voting" @@ r3 :> "idle")
+State 14: EnterZone
+    phase = (r1 :> "inside" @@ r2 :> "voting" @@ r3 :> "idle")
+State 15: HandleRelease
+    vote = ( r1 :> (z1 :> [st |-> "F", rid |-> NoRid]) @@ r2 :> (z1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@ r3 :> (z1 :> [st |-> "F", rid |-> NoRid]) )
+State 16: GrantVote
+    msgs + [rid |-> <<r2, 0, 1>>, type |-> "vote", from |-> r1]
+    vote = ( r1 :> (z1 :> [st |-> "T", rid |-> <<r2, 0, 1>>]) @@ r2 :> (z1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@ r3 :> (z1 :> [st |-> "F", rid |-> NoRid]) )
+State 17: GrantVote
+    msgs + [rid |-> <<r2, 0, 1>>, type |-> "vote", from |-> r3]
+    vote = ( r1 :> (z1 :> [st |-> "T", rid |-> <<r2, 0, 1>>]) @@ r2 :> (z1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@ r3 :> (z1 :> [st |-> "T", rid |-> <<r2, 0, 1>>]) )
+State 18: SendEnter
+    msgs + [rid |-> <<r2, 0, 1>>, type |-> "enter", zs |-> {z1}]
+    phase = (r1 :> "inside" @@ r2 :> "entering" @@ r3 :> "idle")
+State 19: CommitVote
+    msgs + [rid |-> <<r2, 0, 1>>, type |-> "ack", from |-> r1]
+    vote = ( r1 :> (z1 :> [st |-> "C", rid |-> <<r2, 0, 1>>]) @@ r2 :> (z1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@ r3 :> (z1 :> [st |-> "T", rid |-> <<r2, 0, 1>>]) )
+State 20: CommitVote
+    msgs + [rid |-> <<r2, 0, 1>>, type |-> "ack", from |-> r3]
+    vote = ( r1 :> (z1 :> [st |-> "C", rid |-> <<r2, 0, 1>>]) @@ r2 :> (z1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@ r3 :> (z1 :> [st |-> "C", rid |-> <<r2, 0, 1>>]) )
+State 21: EnterZone
+    phase = (r1 :> "inside" @@ r2 :> "inside" @@ r3 :> "idle")
+
+## TLC 원문
+Error: Invariant MutualExclusion is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ phase = (r1 :> "idle" @@ r2 :> "idle" @@ r3 :> "idle")
+/\ done = (r1 :> {} @@ r2 :> {} @@ r3 :> {})
+/\ seq = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ cur = (r1 :> NoRid @@ r2 :> NoRid @@ r3 :> NoRid)
+/\ nreqs = 0
+/\ curS = (r1 :> {} @@ r2 :> {} @@ r3 :> {})
+/\ msgs = {}
+/\ vote = ( r1 :> (z1 :> [st |-> "F", rid |-> NoRid]) @@
+  r2 :> (z1 :> [st |-> "F", rid |-> NoRid]) @@
+  r3 :> (z1 :> [st |-> "F", rid |-> NoRid]) )
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 0
+
+State 2: <Request line 133, col 3 to line 143, col 42 of module QuorumVote>
+/\ phase = (r1 :> "voting" @@ r2 :> "idle" @@ r3 :> "idle")
+/\ done = (r1 :> {} @@ r2 :> {} @@ r3 :> {})
+/\ seq = (r1 :> 1 @@ r2 :> 0 @@ r3 :> 0)
+/\ cur = (r1 :> <<r1, 0, 1>> @@ r2 :> NoRid @@ r3 :> NoRid)
+/\ nreqs = 1
+/\ curS = (r1 :> {z1} @@ r2 :> {} @@ r3 :> {})
+/\ msgs = {[rid |-> <<r1, 0, 1>>, type |-> "req", zs |-> {z1}]}
+/\ vote = ( r1 :> (z1 :> [st |-> "F", rid |-> NoRid]) @@
+  r2 :> (z1 :> [st |-> "F", rid |-> NoRid]) @@
+  r3 :> (z1 :> [st |-> "F", rid |-> NoRid]) )
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 0
+
+State 3: <GrantVote line 222, col 3 to line 230, col 68 of module QuorumVote>
+/\ phase = (r1 :> "voting" @@ r2 :> "idle" @@ r3 :> "idle")
+/\ done = (r1 :> {} @@ r2 :> {} @@ r3 :> {})
+/\ seq = (r1 :> 1 @@ r2 :> 0 @@ r3 :> 0)
+/\ cur = (r1 :> <<r1, 0, 1>> @@ r2 :> NoRid @@ r3 :> NoRid)
+/\ nreqs = 1
+/\ curS = (r1 :> {z1} @@ r2 :> {} @@ r3 :> {})
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "req", zs |-> {z1}] }
+/\ vote = ( r1 :> (z1 :> [st |-> "T", rid |-> <<r1, 0, 1>>]) @@
+  r2 :> (z1 :> [st |-> "F", rid |-> NoRid]) @@
+  r3 :> (z1 :> [st |-> "F", rid |-> NoRid]) )
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 0
+
+State 4: <Request line 133, col 3 to line 143, col 42 of module QuorumVote>
+/\ phase = (r1 :> "voting" @@ r2 :> "voting" @@ r3 :> "idle")
+/\ done = (r1 :> {} @@ r2 :> {} @@ r3 :> {})
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> <<r1, 0, 1>> @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 2
+/\ curS = (r1 :> {z1} @@ r2 :> {z1} @@ r3 :> {})
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "req", zs |-> {z1}],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", zs |-> {z1}] }
+/\ vote = ( r1 :> (z1 :> [st |-> "T", rid |-> <<r1, 0, 1>>]) @@
+  r2 :> (z1 :> [st |-> "F", rid |-> NoRid]) @@
+  r3 :> (z1 :> [st |-> "F", rid |-> NoRid]) )
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 0
+
+State 5: <GrantVote line 222, col 3 to line 230, col 68 of module QuorumVote>
+/\ phase = (r1 :> "voting" @@ r2 :> "voting" @@ r3 :> "idle")
+/\ done = (r1 :> {} @@ r2 :> {} @@ r3 :> {})
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> <<r1, 0, 1>> @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 2
+/\ curS = (r1 :> {z1} @@ r2 :> {z1} @@ r3 :> {})
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2],
+  [rid |-> <<r1, 0, 1>>, type |-> "req", zs |-> {z1}],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", zs |-> {z1}] }
+/\ vote = ( r1 :> (z1 :> [st |-> "T", rid |-> <<r1, 0, 1>>]) @@
+  r2 :> (z1 :> [st |-> "T", rid |-> <<r1, 0, 1>>]) @@
+  r3 :> (z1 :> [st |-> "F", rid |-> NoRid]) )
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 0
+
+State 6: <SendEnter line 147, col 3 to line 152, col 65 of module QuorumVote>
+/\ phase = (r1 :> "entering" @@ r2 :> "voting" @@ r3 :> "idle")
+/\ done = (r1 :> {} @@ r2 :> {} @@ r3 :> {})
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> <<r1, 0, 1>> @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 2
+/\ curS = (r1 :> {z1} @@ r2 :> {z1} @@ r3 :> {})
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2],
+  [rid |-> <<r1, 0, 1>>, type |-> "req", zs |-> {z1}],
+  [rid |-> <<r1, 0, 1>>, type |-> "enter", zs |-> {z1}],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", zs |-> {z1}] }
+/\ vote = ( r1 :> (z1 :> [st |-> "T", rid |-> <<r1, 0, 1>>]) @@
+  r2 :> (z1 :> [st |-> "T", rid |-> <<r1, 0, 1>>]) @@
+  r3 :> (z1 :> [st |-> "F", rid |-> NoRid]) )
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 0
+
+State 7: <CommitVote line 234, col 3 to line 241, col 68 of module QuorumVote>
+/\ phase = (r1 :> "entering" @@ r2 :> "voting" @@ r3 :> "idle")
+/\ done = (r1 :> {} @@ r2 :> {} @@ r3 :> {})
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> <<r1, 0, 1>> @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 2
+/\ curS = (r1 :> {z1} @@ r2 :> {z1} @@ r3 :> {})
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2],
+  [rid |-> <<r1, 0, 1>>, type |-> "req", zs |-> {z1}],
+  [rid |-> <<r1, 0, 1>>, type |-> "enter", zs |-> {z1}],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", zs |-> {z1}] }
+/\ vote = ( r1 :> (z1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r2 :> (z1 :> [st |-> "T", rid |-> <<r1, 0, 1>>]) @@
+  r3 :> (z1 :> [st |-> "F", rid |-> NoRid]) )
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 0
+
+State 8: <CommitVote line 234, col 3 to line 241, col 68 of module QuorumVote>
+/\ phase = (r1 :> "entering" @@ r2 :> "voting" @@ r3 :> "idle")
+/\ done = (r1 :> {} @@ r2 :> {} @@ r3 :> {})
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> <<r1, 0, 1>> @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 2
+/\ curS = (r1 :> {z1} @@ r2 :> {z1} @@ r3 :> {})
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2],
+  [rid |-> <<r1, 0, 1>>, type |-> "req", zs |-> {z1}],
+  [rid |-> <<r1, 0, 1>>, type |-> "enter", zs |-> {z1}],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r2],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", zs |-> {z1}] }
+/\ vote = ( r1 :> (z1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r2 :> (z1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r3 :> (z1 :> [st |-> "F", rid |-> NoRid]) )
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 0
+
+State 9: <EnterZone line 156, col 3 to line 160, col 71 of module QuorumVote>
+/\ phase = (r1 :> "inside" @@ r2 :> "voting" @@ r3 :> "idle")
+/\ done = (r1 :> {} @@ r2 :> {} @@ r3 :> {})
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> <<r1, 0, 1>> @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 2
+/\ curS = (r1 :> {z1} @@ r2 :> {z1} @@ r3 :> {})
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2],
+  [rid |-> <<r1, 0, 1>>, type |-> "req", zs |-> {z1}],
+  [rid |-> <<r1, 0, 1>>, type |-> "enter", zs |-> {z1}],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r2],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", zs |-> {z1}] }
+/\ vote = ( r1 :> (z1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r2 :> (z1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r3 :> (z1 :> [st |-> "F", rid |-> NoRid]) )
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 0
+
+State 10: <Exit line 181, col 3 to line 186, col 54 of module QuorumVote>
+/\ phase = (r1 :> "idle" @@ r2 :> "voting" @@ r3 :> "idle")
+/\ done = (r1 :> {} @@ r2 :> {} @@ r3 :> {})
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> NoRid @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 2
+/\ curS = (r1 :> {} @@ r2 :> {z1} @@ r3 :> {})
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "release"],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2],
+  [rid |-> <<r1, 0, 1>>, type |-> "req", zs |-> {z1}],
+  [rid |-> <<r1, 0, 1>>, type |-> "enter", zs |-> {z1}],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r2],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", zs |-> {z1}] }
+/\ vote = ( r1 :> (z1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r2 :> (z1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r3 :> (z1 :> [st |-> "F", rid |-> NoRid]) )
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 0
+
+State 11: <CrashRestart line 192, col 3 to line 208, col 24 of module QuorumVote>
+/\ phase = (r1 :> "idle" @@ r2 :> "voting" @@ r3 :> "idle")
+/\ done = (r1 :> {} @@ r2 :> {} @@ r3 :> {})
+/\ seq = (r1 :> 0 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> NoRid @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 2
+/\ curS = (r1 :> {} @@ r2 :> {z1} @@ r3 :> {})
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "release"],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2],
+  [rid |-> <<r1, 0, 1>>, type |-> "req", zs |-> {z1}],
+  [rid |-> <<r1, 0, 1>>, type |-> "enter", zs |-> {z1}],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r2],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", zs |-> {z1}] }
+/\ vote = ( r1 :> (z1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r2 :> (z1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r3 :> (z1 :> [st |-> "F", rid |-> NoRid]) )
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 1
+
+State 12: <Request line 133, col 3 to line 143, col 42 of module QuorumVote>
+/\ phase = (r1 :> "voting" @@ r2 :> "voting" @@ r3 :> "idle")
+/\ done = (r1 :> {} @@ r2 :> {} @@ r3 :> {})
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> <<r1, 0, 1>> @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 3
+/\ curS = (r1 :> {z1} @@ r2 :> {z1} @@ r3 :> {})
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "release"],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2],
+  [rid |-> <<r1, 0, 1>>, type |-> "req", zs |-> {z1}],
+  [rid |-> <<r1, 0, 1>>, type |-> "enter", zs |-> {z1}],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r2],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", zs |-> {z1}] }
+/\ vote = ( r1 :> (z1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r2 :> (z1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r3 :> (z1 :> [st |-> "F", rid |-> NoRid]) )
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 1
+
+State 13: <SendEnter line 147, col 3 to line 152, col 65 of module QuorumVote>
+/\ phase = (r1 :> "entering" @@ r2 :> "voting" @@ r3 :> "idle")
+/\ done = (r1 :> {} @@ r2 :> {} @@ r3 :> {})
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> <<r1, 0, 1>> @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 3
+/\ curS = (r1 :> {z1} @@ r2 :> {z1} @@ r3 :> {})
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "release"],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2],
+  [rid |-> <<r1, 0, 1>>, type |-> "req", zs |-> {z1}],
+  [rid |-> <<r1, 0, 1>>, type |-> "enter", zs |-> {z1}],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r2],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", zs |-> {z1}] }
+/\ vote = ( r1 :> (z1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r2 :> (z1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r3 :> (z1 :> [st |-> "F", rid |-> NoRid]) )
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 1
+
+State 14: <EnterZone line 156, col 3 to line 160, col 71 of module QuorumVote>
+/\ phase = (r1 :> "inside" @@ r2 :> "voting" @@ r3 :> "idle")
+/\ done = (r1 :> {} @@ r2 :> {} @@ r3 :> {})
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> <<r1, 0, 1>> @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 3
+/\ curS = (r1 :> {z1} @@ r2 :> {z1} @@ r3 :> {})
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "release"],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2],
+  [rid |-> <<r1, 0, 1>>, type |-> "req", zs |-> {z1}],
+  [rid |-> <<r1, 0, 1>>, type |-> "enter", zs |-> {z1}],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r2],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", zs |-> {z1}] }
+/\ vote = ( r1 :> (z1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r2 :> (z1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r3 :> (z1 :> [st |-> "F", rid |-> NoRid]) )
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 1
+
+State 15: <HandleRelease line 273, col 3 to line 277, col 68 of module QuorumVote>
+/\ phase = (r1 :> "inside" @@ r2 :> "voting" @@ r3 :> "idle")
+/\ done = (r1 :> {} @@ r2 :> {} @@ r3 :> {})
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> <<r1, 0, 1>> @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 3
+/\ curS = (r1 :> {z1} @@ r2 :> {z1} @@ r3 :> {})
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "release"],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2],
+  [rid |-> <<r1, 0, 1>>, type |-> "req", zs |-> {z1}],
+  [rid |-> <<r1, 0, 1>>, type |-> "enter", zs |-> {z1}],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r2],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", zs |-> {z1}] }
+/\ vote = ( r1 :> (z1 :> [st |-> "F", rid |-> NoRid]) @@
+  r2 :> (z1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r3 :> (z1 :> [st |-> "F", rid |-> NoRid]) )
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 1
+
+State 16: <GrantVote line 222, col 3 to line 230, col 68 of module QuorumVote>
+/\ phase = (r1 :> "inside" @@ r2 :> "voting" @@ r3 :> "idle")
+/\ done = (r1 :> {} @@ r2 :> {} @@ r3 :> {})
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> <<r1, 0, 1>> @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 3
+/\ curS = (r1 :> {z1} @@ r2 :> {z1} @@ r3 :> {})
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "release"],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2],
+  [rid |-> <<r1, 0, 1>>, type |-> "req", zs |-> {z1}],
+  [rid |-> <<r1, 0, 1>>, type |-> "enter", zs |-> {z1}],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r2],
+  [rid |-> <<r2, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", zs |-> {z1}] }
+/\ vote = ( r1 :> (z1 :> [st |-> "T", rid |-> <<r2, 0, 1>>]) @@
+  r2 :> (z1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r3 :> (z1 :> [st |-> "F", rid |-> NoRid]) )
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 1
+
+State 17: <GrantVote line 222, col 3 to line 230, col 68 of module QuorumVote>
+/\ phase = (r1 :> "inside" @@ r2 :> "voting" @@ r3 :> "idle")
+/\ done = (r1 :> {} @@ r2 :> {} @@ r3 :> {})
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> <<r1, 0, 1>> @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 3
+/\ curS = (r1 :> {z1} @@ r2 :> {z1} @@ r3 :> {})
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "release"],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2],
+  [rid |-> <<r1, 0, 1>>, type |-> "req", zs |-> {z1}],
+  [rid |-> <<r1, 0, 1>>, type |-> "enter", zs |-> {z1}],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r2],
+  [rid |-> <<r2, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r2, 0, 1>>, type |-> "vote", from |-> r3],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", zs |-> {z1}] }
+/\ vote = ( r1 :> (z1 :> [st |-> "T", rid |-> <<r2, 0, 1>>]) @@
+  r2 :> (z1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r3 :> (z1 :> [st |-> "T", rid |-> <<r2, 0, 1>>]) )
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 1
+
+State 18: <SendEnter line 147, col 3 to line 152, col 65 of module QuorumVote>
+/\ phase = (r1 :> "inside" @@ r2 :> "entering" @@ r3 :> "idle")
+/\ done = (r1 :> {} @@ r2 :> {} @@ r3 :> {})
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> <<r1, 0, 1>> @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 3
+/\ curS = (r1 :> {z1} @@ r2 :> {z1} @@ r3 :> {})
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "release"],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2],
+  [rid |-> <<r1, 0, 1>>, type |-> "req", zs |-> {z1}],
+  [rid |-> <<r1, 0, 1>>, type |-> "enter", zs |-> {z1}],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r2],
+  [rid |-> <<r2, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r2, 0, 1>>, type |-> "vote", from |-> r3],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", zs |-> {z1}],
+  [rid |-> <<r2, 0, 1>>, type |-> "enter", zs |-> {z1}] }
+/\ vote = ( r1 :> (z1 :> [st |-> "T", rid |-> <<r2, 0, 1>>]) @@
+  r2 :> (z1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r3 :> (z1 :> [st |-> "T", rid |-> <<r2, 0, 1>>]) )
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 1
+
+State 19: <CommitVote line 234, col 3 to line 241, col 68 of module QuorumVote>
+/\ phase = (r1 :> "inside" @@ r2 :> "entering" @@ r3 :> "idle")
+/\ done = (r1 :> {} @@ r2 :> {} @@ r3 :> {})
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> <<r1, 0, 1>> @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 3
+/\ curS = (r1 :> {z1} @@ r2 :> {z1} @@ r3 :> {})
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "release"],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2],
+  [rid |-> <<r1, 0, 1>>, type |-> "req", zs |-> {z1}],
+  [rid |-> <<r1, 0, 1>>, type |-> "enter", zs |-> {z1}],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r2],
+  [rid |-> <<r2, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r2, 0, 1>>, type |-> "vote", from |-> r3],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", zs |-> {z1}],
+  [rid |-> <<r2, 0, 1>>, type |-> "enter", zs |-> {z1}],
+  [rid |-> <<r2, 0, 1>>, type |-> "ack", from |-> r1] }
+/\ vote = ( r1 :> (z1 :> [st |-> "C", rid |-> <<r2, 0, 1>>]) @@
+  r2 :> (z1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r3 :> (z1 :> [st |-> "T", rid |-> <<r2, 0, 1>>]) )
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 1
+
+State 20: <CommitVote line 234, col 3 to line 241, col 68 of module QuorumVote>
+/\ phase = (r1 :> "inside" @@ r2 :> "entering" @@ r3 :> "idle")
+/\ done = (r1 :> {} @@ r2 :> {} @@ r3 :> {})
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> <<r1, 0, 1>> @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 3
+/\ curS = (r1 :> {z1} @@ r2 :> {z1} @@ r3 :> {})
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "release"],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2],
+  [rid |-> <<r1, 0, 1>>, type |-> "req", zs |-> {z1}],
+  [rid |-> <<r1, 0, 1>>, type |-> "enter", zs |-> {z1}],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r2],
+  [rid |-> <<r2, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r2, 0, 1>>, type |-> "vote", from |-> r3],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", zs |-> {z1}],
+  [rid |-> <<r2, 0, 1>>, type |-> "enter", zs |-> {z1}],
+  [rid |-> <<r2, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r2, 0, 1>>, type |-> "ack", from |-> r3] }
+/\ vote = ( r1 :> (z1 :> [st |-> "C", rid |-> <<r2, 0, 1>>]) @@
+  r2 :> (z1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r3 :> (z1 :> [st |-> "C", rid |-> <<r2, 0, 1>>]) )
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 1
+
+State 21: <EnterZone line 156, col 3 to line 160, col 71 of module QuorumVote>
+/\ phase = (r1 :> "inside" @@ r2 :> "inside" @@ r3 :> "idle")
+/\ done = (r1 :> {} @@ r2 :> {} @@ r3 :> {})
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> <<r1, 0, 1>> @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 3
+/\ curS = (r1 :> {z1} @@ r2 :> {z1} @@ r3 :> {})
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "release"],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2],
+  [rid |-> <<r1, 0, 1>>, type |-> "req", zs |-> {z1}],
+  [rid |-> <<r1, 0, 1>>, type |-> "enter", zs |-> {z1}],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r2],
+  [rid |-> <<r2, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r2, 0, 1>>, type |-> "vote", from |-> r3],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", zs |-> {z1}],
+  [rid |-> <<r2, 0, 1>>, type |-> "enter", zs |-> {z1}],
+  [rid |-> <<r2, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r2, 0, 1>>, type |-> "ack", from |-> r3] }
+/\ vote = ( r1 :> (z1 :> [st |-> "C", rid |-> <<r2, 0, 1>>]) @@
+  r2 :> (z1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r3 :> (z1 :> [st |-> "C", rid |-> <<r2, 0, 1>>]) )
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 1
+
+20729069 states generated, 1813987 distinct states found, 362098 states left on queue.
