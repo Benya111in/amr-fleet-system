@@ -10,11 +10,13 @@
   4. 종료 판정
      - 'local'  : 살아 있는 로봇 전원이 실행 중이거나 (K 라운드 안정 + 쥔 작업 없음) — 각 로봇의 국소 확정
      - 'global' : 살아 있는 로봇 전원이 K 라운드 안정 (전역 종료 오라클 — 실제 시스템에는 없다. 재현 전용)
-     - 'fixed'  : max_rounds 까지
+     - 'fixed'  : max_rounds 까지. 고장 실험은 이것을 쓴다 — 'local' 은 살아 있는 로봇이 모두 "할 일 끝"
+                  이라고 믿는 순간 멈추므로, 하트비트(H)가 이탈을 알아채기 전에 끝나 고착을 과대평가한다
 
 지표 (연구 계산과 같은 정의)
 - dup        : 같은 작업을 쥔 로봇 수 − 1 의 합 (local 모드는 실행을 시작한 로봇, 그 밖은 살아 있는 로봇의 x)
-- unassigned : min(작업 수, 일할 수 있는 로봇 수) − 쥔 서로 다른 작업 수 (0 미만은 0)
+- unassigned : min(작업 수, 일할 수 있는 로봇 수) − 쥔 서로 다른 작업 수 (0 미만은 0).
+               일할 수 있는 로봇 = 살아 있고 건강한 로봇 + 실행을 시작한 뒤 이탈·건강 저하된 로봇
 - stuck      : 아무도 쥐지 않았는데 살아 있는 로봇의 표에서 죽은 로봇이 승자인 작업 수 (고착)
 """
 
@@ -67,6 +69,21 @@ class RunResult:
     commit_round: Dict[str, int]           # 로봇 → 실행 시작 라운드
     invalidations: int
     lock_denied: int
+    dropped: Dict[str, Tuple[int, Optional[str]]] = dataclasses.field(default_factory=dict)
+    unhealthy: List[str] = dataclasses.field(default_factory=list)
+
+    def recovery_rounds(self, robot_id: str) -> Optional[int]:
+        """
+        이탈한 로봇이 쥐고 있던 작업을 다른 로봇이 실행 시작하기까지 걸린 라운드.
+
+        이탈 때 쥔 작업이 없었으면 0, 끝까지 아무도 이어받지 못했으면 None.
+        """
+        rnd, task = self.dropped.get(robot_id, (None, None))
+        if rnd is None or task is None:
+            return 0 if rnd is not None else None
+        others = [r for r in self.holders.get(task, []) if r != robot_id]
+        starts = [self.commit_round[r] for r in others if r in self.commit_round]
+        return min(starts) - rnd if starts else None
 
     @property
     def clean(self) -> bool:
@@ -101,10 +118,11 @@ def run_case(cost: Sequence[Sequence[float]], robot_ids: Sequence[str], task_ids
     broadcasts = deliveries = 0
     wall = 0.0
     commit_round: Dict[str, int] = {}
+    dropped: Dict[str, Tuple[int, Optional[str]]] = {}
     recv_changed = [False] * len(ids)
     rnd = 0
     for rnd in range(1, sim.max_rounds + 1):
-        _apply_dropouts(kills, rnd, ids, agents, alive)
+        _apply_dropouts(kills, rnd, ids, agents, alive, dropped)
         for r, rid, ok in events:
             if r == rnd:
                 agents[ids.index(rid)].set_localization_healthy(ok, rnd)
@@ -147,12 +165,15 @@ def run_case(cost: Sequence[Sequence[float]], robot_ids: Sequence[str], task_ids
             if all(ag.executing is not None or (ag.stable >= k_stable and ag.assigned is None)
                    for ag in live):
                 break
-    return _summarize(agents, ids, task_ids, alive, rnd, broadcasts, deliveries, wall,
-                      commit_round, agent_config.local_commit)
+    res = _summarize(agents, ids, task_ids, alive, rnd, broadcasts, deliveries, wall,
+                     commit_round, agent_config.local_commit)
+    res.dropped = dropped
+    return res
 
 
 def _apply_dropouts(kills: Dict[str, int], rnd: int, ids: List[str],
-                    agents: List[CbaaAgent], alive: List[bool]) -> None:
+                    agents: List[CbaaAgent], alive: List[bool],
+                    dropped: Dict[str, Tuple[int, Optional[str]]]) -> None:
     for who, r in list(kills.items()):
         if r != rnd:
             continue
@@ -162,6 +183,8 @@ def _apply_dropouts(kills: Dict[str, int], rnd: int, ids: List[str],
         else:
             victim = ids.index(who)
         alive[victim] = False
+        ag = agents[victim]
+        dropped[ids[victim]] = (rnd, ag.executing if ag.executing is not None else ag.assigned)
         del kills[who]
 
 
@@ -177,7 +200,10 @@ def _summarize(agents: List[CbaaAgent], ids: List[str], task_ids: Sequence[str],
     n_alive = sum(alive)
     n_dead_exec = sum(1 for i, ag in enumerate(agents)
                       if not alive[i] and local_commit and ag.executing is not None)
-    want = min(len(task_ids), n_alive + n_dead_exec)
+    # 위치추정 건강이 나쁜 채 끝난 로봇은 입찰할 수 없으므로 일할 수 있는 로봇에서 뺀다
+    n_sick_idle = sum(1 for i, ag in enumerate(agents)
+                      if alive[i] and not ag.healthy and ag.executing is None)
+    want = min(len(task_ids), n_alive - n_sick_idle + n_dead_exec)
     unassigned = max(0, want - len(holders))
     dead_ids = {ids[i] for i in range(len(ids)) if not alive[i]}
     stuck = 0
@@ -194,7 +220,8 @@ def _summarize(agents: List[CbaaAgent], ids: List[str], task_ids: Sequence[str],
         alive=[ids[i] for i in range(len(ids)) if alive[i]], dead=sorted(dead_ids),
         commit_round=commit_round,
         invalidations=sum(ag.n_invalidated for ag in agents),
-        lock_denied=sum(ag.n_lock_denied for ag in agents))
+        lock_denied=sum(ag.n_lock_denied for ag in agents),
+        unhealthy=[ids[i] for i, ag in enumerate(agents) if not ag.healthy])
 
 
 def assignment_indices(result: RunResult, robot_ids: Sequence[str],

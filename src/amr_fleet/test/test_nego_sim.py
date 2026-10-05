@@ -95,6 +95,33 @@ def test_holder_dropout_heartbeat_prevents_stuck(rule):
     assert stuck_hb == 0
 
 
+def test_dropout_recovery_waits_for_heartbeat_then_reassigns():
+    """보유 로봇 이탈: 이어받기는 H 가 지난 뒤에만 일어나고, 고정 지평선 안에서 끝난다."""
+    recs = []
+    for k in range(30):
+        case, cost = case_and_cost(3, 4000 + k)
+        cfg = AgentConfig(stable_rounds=3, heartbeat_timeout=5, liveness='indirect')
+        res = run(case, cost, cfg, PerLinkChannel(seed=k), SimConfig(termination='fixed',
+                                                                     max_rounds=40),
+                  task_lock=ExclusiveTaskLock(), dropouts={HOLDER: 3})
+        (victim, (rnd, task)), = res.dropped.items()
+        assert rnd == 3 and task is not None
+        rec = res.recovery_rounds(victim)
+        assert rec is not None and rec > 5                   # H 전에는 아무도 가져가지 않는다
+        assert res.stuck == 0 and res.unassigned == 0 and res.dup == 0
+        recs.append(rec)
+    assert max(recs) <= 5 + 1 + 3 + 3                        # H + 무효화 1 + 입찰·안정 K + 여유
+
+
+def test_sick_idle_robot_is_not_counted_as_capable():
+    case, cost = case_and_cost(5, 11)
+    cfg = AgentConfig(stable_rounds=2)
+    res = run(case, cost, cfg, PerLinkChannel(seed=0), task_lock=ExclusiveTaskLock(),
+              health_events=[(1, 'amr_01', False)])
+    assert res.unhealthy == ['amr_01'] and 'amr_01' not in res.commit_round
+    assert res.unassigned == 0 and len(res.holders) == 4    # 4 대가 5 건 중 4 건
+
+
 def test_dropout_right_after_commit_needs_strict_lock():
     """
     확정 직후(잠금 방송 전) 이탈: 낙관 모드는 H 뒤 다른 로봇이 같은 작업을 다시 확정해 중복이 난다.

@@ -43,6 +43,8 @@ from amr_fleet.negotiation.task_lock import ExclusiveTaskLock, OptimisticTaskLoc
 LOSSES = (0.0, 0.05, 0.1, 0.2, 0.3, 0.4)
 TASKS = (3, 5, 8)
 T_B_MS = 200.0                       # 보고서 54행 초기값: 방송 주기 sim 200 ms
+FAULT_ROUNDS = 120                   # 고장 실험 고정 지평선 (= sim 24 s)
+HEALTH_ROUND = 2
 
 
 @dataclasses.dataclass
@@ -117,26 +119,42 @@ def _one(cell: Cell, case, cost, k: int) -> dict:
     lock = ExclusiveTaskLock() if cell.lock == 'exclusive' else OptimisticTaskLock()
     sim = SimConfig(max_rounds=120, event_driven=cell.event)
     drops, health = None, None
+    if cell.fault != 'none':
+        # 고장 실험은 고정 지평선: 'local' 종료는 H 가 이탈을 알아채기 전에 멈출 수 있다
+        sim = SimConfig(max_rounds=FAULT_ROUNDS, termination='fixed', event_driven=cell.event)
     if cell.fault == 'holder_drop':
         drops = {HOLDER: 3}
     elif cell.fault in ('commit_die', 'holder_unhealthy'):
         base = run_case(cost, case.robot_ids, case.task_ids, cfg,
                         PerLinkChannel(seed=13 * k + 1, p_loss=cell.loss, burst_rho=cell.burst),
-                        sim, task_lock=ExclusiveTaskLock())
+                        SimConfig(max_rounds=120), task_lock=ExclusiveTaskLock())
         if cell.fault == 'commit_die' and base.commit_round:
             first = min(base.commit_round, key=lambda r: (base.commit_round[r], r))
             drops = {first: base.commit_round[first] + 1}
-            sim = SimConfig(max_rounds=60, termination='fixed', event_driven=cell.event)
         elif cell.fault == 'holder_unhealthy':
             victim = base.assignment.get(case.task_ids[0])
             if victim is not None:
-                health = [(2, victim, False)]
+                health = [(HEALTH_ROUND, victim, False)]
     res = run_case(cost, case.robot_ids, case.task_ids, cfg, ch, sim, task_lock=lock,
                    dropouts=drops, health_events=health)
+    recover = None
+    had_task = False
+    if cell.fault == 'holder_drop' and res.dropped:
+        (victim, (_, task)), = res.dropped.items()
+        had_task = task is not None
+        recover = res.recovery_rounds(victim) if had_task else None
+    elif cell.fault == 'holder_unhealthy' and health:
+        victim = health[0][1]
+        task = case.task_ids[0]
+        had_task = True
+        starts = [res.commit_round[r] for r in res.holders.get(task, [])
+                  if r != victim and r in res.commit_round]
+        recover = min(starts) - HEALTH_ROUND if starts else None
     out = {'dup': res.dup > 0, 'unassigned': res.unassigned > 0, 'stuck': res.stuck > 0,
            'rounds': res.rounds, 'broadcasts': res.broadcasts, 'wall': res.wall_ms,
            'inval': res.invalidations, 'denied': res.lock_denied,
-           'last_commit': max(res.commit_round.values()) if res.commit_round else res.rounds}
+           'last_commit': max(res.commit_round.values()) if res.commit_round else res.rounds,
+           'had_task': had_task, 'recover': recover}
     if cell.fault == 'none' and res.clean:
         a = assignment_indices(res, case.robot_ids, case.task_ids)
         g = scenario.central_greedy(cost)
@@ -187,6 +205,14 @@ def summarize(cell: Cell, rows: List[dict], secs: float) -> dict:
     out['wall_ms_mean'] = statistics.mean(r['wall'] for r in rows)
     out['invalidations_mean'] = statistics.mean(r['inval'] for r in rows)
     out['lock_denied_mean'] = statistics.mean(r['denied'] for r in rows)
+    with_task = [r for r in rows if r['had_task']]
+    out['fault_task_runs'] = len(with_task)
+    rec = [r['recover'] for r in with_task if r['recover'] is not None]
+    out['recovered_runs'] = len(rec)
+    if rec:
+        out['recover_mean'] = statistics.mean(rec)
+        out['recover_p95'] = pct(rec, 0.95)
+        out['recover_max'] = max(rec)
     clean = [r for r in rows if 'greedy_eq' in r]
     out['clean_runs'] = len(clean)
     if clean:
