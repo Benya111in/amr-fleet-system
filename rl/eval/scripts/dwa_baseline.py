@@ -177,8 +177,15 @@ def render(s08, exc, s07, root):
     w('## 5. 결과 CSV 로 옮긴 기준선')
     w('')
     w(f'`dwa_gz_s08_episodes.csv` — §2 의 {p["n"]} 시행을 결과 스키마 `{schema.SCHEMA_VERSION}` 로 옮겼다. '
-      '`scenario_seed` = 왕복 순번(0~29) 이고 **독립 시나리오 시드가 아니다** (§0-2). 학습 비교군의 '
-      '새 Gazebo 평가는 이 묶음이 아니라 PROTOCOL.md §3 의 새 시드 묶음과 짝짓는다.')
+      '`scenario_seed` = 왕복 순번(0~29), `episode` = §1 표의 실행 순번(0~'
+      f'{p["runs"] - 1}, 커밋이 바뀌어도 이어서 매긴다). 짝 키 (scenario_seed, episode) 가 '
+      f'{p["n"]} 시행 모두 다르다. `scenario_seed` 는 **독립 시나리오 시드가 아니다** (§0-2).')
+    w('')
+    w('확증 묶음은 PROTOCOL.md §3 의 새 시드 묶음(`gz_new600`)이다. 이 묶음은 사전 등록한 확증 대체안'
+      '(PROTOCOL.md §6.2 끝)에서만 짝으로 쓴다 — 그때 시험 비교군의 k 번째 실행이 이 묶음의 k 번째 실행과 '
+      '짝이 된다. 세 커밋의 런타임 `src/` 는 같다 (`git diff --stat cebd351 80874d3 -- src/` 가 비어 '
+      '있다). `80874d3` 의 08 하네스 변경은 실행 단위 판정만 바꿨고 시행 단위 열(`return_s`·'
+      '`return_first_s` 등)의 계산은 그대로다.')
     w('')
     return '\n'.join(lines) + '\n'
 

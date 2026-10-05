@@ -53,7 +53,7 @@
 
 | `scenario_set` | 내용 | 지금 돌릴 수 있나 | 쓰임 |
 | --- | --- | --- | --- |
-| `gz_s08_actor42` | 기존 시나리오 08 그대로 — A(−4,−5)↔B(4,−9) 왕복 30 회, actor 루프 seed 42 고정 (`gen_warehouse_world.py:63`). `scenario_seed` = 왕복 순번 0–29, `episode` = 같은 정책의 실행 순번 | **예** (r3 플러그인만 있으면) | 기준선 240 시행과 같은 조건 비교. **확증 대체안** (§6.2 끝) |
+| `gz_s08_actor42` | 기존 시나리오 08 그대로 — A(−4,−5)↔B(4,−9) 왕복 30 회, actor 루프 seed 42 고정 (`gen_warehouse_world.py:63`). `scenario_seed` = 왕복 순번 0–29, `episode` = 그 비교군의 실행 순번 0–7 (A 는 커밋 셋을 넘어 `S0a` 0 … `regG` 7 — 시험 비교군의 k 번째 실행이 A 의 k 번째 실행과 짝) | **예** (r3 플러그인만 있으면) | 기준선 240 시행과 같은 조건 비교. **확증 대체안** (§6.2 끝) |
 | `gz_s07` | 기존 시나리오 07 — 5 목표 정적 경로, CTE 직선·곡선 | 예 | CTE·주행 시간 비교 (실행 10 회 × 5 목표, `scenario_seed` = 목표 번호) |
 | `gz_new600` | **확증 묶음** — 08 형 동적 장애물 시나리오를 시드마다 새로 만든 600 개 (작업자 출발 위상·속도·교차 각, 지게차 진입 시각을 `scenario_seed` 로 생성) | **아니오** — 하네스·월드 생성기 변경 필요 (§9) | §6.2–6.5 확증 |
 | `gz_stress50` | 2D 에서 찾은 실패 영역의 시나리오 50 개 (CE·적대 탐색) | 아니오 (`gz_new600` 생성기 필요) | 조건부 실패율, 탐색적 (nominal 접촉률과 섞지 않는다) |
@@ -103,7 +103,8 @@ CP 95 % 상한은 독립을 가정하면 1.24 %, 실행 간 위상이 재현돼 
 ## 5. 결과 CSV 스키마 (`amr_rl_eval/episode/v1`)
 
 에피소드 한 행. r1(Isaac)·r2(2D)·r3(Gazebo 플러그인)과 Gazebo 하네스가 같은 열로 쓴다. 검사기는
-`amr_rl_eval.schema.read_csv` (형·필수·허용 값·`success` 인데 접촉 같은 모순·짝 키 중복을 행 번호와 함께 거부).
+`amr_rl_eval.schema.read_csv` (형·필수·허용 값·`success` 인데 접촉 같은 모순·키 중복을 행 번호나 겹친 키와 함께
+거부). 여러 파일을 합칠 때(`report.load`)도 같은 키 검사를 합본에 다시 한다.
 아래 표는 `schema.markdown_table()` 출력을 그대로 붙인 것이다 (다르면 `tests/test_schema.py` 가 깨진다).
 
 | 열 | 형 | 필수 | 뜻·단위 |
@@ -117,7 +118,7 @@ CP 95 % 상한은 독립을 가정하면 1.24 %, 실행 간 위상이 재현돼 
 | `scenario_id` | str | 예 | 시나리오·레벨 식별자 (CVaR 의 레벨 단위) |
 | `scenario_seed` | int | 예 | 에피소드 시나리오 시드 — **짝짓기 키** |
 | `difficulty` | str | 예 | 난도 층 (rliable task 단위) |
-| `episode` | int | 예 | 같은 (policy_id, scenario_seed) 안의 순번 (0 부터) |
+| `episode` | int | 예 | 같은 scenario_seed 의 반복 순번 (0 부터, 실행 순서) — 짝 키의 일부. 기준 A_dwa 는 커밋이 여럿이어도 비교군 안에서 겹치지 않게 매긴다 |
 | `run_tag` | str | 예 | 로그 태그·실행 디렉터리 |
 | `exec_index` | int |  | 같은 (arm, simulator, scenario_set) 안의 실행 순번 — 순차 감시 순서 (Gazebo 확증 평가에서는 필수, PROTOCOL.md §6.2) |
 | `commit` | str | 예 | git rev-parse HEAD (모르면 unknown — 판정표에 표시된다) |
@@ -142,6 +143,11 @@ CP 95 % 상한은 독립을 가정하면 1.24 %, 실행 간 위상이 재현돼 
 
 열 정의에서 판정에 걸리는 것:
 
+- **짝 키**는 (`scenario_set`, `scenario_id`, `scenario_seed`, `episode`) 이고 비교군·정책은 보지 않는다. 기준
+  비교군 `A_dwa` 안에서는 (`simulator`, `safety_node`) 마다 이 키가 **하나**여야 한다 — A 를 여러 커밋으로 나눠
+  돌렸으면 `episode` 를 커밋을 넘어 이어서 매긴다. 겹치면 `read_csv`·`report.load`·`report.pair_rows` 가
+  오류를 낸다 (어느 기준 행과 짝지을지 조용히 고르지 않는다). DWA 파라미터 변형처럼 같은 키를 다시 도는
+  기준 쪽 정책은 `A_dwa` 로 내지 않는다. 시험 비교군은 정책(학습 시드)마다 같은 키를 써도 된다.
 - `outcome` 은 계약 §8 의 종료와 같다 — `success` = 목표 xy ≤ 0.10 m 이고 |v| ≤ 0.05 m/s, 같은 스텝에 접촉이면
   `collision`. `timeout` = 시간 상한 min(120, 20 + 3·L) s, `stall` = 20 s 동안 0.3 m 미만 이동. 성공률 분석에서
   `timeout`·`stall`·`error` 는 모두 실패다.
@@ -190,7 +196,9 @@ CP 95 % 상한은 독립을 가정하면 1.24 %, 실행 간 위상이 재현돼 
 - 에피소드 독립을 가정한다. `gz_new600` 은 시드마다 시나리오가 달라 이 가정에 가깝다.
 - **확증 대체안 (사전 등록)**: `gz_new600` 생성기가 다음 물결 안에 준비되지 않으면 같은 규칙을 `gz_s08_actor42`
   (C 8 실행 × 30, 상한 600 = 20 실행) 에 적용한다. 이때 결론은 "seed 42 actor 구성에서, 시행이 독립이라면" 으로
-  **한정**해 적고, 같은 실행 안의 시행이 직렬로 의존한다는 점을 함께 적는다.
+  **한정**해 적고, 같은 실행 안의 시행이 직렬로 의존한다는 점을 함께 적는다. 판정표는
+  `scripts/evaluate.py --fallback-set` 으로 만든다 (`report.PREREG['confirm_set_fallback']`). 짝은 C 의 k 번째
+  실행 ↔ 기준선의 k 번째 실행 (`episode` = k, §3.1) 이다.
 
 ### 6.3 H2–H5 — 고정 순서
 
@@ -366,7 +374,8 @@ docker run --rm --network none -v <worktree>:/ws -v <logs>:<logs>:ro -w /ws --en
 python3 rl/eval/scripts/s08_to_csv.py --log-root <logs> --arm C_hybrid --policy-id <체크포인트> \
   --train-seed <시드> --out c_s08.csv <태그1> <태그2> ...
 # 결과 CSV → 판정표·그림
-python3 rl/eval/scripts/evaluate.py results/*.csv --out-dir <출력> [--primary-policy C_hybrid/s3/best]
+python3 rl/eval/scripts/evaluate.py results/*.csv --out-dir <출력> [--primary-policy C_hybrid/s3/best] \
+  [--fallback-set]   # 확증 대체안 gz_s08_actor42 (§6.2 끝) — 기준선 CSV 를 함께 넘긴다
 # 합성 데이터로 파이프라인 점검 (측정값 아님)
 python3 rl/eval/scripts/evaluate.py --synthetic --out-dir /tmp/eval_synth
 ```
@@ -377,4 +386,5 @@ python3 rl/eval/scripts/evaluate.py --synthetic --out-dir /tmp/eval_synth
 | --- | --- | --- |
 | 2026-10-06 | `5533457` | 초판 — 결과 0 건 상태에서 등록 |
 | 2026-10-06 | `390f758` | §11 에 08 로그 변환 도구 추가 — 기준·표본·순서 변경 없음, 결과 0 건 |
-| 2026-10-06 | (이 커밋) | §6.5 안전 경보 검정 Boschloo → Barnard (문턱 0 대 5 → 0 대 3). 경보는 확증 아님. 결과 0 건 상태 |
+| 2026-10-06 | `36ccf70` | §6.5 안전 경보 검정 Boschloo → Barnard (문턱 0 대 5 → 0 대 3). 경보는 확증 아님. 결과 0 건 상태 |
+| 2026-10-06 | (이 커밋) | 리뷰 반영 1 — 짝 키 정의를 고친다. `episode` = 같은 `scenario_seed` 의 반복 순번이고, 기준 `A_dwa` 는 커밋을 넘어 이어서 매긴다 (§3.1·§5). 기준선 CSV 를 다시 만들었다 (`episode` 열만 바뀜: `S0d`–`regG` 의 0,1,0,1,2 → 3–7). 이전 정의에서는 확증 대체안의 짝이 240 이 아니라 90 이었고 전부 `S0a`–`S0c` 와 맺어졌다. 기준 쪽 짝 키 중복은 이제 오류다. 기준·표본·순서 변경 없음, 결과 0 건 |

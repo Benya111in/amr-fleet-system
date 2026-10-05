@@ -70,8 +70,9 @@ def test_synthetic_pooling_and_provenance(tmp_path):
     assert by[('R2', 0)]['outcome'] == 'collision'
     assert by[('R2', 0)]['commit'] == 'unknown'
     assert by[('R1', 0)]['outcome'] == 'success'
-    # 같은 정책(커밋) 의 두 번째 실행은 episode 1 → 짝 키가 겹치지 않는다
-    assert by[('R3', 0)]['episode'] == 1
+    # episode = 비교군 안의 실행 순번 — R1 과 R3 은 같은 커밋이고 R2 는 커밋을 모르지만 셋이
+    # 이어서 0, 1, 2 를 받는다 (커밋마다 0 부터 다시 매기면 짝 키가 커밋 사이에서 겹친다)
+    assert {e['run_tag']: e['episode'] for e in eps} == {'R1': 0, 'R2': 1, 'R3': 2}
     path = tmp_path / 'eps.csv'
     schema.write_csv(str(path), eps)
     assert len(schema.read_csv(str(path))) == 12
@@ -129,13 +130,65 @@ def test_real_excluded_runs_have_contacts():
     assert exc['itest_fx2']['contacts'] == 1 and exc['itest_fx2']['head'] is None
 
 
+BASELINE_CSV = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            'baseline', 'dwa_gz_s08_episodes.csv')
+
+
 def test_committed_episode_csv_is_valid():
-    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    path = os.path.join(here, 'baseline', 'dwa_gz_s08_episodes.csv')
-    rows = schema.read_csv(path)
+    rows = schema.read_csv(BASELINE_CSV)
     assert len(rows) == 240
     assert sum(schema.collided(r) for r in rows) == 0
     assert {r['policy_id'] for r in rows} == {'dwa@cebd351', 'dwa@bcc2cca', 'dwa@80874d3'}
+    # 짝 키: episode = PRIMARY_08 순서의 실행 순번, 240 행이 모두 다른 키
+    assert {r['run_tag']: r['episode'] for r in rows} == {
+        t: i for i, t in enumerate(BL.PRIMARY_08)}
+    assert len({schema.pair_key(r) for r in rows}) == 240
+
+
+def _c_runs_8x30(tmp_path):
+    """시험 비교군 C 의 08 실행 8 개 × 30 시행 (합성 로그 → s08_runs_to_episodes, 실제 변환 경로)."""
+    root = str(tmp_path / 'c_logs')
+    tags = [f'C{k}' for k in range(8)]
+    for k, tag in enumerate(tags):
+        _mk_run(root, tag, [_trial(i, t=14.0 + 0.01 * k) for i in range(30)], head='feed123')
+    rows, _ = BL.s08_runs_to_episodes(root, tags, 'C_hybrid', 'C_hybrid/s3/best', 3)
+    return rows
+
+
+def test_fallback_set_pairs_all_240_with_committed_baseline(tmp_path):
+    """확증 대체안 gz_s08_actor42: 기준선 240 과 C 8×30 이 240 쌍, C 의 k 번째 실행 ↔ A 의 k 번째 실행."""
+    from collections import Counter
+
+    from amr_rl_eval import report as R
+    a_rows = schema.read_csv(BASELINE_CSV)
+    c_rows = _c_runs_8x30(tmp_path)
+    pairs = R.pair_rows(c_rows, a_rows)
+    assert len(pairs) == 240
+    assert Counter(a['run_tag'] for _, a in pairs) == {t: 30 for t in BL.PRIMARY_08}
+    assert all(a['run_tag'] == BL.PRIMARY_08[c['episode']] for c, a in pairs)
+    assert all(a['scenario_seed'] == c['scenario_seed'] for c, a in pairs)
+    pre = dict(R.PREREG, confirm_set=R.PREREG['confirm_set_fallback'])
+    res = R.confirmatory(a_rows + c_rows, prereg=pre)
+    assert res['pairs'] == 240 and res['alarm']['n'] == 240 and res['n'] == 240
+    md = R.render_markdown(R.evaluate(a_rows + c_rows, reps=50, fallback=True))
+    assert '`gz_s08_actor42`' in md and '확증 대체안' in md
+
+
+def test_old_per_commit_numbering_is_rejected(tmp_path):
+    """커밋마다 episode 를 0 부터 매긴 기준선(이 수정 전) — 짝짓기와 CSV 읽기가 둘 다 거부한다."""
+    from amr_rl_eval import report as R
+    a_rows = schema.read_csv(BASELINE_CSV)
+    per_commit, seen = [], {}
+    for r in a_rows:
+        k = seen.setdefault(r['policy_id'], {}).setdefault(r['run_tag'], len(seen[r['policy_id']]))
+        per_commit.append(dict(r, episode=k))
+    assert len({schema.pair_key(r) for r in per_commit}) == 90
+    with pytest.raises(ValueError, match='기준 짝 키 중복'):
+        R.pair_rows(_c_runs_8x30(tmp_path), per_commit)
+    path = tmp_path / 'old.csv'
+    schema.write_csv(str(path), per_commit)
+    with pytest.raises(ValueError, match='기준 A_dwa 짝 키 중복'):
+        schema.read_csv(str(path))
 
 
 def test_s08_runs_to_episodes_for_any_arm(tmp_path):

@@ -33,6 +33,7 @@ PREREG = {
     'secondary_arms': ('B_ppo', 'B_sac', 'D_param'),
     'confirm_simulator': 'gazebo',
     'confirm_set': 'gz_new600',
+    'confirm_set_fallback': 'gz_s08_actor42',     # §6.2 끝 확증 대체안 (결론 한정)
     'gate_collision_cp_upper': 0.005,
     'gate_success_delta': 0.02,
     'error_rate_max': 0.02,
@@ -56,10 +57,14 @@ def sprt_design(prereg=PREREG):
 
 
 def load(paths, strict=True):
-    """여러 결과 CSV 를 읽어 합친다."""
+    """여러 결과 CSV 를 읽어 합친다 — 파일 사이에서 겹치는 키도 거부한다 (strict)."""
     rows = []
     for p in paths:
         rows += schema.read_csv(p, strict=strict)
+    if strict:
+        dup = schema.key_problems(rows, '여러 파일 합본: ')
+        if dup:
+            raise ValueError('\n'.join(dup[:50]))
     return rows
 
 
@@ -188,13 +193,22 @@ def seed_aggregate(rows, simulator, reps=2000, seed=0, backend='auto', prereg=PR
 # ---------------------------------------------------------------- 3. 짝짓기
 
 def pair_rows(rows_t, rows_r):
-    """(scenario_set, scenario_id, scenario_seed, episode) 로 짝짓는다 → [(t, r), ...]."""
-    def key(r):
-        return (r['scenario_set'], r['scenario_id'], r['scenario_seed'], r['episode'])
+    """
+    (scenario_set, scenario_id, scenario_seed, episode) 로 짝짓는다 → [(t, r), ...].
+
+    기준 쪽(rows_r) 에서 키가 겹치면 어느 행을 쓸지 정할 수 없으므로 ValueError — 첫 행을 조용히
+    고르지 않는다. 시험 쪽은 정책이 여럿일 수 있어 겹쳐도 된다 (정책마다 같은 기준 행과 짝).
+    """
     ref = {}
     for r in rows_r:
-        ref.setdefault(key(r), r)
-    return [(t, ref[key(t)]) for t in rows_t if key(t) in ref]
+        k = schema.pair_key(r)
+        if k in ref:
+            a = ref[k]
+            raise ValueError(f'기준 짝 키 중복 {k}: {a["policy_id"]}/{a["run_tag"]} 와 '
+                             f'{r["policy_id"]}/{r["run_tag"]} — episode 를 비교군 안에서 겹치지 않게 '
+                             '매겨야 한다 (PROTOCOL.md §5)')
+        ref[k] = r
+    return [(t, ref[schema.pair_key(t)]) for t in rows_t if schema.pair_key(t) in ref]
 
 
 def safety_alarm(pairs, prereg=PREREG):
@@ -243,7 +257,9 @@ def confirmatory(rows, prereg=PREREG, primary_policy=None, arm=None):
                   scenario_set=prereg['confirm_set'], safety_node='on')
     t_rows = select(base, arm=arm)
     r_rows = select(base, arm=ref_arm)
-    res = {'arm': arm, 'reference': ref_arm, 'hypotheses': []}
+    res = {'arm': arm, 'reference': ref_arm, 'scenario_set': prereg['confirm_set'],
+           'fallback': prereg['confirm_set'] == prereg.get('confirm_set_fallback'),
+           'hypotheses': []}
     hyps = res['hypotheses']
     names = ['H1 접촉률 NI δ=2%p (Ville SPRT)', 'H2 성공률 NI δ=3%p (Tango 짝)',
              'H3 성공률 우월 (McNemar mid-p)', 'H4 복귀 시간 우월 (Wilcoxon)',
@@ -503,8 +519,16 @@ def descriptive_pairs(rows, simulator='gazebo', prereg=PREREG):
     return out
 
 
-def evaluate(rows, prereg=PREREG, primary_policy=None, reps=2000, backend='auto'):
-    """전체 판정 묶음."""
+def evaluate(rows, prereg=PREREG, primary_policy=None, reps=2000, backend='auto',
+             fallback=False):
+    """
+    전체 판정 묶음.
+
+    fallback=True 면 확증 묶음을 사전 등록한 대체안(`confirm_set_fallback`, PROTOCOL.md §6.2 끝)으로
+    바꾼다. 기준·순서는 그대로이고 판정표에 결론 한정 문장이 붙는다.
+    """
+    if fallback:
+        prereg = dict(prereg, confirm_set=prereg['confirm_set_fallback'])
     sims = sorted({r['simulator'] for r in rows})
     return {
         'n_rows': len(rows),
@@ -541,8 +565,12 @@ def render_markdown(res):
     w(f'행 {res["n_rows"]}. 판정 낱말: {MET} · {NOT_MET} · {UNDECIDABLE} · {UNMEASURED} · {SKIPPED}. '
       '사전 등록: rl/eval/PROTOCOL.md §6.')
     w('')
-    w(f'## 1. 확증 — {c["arm"]} 대 {c["reference"]} (Gazebo `{PREREG["confirm_set"]}`, 고정 순서)')
+    w(f'## 1. 확증 — {c["arm"]} 대 {c["reference"]} (Gazebo `{c["scenario_set"]}`, 고정 순서)')
     w('')
+    if c.get('fallback'):
+        w('**확증 대체안** (PROTOCOL.md §6.2 끝): 결론은 "seed 42 actor 구성에서, 시행이 독립이라면" 으로 '
+          '한정한다. 같은 실행 안의 시행은 직렬로 의존한다.')
+        w('')
     w(f'주 체크포인트: `{c.get("policy")}` · 유효 에피소드 {c.get("n", 0)} · 짝 {c.get("pairs", 0)}')
     w('')
     al = c.get('alarm')

@@ -111,7 +111,8 @@ def trials_to_episodes(tag, prov, trials, episode_index, exec_start=0, arm='A_dw
     """
     시나리오 08 시행 → 결과 CSV 행 (schema v1).
 
-    짝짓기 키 scenario_seed = 왕복 순번. exec_index = 실행 순서 (태그를 시간순으로 넘긴다는 전제).
+    짝짓기 키 scenario_seed = 왕복 순번, episode = 그 비교군 안의 실행 순번 (episode_index).
+    exec_index = 실행 순서 (태그를 시간순으로 넘긴다는 전제).
     """
     out = []
     head = prov.get('head') or 'unknown'
@@ -124,7 +125,9 @@ def trials_to_episodes(tag, prov, trials, episode_index, exec_start=0, arm='A_dw
             outcome = 'success'
         else:
             outcome = 'timeout'
-        out.append({
+        row = dict.fromkeys(schema.NAMES)          # 기록이 없는 선택 열은 None (빈 칸)
+        out.append(row)
+        row.update({
             'schema_version': schema.SCHEMA_VERSION, 'arm': arm,
             'policy_id': policy_id, 'train_seed': train_seed, 'simulator': 'gazebo',
             'scenario_set': 'gz_s08_actor42', 'scenario_id': SCEN_08,
@@ -151,15 +154,13 @@ def summarize_08(log_root=DEFAULT_LOG_ROOT, tags=PRIMARY_08):
     반환 dict: runs(실행별), pooled(묶음), episodes(schema 행), sources(파일·sha).
     """
     runs, episodes, pooled_trials, sources = [], [], [], []
-    per_policy = {}
-    for tag in tags:
+    for run_index, tag in enumerate(tags):
         prov, res = provenance(log_root, tag, SCEN_08)
         trials, path = load_trials_08(log_root, tag)
         sources.append((path, _sha256(path)))
-        key = prov.get('head') or 'unknown'
-        idx = per_policy.get(key, 0)
-        per_policy[key] = idx + 1
-        episodes += trials_to_episodes(tag, prov, trials, idx, len(episodes))
+        # episode = 비교군 A 안의 실행 순번 (커밋이 바뀌어도 이어서 매긴다). 커밋마다 0 부터 다시
+        # 매기면 짝 키 (scenario_seed, episode) 가 커밋 사이에서 겹쳐 짝이 240 이 아니라 90 이 된다.
+        episodes += trials_to_episodes(tag, prov, trials, run_index, len(episodes))
         pooled_trials += trials
         col = {k: [t[k] for t in trials] for k in trials[0]}
         runs.append(dict(prov, n=len(trials), reached=int(sum(col['reached'])),
@@ -248,7 +249,8 @@ def s08_runs_to_episodes(log_root, tags, arm, policy_id, train_seed=None):
     """
     임의 비교군의 시나리오 08 실행들 → 결과 CSV 행 (`gz_s08_actor42`, PROTOCOL.md §3.1).
 
-    tags 는 실행 순서(시간순)로 준다. 같은 policy_id 의 실행마다 episode 를 0, 1, … 로 매긴다.
+    tags 는 실행 순서(시간순)로 **한 번에 모두** 준다. 실행마다 episode = 실행 순번 0, 1, … 이고,
+    C 의 k 번째 실행은 기준선 A 의 k 번째 실행(PRIMARY_08[k]) 과 짝이 된다.
     반환: (행 리스트, 실행별 출처 리스트). 시작 시각이 시간순이 아니면 ValueError.
     """
     rows, provs = [], []

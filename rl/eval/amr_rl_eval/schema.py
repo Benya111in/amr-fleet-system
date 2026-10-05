@@ -37,7 +37,8 @@ COLUMNS = [
     ('scenario_id', str, True, '시나리오·레벨 식별자 (CVaR 의 레벨 단위)'),
     ('scenario_seed', int, True, '에피소드 시나리오 시드 — **짝짓기 키**'),
     ('difficulty', str, True, '난도 층 (rliable task 단위)'),
-    ('episode', int, True, '같은 (policy_id, scenario_seed) 안의 순번 (0 부터)'),
+    ('episode', int, True, '같은 scenario_seed 의 반복 순번 (0 부터, 실행 순서) — 짝 키의 일부. '
+                           '기준 A_dwa 는 커밋이 여럿이어도 비교군 안에서 겹치지 않게 매긴다'),
     ('run_tag', str, True, '로그 태그·실행 디렉터리'),
     ('exec_index', int, False, '같은 (arm, simulator, scenario_set) 안의 실행 순번 — 순차 감시 순서 '
                                '(Gazebo 확증 평가에서는 필수, PROTOCOL.md §6.2)'),
@@ -61,6 +62,9 @@ COLUMNS = [
     ('infer_ms_p95', float, False, '제어 주기당 추론 지연 95 분위 [ms]'),
     ('rtf', float, False, 'Gazebo 실시간 비율 (공유 부하 하 예비값)'),
 ]
+
+# 짝짓기 기준 비교군 — 이 비교군 안에서는 (simulator, safety_node) 마다 짝 키가 겹치면 안 된다
+REFERENCE_ARM = 'A_dwa'
 
 NAMES = [c[0] for c in COLUMNS]
 REQUIRED = [c[0] for c in COLUMNS if c[2]]
@@ -116,11 +120,46 @@ def validate_row(row):
     return out, errs
 
 
+def pair_key(row):
+    """짝짓기 키 (scenario_set, scenario_id, scenario_seed, episode) — 비교군·정책은 보지 않는다."""
+    return (row['scenario_set'], row['scenario_id'], row['scenario_seed'], row['episode'])
+
+
+def key_problems(rows, where=''):
+    """
+    행 사이 키 검사 → 문제 문자열 리스트 (없으면 빈 리스트).
+
+    (1) 한 정책 안에서 (policy_id, simulator, scenario_set, scenario_seed, episode, safety_node) 중복.
+    (2) 기준 비교군(REFERENCE_ARM) 안에서 (simulator, safety_node) 마다 짝 키 중복 — 겹치면 짝짓기가
+        어느 기준 행을 쓸지 정할 수 없다 (정책이 여럿이어도 기준 쪽은 하나여야 한다).
+    """
+    out = []
+    seen = {}
+    for r in rows:
+        k = (r['policy_id'], r['simulator'], r['scenario_set'], r['scenario_seed'], r['episode'],
+             r['safety_node'])
+        if k in seen:
+            out.append(f'{where}(policy_id, simulator, scenario_set, scenario_seed, episode, '
+                       f'safety_node) 중복: {k}')
+        seen[k] = r
+    ref = {}
+    for r in rows:
+        if r['arm'] != REFERENCE_ARM:
+            continue
+        k = (r['simulator'], r['safety_node']) + pair_key(r)
+        if k in ref:
+            a = ref[k]
+            out.append(f'{where}기준 {REFERENCE_ARM} 짝 키 중복: {k} — '
+                       f'{a["policy_id"]}/{a["run_tag"]} 와 {r["policy_id"]}/{r["run_tag"]}')
+        ref[k] = r
+    return out
+
+
 def read_csv(path, strict=True):
     """
     결과 CSV 읽기 → 정규화한 dict 리스트.
 
-    strict=True 면 오류가 하나라도 있으면 ValueError (행 번호와 함께).
+    strict=True 면 오류가 하나라도 있으면 ValueError (행 번호, 또는 겹친 키와 함께).
     """
     rows, problems = [], []
     with open(path, newline='', encoding='utf-8') as f:
@@ -130,11 +169,10 @@ def read_csv(path, strict=True):
             problems.extend(f'{path}:{i}: {e}' for e in errs)
     if strict and problems:
         raise ValueError('\n'.join(problems[:50]))
-    keys = [(r['policy_id'], r['simulator'], r['scenario_set'], r['scenario_seed'], r['episode'],
-             r['safety_node']) for r in rows]
-    if strict and len(set(keys)) != len(keys):
-        raise ValueError(f'{path}: (policy_id, simulator, scenario_set, scenario_seed, episode, '
-                         'safety_node) 중복')
+    if strict:
+        dup = key_problems(rows, f'{path}: ')
+        if dup:
+            raise ValueError('\n'.join(dup[:50]))
     return rows
 
 

@@ -4,10 +4,11 @@
 
 사용:
   python3 rl/eval/scripts/evaluate.py <결과.csv> [<결과.csv> ...] --out-dir <디렉터리>
-      [--primary-policy C_hybrid/s3/best] [--reps 2000] [--no-figures]
+      [--primary-policy C_hybrid/s3/best] [--reps 2000] [--no-figures] [--fallback-set]
   python3 rl/eval/scripts/evaluate.py --synthetic --out-dir /tmp/x   # 합성 데이터로 점검
 
 판정 기준은 amr_rl_eval.report.PREREG (= PROTOCOL.md §6) 이고 명령행으로 바꿀 수 없다.
+--fallback-set 은 사전 등록한 확증 대체안(gz_s08_actor42, PROTOCOL.md §6.2 끝)을 고르는 것뿐이다.
 """
 
 import argparse
@@ -46,6 +47,8 @@ def main(argv=None):
     ap.add_argument('--reps', type=int, default=2000)
     ap.add_argument('--synthetic', action='store_true')
     ap.add_argument('--no-figures', action='store_true')
+    ap.add_argument('--fallback-set', action='store_true',
+                    help='확증 묶음을 사전 등록 대체안 gz_s08_actor42 로 (PROTOCOL.md §6.2 끝)')
     a = ap.parse_args(argv)
     if a.synthetic:
         rows = synth.make_dataset(seed=0)
@@ -55,7 +58,8 @@ def main(argv=None):
         rows = report.load(a.csv)
     else:
         ap.error('결과 CSV 또는 --synthetic 이 필요하다')
-    res = report.evaluate(rows, primary_policy=a.primary_policy, reps=a.reps)
+    res = report.evaluate(rows, primary_policy=a.primary_policy, reps=a.reps,
+                          fallback=a.fallback_set)
     os.makedirs(a.out_dir, exist_ok=True)
     md = report.render_markdown(res)
     if a.synthetic:
