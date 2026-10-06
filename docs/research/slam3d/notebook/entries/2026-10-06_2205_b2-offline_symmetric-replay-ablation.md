@@ -228,7 +228,7 @@ replay.md §8 의 녹화 계획 (Gazebo 필요, 보너스 1 측정과 겹치지 
   (대칭 표 수치는 바뀌지 않는다).
 - 시험 [측정 `rv/lint_test.log`]: `amr_slam3d` 74 통과, `amr_evaluation` slam3d 89 통과 + 8 건너뜀(evo 없음 — 이전 실행에서 `/opt/evo` 로
   8 통과, 이번 변경은 evo 교차 확인과 무관), flake8(99) 0, ament_pep257 0. 바뀐 Python 4 파일에 colcon 과 같은 설정의
-   0 (, ). colcon 전체 시험은 다시 돌리지 않았다 (변경이 순수 Python 모듈·시험뿐 — 미측정).
+  `ament_flake8` 0 (`rv/ament_flake8.log`, `8463984`; 실행 id `B2off-test-rv-aflake8` 의 시각은 실행 직후 등록 시각). colcon 전체 시험은 다시 돌리지 않았다 (변경이 순수 Python 모듈·시험뿐 — 미측정).
 
 **비차단 반영**: H5 수치를 sym_final.json 에서 다시 읽어 고쳤다 — `rtabmap3d_noimu` 평균 0.77095 → **0.7709** cm (0.7710 은 반올림 오류),
 차 0.00128 → **0.0013** cm (0.0014 는 오류). 문턱 0.00042 보다 크므로 판정("다르다", 실용상 무의미)은 그대로다. `replay.md` §4 표와 이 항목을 고쳤다.
