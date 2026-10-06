@@ -1,6 +1,6 @@
 # 1차 물결 r3 — ONNX Nav2 제어기 플러그인: 지연, 운동학 스모크, 첫 Gazebo 스모크 실패와 재실행
 
-> **소급 기록** (작성 2026-10-06 19:41 KST, b1-backfill, 단계 A4). 원 작업: r3-controller, 2026-10-06 07:43–08:28 KST
+> **소급 기록** (작성 2026-10-06 19:13 KST 첫 커밋, b1-backfill, 단계 A4). 원 작업: r3-controller, 2026-10-06 07:43–08:28 KST
 > (빌드 07:43, ae0ef2c 08:03 … dc56d03 08:28). **학습된 정책 없이** 무작위 가중치 고정물과 손으로 만든 배관 정책(heuristic_b/c)으로만
 > 돌렸다 — RL 성능 근거가 아니다. 수치는 `summary.json`·`latency_bench_2.log`·`load.txt`·`HEAD.txt` 에서 다시 읽었다.
 
