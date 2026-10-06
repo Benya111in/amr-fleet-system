@@ -77,6 +77,28 @@
 - 실행 묶음: `/home/CAPYI_AI/env/cpu_slot.sh b2-offline` 한 번에 재생 컨테이너 4 개 이하 (재생 하나 ≈ 7 분),
   묶음마다 loadavg 를 남긴다 — 공유 부하 하 예비값. 원자료 `/home/CAPYI_AI/runs/b24/b2-offline/`.
 
+### 사전 등록 뒤 바꾼 것 (재생 결과를 보기 전, 22:20 기록)
+
+1. **오라클 IMU 토픽을 `imu/data` 에서 합성 토픽 `imu/data_gtorient` 로 바꿨다.** 파생 bag 을 만들며 재 보니 `imu/data` 의
+   방위는 정답이 아니라 **항등 쿼터니언**이다 — 55 m·4 회전 동안 yaw 가 끝까지 0, 항등과의 각 최대 0.0° [측정:
+   `/home/CAPYI_AI/runs/b24/b2-offline/derive/derive.json` `imu_data_orientation_vs_identity_max_deg`, `tmp/yawcheck.py`],
+   코드도 그렇다 (`src/amr_localization/src/imu_filter_node.cpp` 147–149행 `orientation.w = 1`, 공분산[0] = −1).
+   정답 방위는 Gazebo 원시 `imu/data_raw` 에만 있다. 그래서 오라클 행 입력은 `imu/data`(바이어스 보정 각속도·가속도)에 같은
+   스탬프 `imu/data_raw` 의 방위만 옮긴 토픽으로 만들었다 (각속도·가속도는 다른 행과 같다). 과제 지시·s3 문서(rtabmap.md §1.1
+   "imu/data 의 방위 필드는 Gazebo 정답")·리서치 노트의 "정답 방위 토픽 = /amr_01/imu/data" 는 **틀렸다** — 문서에서 고친다.
+   이 평평한 월드에서는 GT roll·pitch 가 정확히 0 이라(위 설정) 항등 방위도 roll·pitch 는 정답과 같다 — 그래서 `imu/data` 도
+   SLAM 입력에서 계속 막는다.
+2. 이름: 사전 등록 표의 `liosam_loop`·`liosam_noloop` (재계산 IMU) 은 코드에서 `liosam_loop_re`·`liosam_noloop_re` 다 —
+   원 bag·기록된 madgwick 을 쓰는 s3 행 이름과 섞이지 않게.
+3. **원 bag 재생 3 회를 더한다**: s3 의 `rtabmap3d`·`rtabmap2d`·`liosam_loop`·`liosam_noloop` (기록된 madgwick, 공백 포함) 을
+   그대로 3 회씩. s3 표 값 자체의 재현 잡음과, 기록 IMU ↔ 재계산 IMU 차이(같은 행 설정)를 직접 본다. 판정 규칙은 같다.
+4. 재생 동시 수: 첫 묶음(4 개)에서 컨테이너당 CPU 0.15–0.36 코어 [측정 `docker stats`] 라 나머지는 동시 13 + 6 개로 돈다.
+   동시 수가 처리 누락을 늘리는지는 묶음별 loadavg 와 누락 표로 본다.
+
+파생 bag 확인 [측정]: 입력 35 766 개 → 이득마다 출력 35 766 개, 잠금 단계 벽시계 2.5 s, 예상 밖 출력 0, 노드 파라미터
+`gain` 0.1 / 0.01 확인 (`ros2 param get`). 같은 명령을 두 번 돌린 파생 bag(v1 `_v1_derive_no_oracle`, v2 `derive`)의 재계산
+madgwick·점군·imu/data 가 바이트와 bag 시각까지 같다 (`derive/determinism_v1_v2.log`) — 잠금 단계 재계산은 결정적이다.
+
 ## 결과
 (실행 뒤 채움)
 
