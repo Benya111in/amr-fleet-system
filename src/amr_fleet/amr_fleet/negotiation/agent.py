@@ -237,6 +237,22 @@ class CbaaAgent:
         self.assigned = None
         self.stable = 0
 
+    def withdraw(self, now: float) -> Optional[str]:
+        """
+        협상을 멈출 때 (DEGRADED 를 벗어남): 실행을 시작하지 않은 낙찰과 그 잠금 요청을 놓는다.
+
+        놓지 않으면 잠금 요청이 백오프 재시도로 계속 살아 그 작업의 잠정 표를 붙든다 — 중앙 할당으로 그 작업을
+        받은 로봇의 확정을 막는 활성 결함. 실행 중인 작업은 그대로 둔다. 놓은 작업 ID 를 돌려준다.
+        """
+        if self.executing is not None or self.assigned is None:
+            return None
+        task = self.assigned
+        if self.table.get(task, NO_BID).winner == self.robot_id:
+            self.table[task] = NO_BID
+        self._drop_assigned(now)
+        self.stable = 0
+        return task
+
     def abort_execution(self, task: str, holder: Optional[str] = None) -> None:
         """
         잠정 실행권으로 이동하던 작업의 확정이 거부됐다 (다른 로봇이 확정했다). 그 작업을 놓는다.

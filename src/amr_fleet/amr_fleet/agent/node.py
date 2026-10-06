@@ -10,7 +10,8 @@ fleet_agent 노드 — 로봇마다 하나 (보너스 4 P3). 순수 코어(agent
 - Pub/Sub /fleet_p2p/neg     NegState        RELIABLE · KEEP_LAST 10 (DEGRADED 에서만 발행)
 - Sub /fleet/heartbeat       FleetHeartbeat  BEST_EFFORT
 - Sub /fleet/task_board      Task            RELIABLE · TRANSIENT_LOCAL · 256 (서버와 따로 오는 작업 경로)
-- Sub odometry/filtered_map (Odometry), localization/lost (Bool, latched), battery_state
+- Sub odometry/filtered_map (Odometry), localization/lost (Bool, latched), battery_state,
+      task_status (Task — 중앙 할당 작업이 끝나면 확정 전 잠금 요청을 놓는다)
 - Pub fleet_agent/state      AgentState      RELIABLE · TRANSIENT_LOCAL · 1 (바뀔 때 + 1 s 마다)
 - Pub fleet_agent/events     String(JSON)    RELIABLE · 100 (사건 — 시험 · 로그), event_log 파일에도 JSONL
 - Srv fleet_agent/zone_command (ZoneCommand) — BT 노드가 부른다
@@ -197,6 +198,7 @@ class FleetAgentNode(Node):
         self.create_subscription(Odometry, 'odometry/filtered_map', self._on_odom, 10)
         self.create_subscription(Bool, 'localization/lost', self._on_lost, LATCHED_QOS)
         self.create_subscription(BatteryState, 'battery_state', self._on_battery, 10)
+        self.create_subscription(Task, 'task_status', self._on_task_status, 10)
         self.create_service(ZoneCommand, 'fleet_agent/zone_command', self._on_command)
         self._lost = False
         self._battery: Optional[float] = None
@@ -385,6 +387,12 @@ class FleetAgentNode(Node):
         if self.core is not None and self.core.pose is not None:
             x, y, yaw = self.core.pose
             self.core.set_pose(x, y, yaw, healthy=not self._lost)
+
+    def _on_task_status(self, msg: Task) -> None:
+        if self.core is None or not msg.task_id:
+            return
+        self.core.on_task_status(msg.task_id, int(msg.status))
+        self._flush()
 
     def _on_battery(self, msg: BatteryState) -> None:
         self._battery = battery_percent(msg.percentage, fallback=self._battery or 100.0)

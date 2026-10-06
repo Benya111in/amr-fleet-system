@@ -40,6 +40,9 @@ from amr_fleet.distributed.wfg import (
 from amr_fleet.negotiation.agent import AgentConfig as NegConfig, CbaaAgent
 from amr_fleet.negotiation.bids import StateMessage
 
+STATUS_COMPLETED = 2  # amr_msgs/Task.STATUS_*
+STATUS_FAILED = 3
+
 CH_ZONE = 0          # amr_msgs/FleetVote.CHANNEL_ZONE
 CH_TASK = 1          # amr_msgs/FleetVote.CHANNEL_TASK
 CHANNELS = (CH_ZONE, CH_TASK)
@@ -396,6 +399,21 @@ class FleetAgentCore:
             return
         self.cbaa.receive(msg, float(self._round))
 
+    def on_task_status(self, task_id: str, status: int) -> None:
+        """
+        실행기의 작업 상태 (task_status). 중앙 할당 작업이 끝나거나 실패했는데 잠금이 아직 확정 전이면 놓는다.
+
+        확정(HELD)된 잠금은 끝나도 놓지 않는다 (픽업을 시작한 작업). status: amr_msgs/Task.STATUS_*.
+        """
+        if task_id != self.central_task or status not in (STATUS_COMPLETED, STATUS_FAILED):
+            return
+        if not self.lock.is_held(task_id):
+            self.lock.release(task_id, self.me, 0.0)
+        if status == STATUS_COMPLETED or self.lock.is_held(task_id):
+            self.done.add(task_id)
+        self.central_task = ''
+        self._note('central_done', task_id=task_id, status=int(status))
+
     def on_board(self, t: BoardTask) -> None:
         """작업 게시판 게시물 (같은 id 는 처음 것만 — TaskLedger 의 멱등 규칙과 같은 효과)."""
         self.board.setdefault(t.task_id, t)
@@ -497,6 +515,10 @@ class FleetAgentCore:
                        server=status)
             if mode == DEGRADED:
                 self._enter_degraded()
+            elif before == DEGRADED and self.cbaa is not None:
+                dropped = self.cbaa.withdraw(float(self._round or 0))
+                if dropped is not None:
+                    self._note('task_withdrawn', task_id=dropped, mode=mode)
         self._negotiate()
         self._run_executor()
         self._process_releases()

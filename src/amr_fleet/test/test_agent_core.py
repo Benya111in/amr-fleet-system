@@ -324,3 +324,50 @@ def test_disc_clear_of_polygon_geometry():
     assert disc_clear_of_polygon(2.5, 1.0, 0.36, sq)
     assert not disc_clear_of_polygon(2.2, 2.2, 0.36, sq)      # 꼭짓점 근처
     assert disc_clear_of_polygon(2.3, 2.3, 0.36, sq)
+
+
+# ---------------------------------------------------------------------- 활성: 남은 잠금 요청 정리
+def _lonely_core():
+    """동료 없이 코어 하나 — 다른 로봇의 비컨을 손으로 넣어 DEGRADED 로 만든다 (투표 과반은 못 모은다)."""
+    from amr_fleet.agent.core import Beacon, FleetAgentCore
+    from amr_fleet.distributed.store import MemoryStore
+    cfg = _cfgs()[0]
+    c = FleetAgentCore.boot(cfg, MemoryStore(), MemoryStore(), MemoryStore(), 1.0)
+    c.set_pose(0.0, 0.0, 0.0)
+    t = 1.0
+    for _ in range(100):                                   # 10 s: 서버 무소식 + 동료 넷이 DEAD 라고 말한다
+        t += 0.1
+        for i, r in enumerate(ROBOTS[1:]):
+            c.on_beacon(Beacon(r, 1, int(t * 10), t, server_dead=True), t)
+        c.tick(t)
+        c.drain()
+    return c, t
+
+
+def test_leaving_degraded_withdraws_pending_task_lock():
+    c, t = _lonely_core()
+    assert c.modes.mode == DEGRADED
+    c.on_board(BoardTask('t1', pickup_x=1.0))
+    for _ in range(20):                                    # CBAA 낙찰 → 잠금 요청 (과반 없음 → PENDING)
+        t += 0.1
+        c.tick(t)
+        c.drain()
+    assert c.lock.pursuing() == 't1' and c.cbaa.assigned == 't1'
+    c.on_heartbeat(1, '/fleet/fleet_manager_node', 1, 0, t)
+    t += 0.1
+    c.tick(t)
+    out = c.drain()
+    assert c.modes.mode == RESYNC
+    assert c.lock.pursuing() is None and c.cbaa.assigned is None
+    assert any(e['event'] == 'task_withdrawn' for e in out.events)
+    assert any(v.kind == 'ABANDON' for _, v in out.votes)
+
+
+def test_central_task_lock_request_is_dropped_when_executor_finishes():
+    c, t = _lonely_core()
+    c.on_heartbeat(1, '/fleet/fleet_manager_node', 1, 0, t)
+    c.modes.base = NORMAL                                  # 시험: 곧바로 NORMAL 로 (히스테리시스 생략)
+    ok, _ = c.check_assignment('c1', 1, '/fleet/fleet_manager_node', t)
+    assert ok and c.lock.pursuing() == 'c1'
+    c.on_task_status('c1', 3)                              # FAILED
+    assert c.lock.pursuing() is None and c.central_task == ''
