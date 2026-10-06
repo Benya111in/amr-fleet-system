@@ -12,7 +12,8 @@ bag·지도 파일 도구 — 파일럿 bag 메타데이터, 정답 궤적(TUM),
 match 는 "처리 스캔 누락 0" 판정이다: 입력 bag 의 header 스탬프마다 출력 bag 에 같은 스탬프가 있는지 본다.
 출력 bag 은 C++ 기록기(ros2 bag record)라 Python 측정 노드처럼 뒤처져 버리지 않는다.
 assemble 은 자세 파일(월드 프레임, 스탬프 = 스캔 스탬프)의 각 자세에 그 스탬프의 점군을 붙여 월드 점 지도를 만든다
-(rtabmap-export --cloud --scan 이 0 점을 내서 [측정 s3_pilot_a rows/rtabmap3d/export_cloud.log] 대신 쓴다).
+(rtabmap-export --cloud --scan 이 0 점을 내서 대신 쓴다 —
+[측정 s3_pilot_a rows/_v1_rtabmap3d/export_cloud.log]).
 점군 프레임 → base 변환은 bag 의 /tf_static 으로 계산한다.
 
 stats 는 header 가 첫 필드인 형만 header.stamp 로 주기를 낸다 (CDR 머리만 읽는다 — 점군을 역직렬화하지 않는다).

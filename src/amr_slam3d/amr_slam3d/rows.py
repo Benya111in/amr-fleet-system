@@ -45,6 +45,8 @@ class Row:
     # (RTAB-Map odom 은 reliable keep_last 1)가 부하 때 덮여 구독자마다 다른 수가 나온다 [측정: rtabmap3d
     # v2 재생 — 로그 1 785 줄, 측정 노드 1 607 개, C++ 기록기 1 586 개]
     log_processed: str = ''
+    # 행 런치 전에 같은 컨테이너에서 띄울 런치 (예: madgwick 을 재생 중에 다시 돌리는 변형 행)
+    pre_launch: Tuple[str, ...] = ()
     extra: Dict[str, str] = field(default_factory=dict)
 
 
@@ -89,6 +91,16 @@ ROWS: Dict[str, Row] = {
         map_topic=f'{_R}/map', processed=((f'{_R}/icp_odom', 'odom', 'reliable'),),
         fatal_patterns=RTABMAP_FATAL, note_patterns=RTABMAP_NOTE,
         log_processed=RTABMAP_PROCESSED),
+    # 변형: 기록된 imu/data_madgwick 대신 재생 중 imu/data(바이어스 보정, 공백 없음)에서 madgwick 을 다시 돌린다.
+    # 파일럿 bag 의 madgwick 출력에 0.14 s 공백(sim 9.48 s)이 있어 IMU 를 쓰는 행이 그 스캔을 버린 것을 가르기 위한 행
+    'rtabmap3d_imulive': Row(
+        name='rtabmap3d_imulive', image='amr-ai/slam:0.1',
+        launch='amr_slam3d rtabmap.launch.py dim:=3d',
+        play_topics=CLOCK + TF + (CLOUD, f'{_R}/imu/data'), input_topic=CLOUD, input_kind='cloud',
+        map_topic=f'{_R}/map', processed=((f'{_R}/icp_odom', 'odom', 'reliable'),),
+        fatal_patterns=RTABMAP_FATAL, note_patterns=RTABMAP_NOTE,
+        log_processed=RTABMAP_PROCESSED,
+        pre_launch=('amr_slam3d madgwick.launch.py robot:=amr_01',)),
     'slam_toolbox': Row(
         name='slam_toolbox', image='amr-ai/slam:0.1',
         launch='amr_slam3d slam_toolbox.launch.py',

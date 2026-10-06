@@ -52,6 +52,7 @@ print(f"POSE={spawn['x']!r},{spawn['y']!r},{spawn['yaw']!r}")
 print('ANCHORS=(' + ' '.join(shlex.quote(f'{p}|{c}|{v}') for p, c, v in r.anchors) + ')')
 print(f"INPUT={shlex.quote(r.input_topic)}")
 print(f"PROC_TOPICS={shlex.quote(' '.join(t for t, _, _ in r.processed))}")
+print('PRE_LAUNCH=(' + ' '.join(shlex.quote(p) for p in r.pre_launch) + ')')
 EOF
 )"
 
@@ -61,7 +62,7 @@ EOF
   echo "FASTRTPS_DEFAULT_PROFILES_FILE=$FASTRTPS_DEFAULT_PROFILES_FILE shm=$(df -h /dev/shm | tail -1)"
   echo "launch: $LAUNCH"
   echo "play_topics: $PLAY_TOPICS"
-  echo "spawn_pose: $POSE anchors: ${ANCHORS[*]}"
+  echo "spawn_pose: $POSE anchors: ${ANCHORS[*]} pre_launch: ${PRE_LAUNCH[*]}"
   echo "loadavg: $(cat /proc/loadavg)"
 } > "$OUT/env.txt"
 
@@ -85,6 +86,14 @@ for a in "${ANCHORS[@]}"; do
   fi
   python3 "$SCRIPTS/anchor_tf.py" "${args[@]}" > "$OUT/anchor_${child//\//_}.log" 2>&1 &
   PIDS+=($!)
+done
+
+i=0
+for pl in "${PRE_LAUNCH[@]}"; do
+  # shellcheck disable=SC2086
+  ros2 launch $pl > "$OUT/pre_launch_$i.log" 2>&1 &
+  PIDS+=($!)
+  i=$((i + 1))
 done
 
 # LIO-SAM save_map 은 $HOME + destination 을 지우고 다시 만든다 → HOME 을 출력 디렉터리로
@@ -156,7 +165,7 @@ for t in $PROC_TOPICS; do
 done
 
 case "$ROW" in
-  rtabmap3d|rtabmap2d)
+  rtabmap3d|rtabmap2d|rtabmap3d_*)
     if [ -f "$OUT/rtabmap.db" ]; then
       rtabmap-export --poses --poses_format 10 --opt 2 --output_dir "$OUT" --output rtabmap \
         "$OUT/rtabmap.db" > "$OUT/export_poses.log" 2>&1 || true
@@ -165,7 +174,7 @@ case "$ROW" in
       if [ -n "$TF" ] && [ -f "$OUT/rtabmap_poses.txt" ]; then
         python3 "$SCRIPTS/bag_tools.py" poses "$OUT/rtabmap_poses.txt" "$OUT/traj_final.tum" \
           --tf "$TF" > "$OUT/traj_final.log" 2>&1 || true
-        if [ "$ROW" = rtabmap3d ]; then
+        if [ "${ROW#rtabmap3d}" != "$ROW" ]; then
           python3 "$SCRIPTS/bag_tools.py" assemble "$BAG" --topic "$INPUT" \
             --poses "$OUT/traj_final.tum" --out "$OUT/cloud_world.ply" > "$OUT/cloud_world.log" 2>&1 || true
         fi

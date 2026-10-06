@@ -87,6 +87,10 @@ def test_rows_play_recorded_clock_and_never_oracle_topics():
     for r in rows.ROWS.values():
         assert '/clock' in r.play_topics
         for t in rows.ORACLE_TOPICS:
+            if t.endswith('imu/data') and r.pre_launch:
+                # imu/data 는 madgwick 입력으로만 튼다 — SLAM 노드는 madgwick 출력만 구독한다
+                assert any('madgwick' in p for p in r.pre_launch), r.name
+                continue
             assert t not in r.play_topics, (r.name, t)
         assert '/tf_static' in r.play_topics
         assert r.input_topic in r.play_topics
