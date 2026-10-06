@@ -144,6 +144,10 @@ Isaac 학습 env 에 넣을 batched torch 정본 φ (`amr_perception::SafetyGate
   `rl/isaac/tests/test_warehouse_paths.py::test_all_2d_obstacles_cross_lidar_plane` 으로 고정했다.
 - 실행 등록 누락 1 건(`A3a_pytest_lint_cf27dd6`, 19:37, 142 통과)을 늦게 등록했다 (시작 시각·부하는 기록하지 않아 근사·n/a 로 적었다).
 - 리뷰의 독립 seed 9090 교차 시험 (4 938 400 비교, 불일치 0, 연속 최대 3.9e-12) 은 리뷰 원자료 `review/xcheck_s9090/` 에 있다.
+- 리뷰 권고 "env 결선·지표를 시험이 지키지 않는다" (결선 변이 E1·E3·E4·E5 생존) 와 "C++ 소형 교차 시험이 skip 될 수 있다" (G3·G4 는
+  그 시험만 잡음) 는 별도 항목 A3d (`2026-10-06_2129_b1-isaac-phi_env-wiring-check.md`) 에서 사전 등록 후 다뤘다 — CPU 시험 추가,
+  `AMR_ISAAC_REQUIRE_CPP=1`, Isaac 안 기록 + C++ 재생 대조 (불일치 0), 변이 8 개 모두 검출. 가지치기의 실제 주행 효과(틱의 약 20 %,
+  최대 0.44 m)도 거기서 쟀다.
 
 ## 해석
 

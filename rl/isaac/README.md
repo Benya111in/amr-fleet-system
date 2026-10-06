@@ -17,13 +17,13 @@
 | `amr_isaac/env_math.py` | env 의 순수 함수 — 풋프린트 분리축 충돌 `footprint_hits`, safety_lite 접근 거리 `approach_distance`, 원호 적분 `integrate_pose`, 서브스텝 이동·접촉 `move_and_collide`, 경로 길이 필터 `select_paths_by_length`, 보상 판 `reward_spec_for`, 에피소드 기록 `EpisodeLog`, 정본 φ 결선 `CanonicalPhi` | 아니오 |
 | `amr_isaac/safety_gate_torch.py` | **정본 safety φ** — C++ `amr_perception::SafetyGate` 상태기계 전체의 배치 torch 이식 (A3, 아래 「정본 safety φ」) | 아니오 |
 | `amr_isaac/eval_metrics.py` | 층위 성공 지표·목표 직전 정지 진단·dwell·목표 여유 기하 (평가·분석이 쓴다) | 아니오 |
-| `tools/phi_crosscheck/` | C++ 원본 SafetyGate 와 torch 이식의 교차 시험 (`crosscheck.sh`, `gate_runner.cpp`, `crosscheck.py`) 과 변이 검사 (`mutate.py`) | 아니오 |
+| `tools/phi_crosscheck/` | C++ 원본 SafetyGate 와 torch 이식의 교차 시험 (`crosscheck.sh`, `gate_runner.cpp`, `crosscheck.py`) 과 변이 검사 (`mutate.py`), env 안 교차 시험 재생 (`replay_env.{sh,py}` — `record_phi_wiring.py` 기록을 불변식 검사·C++ 재생) 과 결선 변이 (`mutate_wiring.py`) | 아니오 |
 | `amr_isaac/env_cfg.py`, `env.py`, `tasks.py` | `DirectRLEnv` — `AMR-Isaac-Nav-B-v0` (학습), `AMR-Isaac-Nav-B-Eval-v0` (held-out 경로·명목 동역학) | 예 |
 | `amr_isaac/agents/rsl_rl_ppo_cfg.py` | rsl_rl PPO 설정 (γ 0.995, λ 0.97, rollout 64) | 예 |
 | `amr_isaac/expert.py` | BC 예열용 특권 정보 전문가 (경로 순수 추종) | 아니오 |
 | `amr_isaac/policy_export.py` | rsl_rl state dict → 계약형 `PolicyB` → ONNX (`onnx_io.md`) | 아니오 |
-| `scripts/` | `build_assets` · `smoke_env` · `check_golden_in_sim` · `train_ppo` (`--phi`) · `eval_unbiased`(판정용, `--phi`·`--dwell_k`·층위 지표·진단) · `eval_policy`(1차 물결, 편향 있음) · `export_onnx` · `plot_curves` · `gpu_monitor.sh` · `analyze_rejudge`(A3b 분석) | 일부 |
-| `tests/` | golden 32 대조(직접·env 캐시 두 길), 기준 구현과 무작위 차분(v1.2.0·v1.1.0), v1.2.0 보상 손 사례(`test_reward_v12.py`), 창고 변환기·경로 풀, env 순수 함수(`test_env_math.py`), ONNX 메타데이터, 정본 φ (`test_safety_gate_torch.py` — 설정 원문 대조·원본 손 사례·창 통계 순차 기준판·작은 C++ 교차 시험·env 결선·평가 지표) | 아니오 |
+| `scripts/` | `build_assets` · `smoke_env` · `check_golden_in_sim` · `train_ppo` (`--phi`) · `eval_unbiased`(판정용, `--phi`·`--dwell_k`·층위 지표·진단) · `eval_policy`(1차 물결, 편향 있음) · `export_onnx` · `plot_curves` · `gpu_monitor.sh` · `analyze_rejudge`(A3b 분석) · `record_phi_wiring`(정본 φ 결선 기록, A3d) | 일부 |
+| `tests/` | golden 32 대조(직접·env 캐시 두 길), 기준 구현과 무작위 차분(v1.2.0·v1.1.0), v1.2.0 보상 손 사례(`test_reward_v12.py`), 창고 변환기·경로 풀, env 순수 함수(`test_env_math.py`), ONNX 메타데이터, 정본 φ (`test_safety_gate_torch.py` — 설정 원문 대조·원본 손 사례(해제 거리·지연 보정 포함)·창 통계 순차 기준판·작은 C++ 교차 시험(`AMR_ISAAC_REQUIRE_CPP=1` 이면 필수)·env 결선(명세 게이트 순차 대조·리셋 = 새 게이트)·평가 지표(`nav2_update`)·결선 변이 대상) | 아니오 |
 | `run_isaac.sh` | Isaac 컨테이너 실행기 (`env/verify/verify_isaac.sh` 의 마운트·환경변수). `AMR_AI_ID`(기본 `r7-isaac12`)로 이름 `amr-ai-<id>-<태그>`·산출 루트 `/home/CAPYI_AI/runs/<id>` 를 정하고 컨테이너에 `AMR_ISAAC_RUNS` 로 넘긴다 | — |
 
 ## 실행
@@ -132,12 +132,15 @@ docker run --rm -v $WT:/ws -v $R:$R -w /ws amr-ai/rl:0.3 python3 rl/isaac/script
   (창의 k 번째 값은 중심 값보다 작을 수 있다) — 배포 safety_node 의 D·가드 거리는 헤더 정의("창 통계의 최소")보다 크게
   나올 수 있고 빔 순서에 따라 다르다 [측정: 탐침 300 개 중 20 개, 교차 시험의 **합성 무작위 폐루프 시나리오** 틱의 5.5 % —
 실제 주행 빈도가 아니다; 리뷰의 독립 C++ 탐침은 합성 스캔 꼴 배열 2 000 개 중 500 개에서 원본 값이 더 크고 차이 중앙 3.5 mm ·
-p90 11 mm · 최대 34.5 mm]. 이식은 **원본 동작 그대로**다
+p90 11 mm · 최대 34.5 mm; **Isaac 실제 주행** (A3d 그림자 게이트, 960 000 틱): LiDAR D 가 유한한 틱의 약 20 % 에서 원본 D 가
+가지치기 없는 값보다 크고 (중앙 5 mm · p90 17 mm · 최대 0.44 m), 가지치기 없는 정의라면 STOP 래치였을 틱이 318 개 (반대 0)]. 이식은
+**원본 동작 그대로**다
   (safety_node 가 실제로 적용하는 φ 가 목표라서). 결함 판단·수정은 amr_perception 소유자 몫이다.
 - **Isaac 의 입력 모델은 safety_node 의 입력과 같지 않다 — 낙관 쪽이다.** 깊이 점군은 "신선하고 비어 있음" 으로 둔다 (Isaac 에
   깊이 카메라가 없다 — 창고 2D 장애물 상자 129 개가 모두 LiDAR 평면(지면 +0.20 m)을 지나 LiDAR 가 못 보는 낮은 물체는 없다
   [시험 `test_warehouse_paths.py::test_all_2d_obstacles_cross_lidar_plane`]. 그러나 배포 점군 채널은 같은 면에서 3 번째로 가까운 점을
-  쓰므로 LiDAR 창 통계(60 % 순위)보다 일찍 멈출 수 있고, 이것은 목표 직전 정지에 직접 영향을 준다: **미측정**). 트랙(TTC)·도킹 예외는 정적 지도라 넣지 않는다. E-stop 래치·
+  쓰므로 LiDAR 창 통계(60 % 순위)보다 일찍 멈출 수 있고, 이것은 목표 직전 정지에 직접 영향을 준다: **미측정** — Gazebo 하네스가
+  safety_node `/diagnostics` 의 `lidar_distance_m`·`depth_distance_m` 을 기록해 재도록 요청했다). 트랙(TTC)·도킹 예외는 정적 지도라 넣지 않는다. E-stop 래치·
   센서 생존 감시는 옮기지 않았다.
 - **정본 φ 로 바꿔도 충돌은 줄지 않았다** (r7 정책, 3–15 m 합 3 → 5 건 / 6144), 그리고 근접 정지도 남는다 (아래).
 - 계산이 무겁다: 평가 결정 스텝당 약 99 ms 대 근사 23 ms (2048 env, 공유 부하 하 예비값).
@@ -152,6 +155,19 @@ perception.yaml·safety_gate.hpp·safety_node.cpp 원문과 대조 — hpp 기�
 **env 결선** (`env_math.CanonicalPhi`): 결정 스텝마다 새 스캔(촬영 시각 = 결정 시작, base_link 빔 = 원점 + r(cos, sin),
 무효 빔 NaN), 50 Hz 서브스텝마다 측정(플랜트 속도) → 명령(프로파일러 출력) → 판정. STOP 래치는 관측의 근접 정지 비트로 나간다.
 리셋 = 새 게이트. lite 길은 그대로 남아 r7 평가를 비트 단위로 재현한다 [측정: 6 평가 × 14 배열].
+
+**env 안 교차 시험과 결선 변이 (A3d)** [측정, 노트 `2026-10-06_2129_b1-isaac-phi_env-wiring-check.md`]: Isaac 폐루프(DR 켬, A3c 정책 확률
+행동 + 무작위 행동)에서 게이트 입력의 독립 출처(env.scan, 플랜트 속도, `_pairs`, 리셋, 관측 비트)를 기록하고, 에피소드마다 새 C++
+SafetyGate 에 명세대로 재구성한 입력을 재생 — 960 000 틱 · 875 에피소드 · 1 920 만 비교에서 **불일치 0**, 결선 불변식(스캔 시각 = 0.1·k,
+측정 = 플랜트 속도, 리셋 = 새 게이트, 관측 래치 비트 = 게이트 래치) **위반 0**. 결선 변이 E1–E4 는 이 검사가, E2–E5·G3·G4 는 CPU 시험
+(g++ 없이)이 잡는다. pytest 는 `AMR_ISAAC_REQUIRE_CPP=1` 로 돌리면 g++·Eigen 이 없을 때 C++ 교차 시험이 skip 대신 실패한다.
+변이 계수 때 메타 시험 `test_wiring_mutants_target_current_source` (어떤 변이든 실패) 는 뺀다.
+
+```bash
+# 결선 검사 (B 단계 학습 스냅숏마다 한 번, 약 2 분): Isaac 기록 → amr-ai/rl:0.3 에서 C++ 재생 대조 (rc 0 = 통과)
+rl/isaac/run_isaac.sh wire rl/isaac/scripts/record_phi_wiring.py --policy <policy.pt> --num_envs 64 --steps 600 --out <dir>
+docker run --rm -v $WT:/ws:ro -v <dir>:<dir> -w /ws amr-ai/rl:0.3 bash -lc 'rl/isaac/tools/phi_crosscheck/replay_env.sh <dir> --out <dir>/replay.json'
+```
 
 **교차 시험** (`tools/phi_crosscheck/crosscheck.sh`, C++ 원본을 ROS 없이 직접 빌드) [측정]: 독립 seed 두 묶음 4 938 400 · 5 938 400
 비교 — 점별 접근 거리 20 만, 창 통계 2 만 + k 번째 1 만, 경계 시나리오 1 794 × 설정 3 종(직진 = 사칙연산이라 문턱 ±ulp 를 비트 단위로),
