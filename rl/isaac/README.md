@@ -289,7 +289,7 @@ isaac pid_d${D}_s$S rl/isaac/scripts/train_ppo.py --num_envs 2048 --iterations 1
     --seed $S --reward 1.2.0 --path_len 3:15 --phi canonical --constraint intervention --cost_budget $D \
     --pid 0.5,0.05,0.1 --lambda_max 10 --pid_d_delay 5 --pid_ema 0.0,0.5 --root $R/train
 #    선택지 (기본 꺼짐, 쓰면 사전 등록에 적는다): --pid_err_clip=-1,1 (음수로 시작하는 값은 반드시 '=' 꼴 — 띄어 쓰면
-#    argparse 가 옵션으로 읽어 실패한다), --constraint_start N (처음 N 반복 λ = 0). 근거는 아래 「PID 스모크」.
+#    argparse 가 옵션으로 읽어 실패한다), --constraint_start N (처음 N 반복 λ = 0). 근거는 아래 「8. 스모크 요약」.
 # B3 SAC (env-step = PPO it160 과 같은 저울 20 971 520, §8.3)
 isaac sac_s$S rl/isaac/scripts/train_sac.py --num_envs 1024 --env_steps 20971520 --run B3_sac_s$S --seed $S \
     --phi canonical --path_len 3:15 --dr on --save_at_env_steps 10e6 --root $R/train
@@ -345,7 +345,22 @@ docker run --rm -v $WT:/workspace/amr --entrypoint bash amr-ai/isaaclab:2.3.2 -l
 ```
 - 시험 파일 머리에서 `pytest.importorskip` 를 쓰지 않는다 — amr-ai/rl:0.3 의 pytest 에서 (원인 미확인) 함께 모은 **다른 파일의 시험까지
   전부 건너뛰었다** (`1 skipped`). 모듈 수준 건너뛰기는 `pytestmark = pytest.mark.skipif(...)` 로.
-- 변이 검사: `tools/mutate_binfra.py` (대조 사본 통과가 먼저, cpu 27 · isaac 5 변이).
+- 변이 검사: `tools/mutate_binfra.py` (대조 사본 통과가 먼저, cpu 29 · isaac 5 변이 — cpu 28 잡힘, 남은 E3 은 동치).
+- SAC 스크립트는 `tests/test_train_sac_dry.py` 가 가짜 env 로 CPU 에서 끝까지 돈다 (GPU 슬롯을 쓰기 전에 스크립트 결함을 잡는다).
+
+### 8. 스모크 요약 (노트 `…_2358_b1-binfra_infra-smokes.md`, 1 시드·짧은 예산 — 성능 주장이 아니다)
+
+| 기능 | 결과 [측정, 공유 부하 하 예비값] |
+|---|---|
+| DR 끔 | `dr_snapshot.json` 모든 축 = 명목값 (통과) |
+| PID λ 반응 (40 반복) | d 0.2: λ 반복 4 에 상한 10, 끝 9.15, 롤아웃 성공 0.9 % / d 200: λ 0 그대로, 96.4 % — **작은 예산에서 적분 포화** (아래 선택지) |
+| 학습 env 동치 | 옛 코드 `f007e2e` = 이 브랜치 코드 (3 반복 정책 비트 동일) |
+| SAC (10M) | 롤아웃 90 % 를 2.03M 에 넘음 (PPO 5.24M), 마지막 5 chunk 0.994 — 그러나 정체 붕괴가 주기적으로 온다 (2.4M 뒤 chunk 26/117 이 < 0.9). 결정론 main_3_15 0.941 (목표 0.107 m 앞 "정책 정지" 116/117) |
+| ONNX | PID 둘 fails 0. SAC 는 입출력 통과, **ORT 대 torch 2–3e-5 로 기존 1e-5 기준 미달** (중간값이 커서 float32 누적 오차 — 기준은 그대로 두었다) |
+| 집합·교란 평가 | 배선 규칙 통과. 교란 묶음은 A3c 에게 대부분 천장 (12 단일 축 중 9 개 ≥ 0.990), 떨어진 것은 구동 이득·가속 한계 |
+
+PID 선택지 (기본 꺼짐, Isaac 미측정): `--pid_err_clip=-1,1` — 정규화 오차가 아래로 −1 에 막히고 위로는 수백까지 가서 생기는 비대칭 적분 포화를 막는다
+(1차 물결 쌍대 상승은 [−1, 5] 로 잘랐다). `--constraint_start N` — 처음 N 반복은 λ = 0.
 
 ## 전이 한 번 (Δt = 0.1 s = 물리 0.02 s × 5)
 
