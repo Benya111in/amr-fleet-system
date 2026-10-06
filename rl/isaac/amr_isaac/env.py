@@ -1,11 +1,15 @@
 """
-Isaac Lab DirectRLEnv — 창고 AMR 내비게이션, 계약 v1.1.0 비교군 B (연속 가속도 행동).
+Isaac Lab DirectRLEnv — 창고 AMR 내비게이션, 계약 v1.2.0 비교군 B (연속 가속도 행동).
 
 전이 한 번 (Δt = 0.1 s = 물리 0.02 s × 5):
   행동 raw → u = tanh(raw) → integrate_b (ray 클램프) → 명령 램프 (v_cmd → v_cmd', 주기 안 선형)
   → [50 Hz × 5] 프로파일러 기준 경로 → safety_lite φ (D = 근사 접근 거리) → 플랜트 (순수 지연 + 1 차 지연 +
   가속 한계, DR) → 정확 원호 적분 → 풋프린트 vs 정적 상자 충돌 판정 (접촉 = 그 자리 정지·종단)
   → Warp RayCaster 2D LiDAR (720 빔) → 계약 관측·보상·비용 (contract_torch).
+
+보상 판은 cfg.reward_version ('1.2.0' = 계약 기본, '1.1.0' = 대조) 으로 고른다. 전이 전 거리 d(s) =
+max(d_arc, 목표 직선거리) 는 관측과 같은 자세에서 캐시해 두고(build_obs → observe_with_cache) 다음 전이의
+Φ(s)·진행 효용에 쓴다 — step_outcome 시점에는 버퍼의 자세가 이미 전이 뒤라 다시 계산할 수 없다.
 
 계약과 다르게(또는 계약이 정하지 않아 여기서) 정한 것은 rl/isaac/README.md 「계약과의 차이」에 적는다.
 """
@@ -25,7 +29,8 @@ from . import contract_torch as CT
 from .assets import load_geometry, load_pool
 from .contract_torch import C, F64
 from .env_cfg import AmrNavEnvCfg, BODY_Z, WAREHOUSE_PRIM
-from .env_math import approach_distance, move_and_collide
+from .env_math import (approach_distance, EpisodeLog, move_and_collide, reward_spec_for,
+                       select_paths_by_length)
 
 PHYS_DT = C.PROFILER_DT
 N_SUB = int(round(C.DT / PHYS_DT))       # 5
@@ -43,12 +48,16 @@ class AmrNavEnv(DirectRLEnv):
         super().__init__(cfg, render_mode, **kwargs)
         N, dev = self.num_envs, self.device
         self.obb = torch.tensor(self._geo['obb'], dtype=F64, device=dev)
+        self.reward_spec = reward_spec_for(cfg.reward_version)
         pool = load_pool(seed=cfg.path_pool_seed, out_dir=cfg.assets_dir)
-        self.pool_pts = torch.tensor(pool['pts'], dtype=F64, device=dev)
-        self.pool_offs = torch.tensor(pool['offs'], dtype=torch.long, device=dev)
+        # 경로 길이 범위 (구조 파라미터 — 2D 2a 와 같은 3–15 m 로 학습·평가할 때)
+        p_pts, p_offs, p_len, self.pool_kept = select_paths_by_length(
+            pool['pts'], pool['offs'], pool['length'], cfg.path_len_min, cfg.path_len_max)
+        self.pool_pts = torch.tensor(p_pts, dtype=F64, device=dev)
+        self.pool_offs = torch.tensor(p_offs, dtype=torch.long, device=dev)
         self.pool_n = self.pool_offs[1:] - self.pool_offs[:-1]
         self.pool_size = int(self.pool_n.shape[0])
-        plen = torch.tensor(pool['length'], dtype=F64, device=dev)
+        plen = torch.tensor(p_len, dtype=F64, device=dev)
         self.pool_order = torch.argsort(plen)
         self.pool_len_sorted = plen[self.pool_order]
         self.curriculum_lmax = None      # 경로 길이 상한 커리큘럼 (None = 끔), 학습 스크립트가 바꾼다
@@ -76,7 +85,7 @@ class AmrNavEnv(DirectRLEnv):
         self.speed_limit = torch.full((N,), math.inf, dtype=F64, device=dev)
         self.in_dev = torch.zeros(N, dtype=torch.bool, device=dev)
         self.dev_peak, self.dev_t = z(), z()
-        self.d_arc = z()
+        self.d_prog = z()      # 전이 전 progress_distance 캐시 (observe_with_cache)
         self.stall_xy = torch.zeros(N, 2, dtype=F64, device=dev)
         self.stall_t = z()
         self.profiler = CT.ProfilerBatch(N, dev)
@@ -120,6 +129,7 @@ class AmrNavEnv(DirectRLEnv):
         self.stat_return_sum = torch.zeros((), dtype=F64, device=dev)
         self.stat_len_sum = torch.zeros((), dtype=F64, device=dev)
         self.stat_path_len_sum = torch.zeros((), dtype=F64, device=dev)
+        self.ep_log = EpisodeLog(N, C.N_COSTS, dev)
         W = cfg.stats_window
         self.win = torch.zeros(W, len(OUTCOMES), dtype=torch.float32, device=dev)
         self.win_ptr = torch.zeros((), dtype=torch.long, device=dev)
@@ -233,7 +243,8 @@ class AmrNavEnv(DirectRLEnv):
     def step_outcome(self):
         """이번 전이의 보상·비용·종료 — 경로·이탈·직전 행동은 전이 전, 자세·v_meas 는 전이 뒤 버퍼."""
         return CT.reward_step(self.contract_state(), self.pose, self.v_meas, self._a_exec,
-                              self._collided, self._pairs, self._pairs_n, d_arc_pre=self.d_arc)
+                              self._collided, self._pairs, self._pairs_n, d_pre=self.d_prog,
+                              spec=self.reward_spec)
 
     def _get_dones(self):
         out = self.step_outcome()
@@ -245,6 +256,7 @@ class AmrNavEnv(DirectRLEnv):
         self.w_cmd = self._w1.clone()
         self.ep_cost += out.cost
         self.ep_return += out.reward
+        self.ep_log.accumulate(self.v_meas, self.w_meas, out.e, out.d_goal_post)
         t = self.episode_length_buf.to(F64) * C.DT
         moved = torch.hypot(self.pose[:, 0] - self.stall_xy[:, 0],
                             self.pose[:, 1] - self.stall_xy[:, 1]) >= C.STALL_RADIUS
@@ -258,6 +270,10 @@ class AmrNavEnv(DirectRLEnv):
         res = torch.stack([out.success, out.terminated & ~out.success, over & ~terminated,
                            stalled & ~over & ~terminated], dim=1)
         self._record(done, res)
+        self.ep_log.finish(done, res, {
+            'return': self.ep_return, 'path_len': self.path_len, 'd_start': self.path_len,
+            'd_final': out.d_post, 'steps': self.episode_length_buf, 'cost': self.ep_cost,
+            'path_id': self.path_id})
         return terminated, time_out
 
     def _record(self, done, res):
@@ -336,6 +352,7 @@ class AmrNavEnv(DirectRLEnv):
         self.stall_xy[env_ids] = pts[:, 0]
         self.ep_cost[env_ids] = 0.0
         self.ep_return[env_ids] = 0.0
+        self.ep_log.reset(env_ids)
         self.profiler.reset(env_ids)
         self._sample_dr(env_ids)
         self._write_root_pose(env_ids)
@@ -420,9 +437,8 @@ class AmrNavEnv(DirectRLEnv):
                                        o[:, 1:2] + rr * torch.sin(ang)], dim=-1)
 
     def build_obs(self):
-        """현재 버퍼의 계약 관측 [N, 291] (Φ 캐시 d_arc 도 갱신)."""
-        obs, parts = CT.build_observation(self.contract_state(), return_parts=True)
-        self.d_arc = parts['d_arc']
+        """현재 버퍼의 계약 관측 [N, 291] (전이 전 거리 캐시 d_prog 도 갱신)."""
+        obs, self.d_prog = CT.observe_with_cache(self.contract_state(), self.reward_spec)
         return obs
 
     def inject_state(self, st, ids):

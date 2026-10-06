@@ -1,7 +1,7 @@
 """
 무작위 차분 시험 — contract_torch(배치) 와 기준 구현 amr_rl_contract(numpy, 한 건씩)를 같은 입력으로 비교.
 
-golden 31 개가 덮지 못한 분기(투영 동률·꼭짓점, 이탈 종료 문턱 사이, 도달했지만 빠름, 곡률 모드 이탈,
+golden 32 개가 덮지 못한 분기(투영 동률·꼭짓점, 이탈 종료 문턱 사이, 도달했지만 빠름, 곡률 모드 이탈,
 트랙 정렬 동률, safety 존 경계)를 무작위로 훑는다. 변이 검사에서 golden 만으로는 놓친 변이를 잡으려고
 더했다 (REPORT 「시험」).
 """
@@ -156,22 +156,33 @@ def test_observation_random_states_match_reference():
         assert not bad, (i, bad)
 
 
-def test_reward_step_random_matches_reference():
+@pytest.mark.parametrize('spec', [R.SPEC, R.SPEC_V110], ids=lambda s: s.name)
+def test_reward_step_random_matches_reference(spec):
+    """
+    무작위 전이 300 개 — 기준 구현 reward.step(spec) 과 보상·항·Φ·비용·종료가 같다.
+
+    v1.2.0 의 분기를 일부러 섞는다: 목표 근처(성공·끝점 너머 'eff'), 경로에서 1 m 넘게 떨어진 자세(힌지),
+    충돌 종단(진행 효용은 종단에서도 실제 d'). 각 분기가 실제로 나왔는지도 센다.
+    """
     rng = random.Random(6)
-    for _ in range(150):
+    seen = {'terminal_progress': 0, 'hinge': 0, 'eff_beats_arc': 0}
+    for _ in range(300):
         pre = _rand_state(rng)
         post = _rand_state(rng)
         post.path = pre.path
-        if rng.random() < 0.3:                            # 목표 근처 (성공 분기)
-            gx, gy = pre.path[-1]
-            post.pose = (gx + rng.uniform(-0.12, 0.12), gy + rng.uniform(-0.12, 0.12), 0.0)
+        r = rng.random()
+        gx, gy = pre.path[-1]
+        if r < 0.3:                                       # 목표 근처 (성공 분기, 끝점 너머)
+            post.pose = (gx + rng.uniform(-0.4, 0.4), gy + rng.uniform(-0.4, 0.4), 0.0)
             post.v_meas = rng.choice([0.0, 0.04, 0.2])
+        elif r < 0.4:                                     # 전이 전도 목표 근처
+            pre.pose = (gx + rng.uniform(-0.5, 0.5), gy + rng.uniform(-0.5, 0.5), 0.0)
         a = (rng.uniform(-1, 1), rng.uniform(-2, 2))
-        col = rng.random() < 0.2
+        col = rng.random() < 0.25
         pairs = [((rng.uniform(0, 1), rng.uniform(-1, 1)),
                   (rng.uniform(0, 1), rng.uniform(-1, 1)))
                  for _ in range(rng.randint(0, 5))]
-        ref = R.step(pre, post, a, col, pairs)
+        ref = R.step(pre, post, a, col, pairs, spec=spec)
         bp = CT.states_from_dicts([pre.to_dict()])
         bq = CT.states_from_dicts([post.to_dict()])
         pt = None
@@ -179,11 +190,28 @@ def test_reward_step_random_matches_reference():
             pt = torch.tensor([[x[0][0], x[0][1], x[1][0], x[1][1]] for x in pairs],
                               dtype=F64).unsqueeze(0)
         out = CT.reward_step(bp, bq.pose, bq.v_meas, torch.tensor([a], dtype=F64),
-                             torch.tensor([col]), pt)
+                             torch.tensor([col]), pt, spec=spec)
         assert float(out.reward[0]) == pytest.approx(ref.reward, abs=1e-9)
+        assert set(out.terms) == set(ref.terms)
+        for k, v in ref.terms.items():
+            assert float(out.terms[k][0]) == pytest.approx(v, abs=1e-9), k
+        assert float(out.phi_pre[0]) == pytest.approx(ref.phi_pre, abs=1e-9)
+        assert float(out.phi_post[0]) == pytest.approx(ref.phi_post, abs=1e-9)
+        assert float(out.d_pre[0]) == pytest.approx(R.progress_distance(pre, spec), abs=1e-9)
+        assert float(out.d_post[0]) == pytest.approx(R.progress_distance(post, spec), abs=1e-9)
         assert np.allclose(out.cost[0].numpy(), ref.cost, atol=1e-12)
         assert (bool(out.terminated[0]), bool(out.success[0])) == (ref.terminated, ref.success)
         assert bool(out.in_dev[0]) == ref.dev.in_dev
+        if ref.terminated and abs(ref.terms.get('progress', 0.0)) > 1e-6:
+            seen['terminal_progress'] += 1
+        if ref.terms.get('dev', 0.0) != 0.0:
+            seen['hinge'] += 1
+        if R.goal_distance(post) > G.remaining_arc(post.path, post.pose[:2]) + 1e-6:
+            seen['eff_beats_arc'] += 1
+    if spec.progress_kappa:
+        assert seen['terminal_progress'] >= 20, seen
+        assert seen['hinge'] >= 20, seen
+    assert seen['eff_beats_arc'] >= 20, seen
 
 
 def test_safety_filter_random_matches_reference():

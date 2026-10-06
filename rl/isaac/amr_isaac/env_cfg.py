@@ -1,5 +1,5 @@
 """
-Isaac Lab DirectRLEnv 설정 — AMR 내비게이션 (계약 v1.1.0, 비교군 B).
+Isaac Lab DirectRLEnv 설정 — AMR 내비게이션 (계약 v1.2.0, 비교군 B).
 
 Isaac Sim 앱이 뜬 뒤에만 import 한다 (isaaclab 모듈 의존).
 시간: 물리 dt 0.02 s (프로파일러 50 Hz, V:6) × decimation 5 = 결정 주기 0.1 s (contract.md §3).
@@ -18,6 +18,7 @@ from isaaclab.sensors.ray_caster.patterns import PatternBaseCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.utils import configclass
 
+from .assets import DEFAULT_DIR as ASSETS_DIR
 from .contract_torch import C, OBS_DIM
 
 BODY_Z = 0.18           # [m] 차체 중심 높이 (상자 0.03–0.33, sensors.yaml base_link_height 0.18)
@@ -102,8 +103,11 @@ class AmrNavEnvCfg(DirectRLEnvCfg):
         debug_vis=False,
     )
 
-    assets_dir: str = '/home/CAPYI_AI/runs/r1-isaac/assets'
+    assets_dir: str = ASSETS_DIR     # $AMR_ISAAC_RUNS/assets (run_isaac.sh 가 정한다)
     path_pool_seed: int = 0          # 0 = 학습 풀, 1 = 평가(held-out 시작·목표) 풀
+    path_len_min: float = 0.0        # 풀에서 쓸 경로 길이 범위 [m] (풀 자체는 3–30 m, contract §10)
+    path_len_max: float = 1000.0
+    reward_version: str = C.CONTRACT_VERSION   # '1.2.0' (계약) 또는 '1.1.0' (대조)
     dr: DomainRandCfg = DomainRandCfg()
     lidar_source: str = 'sensor'     # 'sensor' = RayCaster 데이터, 'direct' = 같은 Warp 메시에 직접
     v_cap: float = C.V_MAX_OP

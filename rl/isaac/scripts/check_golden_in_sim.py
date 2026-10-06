@@ -4,10 +4,12 @@ Isaac 안에서의 계약 일치 시험 — golden 상태를 실제 env 버퍼(C
     rl/isaac/run_isaac.sh golden rl/isaac/scripts/check_golden_in_sim.py
 
 tests/test_contract_golden.py 는 contract_torch 를 직접 부른다. 이 스크립트는 그 위의 env 배선
-(경로 패딩·누적 호길이, 버퍼 이름, Φ 캐시 d_arc, 안전 개입 쌍 수, 트랙 버퍼)이 같은 값을 내는지 본다.
+(경로 패딩·누적 호길이, 버퍼 이름, 전이 전 거리 캐시 d_prog = max(d_arc, 목표 직선거리), 보상 판 선택,
+안전 개입 쌍 수, 트랙 버퍼)이 같은 값을 내는지 본다. 계약 v1.2.0 (golden 32 = decision 17 + step 12 + 기타 3).
   decision 17: inject_state → build_obs → golden obs (허용오차 tolerance.obs)
-  step 11    : pre 주입 → build_obs (Φ(s) 캐시) → 자세·v_meas 를 post 로 → step_outcome → golden
-결과: /home/CAPYI_AI/runs/r1-isaac/golden/in_sim.json, rc 0 = 전부 일치.
+  step 12    : pre 주입 → build_obs (d(s) 캐시) → 자세·v_meas 를 post 로 → step_outcome → golden
+               (보상 항 집합 = golden 의 항 집합: progress·dev 포함)
+결과: $AMR_ISAAC_RUNS/golden/in_sim.json, rc 0 = 전부 일치.
 """
 
 import argparse
@@ -19,7 +21,8 @@ import sys
 from isaaclab.app import AppLauncher
 
 ap = argparse.ArgumentParser()
-ap.add_argument('--out', default='/home/CAPYI_AI/runs/r1-isaac/golden/in_sim.json')
+ap.add_argument('--out', default=os.path.join(os.environ.get(
+    'AMR_ISAAC_RUNS', '/home/CAPYI_AI/runs/r7-isaac12'), 'golden', 'in_sim.json'))
 AppLauncher.add_app_launcher_args(ap)
 args = ap.parse_args()
 args.headless = True
@@ -31,6 +34,8 @@ import torch  # noqa: E402
 from amr_isaac import contract_torch as CT  # noqa: E402
 from amr_isaac.env import AmrNavEnv  # noqa: E402
 from amr_isaac.env_cfg import AmrNavEnvCfg  # noqa: E402
+from amr_rl_contract import constants as C  # noqa: E402
+from amr_rl_contract import reward as RW  # noqa: E402
 from amr_rl_contract.observation import obs_slices  # noqa: E402
 
 GOLDEN = '/workspace/amr/rl/contract/golden'
@@ -42,13 +47,18 @@ def main():
     gold = [json.load(open(f, encoding='utf-8')) for f in files]
     dec = [g for g in gold if g['kind'] == 'decision']
     stp = [g for g in gold if g['kind'] == 'step']
+    assert C.CONTRACT_VERSION == '1.2.0', C.CONTRACT_VERSION
+    assert (len(gold), len(dec), len(stp)) == (32, 17, 12), (len(gold), len(dec), len(stp))
+    assert all(g['contract_version'] == '1.2.0' for g in gold)
     cfg = AmrNavEnvCfg()
     cfg.scene.num_envs = max(len(dec), len(stp)) + 3
     cfg.dr.enable = False
     env = AmrNavEnv(cfg)
     env.reset()
     dev = env.device
-    res = {'decision': {}, 'step': {}, 'device': str(dev)}
+    assert env.reward_spec is RW.SPEC, env.reward_spec
+    res = {'decision': {}, 'step': {}, 'device': str(dev), 'contract_version': C.CONTRACT_VERSION,
+           'reward_spec': str(env.reward_spec)}
     fails = []
 
     ids = torch.arange(len(dec), device=dev)
@@ -68,7 +78,7 @@ def main():
     pre = CT.states_from_dicts([g['pre'] for g in stp], device=dev)
     post = CT.states_from_dicts([g['post'] for g in stp], device=dev)
     env.inject_state(pre, ids)
-    env.build_obs()                                   # Φ(s) 캐시 (d_arc) 를 pre 자세로
+    env.build_obs()                                   # d(s) 캐시 (d_prog) 를 pre 자세로
     env.pose[ids] = post.pose
     env.v_meas[ids] = post.v_meas
     env._a_exec[ids] = torch.tensor([g['action_exec'] for g in stp], dtype=torch.float64,
@@ -86,16 +96,18 @@ def main():
         e, tol = g['expected'], g['tolerance']
         errs = {'reward': abs(float(out.reward[i]) - e['reward'])}
         for k, v in e['terms'].items():
-            errs[f'term_{k}'] = abs(float(out.terms[k][i]) - v)
+            errs[f'term_{k}'] = (abs(float(out.terms[k][i]) - v) if k in out.terms
+                                 else float('inf'))
         errs['cost'] = float((out.cost[i].cpu() - torch.tensor(e['cost'],
                                                                dtype=torch.float64)).abs().max())
-        flags_ok = (bool(out.terminated[i]) == e['terminated'] and
+        terms_ok = set(out.terms) == set(e['terms'])
+        flags_ok = (terms_ok and bool(out.terminated[i]) == e['terminated'] and
                     bool(out.success[i]) == e['success'] and
                     bool(out.in_dev[i]) == e['dev']['in_dev'] and
                     abs(float(out.dev_t[i]) - e['dev']['t_since_peak']) <= 1e-9)
         ok = (errs['reward'] <= tol['reward'] and errs['cost'] <= tol['cost'] and flags_ok and
               all(v <= tol['reward_terms'] for k, v in errs.items() if k.startswith('term_')))
-        res['step'][g['name']] = {'ok': ok, 'flags_ok': flags_ok,
+        res['step'][g['name']] = {'ok': ok, 'flags_ok': flags_ok, 'terms_ok': terms_ok,
                                   'max_err': max(errs.values())}
         if not ok:
             fails.append(g['name'])

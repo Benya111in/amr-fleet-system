@@ -1,9 +1,16 @@
 """
-계약 v1.1.0 의 배치 torch 구현 — Isaac Lab env 가 쓰는 관측·보상·비용·적분·프로파일러·safety_lite.
+계약 v1.2.0 의 배치 torch 구현 — Isaac Lab env 가 쓰는 관측·보상·비용·적분·프로파일러·safety_lite.
 
 기준 구현 rl/contract/amr_rl_contract/ (numpy, 비벡터화) 를 배치 축 B 로 옮겼다. 규범 순서는
-golden > 기준 구현 > contract.md 이고, 이 모듈은 rl/isaac/tests/test_contract_golden.py 가 golden 31 개와
+golden > 기준 구현 > contract.md 이고, 이 모듈은 rl/isaac/tests/test_contract_golden.py 가 golden 32 개와
 허용오차 안에서 대조한다. Isaac Sim 에 의존하지 않는다 (torch 만) — CPU 에서도 시험할 수 있다.
+
+보상 (v1.2.0, contract.md §6): 설계 매개변수는 기준 구현의 reward.RewardSpec 을 그대로 받는다
+(기본 reward.SPEC = v1.2.0, reward.SPEC_V110 = v1.1.0). v1.2.0 의 세 변경 —
+  ① Φ·진행의 거리 d = max(d_arc, 목표 직선거리)  (전이 전·후 모두)
+  ② 진행 효용 κ_b·(d − d')  (종단 스텝도 실제 d', PBRS 처럼 0 으로 두지 않는다)
+  ③ 이탈 힌지 −q_d·1[e > 1 m]  (이탈 구간 여부와 무관)
+— 은 reward_step 에 있고, env 가 쓰는 전이 전 거리 캐시는 observe_with_cache 가 만든다.
 
 수치 정밀도: 기하·경로·보상은 float64 로 계산하고 관측만 float32 로 내보낸다
 (contract.md §12 "d_arc 와 shaping 은 float64 로").
@@ -24,6 +31,7 @@ if _CONTRACT not in sys.path:
     sys.path.insert(0, _CONTRACT)
 
 from amr_rl_contract import constants as C  # noqa: E402
+from amr_rl_contract import reward as RW  # noqa: E402
 from amr_rl_contract.observation import OBS_DIM, OBS_LAYOUT  # noqa: E402
 
 F64 = torch.float64
@@ -333,6 +341,30 @@ def remaining_arc(state, p=None):
     return torch.clamp(path_length(state) - s, min=0.0)
 
 
+def goal_distance(p, goal):
+    """경로 끝점(목표)까지 직선거리 [B], 지도 좌표 — 기준 구현 reward.goal_distance 의 배치판."""
+    return torch.hypot(p[:, 0] - goal[:, 0], p[:, 1] - goal[:, 1])
+
+
+def progress_distance(d_arc, d_goal, spec=RW.SPEC):
+    """
+    Φ·진행 효용의 거리 [B] — reward.progress_distance 의 배치판.
+
+    'arc' = d_arc (v1.1.0), 'eff' = max(d_arc, 목표 직선거리) (v1.2.0, contract.md §6).
+    """
+    if spec.phi_dist == 'eff':
+        return torch.maximum(d_arc, d_goal.to(d_arc.dtype))
+    if spec.phi_dist != 'arc':
+        raise ValueError(spec.phi_dist)
+    return d_arc
+
+
+def state_progress_distance(state, spec=RW.SPEC):
+    """상태의 progress_distance (자세 = state.pose)."""
+    return progress_distance(remaining_arc(state), goal_distance(state.pose, goal_point(state)),
+                             spec)
+
+
 # ======================================================================== 관측
 def lidar_sectors(scan):
     """720 빔 → 180 섹터 풋프린트 여유거리 최솟값 / 10 m (observation.lidar_sectors)."""
@@ -459,10 +491,22 @@ def build_observation(state, return_parts=False):
     obs = torch.cat([parts[name] for name, _ in OBS_LAYOUT], dim=1).to(torch.float32)
     assert obs.shape == (B, OBS_DIM), obs.shape
     if return_parts:
-        parts['s0'] = s0          # 투영 호길이 (env 가 Φ = −κ·d_arc 캐시에 쓴다)
-        parts['d_arc'] = d_arc
+        parts['s0'] = s0          # 투영 호길이
+        parts['d_arc'] = d_arc    # 남은 호길이 (자르지 않은 값)
+        parts['d_goal'] = goal_distance(xy, goal_point(state))   # 목표 직선거리 (지도 좌표)
         return obs, parts
     return obs
+
+
+def observe_with_cache(state, spec=RW.SPEC):
+    """
+    관측 [B, 291] 과 전이 전 거리 캐시 d(s) [B] — env 의 build_obs 가 부른다.
+
+    d(s) = progress_distance(d_arc, 목표 직선거리) 이고 다음 전이의 Φ(s)·진행 효용의 d 로 쓴다
+    (reward_step 의 d_pre). 리셋 직후·결정마다 관측과 같은 자세로 계산된다.
+    """
+    obs, parts = build_observation(state, return_parts=True)
+    return obs, progress_distance(parts['d_arc'], parts['d_goal'], spec)
 
 
 # ======================================================================== 보상·비용
@@ -481,6 +525,9 @@ class StepOut:
     e: torch.Tensor
     phi_pre: torch.Tensor
     phi_post: torch.Tensor
+    d_pre: torch.Tensor         # 전이 전 progress_distance
+    d_post: torch.Tensor        # 전이 뒤 progress_distance (종단이어도 실제 값)
+    d_goal_post: torch.Tensor   # 전이 뒤 목표 직선거리
 
 
 def dev_update(in_dev, peak, t, e, dt=C.DT):
@@ -522,36 +569,47 @@ def intervention_cost(pairs, n_valid=None):
 
 
 def reward_step(pre, post_pose, post_v_meas, action_exec, collision, pairs=None,
-                pairs_n=None, d_arc_pre=None):
+                pairs_n=None, d_pre=None, spec=RW.SPEC):
     """
     전이 (pre, a, post) 의 보상·비용 (reward.step 과 같은 식). post 의 경로 = pre 의 경로.
 
     pre: BatchState (결정 시점), post_pose [B, 3], post_v_meas [B], action_exec [B, 2],
-    collision [B] bool, pairs [B, K, 4] (선택). d_arc_pre 를 주면 Φ(s) 재계산을 건너뛴다.
+    collision [B] bool, pairs [B, K, 4] (선택).
+    d_pre: 전이 전 progress_distance [B] (env 캐시, observe_with_cache). 주면 pre.pose 를 쓰지 않는다 —
+      env 는 전이 뒤 자세가 이미 버퍼에 있어 pre.pose 가 전이 뒤 자세다. None 이면 pre.pose 로 계산.
+    spec: reward.RewardSpec (기본 계약 v1.2.0). 정체 종단 후보(stall_terminal)는 지원하지 않는다.
     """
+    if spec.stall_terminal:
+        raise ValueError('stall_terminal 후보는 Isaac env 에서 지원하지 않는다 (계약 v1.2.0 = truncation)')
     goal = goal_point(pre)
     success = is_success(post_pose, goal, post_v_meas, collision)
     terminated = collision | success
     _s, e, _se, _y = project_onto_path(pre, post_pose[:, :2])
     in_dev, peak, t = dev_update(pre.in_dev, pre.dev_peak, pre.dev_t, e)
-    if d_arc_pre is None:
-        d_arc_pre = remaining_arc(pre)
-    phi_pre = -C.KAPPA * d_arc_pre
-    d_arc_post = torch.clamp(path_length(pre) - _s, min=0.0)
-    phi_post = torch.where(terminated, torch.zeros_like(d_arc_post), -C.KAPPA * d_arc_post)
+    if d_pre is None:
+        d_pre = state_progress_distance(pre, spec)
+    d_goal_post = goal_distance(post_pose, goal)
+    d_post = progress_distance(torch.clamp(path_length(pre) - _s, min=0.0), d_goal_post, spec)
+    phi_pre = -spec.kappa * d_pre
+    phi_post = torch.where(terminated, torch.zeros_like(d_post), -spec.kappa * d_post)
     a_prev = pre.prev_actions[:, 0]
     dav = (action_exec[:, 0] - a_prev[:, 0]) / C.A_MAX
     daw = (action_exec[:, 1] - a_prev[:, 1]) / C.ALPHA_MAX
     zero = torch.zeros_like(e)
     terms = {
-        'time': torch.full_like(e, -C.TIME_COST),
+        'time': torch.full_like(e, -spec.time_cost),
         'shape': C.GAMMA * phi_post - phi_pre,
         'smooth': -C.SMOOTH_WEIGHT * (dav * dav + daw * daw),
         'track': torch.where(in_dev, zero,
                              -C.TRACK_WEIGHT * torch.clamp(e / C.CTE_REF, max=C.TRACK_CLIP) ** 2),
-        'goal': torch.where(success, torch.full_like(e, C.GOAL_REWARD), zero),
-        'collision': torch.where(collision, torch.full_like(e, -C.COLLISION_PENALTY), zero),
+        'goal': torch.where(success, torch.full_like(e, spec.goal_reward), zero),
+        'collision': torch.where(collision, torch.full_like(e, -spec.collision_penalty), zero),
     }
+    if spec.progress_kappa:
+        # 진행 효용: 종단 스텝도 실제 d' (Φ 처럼 0 으로 두면 멀리서의 충돌이 κ_b·d 를 돌려받는다)
+        terms['progress'] = spec.progress_kappa * (d_pre - d_post)
+    if spec.dev_hinge:
+        terms['dev'] = torch.where(e > C.DEV_LIMIT, torch.full_like(e, -spec.dev_hinge), zero)
     if pairs is None:
         inter = zero
     else:
@@ -561,10 +619,9 @@ def reward_step(pre, post_pose, post_v_meas, action_exec, collision, pairs=None,
         (e > C.DEV_LIMIT).to(F64),
         (in_dev & (t > C.RETURN_LIMIT)).to(F64),
         ((~in_dev) & (e > C.CTE_TRACK_LIMIT)).to(F64)], dim=1)
-    reward = terms['time'] + terms['shape'] + terms['smooth'] + terms['track'] + \
-        terms['goal'] + terms['collision']
+    reward = sum(terms.values())
     return StepOut(reward, terms, cost, in_dev, peak, t, terminated, success, e,
-                   phi_pre, phi_post)
+                   phi_pre, phi_post, d_pre, d_post, d_goal_post)
 
 
 def time_limit(path_len):
