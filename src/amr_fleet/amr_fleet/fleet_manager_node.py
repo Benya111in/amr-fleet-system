@@ -5,7 +5,8 @@ fleet_manager_node — 중앙 작업 관리자 (components.md §3.6 / §5.6, 명
 - Sub  task_request (std_msgs/String, JSON). 스키마 + 의미 규칙 위반은 fleet/INVALID_TASK 알림 후 버린다
 - SrvS assign_task (amr_msgs/AssignTask, robot_id 가 비면 자동 할당). JSON 경로와 같은 검증, 위반은 success=false
 - Sub  /amr_XX/robot_state, /amr_XX/task_status
-- SrvC /amr_XX/assign_task (호출 전 송신 지연 큐: 메시지마다 U(comm_latency_ms) ms, drop_rate 유실)
+- SrvC /amr_XX/assign_task (호출 전 송신 지연 큐: 링크 fleet→amr_XX 의 CommEmulator 지연·유실 — 기본
+       U(comm_latency_ms) ms · drop_rate, comm_model_file 로 링크별 규칙·버스트·분할 일정)
 - Pub  task_events (Task, 전이마다) · status (FleetStatus, 1 Hz) · alerts (DiagnosticArray)
 - Sub  traffic_events (DiagnosticArray, 교착 카운트)
 - 로그 logs/tasks_YYYYmmdd.csv (작업), logs/allocation_YYYYmmdd.csv (할당 최적성 지표). 날짜는 벽시계
@@ -36,7 +37,7 @@ status=ERROR), 호출 중이던 작업은 재할당, 진행 중이던 작업은 
 재시도. 다시 들어오면 fleet/ROBOT_RECOVERED(OK).
 
 모든 콜백은 예외를 삼키고 fleet/INTERNAL_ERROR 로 알린다 — 입력 하나로 노드가 죽지 않는다.
-순수 모듈(task_schema / scheduler / allocation / task_state / kpi / latency)이 로직을 갖고,
+순수 모듈(task_schema / scheduler / allocation / task_state / kpi / comm_emulator)이 로직을 갖고,
 이 노드는 ROS 입출력과 타이머만 담당한다.
 """
 
@@ -63,7 +64,7 @@ from amr_fleet.allocation import (
     RobotInfo, allocate, available_strategies, create_strategy, select_batch,
 )
 from amr_fleet.kpi import STATUS_ERROR, STATUS_ESTOP, STATUS_IDLE, KpiTracker
-from amr_fleet.latency import LatencyModel
+from amr_fleet.comm_emulator import FLEET, from_node_params
 from amr_fleet.scheduler import SchedulerConfig, TaskScheduler
 from amr_fleet.task_msg import float_to_time, spec_from_msg, spec_to_msg
 from amr_fleet.task_schema import (
@@ -93,7 +94,8 @@ ALLOCATION_LOG_HEADER = [
 # 시작할 때 한 번만 읽는 파라미터 — 실행 중 변경(ros2 param set)은 거절한다 (재시작 필요)
 STARTUP_ONLY_PARAMS = frozenset({
     'robot_ids', 'discover_robots', 'allocation_strategy', 'nominal_speed', 'simulate_latency',
-    'comm_latency_ms', 'drop_rate', 'seed', 'log_dir', 'log_time_format', 'allocation_period_s',
+    'comm_latency_ms', 'drop_rate', 'seed', 'comm_model_file', 'log_dir', 'log_time_format',
+    'allocation_period_s',
     'status_period_s', 'discovery_period_s', 'throughput_window_s', 'utilization_mode',
     'task_schema_path', 'robot_params_path',
 })
@@ -168,11 +170,12 @@ class FleetManagerNode(Node):
         self.internal_errors = 0
         self.invalid_tasks = 0
         self.conflicts = 0
-        self._latency = LatencyModel(simulate=bool(p('simulate_latency')),
-                                     comm_latency_ms=p('comm_latency_ms'),
-                                     drop_rate=float(p('drop_rate')), seed=int(p('seed')))
-        if self._latency.exceeds_spec():
-            self.get_logger().warn(f'comm_latency_ms 상한 {self._latency.max_ms} ms > 명세 100 ms')
+        # 통신 모의 (링크 fleet → <robot>). 시각은 노드 시계 (use_sim_time 이면 /clock)
+        self._comm = from_node_params(bool(p('simulate_latency')), p('comm_latency_ms'),
+                                      float(p('drop_rate')), int(p('seed')),
+                                      str(p('comm_model_file')))
+        if self._comm.exceeds_spec():
+            self.get_logger().warn(f'통신 지연 상한 {self._comm.max_ms():g} ms > 명세 100 ms')
 
         # --- 순수 모듈 ---
         item_masses = load_item_masses(p('robot_params_path') or None)
@@ -232,7 +235,7 @@ class FleetManagerNode(Node):
         self._kpi.start(self._now())
         self.get_logger().info(
             f'fleet_manager 시작: strategy={self._strategy.name}, robots={sorted(self._robots)}, '
-            f'comm_latency={self._latency.describe()}, '
+            f'comm={self._comm.describe()}, '
             f'batch_window={float(p("allocation_batch_window_s")) * 1e3:g} ms, '
             f'use_sim_time={p("use_sim_time")}, log_dir={self._log_dir}')
 
@@ -247,7 +250,8 @@ class FleetManagerNode(Node):
             'simulate_latency': True,        # false = 지연·유실 없이 바로 호출 (실기)
             'comm_latency_ms': [0.0, 100.0],  # assign_task 호출마다 U(lo, hi) ms (숫자면 [0, 값])
             'drop_rate': 0.0,                # 호출 유실 확률 → assign_timeout_s 뒤 재할당
-            'seed': 0,                       # 0 = 무작위
+            'seed': 0,                       # 통신 모의 루트 시드. 0 = 무작위로 뽑아 로그에 남김
+            'comm_model_file': '',           # '' = 기본 링크만. YAML: 링크별 규칙 · 버스트 · 분할 · 단절
             'log_dir': '',                   # '' = $ROS_WS/logs
             'log_time_format': 'iso',        # iso | epoch
             'allocation_period_s': 0.5,
@@ -684,8 +688,8 @@ class FleetManagerNode(Node):
         req = AssignTask.Request()
         req.task = spec_to_msg(spec)
         req.task.robot_id = robot_id
-        delay = self._latency.sample()
         now = self._now()
+        delay = self._comm.transmit(FLEET, robot_id, now)
         req.task.header.stamp = float_to_time(now)
         req.task.pickup_pose.header.stamp = req.task.dropoff_pose.header.stamp = \
             req.task.header.stamp
@@ -693,8 +697,8 @@ class FleetManagerNode(Node):
         self._inflight[task_id] = _Dispatch(robot_id, req, now, timeout_at, delay)
         self._robots[robot_id].inflight = task_id
         if delay is None:
-            self.get_logger().warn(f'{task_id} → {robot_id}: 호출 유실(drop_rate), 시간 초과 후 재할당')
-        elif self._latency.enabled:
+            self.get_logger().warn(f'{task_id} → {robot_id}: 호출 유실(통신 모의), 시간 초과 후 재할당')
+        elif self._comm.enabled(FLEET, robot_id):
             self._outbox.push(task_id, delay, key=robot_id)   # 로봇별 링크 FIFO
             self.get_logger().info(f'{task_id} → {robot_id}: 송신 지연 {delay * 1e3:.1f} ms')
         else:

@@ -336,21 +336,22 @@ def test_dropped_and_undeliverable_calls_are_reassigned(fleet):
     got, m = fleet['got'], fleet['manager']
     f1, f2, f3 = (fleet['fakes'][r] for r in ROBOTS)
     f3.status = MOVING
-    original = m._latency.sample
+    original = m._comm.transmit
     dropped = []
 
-    def drop_once():
+    def drop_once(src, dst, now):
         if not dropped:
-            dropped.append(True)
-            return None                                           # drop_rate 유실 흉내
-        return original()
+            dropped.append((src, dst))
+            return None                                           # 통신 모의 유실 흉내
+        return original(src, dst, now)
 
-    m._latency.sample = drop_once
+    m._comm.transmit = drop_once
     try:
         fleet['submit'](_task('drop_1', x=0.0))
         assert fleet['spin'](lambda: _running(got, 'drop_1', 'amr_f2'))
     finally:
-        m._latency.sample = original
+        m._comm.transmit = original
+    assert dropped == [('fleet', 'amr_f1')]                     # 링크 fleet → 고른 로봇
     assert dropped and 'drop_1' not in f1.requests             # 유실된 호출은 f1 에 닿지 않았다
     assert not _alerts(got, 'fleet/ASSIGN_TIMEOUT', 'drop_1')  # 보류 없이 바로 재할당
     _finish(fleet, 'drop_1', 'amr_f2')
@@ -591,7 +592,7 @@ def test_iso_deadline_uses_node_clock_under_sim_time(rig, tmp_path):
         'use_sim_time': True, 'discover_robots': True, 'log_dir': str(tmp_path),
         'comm_latency_ms': [0.0, 150.0], 'allocation_strategy': 'bogus'}))
     try:
-        assert sim._strategy.name == 'nearest' and sim._latency.exceeds_spec()
+        assert sim._strategy.name == 'nearest' and sim._comm.exceeds_spec()
         clock = sim.get_clock()
         sim._check_clock()                     # /clock 없음 → 경고 (노드 시계 0)
         clock.set_ros_time_override(Time(seconds=120))

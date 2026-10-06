@@ -144,8 +144,8 @@ def test_json_tasks_complete_with_events_log_and_status(fleet):
     assert len(st.robots) == len(ROBOTS) and 0.0 < st.robot_utilization <= 1.0
 
     # 주입한 지연(표본)은 설정 구간 [5, 30] ms 안이어야 한다 — 명세 ≤ 100 ms 를 여기서 확인한다.
-    injected = list(manager._latency.history)
-    assert len(injected) >= 3
+    injected = [ev.delay_s for ev in manager._comm.history if ev.delay_s is not None]
+    assert len(injected) >= 3 and all(ev.src == 'fleet' for ev in manager._comm.history)
     assert all(LATENCY_MS[0] * 1e-3 <= d <= LATENCY_MS[1] * 1e-3 for d in injected)
     # 통신 지연 로그 [cmd_time, response_time, latency_ms]: 측정값은 주입 하한보다 이르지 않다
     # (상한 쪽은 전송·스케줄링 지연이 더해져 호스트 부하에 좌우되므로 주입값으로 본다).

@@ -14,7 +14,8 @@ Fleet Manager + 로봇별 어댑터 런치 (docker-compose `fleet` 서비스가 
 - traffic_manager:=true(기본)면 traffic_manager_node 를 config/traffic.yaml(traffic_params_file)로
   함께 띄운다 (robot_ids · use_sim_time 은 같은 값, traffic_mode 가 비어 있지 않으면 mode 를 덮어쓴다).
 - 기본값은 config/fleet.yaml (params_file) 한 곳에 둔다. 아래 인자는 비어 있지 않을 때만 덮어쓴다.
-- comm_latency_ms, simulate_latency 는 manager(assign_task 호출)와 adapter(robot_state) 양쪽에 준다.
+- comm_latency_ms, simulate_latency, seed, comm_model_file 은 manager(assign_task 호출)와
+  adapter(robot_state) 양쪽에 준다 (통신 모의 CommEmulator — 링크마다 결정적 난수, p0.md §1).
 - use_sim_time 기본 true: 전 노드가 /clock 을 쓴다 (multi_robot.md §6, dashboard·evaluation 런치와 같다).
   /clock 없이 단독으로 띄우면 노드 시계가 0 에 멈추므로 use_sim_time:=false 를 준다.
 - serve_assign_task: 비우면 auto_complete_after_s > 0 (모의 시험)일 때만 true, 그 외에는 fleet.yaml(false).
@@ -29,14 +30,15 @@ from launch_ros.substitutions import FindPackageShare
 import yaml
 
 # 인자 이름 → 값 변환. 빈 문자열이면 fleet.yaml 값을 그대로 쓴다.
-_MANAGER_ARGS = ('allocation_strategy', 'comm_latency_ms', 'simulate_latency', 'log_dir')
-_ADAPTER_ARGS = ('comm_latency_ms', 'simulate_latency', 'auto_complete_after_s',
-                 'serve_assign_task', 'log_dir')
+_MANAGER_ARGS = ('allocation_strategy', 'comm_latency_ms', 'simulate_latency', 'seed',
+                 'comm_model_file', 'log_dir')
+_ADAPTER_ARGS = ('comm_latency_ms', 'simulate_latency', 'seed', 'comm_model_file',
+                 'auto_complete_after_s', 'serve_assign_task', 'log_dir')
 
 
 def _typed(name, text):
     """런치 인자 문자열 → 파라미터 값 (YAML 해석, 목록은 실수로 통일)."""
-    if name in ('allocation_strategy', 'log_dir'):
+    if name in ('allocation_strategy', 'log_dir', 'comm_model_file'):
         return text
     value = yaml.safe_load(text)
     if name == 'comm_latency_ms':
@@ -45,6 +47,10 @@ def _typed(name, text):
         return float(value)
     if name == 'auto_complete_after_s':
         return float(value)
+    if name == 'seed':
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f'seed 는 0 이상의 정수: {text!r}')
+        return value
     if name in ('simulate_latency', 'serve_assign_task', 'traffic_manager'):
         if not isinstance(value, bool):
             raise ValueError(f'{name} 는 true/false: {text!r}')
@@ -110,6 +116,10 @@ def generate_launch_description() -> LaunchDescription:
                               description="통신 지연 [lo, hi] ms 예: '[0.0, 100.0]' ('' = yaml)"),
         DeclareLaunchArgument('simulate_latency', default_value='',
                               description="true | false ('' = fleet.yaml)"),
+        DeclareLaunchArgument('seed', default_value='',
+                              description="통신 모의 루트 시드 (0 = 무작위로 뽑아 기록, '' = fleet.yaml)"),
+        DeclareLaunchArgument('comm_model_file', default_value='',
+                              description="통신 모의 YAML (링크별 규칙 · 버스트 · 분할, '' = fleet.yaml)"),
         DeclareLaunchArgument('auto_complete_after_s', default_value='',
                               description='> 0 이면 어댑터가 N s 뒤 완료를 흉내 (실행기 없는 테스트)'),
         DeclareLaunchArgument('serve_assign_task', default_value='',

@@ -13,11 +13,16 @@
     allocation_batch_size: 0         # 한 라운드에 전략에 넘길 대기 작업 수. 0 = 가용 로봇 수
                                      # (바쁜 로봇에 고정된 작업은 빼고 채운다 → 빈 로봇이 놀지 않는다)
     nominal_speed: 1.0               # [시작 전용] [m/s] 이동 시간 = 거리 / nominal_speed (limits.max 2.0 의 절반)
-    # 통신 지연 시뮬레이션 (multi_robot.md §6): assign_task 호출 전 송신 지연 큐
+    # 통신 지연 시뮬레이션 (multi_robot.md §6): assign_task 호출 전 송신 지연 큐.
+    # 링크 fleet → <robot> 마다 CommEmulator (comm_emulator.py, docs/research/fleet-distributed/p0.md §1)
     simulate_latency: true           # [시작 전용] false = 지연·유실 없음 (실기 배포)
-    comm_latency_ms: [0.0, 100.0]    # [시작 전용] 호출마다 U(lo, hi) ms, 평균 50 ms (명세 4.9 최대 100 ms)
-    drop_rate: 0.0                   # [시작 전용] 호출 유실 확률 → assign_timeout_s 뒤 다음 후보로 재할당
-    seed: 0                          # [시작 전용] 0 = 무작위, 그 외 재현용 시드
+    comm_latency_ms: [0.0, 100.0]    # [시작 전용] 기본 링크: 호출마다 U(lo, hi) ms, 평균 50 ms (명세 4.9 최대 100 ms)
+    drop_rate: 0.0                   # [시작 전용] 기본 링크 유실 확률 → assign_timeout_s 뒤 다음 후보로 재할당
+    seed: 1                          # [시작 전용] 루트 시드. 링크의 k 번째 메시지 = f(시드, 송신자, 수신자, k) 라
+                                     # 같은 시드면 같은 지연열 (다른 링크의 메시지 수와 무관). 0 = 무작위로 하나
+                                     # 뽑아 시작 로그에 남긴다 (그 값을 주면 재현)
+    comm_model_file: ""              # [시작 전용] "" = 기본 링크만. YAML: 링크별 규칙(로봇↔로봇 포함) ·
+                                     # Gilbert–Elliott 버스트 · 분할 · 단절 일정 (sim 초). 예: config/examples/comm_model.yaml
     log_dir: ""                      # [시작 전용] "" = $ROS_WS/logs → tasks_ / allocation_YYYYmmdd.csv
                                      # (파일 날짜는 벽시계, 시각 칸은 노드 시계)
     log_time_format: iso             # [시작 전용] iso | epoch (use_sim_time 이면 epoch 권장)
@@ -53,10 +58,11 @@
   ros__parameters:
     robot_id: ""                     # "" = 네임스페이스에서 유도
     publish_rate_hz: 2.0             # robot_state 발행 주기
-    simulate_latency: true           # robot_state 송신 지연 큐 (multi_robot.md §6)
-    comm_latency_ms: [0.0, 100.0]    # 메시지마다 U(lo, hi) ms
-    drop_rate: 0.0                   # robot_state 유실 확률
-    seed: 0                          # 0 = 무작위. 0 이 아니면 robot_id 별로 다른 시퀀스
+    simulate_latency: true           # robot_state 송신 지연 큐 (multi_robot.md §6), 링크 <robot> → fleet
+    comm_latency_ms: [0.0, 100.0]    # 기본 링크: 메시지마다 U(lo, hi) ms
+    drop_rate: 0.0                   # 기본 링크 robot_state 유실 확률
+    seed: 1                          # 루트 시드 (manager 와 같은 뜻). 링크 이름이 로봇마다 달라 열도 다르다
+    comm_model_file: ""              # manager 와 같은 형식 (같은 파일을 주면 링크 규칙이 한 곳에 모인다)
     auto_complete_after_s: 0.0       # > 0 이면 실행기 없이 N s 뒤 완료를 흉내 (테스트 전용)
     serve_assign_task: false         # 실제 assign_task 서버는 amr_behavior 의 task_executor_node (§5.5).
                                      # true 는 실행기 없는 모의 시험 전용 (auto_complete_after_s 와 짝;

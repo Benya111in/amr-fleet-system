@@ -5,7 +5,8 @@ fleet_adapter_node — 로봇별 상태 취합기 (components.md §3.6 / §5.6).
        executor/phase (String), safety/estop_active (Bool, latched = reliable·transient_local·1),
        localization/lost (Bool, latched — kidnap_monitor_node 가 발행),
        safety/zone (UInt8, 0 CLEAR · 1 WARNING · 2 CRITICAL · 3 STOP — 로그용)
-- Pub  robot_state (RobotState, 2 Hz; 송신 지연 큐 U(comm_latency_ms) ms, drop_rate 유실, 링크 FIFO).
+- Pub  robot_state (RobotState, 2 Hz; 송신 지연 큐 = 링크 <robot>→fleet 의 CommEmulator 지연·유실, 링크 FIFO.
+       기본 U(comm_latency_ms) ms · drop_rate, comm_model_file 로 링크별 규칙·버스트·분할 일정).
        E-stop 이나 localization/lost 가 바뀌면 주기를 기다리지 않고 한 번 더 보낸다.
 - SrvS assign_task (AssignTask) — serve_assign_task=true 일 때만 (기본 false). 실제 서버는 amr_behavior 의
        task_executor_node 다 (components.md §5.5). 둘 다 켜면 한 네임스페이스에 서버가 둘이 되어
@@ -25,10 +26,9 @@ import os
 import pathlib
 import time
 from typing import Optional
-import zlib
 
+from amr_fleet.comm_emulator import FLEET, from_node_params
 from amr_fleet.kpi import STATUS_ERROR, STATUS_ESTOP
-from amr_fleet.latency import LatencyModel
 from amr_fleet.robot_status import (
     STATUS_NAMES, battery_percent, map_status,
 )
@@ -63,7 +63,9 @@ class FleetAdapterNode(Node):
             'simulate_latency': True,        # false = robot_state 를 지연 없이 발행 (실기)
             'comm_latency_ms': [0.0, 100.0],  # robot_state 메시지마다 U(lo, hi) ms (숫자면 [0, 값])
             'drop_rate': 0.0,                # robot_state 유실 확률
-            'seed': 0,                       # 0 = 무작위. 0 이 아니면 robot_id 별로 달리 섞는다
+            'seed': 0,                       # 통신 모의 루트 시드 (0 = 무작위로 뽑아 로그에 남김).
+                                             # 로봇마다 링크 이름이 달라 같은 시드여도 열이 다르다
+            'comm_model_file': '',           # '' = 기본 링크만. YAML: 링크별 규칙 · 버스트 · 분할 · 단절
             'auto_complete_after_s': 0.0,    # > 0 이면 수락 N s 뒤 COMPLETED 를 흉내 (테스트용)
             'serve_assign_task': False,      # true = 모의 assign_task 서버 (실제 서버는 task_executor)
             'initial_battery': 100.0,        # battery_state 가 없을 때 보고할 잔량 [%]
@@ -74,12 +76,10 @@ class FleetAdapterNode(Node):
             self.declare_parameter(name, value, descriptor)
         p = self._param
         self.robot_id = p('robot_id') or self.get_namespace().strip('/').split('/')[-1] or 'amr'
-        seed = int(p('seed'))
-        if seed:
-            seed += zlib.crc32(self.robot_id.encode())   # 로봇마다 다른 재현 가능한 시퀀스
-        self._latency = LatencyModel(simulate=bool(p('simulate_latency')),
-                                     comm_latency_ms=p('comm_latency_ms'),
-                                     drop_rate=float(p('drop_rate')), seed=seed)
+        # 통신 모의 (링크 <robot> → fleet). 시각은 노드 시계 (use_sim_time 이면 /clock)
+        self._comm = from_node_params(bool(p('simulate_latency')), p('comm_latency_ms'),
+                                      float(p('drop_rate')), int(p('seed')),
+                                      str(p('comm_model_file')))
         self._auto_complete_s = float(p('auto_complete_after_s'))
         default_log_dir = os.path.join(os.environ.get('ROS_WS', '.'), 'logs')
         self._log_dir = pathlib.Path(p('log_dir') or default_log_dir)
@@ -118,7 +118,7 @@ class FleetAdapterNode(Node):
         self.create_timer(1.0 / max(float(p('publish_rate_hz')), 0.1), self._on_publish_timer)
         self.get_logger().info(
             f'fleet_adapter {self.robot_id}: rate={p("publish_rate_hz")} Hz, '
-            f'latency={self._latency.describe()}, auto_complete={self._auto_complete_s} s, '
+            f'comm={self._comm.describe()}, auto_complete={self._auto_complete_s} s, '
             f'serve_assign_task={p("serve_assign_task")}')
 
     def _param(self, name: str):
@@ -244,11 +244,11 @@ class FleetAdapterNode(Node):
 
     def _on_publish_timer(self) -> None:
         msg = self._build_state()
-        if not self._latency.enabled:
+        delay = self._comm.transmit(self.robot_id, FLEET, self._now())
+        if not self._comm.enabled(self.robot_id, FLEET):
             self._pub_state.publish(msg)
             return
-        delay = self._latency.sample()
-        if delay is not None:           # None = 유실(drop_rate)
+        if delay is not None:           # None = 유실 (손실 · 버스트 · 분할 · 단절)
             self._state_queue.push(msg, delay, key='robot_state')   # 추월 없이 (링크 FIFO)
 
     def _pub_state_now(self, msg: RobotState) -> None:
