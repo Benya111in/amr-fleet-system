@@ -1,0 +1,20 @@
+# 통신 모의 설정 예 (fleet.yaml 의 comm_model_file 에 경로를 준다). 형식: amr_fleet/comm_emulator.py
+# 이름: fleet = 중앙(fleet_manager · traffic_manager), 로봇 = 네임스페이스 id. src/dst 는 fnmatch 패턴.
+# 시각은 노드 시계 초 (use_sim_time 이면 /clock 의 sim 초). 이 파일은 예시일 뿐 기본으로 읽지 않는다.
+#
+# seed: 7                            # 있으면 노드 파라미터 seed 대신 쓴다
+
+links:                               # 위에서부터 처음 맞는 규칙. 빠진 값은 노드의 기본 링크(comm_latency_ms · drop_rate)
+  - src: "amr_*"                     # 로봇 ↔ 로봇 (분산 협상 · 투표 경로 — 보고서: 모든 링크에 같은 모델)
+    dst: "amr_*"
+    comm_latency_ms: [0.0, 100.0]
+    drop_rate: 0.05
+  - src: "*"                         # 나머지 전부: 평균 2.5 s 버스트 (Gilbert–Elliott, 장기 손실 ≈ 4.8 %)
+    dst: "*"
+    burst: {mean_good_s: 50.0, mean_bad_s: 2.5, loss_good: 0.0, loss_bad: 1.0}
+
+partitions:                          # [start_s, end_s) 동안 그룹 사이 유실. 적지 않은 이름은 '나머지' 그룹
+  - {start_s: 300.0, end_s: 330.0, groups: [[amr_01, amr_02]]}   # F5: {R1, R2} 대 {R3, R4, R5} + 서버
+
+outages:                             # [start_s, end_s) 동안 한 방향만 유실 (비대칭)
+  - {start_s: 400.0, end_s: 410.0, src: amr_03, dst: fleet}      # amr_03 상향 링크만 끊김
