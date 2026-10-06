@@ -11,7 +11,7 @@ P = src/amr_perception/config/perception.yaml.
 
 import math
 
-CONTRACT_VERSION = '1.1.0'   # contract.md 「변경 이력」
+CONTRACT_VERSION = '1.2.0'   # contract.md 「변경 이력」
 
 # ---------------------------------------------------------------- 로봇 기하·한계
 FOOTPRINT_LENGTH = 0.60          # [m] R:15
@@ -125,7 +125,10 @@ CTE_REF = 0.05                   # [m] 명세 31_*.md:554 직선 CTE 5 cm
 # ---------------------------------------------------------------- 보상·할인 (contract.md §6, §7)
 GAMMA = 0.995                    # 물리 지평 Δt/(1−γ) = 20 s
 GAE_LAMBDA = 0.97                # 신용할당 창 1/(1−γλ) = 28.7 step = 2.87 s
-KAPPA = 1.0                      # [1/m] 호장 퍼텐셜 Φ = −κ·d_arc
+KAPPA = 1.0                      # [1/m] 퍼텐셜 Φ = −κ·d (PBRS)
+PHI_DIST = 'eff'                 # Φ·진행 효용의 거리 d = max(d_arc, 목표 직선거리) (v1.2.0, contract.md §6)
+PROGRESS_KAPPA = 0.5             # κ_b: 기저 진행 효용 κ_b·(d − d') (v1.2.0, PBRS 아님 — §6.1)
+DEV_HINGE = 0.05                 # 1 m 초과 이탈 힌지 −q_d·1[e > DEV_LIMIT] /스텝 (v1.2.0)
 TIME_COST = 0.02                 # 스텝당 시간 비용 (= 0.2 /s)
 GOAL_REWARD = 10.0
 COLLISION_PENALTY = 30.0      # > TIME_COST × 시간 상한 스텝(0.02×1200=24): 무할인 τ_crash ≺ τ_idle

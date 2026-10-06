@@ -1,4 +1,4 @@
-# 정책 ONNX 입출력 계약 v1.1.0 (입출력 자체는 v1.0.0 과 같다)
+# 정책 ONNX 입출력 계약 v1.2.0 (입출력 자체는 v1.0.0 과 같다 — v1.2.0 은 보상만 바뀌었다)
 
 r1(Isaac)·r2(2D)가 내보내는 정책과 r3(`src/amr_rl_controller`, ONNX Runtime C++ 1.23.2 `/opt/onnxruntime`)가
 읽는 정책의 인터페이스. 관측·행동의 의미는 [`contract.md`](contract.md) §4–§5 가 정한다.
@@ -18,7 +18,7 @@ r3 는 학습된 정책을 기다리지 않고 C++ 에서 같은 출력이 나�
 | 배치 축 | 0 번 축 동적 (`batch`), 플러그인은 1 로 부른다 |
 | 관측 | `obs` [batch, 291] — `amr_rl_contract.observation.build_observation` 의 출력 그대로 (계약 정규화 포함) |
 | 학습 정규화 | running mean/std 는 **모델 안**: x = clip((obs − μ)/√(σ² + 1e-8), −10, 10). 플러그인은 계약 관측만 만든다 |
-| 메타데이터 (`metadata_props`) | 필수: `contract_version`(=1.1.0), `arm`(B·C), `obs_dim`(291), `dt`(0.1), `normalization`(inside). 권장: `algo`, `seed`, `git_commit`, `train_steps`, `simulator`(isaac·sim2d) |
+| 메타데이터 (`metadata_props`) | 필수: `contract_version`(=1.2.0; 1.1.0 정책도 입출력은 같다), `arm`(B·C), `obs_dim`(291), `dt`(0.1), `normalization`(inside). 권장: `algo`, `seed`, `git_commit`, `train_steps`, `simulator`(isaac·sim2d) |
 | 내보내기 | `amr-ai/rl:0.3` 에는 `onnxscript` 가 없어 torch 2.11 의 기본(dynamo) 내보내기가 안 된다 → `torch.onnx.export(..., dynamo=False, opset_version=17)` (2026-10-06 이 컨테이너에서 확인) |
 | 버전 불일치 | 플러그인은 `contract_version` 의 주 버전이 다르거나 `obs_dim` 이 다르면 `configure()` 에서 실패해야 한다 |
 

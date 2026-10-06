@@ -1,14 +1,17 @@
 """
 보상·비용·종료 기준 구현 (contract.md §6–§8).
 
-보상 r = r_time + r_shape + r_smooth + r_track + r_goal + r_collision
-  r_shape = γ·Φ(s') − Φ(s),  Φ(s) = −κ·d_arc(s),  종단(성공·충돌)에서 Φ(s') = 0  (PBRS, Ng 1999)
+보상 r = r_time + r_shape + r_progress + r_smooth + r_track + r_dev + r_goal + r_collision  (v1.2.0)
+  r_shape = γ·Φ(s') − Φ(s),  Φ(s) = −κ·d(s),  d = max(d_arc, 목표 직선거리),  종단에서 Φ(s') = 0  (PBRS)
+  r_progress = κ_b·(d(s) − d(s'))  (기저 진행 효용, PBRS 아님 — contract.md §6.1)
+  r_dev = −q_d·1[e > 1.0 m]
 비용 c = [collision, intervention, deviation_1m, return_5s, cte_track]  (비할인 에피소드 합으로 제약)
 이탈 상태기계(reward machine) = tests/integration/amr_itest/metrics.py:240-263
 deviation_episodes 와 같은 규칙.
 
-보상 설계 매개변수는 RewardSpec 이다. 기본값(SPEC_V110)이 계약 v1.1.0 이고 golden 은 이것으로 만든다.
-2차 물결 후보(r5-reward, docs/research/rl-navigation/reward_v12.md)는 reward_variants.CANDIDATES 에 있다.
+보상 설계 매개변수는 RewardSpec 이다. 기본값(SPEC)이 계약 v1.2.0 이고 golden 은 이것으로 만든다.
+v1.1.0(SPEC_V110)과 2차 물결 후보(docs/research/rl-navigation/reward_v12.md)는
+reward_variants.CANDIDATES 에 있다.
 """
 
 from dataclasses import dataclass
@@ -22,9 +25,10 @@ from .state import DevState
 @dataclass(frozen=True)
 class RewardSpec:
     """
-    보상·종료 설계 매개변수 — 기본값 = 계약 v1.1.0 (§6, §8).
+    보상·종료 설계 매개변수 — 기본값 = 계약 v1.2.0 (§6, §8).
 
-    phi_dist: 'arc' = d_arc (v1.1.0), 'eff' = max(d_arc, 목표 직선거리) — §5.2 (3) 의 d_goal 과 같은 정의.
+    phi_dist: 'arc' = d_arc (v1.1.0), 'eff' = max(d_arc, 목표 직선거리) (v1.2.0) — §5.2 (3) 의 d_goal 과 같은
+      정의.
       d_arc 는 경로 끝 너머에서 0 으로 평평하므로 'eff' 는 끝점 너머의 이탈도 거리로 센다.
     progress_kappa: κ_b. 기저 진행 효용 κ_b·(d(s) − d(s')) 를 매 스텝(종단 스텝 포함, 실제 d(s')) 더한다.
       PBRS 가 아니다 — §6.1 분해대로 PBRS(κ_b) − κ_b(1−γ)d' 이므로 최적 정책을 바꾼다 (끝나지 않는 궤적도
@@ -34,11 +38,11 @@ class RewardSpec:
     stall_terminal: 정체(N:86-87)를 truncation 대신 실패 종단으로 (Φ' = 0, −stall_penalty).
     """
 
-    name: str = 'v1.1.0'
+    name: str = 'v' + C.CONTRACT_VERSION
     kappa: float = C.KAPPA
-    phi_dist: str = 'arc'
-    progress_kappa: float = 0.0
-    dev_hinge: float = 0.0
+    phi_dist: str = C.PHI_DIST
+    progress_kappa: float = C.PROGRESS_KAPPA
+    dev_hinge: float = C.DEV_HINGE
     stall_terminal: bool = False
     stall_penalty: float = 0.0
     time_cost: float = C.TIME_COST
@@ -46,7 +50,8 @@ class RewardSpec:
     collision_penalty: float = C.COLLISION_PENALTY
 
 
-SPEC_V110 = RewardSpec()
+SPEC = RewardSpec()
+SPEC_V110 = RewardSpec(name='v1.1.0', phi_dist='arc', progress_kappa=0.0, dev_hinge=0.0)
 
 
 def cross_track_error(state):
@@ -60,7 +65,7 @@ def goal_distance(state):
     return math.hypot(state.pose[0] - gx, state.pose[1] - gy)
 
 
-def progress_distance(state, spec=SPEC_V110):
+def progress_distance(state, spec=SPEC):
     """퍼텐셜·거리 비용에 쓰는 거리: 'arc' = d_arc, 'eff' = max(d_arc, 목표 직선거리)."""
     d = G.remaining_arc(state.path, state.pose[:2])
     if spec.phi_dist == 'eff':
@@ -70,7 +75,7 @@ def progress_distance(state, spec=SPEC_V110):
     return d
 
 
-def potential(state, terminal, spec=SPEC_V110):
+def potential(state, terminal, spec=SPEC):
     """Φ(s) = −κ·d(s), 종단이면 0 (d = progress_distance)."""
     if terminal:
         return 0.0
@@ -135,14 +140,14 @@ class StepResult:
     phi_post: float
 
 
-def step(pre, post, action_exec, collision, safety_pairs=(), spec=SPEC_V110, stalled=False):
+def step(pre, post, action_exec, collision, safety_pairs=(), spec=SPEC, stalled=False):
     """
     전이 (pre, a, post) 의 보상·비용.
 
     action_exec: 이번 주기의 명령 가속도 (a_v, a_w) — 클램프·폴백 뒤 실제 값.
     직전 행동 = pre.prev_actions[0]. post.dev 는 무시하고 pre.dev 에서 갱신한다.
     collision: 환경의 지면 진실 접촉 (풋프린트 vs 장애물 기하).
-    spec: 보상 설계 (기본 v1.1.0). stalled: 이 전이 뒤 정체 판정(ProgressChecker) — spec.stall_terminal 일
+    spec: 보상 설계 (기본 = 계약 v1.2.0). stalled: 이 전이 뒤 정체 판정(ProgressChecker) — spec.stall_terminal 일
     때만 보상·종단에 쓰인다 (성공·충돌과 같은 스텝이면 그쪽이 이긴다).
     """
     success = is_success(post, collision)

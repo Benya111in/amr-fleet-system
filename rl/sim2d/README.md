@@ -1,6 +1,6 @@
 # rl/sim2d — GPU 배치 2D 레이캐스트 시뮬레이터 (보너스 1 주 학습장)
 
-계약 [`rl/contract/contract.md`](../contract/contract.md) v1.1.0 의 관측 291·행동(B 연속 / C 격자 100)·보상·비용 5·
+계약 [`rl/contract/contract.md`](../contract/contract.md) v1.2.0 의 관측 291·행동(B 연속 / C 격자 100)·보상·비용 5·
 종료를 팀 지도 위에서 수천 env 병렬로 돌리는 torch 시뮬레이터. 근거: 「실무」 54–57행(2D 주 학습장), 80–100행(DR),
 「이론」 261–317행(DR·SRCC·접촉 = 즉시 종료). 소유: r2-sim2d (`/home/CAPYI_AI/COORDINATION.md` §2).
 
@@ -21,8 +21,10 @@
 | `amr_sim2d/obstacles.py` | 비반응 장애물: 작업자(원 0.30)·지게차(사각 −1.2…2.0×±0.64)·셔틀(0.6×0.4), 무작위/Gazebo 배치 |
 | `amr_sim2d/ppo.py` | GPU 상주 PPO (B tanh 가우시안, C 마스크 범주형), PI 라그랑주, BC 초기화, ONNX 내보내기 |
 | `amr_sim2d/heuristic.py` | 관측만 쓰는 경로 추종기 (처리량 측정 행동, BC 시연자). **DWA 가 아니다** |
+| `amr_sim2d/scripted.py` | 착취 표용 결정론적 스크립트 정책 12 종 (대기·추종·지나침·직전 정지·우회·표류·회전·기어가기·원 배회·충돌) |
+| `amr_sim2d/exploit.py` | 궤적을 truncation 없이 기록하고 RewardSpec 별 보상·부트스트랩 가치(연속 롤아웃)를 다시 매긴다 |
 | `dwa_binding/` | pybind11 모듈 `amr_core_py`: `src/amr_navigation/src/core/{astar,grid,path_smoother,geometry}.cpp` + `src/amr_perception/src/{safety_gate,geometry2d}.cpp` 를 **읽기 전용으로 컴파일** |
-| `tools/` | `bench_throughput.py`, `train_ppo.py`, `onnx_check.py` |
+| `tools/` | `bench_throughput.py`, `train_ppo.py` (`--reward` 후보 이름, `--eval-seed`), `onnx_check.py`, `exploit_table.py` (G0·G1 착취 표), `g2_summary.py` (학습 가능성 표·곡선) |
 | `tests/` | 아래 표 |
 
 ### 한 결정 스텝 (0.1 s)
@@ -52,6 +54,7 @@ docker run --rm --gpus all --name amr-ai-r2-sim2d-test -v <worktree>:/ws -w /ws/
 | `test_collision.py` | 격자 SAT 를 일반 볼록 다각형 SAT 와 3 000 자세 대조, 경계 접촉 포함, 지도 밖, 원·사각 장애물 4 000 건, 스윕 접근 거리를 **C++ `SweptFootprint` 원본**과 67 운동 × 405 점 대조 |
 | `test_guards.py` | 변이 검사가 처음에 놓친 가드: 컴파일 아래 투영 동률, 관측 지연, 충돌 뒤 정지, truncation 부트스트랩, 정규화 분산 하한, safety STOP 확정(새 스캔 2 번 연속, D > 0.50 에서 해제) |
 | `test_ppo_onnx.py` | PPO 한 번 갱신(B·C), ONNX 내보내기·onnxruntime 왕복, 정규화가 모델 안에 있는가 |
+| `test_reward_spec.py` | 보상 설계 후보(RewardSpec): env(spec) 보상·항·종단 = 기준 구현 `reward.step(spec)`, 정체 종단(prog50_st)은 종단·Φ' = 0, 같은 스텝의 성공·충돌 우선, 스크립트 정책 무한 지평 가치 순서(`slow`) |
 
 변이 검사 [측정, `a6660f3` 사본, 변이마다 전체 63 시험, `/home/CAPYI_AI/logs/agents/r2-sim2d/fix/mut_fix_summary.log`·
 `mut_fix_result.json`]: 정규화 분산 하한 제거, env 의 장애물 접촉 무시, 정체 truncation 제거, 스캔 장애물의 관측 지연

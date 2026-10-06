@@ -1,6 +1,9 @@
 """
 보상 설계 후보 — 2차 물결 2a (r5-reward). 근거와 착취 표는 docs/research/rl-navigation/reward_v12.md.
 
+G2 를 통과한 prog50 이 계약 v1.2.0 의 기본 보상(reward.SPEC)이 되었다 — 'v1.2.0' 과 'prog50' 은 이름만 다르고
+값이 같다 (G0–G2 기록의 재현을 위해 후보 이름을 남긴다).
+
 계약 v1.1.0 의 문제 [측정·계산, reward_v12.md §2]: 진행이 PBRS 로만 들어가 있어서, 끝나지 않는(정체·시간 상한
 truncation 으로 부트스트랩되는) 궤적의 가치가 진행량과 무관하게 κ·d₀ − c/(1−γ) 이하이고, 같음은 제자리 대기
 뿐이다 (움직이면 평활·추종·개입 벌점만 더해진다). 정확한 critic 아래에서 PBRS 는 advantage 를 바꾸지 않으므로
@@ -18,15 +21,17 @@ truncation 으로 부트스트랩되는) 궤적의 가치가 진행량과 무관
 = 4 + 30κ_b 를 요구한다 (κ_b 0.5 → 19 < 30). 정체 종단 벌점은 c̄ = 4 ≤ P_s < C − c·200 = 26.
 """
 
-from .reward import RewardSpec, SPEC_V110
+from .reward import RewardSpec, SPEC, SPEC_V110
 
-PBRS_EFF = RewardSpec(name='pbrs_eff', phi_dist='eff')
+# 모든 후보는 기본값(= 계약 v1.2.0)에 기대지 않고 v1.1.0 과 다른 항을 전부 적는다 — 기본값이 바뀌어도 후보의
+# 뜻이 그대로이게 (v1.2.0 으로 올릴 때 pbrs_eff 가 기본 κ_b 를 물려받는 결함을 시험이 잡았다)
+PBRS_EFF = RewardSpec(name='pbrs_eff', phi_dist='eff', progress_kappa=0.0, dev_hinge=0.0)
 PROG50 = RewardSpec(name='prog50', phi_dist='eff', progress_kappa=0.5, dev_hinge=0.05)
 PROG25 = RewardSpec(name='prog25', phi_dist='eff', progress_kappa=0.25, dev_hinge=0.05)
 PROG50_ST = RewardSpec(name='prog50_st', phi_dist='eff', progress_kappa=0.5, dev_hinge=0.05,
                        stall_terminal=True, stall_penalty=10.0)
 
-CANDIDATES = {s.name: s for s in (SPEC_V110, PBRS_EFF, PROG50, PROG25, PROG50_ST)}
+CANDIDATES = {s.name: s for s in (SPEC_V110, SPEC, PBRS_EFF, PROG50, PROG25, PROG50_ST)}
 
 
 def get(name):

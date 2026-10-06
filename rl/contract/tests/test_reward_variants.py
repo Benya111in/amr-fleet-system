@@ -23,7 +23,7 @@ PATH = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0)]   # 20 m
 L = 20.0
 STEP = 0.1                                      # 1 m/s × 0.1 s
 TAIL = 3000                                     # γ^3000 ≈ 3e-7
-PROG = ('prog25', 'prog50', 'prog50_st')
+PROG = ('prog25', 'prog50', 'prog50_st', 'v1.2.0')
 FLAT = ('v1.1.0', 'pbrs_eff')
 
 
@@ -165,6 +165,16 @@ def test_progress_designs_order_partial_progress(values, name):
         assert v['crash'][k] < v['idle'][k], (name, k)
 
 
+def test_candidates_spell_out_every_term():
+    """후보는 기본값(계약 버전마다 바뀐다)에 기대지 않는다: 이름 → 항 값이 버전과 무관하게 고정."""
+    want = {'v1.1.0': ('arc', 0.0, 0.0, False), 'pbrs_eff': ('eff', 0.0, 0.0, False),
+            'prog25': ('eff', 0.25, 0.05, False), 'prog50': ('eff', 0.5, 0.05, False),
+            'prog50_st': ('eff', 0.5, 0.05, True)}
+    for name, w in want.items():
+        sp = RV.get(name)
+        assert (sp.phi_dist, sp.progress_kappa, sp.dev_hinge, sp.stall_terminal) == w, name
+
+
 @pytest.mark.parametrize('name', list(RV.CANDIDATES))
 def test_suicide_window_holds_to_30m(name):
     """
@@ -220,13 +230,23 @@ def test_chain_rush_threshold_documents_kappa_window():
     assert r.size > 0 and r.min() * 0.1 > 16.0
 
 
-def test_default_spec_is_contract_v110():
-    """기본 RewardSpec = 계약 상수 (golden 이 이것으로 만들어졌다)."""
-    sp = R.SPEC_V110
-    assert (sp.kappa, sp.phi_dist, sp.progress_kappa, sp.dev_hinge, sp.stall_terminal) == \
-        (C.KAPPA, 'arc', 0.0, 0.0, False)
+def test_default_spec_is_contract_v120_and_equals_prog50():
+    """기본 RewardSpec = 계약 상수 v1.2.0 = G2 를 통과한 prog50 (golden 이 이것으로 만들어졌다)."""
+    sp = R.SPEC
+    assert sp.name == 'v1.2.0' == 'v' + C.CONTRACT_VERSION
+    got = (sp.kappa, sp.phi_dist, sp.progress_kappa, sp.dev_hinge, sp.stall_terminal)
+    assert got == (C.KAPPA, C.PHI_DIST, C.PROGRESS_KAPPA, C.DEV_HINGE, False)
+    assert got == (1.0, 'eff', 0.5, 0.05, False)
     assert (sp.time_cost, sp.goal_reward, sp.collision_penalty) == \
         (C.TIME_COST, C.GOAL_REWARD, C.COLLISION_PENALTY)
+    p = RV.PROG50
+    assert (p.kappa, p.phi_dist, p.progress_kappa, p.dev_hinge, p.stall_terminal, p.stall_penalty,
+            p.time_cost, p.goal_reward, p.collision_penalty) == \
+        (sp.kappa, sp.phi_dist, sp.progress_kappa, sp.dev_hinge, sp.stall_terminal,
+         sp.stall_penalty, sp.time_cost, sp.goal_reward, sp.collision_penalty)
+    v = R.SPEC_V110                                  # 1차 물결 계약 (재현용)
+    assert (v.phi_dist, v.progress_kappa, v.dev_hinge, v.stall_terminal) == \
+        ('arc', 0.0, 0.0, False)
 
 
 def test_progress_term_is_delta_d_and_sums_to_net_progress():
@@ -274,4 +294,4 @@ def test_dev_hinge_applies_beyond_1m_regardless_of_deviation_mode():
     assert near.dev.in_dev and near.terms['dev'] == 0.0 and near.terms['track'] == 0.0
     out = R.step(_st(_arc(5.0)), _st((5.05, 1.05)), (0.0, 0.0), False, spec=sp)
     assert out.terms['dev'] == -sp.dev_hinge
-    assert 'dev' not in R.step(pre, _st((5.05, 1.2)), (0.0, 0.0), False).terms   # v1.1.0
+    assert 'dev' not in R.step(pre, _st((5.05, 1.2)), (0.0, 0.0), False, spec=R.SPEC_V110).terms

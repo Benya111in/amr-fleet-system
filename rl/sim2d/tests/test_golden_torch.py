@@ -37,7 +37,7 @@ def _kind(kind):
 
 
 def test_golden_files_present():
-    assert len(FILES) == 31
+    assert len(FILES) == 32
     for d in map(_load, FILES):
         assert d['contract_version'] == C.CONTRACT_VERSION
 
@@ -68,13 +68,14 @@ def test_decision_replay_batched(device, dtype, scan_dtype, static):
 @pytest.mark.parametrize('device,dtype,scan_dtype', CONFIGS)
 def test_step_replay_batched(device, dtype, scan_dtype):
     cases = _kind('step')
-    assert len(cases) == 11
+    assert len(cases) == 12
     pre = bstate_from_states([State.from_dict(d['pre']) for d in cases], device, dtype)
     post = bstate_from_states([State.from_dict(d['post']) for d in cases], device, dtype)
     d_pre = T.remaining_arc(pre.path_pts, pre.path_n, pre.path_cum, pre.path_len, pre.pose[:, :2])
     pj = T.project_onto_path(post.path_pts, post.path_n, post.path_cum, post.pose[:, :2])
     d_post = (post.path_len - pj[0]).clamp_min(0.0)
     gdist = torch.linalg.norm(post.pose[:, :2] - T.goal_xy(post.path_pts, post.path_n), dim=-1)
+    gdist_pre = torch.linalg.norm(pre.pose[:, :2] - T.goal_xy(pre.path_pts, pre.path_n), dim=-1)
     S = max(1, max(len(d['safety_pairs']) for d in cases))
     vin = torch.zeros(len(cases), S, dtype=dtype)
     win, vout, wout = vin.clone(), vin.clone(), vin.clone()
@@ -87,7 +88,7 @@ def test_step_replay_batched(device, dtype, scan_dtype):
     a_exec = torch.tensor([d['action_exec'] for d in cases], dtype=dtype, device=device)
     coll = torch.tensor([d['collision'] for d in cases], device=device)
     r = T.reward_step(d_pre, d_post, pj[1], gdist, post.v_meas, pre.prev_actions[:, 0], a_exec,
-                      coll, (pre.dev_in, pre.dev_peak, pre.dev_t), interv)
+                      coll, (pre.dev_in, pre.dev_peak, pre.dev_t), interv, goal_dist_pre=gdist_pre)
     for i, d in enumerate(cases):
         e, tol, name = d['expected'], d['tolerance'], d['name']
         assert float(r['reward'][i]) == pytest.approx(e['reward'], abs=tol['reward']), name

@@ -59,7 +59,7 @@ def main():
     ap.add_argument('--eval-every', type=int, default=20, help='갱신 수')
     ap.add_argument('--eval-envs', type=int, default=1024)
     ap.add_argument('--eval-episodes', type=int, default=1024)
-    ap.add_argument('--reward', default='v1.1.0',
+    ap.add_argument('--reward', default='v1.2.0',
                     help='보상 설계 (amr_rl_contract.reward_variants.CANDIDATES 이름)')
     ap.add_argument('--eval-seed', type=int, default=None,
                     help='평가 env 시드 (경로 풀·첫 에피소드 고정). None = seed + 1000')

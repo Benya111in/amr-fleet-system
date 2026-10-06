@@ -30,7 +30,8 @@ def make(spec, n=48, seed=5, mode='random', **kw):
     return Sim2DEnv(cfg, log=lambda *a: None)
 
 
-@pytest.mark.parametrize('name', [n for n in RV.CANDIDATES if n != 'v1.1.0'])
+# v1.2.0 = 계약 기본이라 test_env 가 본다
+@pytest.mark.parametrize('name', [n for n in RV.CANDIDATES if n != 'v1.2.0'])
 def test_spec_reward_matches_reference_on_sim_states(name):
     """env(spec) 보상·종단 = 기준 구현 reward.step(spec) — 무작위 행동, 장애물, 모든 항."""
     spec = RV.get(name)
@@ -123,9 +124,10 @@ def test_scripted_exploit_order_in_sim():
     recs = {p: X.record(env, SP.POLICIES[p], 1500, seed=21)
             for p in ('idle', 'stop_short', 'drift', 'follow')}
     res = {s: {p: X.spec_returns(r, RV.get(s)) for p, r in recs.items()}
-           for s in ('v1.1.0', 'prog25', 'prog50', 'prog50_st')}
-    for p, r in res['v1.1.0'].items():
+           for s in ('v1.1.0', 'v1.2.0', 'prog25', 'prog50', 'prog50_st')}
+    for p, r in res['v1.2.0'].items():          # env 기본 = 계약 v1.2.0
         assert r['consistency_vs_env'] < 1e-5, p
+    assert res['v1.1.0']['idle']['consistency_vs_env'] is None
     v = res['v1.1.0']
     assert bool((v['stop_short']['g_boot'] <= v['idle']['g_boot'] + 1e-6).all())   # 진행해도 대기 이하
     assert bool((v['drift']['g_boot'] <= v['idle']['g_boot'] + 1e-6).all())

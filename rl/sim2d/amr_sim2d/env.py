@@ -1,5 +1,5 @@
 """
-GPU 배치 2D 내비게이션 환경 — 계약 v1.1.0 의 관측·행동·보상·비용·종료, 자동 리셋, 텐서 GPU 상주.
+GPU 배치 2D 내비게이션 환경 — 계약 v1.2.0 의 관측·행동·보상·비용·종료, 자동 리셋, 텐서 GPU 상주.
 
 한 결정 스텝(0.1 s = LiDAR 주기) 의 순서 (contract.md §3, §5.4):
   1. 정책 행동 → 명령 적분 (B: integrate_b ray 클램프 / C: integrate_c, 마스크 밖이면 폴백)
@@ -33,9 +33,9 @@ SPIN_W, SPIN_V = 1.0, 0.1                    # 진단: |ω| > 1.0 rad/s 이고 |
 
 
 def _resolve_spec(reward):
-    """EnvConfig.reward → RewardSpec (None = v1.1.0, 문자열 = reward_variants 이름)."""
+    """EnvConfig.reward → RewardSpec (None = 계약 기본 v1.2.0, 문자열 = reward_variants 이름)."""
     if reward is None:
-        return T.SPEC_V110
+        return T.SPEC
     if isinstance(reward, str):
         from amr_rl_contract import reward_variants
         return reward_variants.get(reward)
@@ -64,7 +64,7 @@ class EnvConfig:
     use_triton: bool = None
     compute_mask: bool = None                   # None = arm == 'C'
     compile: bool = True                        # torch.compile 고정 N 경로
-    reward: object = None                       # RewardSpec 또는 후보 이름 (None = 계약 v1.1.0)
+    reward: object = None                       # RewardSpec 또는 후보 이름 (None = 계약 기본)
     truncate: bool = True                       # False = 정체·시간 상한을 플래그만 (분석용 연속 롤아웃)
     dr_ranges: dict = field(default_factory=lambda: {
         'plant_tm': (0.048, 0.112), 'plant_td': (0.02, 0.08), 'accel_scale': (0.84, 1.0),

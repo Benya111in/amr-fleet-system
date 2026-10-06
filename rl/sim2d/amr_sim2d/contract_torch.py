@@ -1,5 +1,5 @@
 """
-계약(rl/contract v1.1.0)의 torch 배치 구현 — 관측·마스크·보상·비용·safety_lite·프로파일러·행동 적분.
+계약(rl/contract v1.2.0)의 torch 배치 구현 — 관측·마스크·보상·비용·safety_lite·프로파일러·행동 적분.
 
 각 함수는 numpy 기준 구현(amr_rl_contract/*.py)의 같은 이름 함수를 env 축 N 으로 벡터화한 것이다.
 분기는 torch.where 로 옮겼고, 기준 구현의 순차 루프 의미(동률 처리 등)를 그대로 지킨다.
@@ -14,7 +14,7 @@ import math
 import torch
 
 from ._contract import C
-from amr_rl_contract.reward import RewardSpec, SPEC_V110  # noqa: E402,F401  (_contract 가 경로를 넣는다)
+from amr_rl_contract.reward import RewardSpec, SPEC, SPEC_V110  # noqa: E402,F401  (_contract 가 경로)
 
 INF = math.inf
 _BEAM_ANG = None
@@ -566,7 +566,7 @@ def potential_arc(d_arc, terminal, kappa=C.KAPPA):
     return torch.where(terminal, torch.zeros_like(d_arc), -kappa * d_arc)
 
 
-def progress_distance(d_arc, goal_dist, spec=SPEC_V110):
+def progress_distance(d_arc, goal_dist, spec=SPEC):
     """reward.progress_distance 배치판: 'arc' = d_arc, 'eff' = max(d_arc, 목표 직선거리)."""
     if spec.phi_dist == 'eff':
         return torch.maximum(d_arc, goal_dist.to(d_arc.dtype))
@@ -591,13 +591,13 @@ def dev_update(dev_in, peak, t, e, dt=C.DT):
 
 
 def reward_step(d_arc_pre, d_arc_post, e_post, goal_dist_post, v_meas_post, a_prev, a_exec,
-                collision, dev_pre, interv, spec=SPEC_V110, goal_dist_pre=None, stalled=None):
+                collision, dev_pre, interv, spec=SPEC, goal_dist_pre=None, stalled=None):
     """
     reward.step 배치판.
 
     d_arc_pre/post: 경로 투영 남은 호길이 (float64), e_post: 경로 최근접 거리, goal_dist_post: 목표 직선거리,
     a_prev = pre.prev_actions[:,0], a_exec: 이번 실행 가속도, dev_pre = (in, peak, t), interv: 개입 비용 [N].
-    spec: 보상 설계 (기본 v1.1.0, 파이썬 상수 — 컴파일 그래프에 박힌다). goal_dist_pre: spec.phi_dist == 'eff'
+    spec: 보상 설계 (기본 = 계약 v1.2.0, 파이썬 상수 — 컴파일 그래프에 박힌다). goal_dist_pre: spec.phi_dist == 'eff'
     일 때 필요. stalled: 이 전이 뒤 정체 판정 [N] bool — spec.stall_terminal 일 때만 쓴다.
     반환 dict: reward, terms(dict), cost [N,5], dev(tuple), terminated, success, stall_term.
     """
@@ -610,6 +610,8 @@ def reward_step(d_arc_pre, d_arc_post, e_post, goal_dist_post, v_meas_post, a_pr
     terminated = collision | success | stall_term
     dev = dev_update(*dev_pre, e_post)
     if spec.phi_dist == 'eff':
+        if goal_dist_pre is None:
+            raise ValueError("phi_dist 'eff' 는 goal_dist_pre(전이 전 목표 직선거리)가 필요하다")
         d_pre = progress_distance(d_arc_pre, goal_dist_pre, spec)
     else:
         d_pre = d_arc_pre

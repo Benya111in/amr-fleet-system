@@ -3180,14 +3180,16 @@
   ]
  ],
  "expected": {
-  "reward": 0.0847,
+  "reward": 0.1147,
   "terms": {
    "time": -0.02,
    "shape": 0.1047,
    "smooth": -0.0,
    "track": -0.0,
    "goal": 0.0,
-   "collision": 0.0
+   "collision": 0.0,
+   "progress": 0.03,
+   "dev": 0.0
   },
   "cost": [
    0.0,
@@ -3214,7 +3216,7 @@
   "phi_pre": -9.0,
   "phi_post": -8.94
  },
- "contract_version": "1.1.0",
+ "contract_version": "1.2.0",
  "tolerance": {
   "obs": 1e-05,
   "vo_time": 0.0001,

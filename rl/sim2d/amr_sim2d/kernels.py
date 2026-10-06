@@ -169,7 +169,7 @@ def min_ttc(st):
     return ttc.min(dim=1).values
 
 
-def post_step(st, P, a_prev, a_exec, collided, interv, spec=T.SPEC_V110, truncate=True):
+def post_step(st, P, a_prev, a_exec, collided, interv, spec=T.SPEC, truncate=True):
     """
     전이 끝: 투영·보상·비용·이탈 갱신·정체·시간 상한·관측.
 
