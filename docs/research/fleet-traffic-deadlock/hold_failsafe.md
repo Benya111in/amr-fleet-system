@@ -436,6 +436,13 @@ auto 2000 회 · 참가자 상한). 실제 경로(ROS 소싱 뒤 도메인 블�
 "232 는 63 프로세스" 와 같다. **도메인 100 · 101 은 참가자 179 · 54 개를 넘으면 임시 포트 범위에 든다** — auto(1–101)가 1/101 씩의
 확률로 고를 수 있다. 과제 지시대로 auto 범위는 바꾸지 않았고 안내만 낸다 (요청: 1–99 로 좁히는 것을 검토).
 
+**E7 — 실제 노드가 그 프로파일로 뜨는지 [측정, 사전 등록 밖 추가]** (`runs/b24/hold-dds/E7/e7_results.txt`): `ros2 run` 으로
+`traffic_manager_node`(amr_01, 구역 없음, `obs_timeout_s` 1 s) + `task_executor_node`(/amr_01)를 20 s, `ROS_LOCALHOST_ONLY=0`.
+`fastdds_multi_robot.xml`: SHM 파일 10, 파서 오류 0. `fastdds_multi_robot_udponly.xml`: **SHM 파일 0**, 파서 오류 0. 두 경우 모두
+관리자 `amr_01 traffic/hold 매칭 구독자 0 → 1`(D10) → 관측 없음 해제 `hold=False (첫 값) unobserved`(D6) → 실행기
+`traffic/hold 매칭 발행자 0 → 1 (그래프 1, 상태 awaiting, 구독 재생성 0)`(D11) → `첫 값 수신 clear`. 첫 시도는 탐침 스크립트가
+빈 파라미터(`charger_claims_topic:=`)를 넘겨 rcl 이 실행기를 띄우지 못했다 — 탐침 결함이라 그 인자를 빼고 다시 돌렸다(v1 로그 보존).
+
 ### 7.6 해석 · 다음
 
 - 이 브랜치가 바꾼 동작 (수정 후 정상 경로에서 보이는 것): 관리자는 로봇마다 hold 를 1 Hz 로 다시 내고(포켓 양보 중이면
@@ -484,3 +491,4 @@ gz p1_base $W/base_ws 61 & gz p1_fix /home/CAPYI_AI/wt/hold-dds 63 & wait    # �
 | HDDS_E6_domain | 도메인 규칙 | c8d64e8 | 위 E6 | [측정] |
 | HDDS_E4b_stability | 새 시험 반복 | a91bbfe | 10/10 · 10/10 | [측정] |
 | HDDS_E5_mutation | 변이 21 | a91bbfe | 21/21 잡힘 | [측정] |
+| HDDS_E7_realnodes | 실제 관리자 · 실행기, 두 프로파일 (사전 등록 밖) | f0ec40e | udponly SHM 0 · 첫 값 수신 | [측정] |
