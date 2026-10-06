@@ -75,6 +75,14 @@ def test_dim3_columns_z_and_roll_in_window():
     c = symmetric.dim3_columns((t, xyz, q), (t, exyz, eq), (0.0, 15.0))
     assert c['z_abs_max_cm'] == pytest.approx(5.0)
     assert c['z_rmse_cm'] == pytest.approx(5.0)
+    # 창 안에서 z 가 변하면 최대 ≠ RMSE: 앞 절반 0, 뒤 절반(t > 7.5 s) −4 cm (부호 무시 최대 4)
+    exyz[:, 2] = 0.0
+    exyz[t > 7.5, 2] = -0.04
+    m = symmetric.in_window(t, (0.0, 15.0))
+    c = symmetric.dim3_columns((t, xyz, q), (t, exyz, eq), (0.0, 15.0))
+    assert c['z_abs_max_cm'] == pytest.approx(4.0)
+    assert c['z_rmse_cm'] == pytest.approx(100.0 * float(np.sqrt(np.mean(exyz[m, 2] ** 2))))
+    assert c['z_rmse_cm'] < 3.5
     assert c['roll_rmse_deg'] == pytest.approx(1.0)
     assert c['pitch_rmse_deg'] == pytest.approx(0.0, abs=1e-9)
     assert c['rp_abs_max_deg'] == pytest.approx(1.0)
@@ -105,8 +113,15 @@ def test_spread_and_missing():
 def test_differs_preregistered_rule():
     """범위가 겹치지 않고 평균 차 > 2·max(sd) 일 때만 '다르다'."""
     sp = symmetric.spread
-    assert symmetric.differs(sp([1.0, 1.1, 0.9]), sp([2.0, 2.1, 1.9])) is True
-    assert symmetric.differs(sp([1.0, 2.0, 1.5]), sp([1.8, 2.5, 2.2])) is False   # 겹침
+    a, b = sp([1.0, 1.1, 0.9]), sp([2.0, 2.1, 1.9])
+    assert symmetric.differs(a, b) is True and symmetric.differs(b, a) is True
+    # 겹치고 평균 차 0.67 < 문턱 1.0 — 두 조건 모두 False 쪽 (겹침만 시험하지는 못한다)
+    assert symmetric.differs(sp([1.0, 2.0, 1.5]), sp([1.8, 2.5, 2.2])) is False
+    # 겹침이 결과를 가르는 사례 (리뷰 B2): 범위 [0, 3] 과 [2.9, 6] 이 겹치지만
+    # 평균 차 3.97 > 문턱 2 × sd 1.79 = 3.58 — 겹침 조건만이 False 를 만든다
+    lo, hi = sp([0.0, 0.0, 3.0]), sp([2.9, 6.0, 6.0])
+    assert abs(hi['mean'] - lo['mean']) > symmetric.noise_threshold(lo['sd'], hi['sd'])
+    assert symmetric.differs(lo, hi) is False and symmetric.differs(hi, lo) is False
     # 겹치지 않지만 평균 차 0.65 < 2 × sd 0.5 = 1.0
     assert symmetric.differs(sp([0.0, 1.0, 0.5]), sp([1.1, 1.2, 1.15])) is False
     assert symmetric.differs(sp([1.0]), sp([2.0, 2.1])) is None
