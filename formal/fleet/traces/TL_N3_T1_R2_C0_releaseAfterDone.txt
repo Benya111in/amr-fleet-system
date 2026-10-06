@@ -1,0 +1,473 @@
+# model=TaskLock cfg=cfg/TL_N3_T1_R2_C0_releaseAfterDone.cfg workers=2 heap=8g image=amr-ai/rl:0.3 timeout=170s
+# jar=/home/CAPYI_AI/downloads/tla/tla2tools-1.7.4.jar sha256=936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
+# head=b9a534b777e77c211f2a627a6f0e5d5bf933bcdb dirty=8
+# spec_sha256=290b7fafd0faa8929ac00e2ba6ad64c04138c789c58fd5ce5521ee460a814809 cfg_sha256=74ad5f0d594703dc281144c610dfce7bba6fb9f04bdb802b88560fcfbc2bcf18
+# start=2026-10-06T06:41:28+09:00 loadavg=86.92 64.19 47.18
+# end=2026-10-06T06:41:32+09:00 rc=12 loadavg=82.44 63.63 47.09
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+
+## 상태마다 바뀐 변수만 (trace_diff.py)
+State 1: Initial
+    cur = (r1 :> NoRid @@ r2 :> NoRid @@ r3 :> NoRid)
+    curT = (r1 :> NoRid @@ r2 :> NoRid @@ r3 :> NoRid)
+    execCount = (t1 :> 0)
+    inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+    lock = ( r1 :> (t1 :> [st |-> "F", rid |-> NoRid]) @@ r2 :> (t1 :> [st |-> "F", rid |-> NoRid]) @@ r3 :> (t1 :> [st |-> "F", rid |-> NoRid]) )
+    msgs = {}
+    ncrash = 0
+    nreqs = 0
+    phase = (r1 :> "idle" @@ r2 :> "idle" @@ r3 :> "idle")
+    seq = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+State 2: Request
+    cur = (r1 :> <<r1, 0, 1>> @@ r2 :> NoRid @@ r3 :> NoRid)
+    curT = (r1 :> t1 @@ r2 :> NoRid @@ r3 :> NoRid)
+    msgs + [rid |-> <<r1, 0, 1>>, type |-> "req", task |-> t1]
+    nreqs = 1
+    phase = (r1 :> "locking" @@ r2 :> "idle" @@ r3 :> "idle")
+    seq = (r1 :> 1 @@ r2 :> 0 @@ r3 :> 0)
+State 3: GrantVote
+    lock = ( r1 :> (t1 :> [st |-> "T", rid |-> <<r1, 0, 1>>]) @@ r2 :> (t1 :> [st |-> "F", rid |-> NoRid]) @@ r3 :> (t1 :> [st |-> "F", rid |-> NoRid]) )
+    msgs + [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1]
+State 4: Request
+    cur = (r1 :> <<r1, 0, 1>> @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+    curT = (r1 :> t1 @@ r2 :> t1 @@ r3 :> NoRid)
+    msgs + [rid |-> <<r2, 0, 1>>, type |-> "req", task |-> t1]
+    nreqs = 2
+    phase = (r1 :> "locking" @@ r2 :> "locking" @@ r3 :> "idle")
+    seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+State 5: GrantVote
+    lock = ( r1 :> (t1 :> [st |-> "T", rid |-> <<r1, 0, 1>>]) @@ r2 :> (t1 :> [st |-> "T", rid |-> <<r1, 0, 1>>]) @@ r3 :> (t1 :> [st |-> "F", rid |-> NoRid]) )
+    msgs + [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2]
+State 6: SendConfirm
+    msgs + [rid |-> <<r1, 0, 1>>, type |-> "confirm", task |-> t1]
+    phase = (r1 :> "confirming" @@ r2 :> "locking" @@ r3 :> "idle")
+State 7: CommitVote
+    lock = ( r1 :> (t1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@ r2 :> (t1 :> [st |-> "T", rid |-> <<r1, 0, 1>>]) @@ r3 :> (t1 :> [st |-> "F", rid |-> NoRid]) )
+    msgs + [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r1]
+State 8: CommitVote
+    lock = ( r1 :> (t1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@ r2 :> (t1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@ r3 :> (t1 :> [st |-> "F", rid |-> NoRid]) )
+    msgs + [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r2]
+State 9: Locked
+    phase = (r1 :> "locked" @@ r2 :> "locking" @@ r3 :> "idle")
+State 10: Start
+    execCount = (t1 :> 1)
+    phase = (r1 :> "started" @@ r2 :> "locking" @@ r3 :> "idle")
+State 11: Done
+    cur = (r1 :> NoRid @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+    curT = (r1 :> NoRid @@ r2 :> t1 @@ r3 :> NoRid)
+    msgs + [rid |-> <<r1, 0, 1>>, type |-> "release"]
+    phase = (r1 :> "idle" @@ r2 :> "locking" @@ r3 :> "idle")
+State 12: HandleRelease
+    lock = ( r1 :> (t1 :> [st |-> "F", rid |-> NoRid]) @@ r2 :> (t1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@ r3 :> (t1 :> [st |-> "F", rid |-> NoRid]) )
+State 13: GrantVote
+    lock = ( r1 :> (t1 :> [st |-> "T", rid |-> <<r2, 0, 1>>]) @@ r2 :> (t1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@ r3 :> (t1 :> [st |-> "F", rid |-> NoRid]) )
+    msgs + [rid |-> <<r2, 0, 1>>, type |-> "vote", from |-> r1]
+State 14: GrantVote
+    lock = ( r1 :> (t1 :> [st |-> "T", rid |-> <<r2, 0, 1>>]) @@ r2 :> (t1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@ r3 :> (t1 :> [st |-> "T", rid |-> <<r2, 0, 1>>]) )
+    msgs + [rid |-> <<r2, 0, 1>>, type |-> "vote", from |-> r3]
+State 15: SendConfirm
+    msgs + [rid |-> <<r2, 0, 1>>, type |-> "confirm", task |-> t1]
+    phase = (r1 :> "idle" @@ r2 :> "confirming" @@ r3 :> "idle")
+State 16: CommitVote
+    lock = ( r1 :> (t1 :> [st |-> "C", rid |-> <<r2, 0, 1>>]) @@ r2 :> (t1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@ r3 :> (t1 :> [st |-> "T", rid |-> <<r2, 0, 1>>]) )
+    msgs + [rid |-> <<r2, 0, 1>>, type |-> "ack", from |-> r1]
+State 17: CommitVote
+    lock = ( r1 :> (t1 :> [st |-> "C", rid |-> <<r2, 0, 1>>]) @@ r2 :> (t1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@ r3 :> (t1 :> [st |-> "C", rid |-> <<r2, 0, 1>>]) )
+    msgs + [rid |-> <<r2, 0, 1>>, type |-> "ack", from |-> r3]
+State 18: Locked
+    phase = (r1 :> "idle" @@ r2 :> "locked" @@ r3 :> "idle")
+State 19: Start
+    execCount = (t1 :> 2)
+    phase = (r1 :> "idle" @@ r2 :> "started" @@ r3 :> "idle")
+
+## TLC 원문
+Error: Invariant AtMostOnce is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ phase = (r1 :> "idle" @@ r2 :> "idle" @@ r3 :> "idle")
+/\ seq = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ cur = (r1 :> NoRid @@ r2 :> NoRid @@ r3 :> NoRid)
+/\ nreqs = 0
+/\ execCount = (t1 :> 0)
+/\ lock = ( r1 :> (t1 :> [st |-> "F", rid |-> NoRid]) @@
+  r2 :> (t1 :> [st |-> "F", rid |-> NoRid]) @@
+  r3 :> (t1 :> [st |-> "F", rid |-> NoRid]) )
+/\ curT = (r1 :> NoRid @@ r2 :> NoRid @@ r3 :> NoRid)
+/\ msgs = {}
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 0
+
+State 2: <Request line 96, col 3 to line 106, col 47 of module TaskLock>
+/\ phase = (r1 :> "locking" @@ r2 :> "idle" @@ r3 :> "idle")
+/\ seq = (r1 :> 1 @@ r2 :> 0 @@ r3 :> 0)
+/\ cur = (r1 :> <<r1, 0, 1>> @@ r2 :> NoRid @@ r3 :> NoRid)
+/\ nreqs = 1
+/\ execCount = (t1 :> 0)
+/\ lock = ( r1 :> (t1 :> [st |-> "F", rid |-> NoRid]) @@
+  r2 :> (t1 :> [st |-> "F", rid |-> NoRid]) @@
+  r3 :> (t1 :> [st |-> "F", rid |-> NoRid]) )
+/\ curT = (r1 :> t1 @@ r2 :> NoRid @@ r3 :> NoRid)
+/\ msgs = {[rid |-> <<r1, 0, 1>>, type |-> "req", task |-> t1]}
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 0
+
+State 3: <GrantVote line 165, col 3 to line 170, col 73 of module TaskLock>
+/\ phase = (r1 :> "locking" @@ r2 :> "idle" @@ r3 :> "idle")
+/\ seq = (r1 :> 1 @@ r2 :> 0 @@ r3 :> 0)
+/\ cur = (r1 :> <<r1, 0, 1>> @@ r2 :> NoRid @@ r3 :> NoRid)
+/\ nreqs = 1
+/\ execCount = (t1 :> 0)
+/\ lock = ( r1 :> (t1 :> [st |-> "T", rid |-> <<r1, 0, 1>>]) @@
+  r2 :> (t1 :> [st |-> "F", rid |-> NoRid]) @@
+  r3 :> (t1 :> [st |-> "F", rid |-> NoRid]) )
+/\ curT = (r1 :> t1 @@ r2 :> NoRid @@ r3 :> NoRid)
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "req", task |-> t1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1] }
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 0
+
+State 4: <Request line 96, col 3 to line 106, col 47 of module TaskLock>
+/\ phase = (r1 :> "locking" @@ r2 :> "locking" @@ r3 :> "idle")
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> <<r1, 0, 1>> @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 2
+/\ execCount = (t1 :> 0)
+/\ lock = ( r1 :> (t1 :> [st |-> "T", rid |-> <<r1, 0, 1>>]) @@
+  r2 :> (t1 :> [st |-> "F", rid |-> NoRid]) @@
+  r3 :> (t1 :> [st |-> "F", rid |-> NoRid]) )
+/\ curT = (r1 :> t1 @@ r2 :> t1 @@ r3 :> NoRid)
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "req", task |-> t1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", task |-> t1] }
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 0
+
+State 5: <GrantVote line 165, col 3 to line 170, col 73 of module TaskLock>
+/\ phase = (r1 :> "locking" @@ r2 :> "locking" @@ r3 :> "idle")
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> <<r1, 0, 1>> @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 2
+/\ execCount = (t1 :> 0)
+/\ lock = ( r1 :> (t1 :> [st |-> "T", rid |-> <<r1, 0, 1>>]) @@
+  r2 :> (t1 :> [st |-> "T", rid |-> <<r1, 0, 1>>]) @@
+  r3 :> (t1 :> [st |-> "F", rid |-> NoRid]) )
+/\ curT = (r1 :> t1 @@ r2 :> t1 @@ r3 :> NoRid)
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "req", task |-> t1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", task |-> t1] }
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 0
+
+State 6: <SendConfirm line 109, col 3 to line 113, col 70 of module TaskLock>
+/\ phase = (r1 :> "confirming" @@ r2 :> "locking" @@ r3 :> "idle")
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> <<r1, 0, 1>> @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 2
+/\ execCount = (t1 :> 0)
+/\ lock = ( r1 :> (t1 :> [st |-> "T", rid |-> <<r1, 0, 1>>]) @@
+  r2 :> (t1 :> [st |-> "T", rid |-> <<r1, 0, 1>>]) @@
+  r3 :> (t1 :> [st |-> "F", rid |-> NoRid]) )
+/\ curT = (r1 :> t1 @@ r2 :> t1 @@ r3 :> NoRid)
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "req", task |-> t1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2],
+  [rid |-> <<r1, 0, 1>>, type |-> "confirm", task |-> t1],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", task |-> t1] }
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 0
+
+State 7: <CommitVote line 173, col 3 to line 178, col 73 of module TaskLock>
+/\ phase = (r1 :> "confirming" @@ r2 :> "locking" @@ r3 :> "idle")
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> <<r1, 0, 1>> @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 2
+/\ execCount = (t1 :> 0)
+/\ lock = ( r1 :> (t1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r2 :> (t1 :> [st |-> "T", rid |-> <<r1, 0, 1>>]) @@
+  r3 :> (t1 :> [st |-> "F", rid |-> NoRid]) )
+/\ curT = (r1 :> t1 @@ r2 :> t1 @@ r3 :> NoRid)
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "req", task |-> t1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2],
+  [rid |-> <<r1, 0, 1>>, type |-> "confirm", task |-> t1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", task |-> t1] }
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 0
+
+State 8: <CommitVote line 173, col 3 to line 178, col 73 of module TaskLock>
+/\ phase = (r1 :> "confirming" @@ r2 :> "locking" @@ r3 :> "idle")
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> <<r1, 0, 1>> @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 2
+/\ execCount = (t1 :> 0)
+/\ lock = ( r1 :> (t1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r2 :> (t1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r3 :> (t1 :> [st |-> "F", rid |-> NoRid]) )
+/\ curT = (r1 :> t1 @@ r2 :> t1 @@ r3 :> NoRid)
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "req", task |-> t1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2],
+  [rid |-> <<r1, 0, 1>>, type |-> "confirm", task |-> t1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r2],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", task |-> t1] }
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 0
+
+State 9: <Locked line 116, col 3 to line 119, col 76 of module TaskLock>
+/\ phase = (r1 :> "locked" @@ r2 :> "locking" @@ r3 :> "idle")
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> <<r1, 0, 1>> @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 2
+/\ execCount = (t1 :> 0)
+/\ lock = ( r1 :> (t1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r2 :> (t1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r3 :> (t1 :> [st |-> "F", rid |-> NoRid]) )
+/\ curT = (r1 :> t1 @@ r2 :> t1 @@ r3 :> NoRid)
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "req", task |-> t1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2],
+  [rid |-> <<r1, 0, 1>>, type |-> "confirm", task |-> t1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r2],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", task |-> t1] }
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 0
+
+State 10: <Start line 123, col 3 to line 126, col 65 of module TaskLock>
+/\ phase = (r1 :> "started" @@ r2 :> "locking" @@ r3 :> "idle")
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> <<r1, 0, 1>> @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 2
+/\ execCount = (t1 :> 1)
+/\ lock = ( r1 :> (t1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r2 :> (t1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r3 :> (t1 :> [st |-> "F", rid |-> NoRid]) )
+/\ curT = (r1 :> t1 @@ r2 :> t1 @@ r3 :> NoRid)
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "req", task |-> t1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2],
+  [rid |-> <<r1, 0, 1>>, type |-> "confirm", task |-> t1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r2],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", task |-> t1] }
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 0
+
+State 11: <Done line 130, col 3 to line 133, col 59 of module TaskLock>
+/\ phase = (r1 :> "idle" @@ r2 :> "locking" @@ r3 :> "idle")
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> NoRid @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 2
+/\ execCount = (t1 :> 1)
+/\ lock = ( r1 :> (t1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r2 :> (t1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r3 :> (t1 :> [st |-> "F", rid |-> NoRid]) )
+/\ curT = (r1 :> NoRid @@ r2 :> t1 @@ r3 :> NoRid)
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "release"],
+  [rid |-> <<r1, 0, 1>>, type |-> "req", task |-> t1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2],
+  [rid |-> <<r1, 0, 1>>, type |-> "confirm", task |-> t1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r2],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", task |-> t1] }
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 0
+
+State 12: <HandleRelease line 201, col 3 to line 204, col 79 of module TaskLock>
+/\ phase = (r1 :> "idle" @@ r2 :> "locking" @@ r3 :> "idle")
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> NoRid @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 2
+/\ execCount = (t1 :> 1)
+/\ lock = ( r1 :> (t1 :> [st |-> "F", rid |-> NoRid]) @@
+  r2 :> (t1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r3 :> (t1 :> [st |-> "F", rid |-> NoRid]) )
+/\ curT = (r1 :> NoRid @@ r2 :> t1 @@ r3 :> NoRid)
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "release"],
+  [rid |-> <<r1, 0, 1>>, type |-> "req", task |-> t1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2],
+  [rid |-> <<r1, 0, 1>>, type |-> "confirm", task |-> t1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r2],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", task |-> t1] }
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 0
+
+State 13: <GrantVote line 165, col 3 to line 170, col 73 of module TaskLock>
+/\ phase = (r1 :> "idle" @@ r2 :> "locking" @@ r3 :> "idle")
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> NoRid @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 2
+/\ execCount = (t1 :> 1)
+/\ lock = ( r1 :> (t1 :> [st |-> "T", rid |-> <<r2, 0, 1>>]) @@
+  r2 :> (t1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r3 :> (t1 :> [st |-> "F", rid |-> NoRid]) )
+/\ curT = (r1 :> NoRid @@ r2 :> t1 @@ r3 :> NoRid)
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "release"],
+  [rid |-> <<r1, 0, 1>>, type |-> "req", task |-> t1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2],
+  [rid |-> <<r1, 0, 1>>, type |-> "confirm", task |-> t1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r2],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", task |-> t1],
+  [rid |-> <<r2, 0, 1>>, type |-> "vote", from |-> r1] }
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 0
+
+State 14: <GrantVote line 165, col 3 to line 170, col 73 of module TaskLock>
+/\ phase = (r1 :> "idle" @@ r2 :> "locking" @@ r3 :> "idle")
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> NoRid @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 2
+/\ execCount = (t1 :> 1)
+/\ lock = ( r1 :> (t1 :> [st |-> "T", rid |-> <<r2, 0, 1>>]) @@
+  r2 :> (t1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r3 :> (t1 :> [st |-> "T", rid |-> <<r2, 0, 1>>]) )
+/\ curT = (r1 :> NoRid @@ r2 :> t1 @@ r3 :> NoRid)
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "release"],
+  [rid |-> <<r1, 0, 1>>, type |-> "req", task |-> t1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2],
+  [rid |-> <<r1, 0, 1>>, type |-> "confirm", task |-> t1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r2],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", task |-> t1],
+  [rid |-> <<r2, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r2, 0, 1>>, type |-> "vote", from |-> r3] }
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 0
+
+State 15: <SendConfirm line 109, col 3 to line 113, col 70 of module TaskLock>
+/\ phase = (r1 :> "idle" @@ r2 :> "confirming" @@ r3 :> "idle")
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> NoRid @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 2
+/\ execCount = (t1 :> 1)
+/\ lock = ( r1 :> (t1 :> [st |-> "T", rid |-> <<r2, 0, 1>>]) @@
+  r2 :> (t1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r3 :> (t1 :> [st |-> "T", rid |-> <<r2, 0, 1>>]) )
+/\ curT = (r1 :> NoRid @@ r2 :> t1 @@ r3 :> NoRid)
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "release"],
+  [rid |-> <<r1, 0, 1>>, type |-> "req", task |-> t1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2],
+  [rid |-> <<r1, 0, 1>>, type |-> "confirm", task |-> t1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r2],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", task |-> t1],
+  [rid |-> <<r2, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r2, 0, 1>>, type |-> "vote", from |-> r3],
+  [rid |-> <<r2, 0, 1>>, type |-> "confirm", task |-> t1] }
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 0
+
+State 16: <CommitVote line 173, col 3 to line 178, col 73 of module TaskLock>
+/\ phase = (r1 :> "idle" @@ r2 :> "confirming" @@ r3 :> "idle")
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> NoRid @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 2
+/\ execCount = (t1 :> 1)
+/\ lock = ( r1 :> (t1 :> [st |-> "C", rid |-> <<r2, 0, 1>>]) @@
+  r2 :> (t1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r3 :> (t1 :> [st |-> "T", rid |-> <<r2, 0, 1>>]) )
+/\ curT = (r1 :> NoRid @@ r2 :> t1 @@ r3 :> NoRid)
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "release"],
+  [rid |-> <<r1, 0, 1>>, type |-> "req", task |-> t1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2],
+  [rid |-> <<r1, 0, 1>>, type |-> "confirm", task |-> t1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r2],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", task |-> t1],
+  [rid |-> <<r2, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r2, 0, 1>>, type |-> "vote", from |-> r3],
+  [rid |-> <<r2, 0, 1>>, type |-> "confirm", task |-> t1],
+  [rid |-> <<r2, 0, 1>>, type |-> "ack", from |-> r1] }
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 0
+
+State 17: <CommitVote line 173, col 3 to line 178, col 73 of module TaskLock>
+/\ phase = (r1 :> "idle" @@ r2 :> "confirming" @@ r3 :> "idle")
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> NoRid @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 2
+/\ execCount = (t1 :> 1)
+/\ lock = ( r1 :> (t1 :> [st |-> "C", rid |-> <<r2, 0, 1>>]) @@
+  r2 :> (t1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r3 :> (t1 :> [st |-> "C", rid |-> <<r2, 0, 1>>]) )
+/\ curT = (r1 :> NoRid @@ r2 :> t1 @@ r3 :> NoRid)
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "release"],
+  [rid |-> <<r1, 0, 1>>, type |-> "req", task |-> t1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2],
+  [rid |-> <<r1, 0, 1>>, type |-> "confirm", task |-> t1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r2],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", task |-> t1],
+  [rid |-> <<r2, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r2, 0, 1>>, type |-> "vote", from |-> r3],
+  [rid |-> <<r2, 0, 1>>, type |-> "confirm", task |-> t1],
+  [rid |-> <<r2, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r2, 0, 1>>, type |-> "ack", from |-> r3] }
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 0
+
+State 18: <Locked line 116, col 3 to line 119, col 76 of module TaskLock>
+/\ phase = (r1 :> "idle" @@ r2 :> "locked" @@ r3 :> "idle")
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> NoRid @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 2
+/\ execCount = (t1 :> 1)
+/\ lock = ( r1 :> (t1 :> [st |-> "C", rid |-> <<r2, 0, 1>>]) @@
+  r2 :> (t1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r3 :> (t1 :> [st |-> "C", rid |-> <<r2, 0, 1>>]) )
+/\ curT = (r1 :> NoRid @@ r2 :> t1 @@ r3 :> NoRid)
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "release"],
+  [rid |-> <<r1, 0, 1>>, type |-> "req", task |-> t1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2],
+  [rid |-> <<r1, 0, 1>>, type |-> "confirm", task |-> t1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r2],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", task |-> t1],
+  [rid |-> <<r2, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r2, 0, 1>>, type |-> "vote", from |-> r3],
+  [rid |-> <<r2, 0, 1>>, type |-> "confirm", task |-> t1],
+  [rid |-> <<r2, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r2, 0, 1>>, type |-> "ack", from |-> r3] }
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 0
+
+State 19: <Start line 123, col 3 to line 126, col 65 of module TaskLock>
+/\ phase = (r1 :> "idle" @@ r2 :> "started" @@ r3 :> "idle")
+/\ seq = (r1 :> 1 @@ r2 :> 1 @@ r3 :> 0)
+/\ cur = (r1 :> NoRid @@ r2 :> <<r2, 0, 1>> @@ r3 :> NoRid)
+/\ nreqs = 2
+/\ execCount = (t1 :> 2)
+/\ lock = ( r1 :> (t1 :> [st |-> "C", rid |-> <<r2, 0, 1>>]) @@
+  r2 :> (t1 :> [st |-> "C", rid |-> <<r1, 0, 1>>]) @@
+  r3 :> (t1 :> [st |-> "C", rid |-> <<r2, 0, 1>>]) )
+/\ curT = (r1 :> NoRid @@ r2 :> t1 @@ r3 :> NoRid)
+/\ msgs = { [rid |-> <<r1, 0, 1>>, type |-> "release"],
+  [rid |-> <<r1, 0, 1>>, type |-> "req", task |-> t1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "vote", from |-> r2],
+  [rid |-> <<r1, 0, 1>>, type |-> "confirm", task |-> t1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r1, 0, 1>>, type |-> "ack", from |-> r2],
+  [rid |-> <<r2, 0, 1>>, type |-> "req", task |-> t1],
+  [rid |-> <<r2, 0, 1>>, type |-> "vote", from |-> r1],
+  [rid |-> <<r2, 0, 1>>, type |-> "vote", from |-> r3],
+  [rid |-> <<r2, 0, 1>>, type |-> "confirm", task |-> t1],
+  [rid |-> <<r2, 0, 1>>, type |-> "ack", from |-> r1],
+  [rid |-> <<r2, 0, 1>>, type |-> "ack", from |-> r3] }
+/\ inc = (r1 :> 0 @@ r2 :> 0 @@ r3 :> 0)
+/\ ncrash = 0
+
+210067 states generated, 40247 distinct states found, 7426 states left on queue.
