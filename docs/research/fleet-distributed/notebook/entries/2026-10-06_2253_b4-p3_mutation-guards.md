@@ -78,3 +78,10 @@ P3 에서 넣은 가드(모드 · 에포크 펜스 · 작업 잠금 어댑터 ·
 ## 다음
 
 - 최종 회귀 (colcon -Werror + 세 패키지 시험) 뒤 p3.md §6.4 에 반영.
+
+## 리뷰 반영 (2026-10-07, 항목 `2026-10-06_2348_b4-p3_review-fix-proxy-leak-contention.md`)
+
+- 리뷰 변이: RM1(가짜 실행기가 held 를 기다리지 않음)은 순수 시험에서 KILLED 였지만 **launch 시험(④)에서는 SURVIVED** — 이 항목의
+  "ROS 수준 5/5" 는 프록시 펜스(N1)와 존 BT 헤더(C1–C4)만 본 것이고 작업 잠금의 ROS 경로는 변이로 확인한 적이 없었다.
+- 고친 코드에서: 앞 회차 26 종 + 새 가드 MR1–MR11 = **37/37 KILLED** (P3R_mutation_v3). ROS 수준: RM1 은 새 ④c 에서 KILLED,
+  N2(실행기 거부를 수락으로)는 ④b 에서 KILLED, RM2(ENTER 가 다른 요청의 잠정 표로도 확정)는 ④b · ④c 둘 다 **SURVIVED** (새 항목 결과).
