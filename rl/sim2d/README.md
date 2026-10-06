@@ -142,6 +142,15 @@ docker run --rm --gpus all --name amr-ai-r2-sim2d-test -v <worktree>:/ws -w /ws/
   사례, env 관측 배치 1·N), 메타데이터 `contract_version 1.1.0, arm B, obs_dim 291, dt 0.1, normalization inside` [측정,
   `/home/CAPYI_AI/runs/r2-sim2d/B_bc3/onnx_check.json`]. 모델 파일은 커밋하지 않는다 (루트 `.gitignore:42-43`).
 
+## 보상 v1.2 (2차 물결 r5-reward) — 순수 PPO 학습 가능성 [측정]
+
+`--reward` 로 보상 설계를 고른다 (기본 = 계약 v1.2.0). 같은 예산(순수 PPO, BC 없음, 14.94M env-steps, 2 048 env,
+정적 지도, 평가 시드 4242·n = 2 048, 마지막 반복 정책)에서 평가 성공: v1.1.0 0.000, PBRS 만 고친 pbrs_eff
+0.000·0.000, **v1.2.0(= prog50) 0.983·0.948**, prog50_st 0.992·0.977, prog25 0.198·0.000, 비교군 C(prog50) 0.937,
+**동적 장애물(mixed 0–4, prog50) 0.000 — 제자리 회전으로 굳는다**. 표·곡선·착취 표와 이유는
+[`docs/research/rl-navigation/reward_v12.md`](../../docs/research/rl-navigation/reward_v12.md), 원자료
+`/home/CAPYI_AI/runs/r5-reward/g2/`. 위 1차 물결 표는 v1.1.0 보상으로 학습한 것이다.
+
 ## 계약·보고서와 다르게 한 것
 
 | 항목 | 여기서 한 것 | 이유 |
