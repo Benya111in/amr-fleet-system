@@ -84,3 +84,11 @@ G2 의 결론 "prog50(= v1.2.0) 은 두 시드 모두 학습된다" 가 독립 �
 | `W2a_r5_review_v120_full_s3` | train | 2d | c9ea4e6 | 3 | [측정] |
 | `W2a_r5_review_g01_rerun` | probe | 2d | c9ea4e6 | 777 | [측정] |
 | `W2a_r5_review_eval_ckpt_seed777` | eval | 2d | c9ea4e6 | 777 | [측정] |
+
+## 리뷰 반영으로 더 등록한 run (변이 검사·학습 스모크)
+A4 리뷰 비차단 6("등록하지 않은 원자료")을 반영해 소급 등록했다 (`runs/b1-backfill.jsonl`, `revision` 필드).
+커밋이 `unknown-noHEAD` 인 것은 config 에 추정 근거를 적었다. 시각이 파일 mtime 인 것은 상·하한이다.
+
+| run_id | 종류 | 시뮬 | 커밋 | dirty | 결과 [측정] |
+|---|---|---|---|---|---|
+| `W2a_r5_fix_mutation_4fcba3e` | test | offline | 4fcba3e | unknown | 22/23 잡힘 — 생존: N5r (의도한 대조군 — 생존이 기대값) |

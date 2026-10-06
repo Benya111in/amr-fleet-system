@@ -84,3 +84,12 @@ p99 는 모든 조합에서 ≤ 0.22 ms (50 ms 예산의 0.44 %). 최댓값 7.43
 | `W1_r3_gz_c_heur_a` | gazebo | gazebo | d5417a0 | n/a | 실패 |
 | `W1_r3_gz_c_heur_b` | gazebo | gazebo | d5417a0 | n/a | [측정] |
 | `W1_r3_latency_bench_2` | probe | offline | e085271 | n/a | [측정] |
+
+## 리뷰 반영으로 더 등록한 run (변이 검사·학습 스모크)
+A4 리뷰 비차단 6("등록하지 않은 원자료")을 반영해 소급 등록했다 (`runs/b1-backfill.jsonl`, `revision` 필드).
+커밋이 `unknown-noHEAD` 인 것은 config 에 추정 근거를 적었다. 시각이 파일 mtime 인 것은 상·하한이다.
+
+| run_id | 종류 | 시뮬 | 커밋 | dirty | 결과 [측정] |
+|---|---|---|---|---|---|
+| `W1_r3_mutation_run1_e085271` | test | offline | e085271 | false | 24/28 잡힘 — 생존: M7 목표 너머 검사 제외; M13 투영 동률 규칙; M15 폴백 셀 항상 유효 (정의 오류로 등가); P2 arm 검사 |
+| `W1_r3_mutation_run2_d5417a0` | test | offline | d5417a0 | false | 4/4 잡힘 |

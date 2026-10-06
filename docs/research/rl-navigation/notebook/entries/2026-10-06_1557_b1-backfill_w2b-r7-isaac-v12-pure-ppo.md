@@ -102,3 +102,15 @@
 | `W2b_r7_review_rv_v11_s0_eval_3_15` | eval | isaac | ab8b16f | 평가 seed 4242 | [측정] |
 | `W2b_r7_golden_in_sim_174fda8` | test | isaac | 174fda8 | n/a | [측정] |
 | `W2b_r7_smoke_174fda8` | probe | isaac | 174fda8 | n/a | [측정] |
+
+## 리뷰 반영으로 더 등록한 run (변이 검사·학습 스모크)
+A4 리뷰 비차단 6("등록하지 않은 원자료")을 반영해 소급 등록했다 (`runs/b1-backfill.jsonl`, `revision` 필드).
+커밋이 `unknown-noHEAD` 인 것은 config 에 추정 근거를 적었다. 시각이 파일 mtime 인 것은 상·하한이다.
+
+| run_id | 종류 | 시뮬 | 커밋 | dirty | 결과 [측정] |
+|---|---|---|---|---|---|
+| `W2b_r7_smoke_train` | train | isaac | unknown-noHEAD | true | 롤아웃 9 에피소드: 성공 0.0, 충돌 0.222; 정책 대조 2.4e-07 |
+| `W2b_r7_mutation_bbdbe2f` | test | offline | bbdbe2f | unknown | 21/22 잡힘 — 생존: M3e 이탈 구간 안에서만 힌지 (예측한 등가 변이) |
+| `W2b_r7_mut_isaac_M5a_bbdbe2f` | test | isaac | bbdbe2f | false | 잡힘 (decision 실패 0/17, step 실패 6/12) |
+| `W2b_r7_mut_isaac_M5c_bbdbe2f` | test | isaac | bbdbe2f | false | 잡힘 (decision 실패 0/17, step 실패 12/12) |
+| `W2b_r7_review_mutation_ab8b16f` | test | offline | ab8b16f | unknown | 11/12 잡힘 — 생존: R11 env_math 판 일치 가드 제거 (지금 상수로는 닿을 수 없는 방어 가드) |

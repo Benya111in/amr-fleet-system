@@ -63,3 +63,13 @@
 | `W1_r2_B_bc1` | train | 2d | f0d293c | 0 | [측정] |
 | `W1_r2_B_bc2` | train | 2d | 24543a2 | 0 | [측정] |
 | `W1_r2_B_bc3` | train | 2d | 6be890c | 0 | [측정] |
+
+## 리뷰 반영으로 더 등록한 run (변이 검사·학습 스모크)
+A4 리뷰 비차단 6("등록하지 않은 원자료")을 반영해 소급 등록했다 (`runs/b1-backfill.jsonl`, `revision` 필드).
+커밋이 `unknown-noHEAD` 인 것은 config 에 추정 근거를 적었다. 시각이 파일 mtime 인 것은 상·하한이다.
+
+| run_id | 종류 | 시뮬 | 커밋 | dirty | 결과 [측정] |
+|---|---|---|---|---|---|
+| `W1_r2_mutation_bffbd33` | test | offline | bffbd33 | unknown | 10/14 잡힘 — 생존: M3 compile 아래 argmax 동률; M12 관측 지연 무시; M13 truncation 부트스트랩 끔 — 오류: M11 원문 문자열 불일치로 적용 실패 (count 0) |
+| `W1_r2_mutation_24543a2_rerun` | test | offline | 24543a2 | unknown | 4/4 잡힘 |
+| `W1_r2_mutation_M15_658aa73` | test | offline | 658aa73 | unknown | 1/1 잡힘 |

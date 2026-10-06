@@ -76,3 +76,14 @@
 | `W1_r2_B_bc2_reeval` | eval | 2d | 5b42ca8 | 1000 | [측정] |
 | `W1_r2_B_bc3_reeval` | eval | 2d | 5b42ca8 | 1000,2000 | [측정] |
 | `W1_r2_review_diag2_unbiased` | eval | 2d | 658aa73 | 1000,2000 | [측정] |
+
+## 리뷰 반영으로 더 등록한 run (변이 검사·학습 스모크)
+A4 리뷰 비차단 6("등록하지 않은 원자료")을 반영해 소급 등록했다 (`runs/b1-backfill.jsonl`, `revision` 필드).
+커밋이 `unknown-noHEAD` 인 것은 config 에 추정 근거를 적었다. 시각이 파일 mtime 인 것은 상·하한이다.
+
+| run_id | 종류 | 시뮬 | 커밋 | dirty | 결과 [측정] |
+|---|---|---|---|---|---|
+| `W1_r2_review_mutation_658aa73` | test | offline | 658aa73 | unknown | 1/6 잡힘 — 생존: R2 장애물 접촉 무시; R3 정체 절단 제거; R4 장애물 스캔 지연 무시; R5 STOP 1 스캔 확정; R6 시간 상한 제거 |
+| `W1_r2_fix_mutation_a6660f3` | test | offline | a6660f3 | unknown | 10/10 잡힘 |
+| `W1_r2_fix_mutation_E0_old_evaluate` | test | offline | a6660f3 | unknown | 1/1 잡힘 |
+| `W1_r2_recheck_mutation_486fdce` | test | offline | 486fdce | unknown | 14/15 잡힘 — 생존: X5 평가 라운드마다 같은 seed 재사용 |

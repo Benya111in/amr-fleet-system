@@ -93,3 +93,17 @@
 | `W2b_r6_g2_bc_s0_aborted_73675fd` | train | 2d | 73675fd | 0 | 실패 |
 | `W2b_r6_g2_paired_eval` | eval | 2d | 70eb1ac | 4242 | [측정] |
 | `W2b_r6_review_rv_paired` | eval | 2d | 3b5657c | 4242,9001 | [측정] |
+
+## 리뷰 반영으로 더 등록한 run (변이 검사·학습 스모크)
+A4 리뷰 비차단 6("등록하지 않은 원자료")을 반영해 소급 등록했다 (`runs/b1-backfill.jsonl`, `revision` 필드).
+커밋이 `unknown-noHEAD` 인 것은 config 에 추정 근거를 적었다. 시각이 파일 mtime 인 것은 상·하한이다.
+
+| run_id | 종류 | 시뮬 | 커밋 | dirty | 결과 [측정] |
+|---|---|---|---|---|---|
+| `W2b_r6_smoke_train_smk1` | train | 2d | unknown-noHEAD | true | 스모크 평가 n 64: 성공 0.0, 충돌 0.203, 정체 0.641; ONNX 통과 |
+| `W2b_r6_smoke_train_smk2` | train | 2d | unknown-noHEAD | true | 스모크 평가 n 64: 성공 0.0, 충돌 0.156, 정체 0.594; ONNX 통과 |
+| `W2b_r6_smoke_train_smk3` | train | 2d | unknown-noHEAD | true | 스모크 평가 n 64: 성공 0.0, 충돌 0.219, 정체 0.734; ONNX 통과 |
+| `W2b_r6_smoke_train_smk4` | train | 2d | unknown-noHEAD | true | 스모크 평가 n 64: 성공 0.0, 충돌 0.625, 정체 0.3125; ONNX 통과 |
+| `W2b_r6_mutation_70eb1ac` | test | offline | 70eb1ac | unknown | 12/15 잡힘 — 생존: M3 거르기가 t0 만 봄 (시험이 같은 함수로 확인해 공허); M5 장애물 꼭짓점 거리 누락; M15 회전 접촉이 주행 중 접촉 포함 |
+| `W2b_r6_mutation_0e6fd1e` | test | offline | 0e6fd1e | unknown | 15/15 잡힘 |
+| `W2b_r6_review_mutation_3b5657c` | test | offline | 3b5657c | unknown | 1/3 잡힘 — 생존: R1 EMA 가중 뒤바꿈 (lag_ema 0.5 에서 등가); R2 KL-to-BC 손실 항 제거 (④ 핵심 항 시험 공백) |

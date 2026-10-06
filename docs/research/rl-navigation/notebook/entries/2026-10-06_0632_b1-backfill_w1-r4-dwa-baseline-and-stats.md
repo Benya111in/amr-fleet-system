@@ -75,7 +75,10 @@
 - 보고: `/home/CAPYI_AI/logs/agents/r4-eval/WAVE1_RESULT.md`
 
 ## WAVE 보고와 원자료의 차이
-- 없음 — 도달 240/240, 접촉 0/240, 45·15·82/240, 0.883 m, 3.82 s, 15.01/107.32 s, 0.061 m, CTE 값 모두 원자료와 같다.
+- 기준선 수치는 차이 없음 — 도달 240/240, 접촉 0/240, 45·15·82/240, 0.883 m, 3.82 s, 15.01/107.32 s, 0.061 m, CTE 값 모두 원자료와 같다.
+- (리뷰 반영 중 변이 run 을 등록하며 찾음) WAVE 변이 검사 "최종 25/25 포착; 처음부터 잡힌 것 20/25" — `mutation_round{1,2,3}.log` 의 합집합은
+  서로 다른 변이 **24** 개, 첫 시도에 **19** 개, 끝에 24 개 잡힘이다 [계산]. 1 차 20 + 2 차에 새로 4 (Barnard 합동 분산, 귀무 격자 200→32,
+  경보 검정 Barnard→Boschloo, 경보 누적 A 접촉) = 24. 한 개가 더 세어졌다 (표기, 결론 불변).
 
 ## 실행 목록에 등록한 run (`runs/b1-backfill.jsonl`, entry = 이 파일)
 
@@ -91,3 +94,14 @@
 | `W0_dwa_s08_regG` | gazebo | gazebo | 80874d3 | world actor 42, harness 7 | [측정] |
 | `W0_dwa_s07_regG` | gazebo | gazebo | 80874d3 | n/a | [측정] |
 | `W0_dwa_s07_E07` | gazebo | gazebo | b37c687 | n/a | [측정] |
+
+## 리뷰 반영으로 더 등록한 run (변이 검사·학습 스모크)
+A4 리뷰 비차단 6("등록하지 않은 원자료")을 반영해 소급 등록했다 (`runs/b1-backfill.jsonl`, `revision` 필드).
+커밋이 `unknown-noHEAD` 인 것은 config 에 추정 근거를 적었다. 시각이 파일 mtime 인 것은 상·하한이다.
+
+| run_id | 종류 | 시뮬 | 커밋 | dirty | 결과 [측정] |
+|---|---|---|---|---|---|
+| `W1_r4_mutation_round1` | test | offline | unknown-noHEAD | unknown | 17/20 잡힘 — 생존: FM 닫힌 해 대체 경로 제거; CP x=n 가드; 게이트 AND |
+| `W1_r4_mutation_round2` | test | offline | unknown-noHEAD | unknown | 5/7 잡힘 — 생존: Barnard 합동 분산; 경보 누적 A 접촉 |
+| `W1_r4_mutation_round3` | test | offline | unknown-noHEAD | unknown | 2/2 잡힘 |
+| `W1_r4_fix_mutation_review` | test | offline | unknown-noHEAD | unknown | 20/20 잡힘 |

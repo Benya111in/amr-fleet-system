@@ -54,6 +54,9 @@
 
 ## WAVE 보고와 원자료의 차이
 - WAVE fix 의 "nav |Δω| 0.48·0.47" 은 **전체 틱** 최대(0.482·0.474)다. 전환 틱만 보면 1 회차 0.454 다 (정의 차이, 결론 불변).
+- (리뷰 반영 중 변이 run 을 등록하며 찾음) WAVE "cdead19 기준 1차 10/10 잡힘 (rev_mutation.json)" — 그 결과 파일의 mtime 09:25:22 (M6 재실행 09:27:24)이
+  cdead19 커밋 시각 09:28:34 보다 **앞**이다. 변이 검사는 커밋 전 작업 트리(dc56d03 + 미커밋)에서 돌았고, 그 내용이 cdead19 와 같은지는 기록이 없다 (출처).
+  WAVE 의 "그 전 실행은 LD_LIBRARY_PATH 결함으로 무효 (모든 변이가 통과로 나옴)" 도 원자료가 남지 않았다 → [문서주장].
 - 그 밖(0.36/0.35/0.35/0.33, 전환 21·22·39·42 회, 8/8 도달)은 원자료와 같다.
 
 ## 실행 목록에 등록한 run (`runs/b1-backfill.jsonl`, entry = 이 파일)
@@ -68,3 +71,13 @@
 | `W1_r3_rev2_kin_follow_to014_prefix` | test | offline | dc56d03 | n/a (시간초과 무작위) | [측정] |
 | `W1_r3_rev2_kin_nav_to014_fixed` | test | offline | ffd359b | n/a (시간초과 무작위) | [측정] |
 | `W1_r3_rev2_kin_nav_to014_prefix` | test | offline | dc56d03 | n/a (시간초과 무작위) | [측정] |
+
+## 리뷰 반영으로 더 등록한 run (변이 검사·학습 스모크)
+A4 리뷰 비차단 6("등록하지 않은 원자료")을 반영해 소급 등록했다 (`runs/b1-backfill.jsonl`, `revision` 필드).
+커밋이 `unknown-noHEAD` 인 것은 config 에 추정 근거를 적었다. 시각이 파일 mtime 인 것은 상·하한이다.
+
+| run_id | 종류 | 시뮬 | 커밋 | dirty | 결과 [측정] |
+|---|---|---|---|---|---|
+| `W1_r3_fix_mutation_precommit` | test | offline | unknown-noHEAD | true | 빌드된 9/9 잡힘, M6_no_w_step_clamp 빌드 실패 → `W1_r3_fix_mutation_m6_rerun` 에서 잡힘 (합 10/10) |
+| `W1_r3_fix_mutation_m6_rerun` | test | offline | unknown-noHEAD | true | 1/1 잡힘 |
+| `W1_r3_fix_mutation2_ffd359b` | test | offline | unknown-noHEAD | unknown | 13/14 잡힘 — 생존: R3 동기 판정에서 ω 비교 생략 (ω 만 어긋나는 장면 시험 없음) |

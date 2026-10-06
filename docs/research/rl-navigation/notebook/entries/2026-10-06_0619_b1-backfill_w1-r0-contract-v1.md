@@ -84,3 +84,13 @@ Isaac(r1)·2D(r2)·C++ 플러그인(r3)·평가(r4)가 **같은 관측·행동·
 | `W1_r0_crosscheck_cpp_b1eb0c7` | test | offline | b1eb0c7 | n/a (결정적 입력) | [측정] |
 | `W1_r0_pytest_ffc93af` | test | offline | ffc93af | n/a (결정적 입력) | [측정] |
 | `W1_r0_pytest_b1eb0c7` | test | offline | b1eb0c7 | n/a (결정적 입력) | [측정] |
+
+## 리뷰 반영으로 더 등록한 run (변이 검사·학습 스모크)
+A4 리뷰 비차단 6("등록하지 않은 원자료")을 반영해 소급 등록했다 (`runs/b1-backfill.jsonl`, `revision` 필드).
+커밋이 `unknown-noHEAD` 인 것은 config 에 추정 근거를 적었다. 시각이 파일 mtime 인 것은 상·하한이다.
+
+| run_id | 종류 | 시뮬 | 커밋 | dirty | 결과 [측정] |
+|---|---|---|---|---|---|
+| `W1_r0_mutation_698585d` | test | offline | 698585d | unknown | 21/22 잡힘 (전체 시험·golden 제외 두 방식 모두) — 생존: M22 프로파일러 저크 재클램프 제거 (등가 변이 — 리뷰 동의) |
+| `W1_r0_mutation_review_b1eb0c7` | test | offline | b1eb0c7 | false | HEAD 7/7 잡힘, 리뷰 전 ffc93af 0/4 잡힘 |
+| `W1_r0_review_recheck_mutation_b1eb0c7` | test | offline | b1eb0c7 | unknown | HEAD 7/7 잡힘, 리뷰 전 ffc93af 0/3 잡힘 |

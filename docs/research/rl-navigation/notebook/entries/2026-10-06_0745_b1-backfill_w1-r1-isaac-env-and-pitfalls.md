@@ -66,6 +66,9 @@ Isaac 함정 (이 호스트, Isaac Sim 5.1 / Lab 2.3.2 / RTX 5090 / Rocky 8.10):
 ## WAVE 보고와 원자료의 차이
 - smoke 2048 의 "loadavg 36" 은 원자료 json 에 없다 (출처 미확인 — 공유 부하 수치로만 인용).
 - CUDA 700 함정은 WAVE impl 이 [측정] 으로 적었지만 출력 로그가 없어 [문서주장] 이다 (리뷰가 이미 지적).
+- (리뷰 반영 중 변이 run 을 등록하며 찾음) WAVE "변이 14 종 가운데 golden 만으로는 10 종" 과 "golden 만으로는 M2·M4·M8 이 통과한다
+  (r1 mutation_result.json)" — 그 파일에는 golden + 무작위 결합 실행(13/14) 하나만 있다. golden 만의 결과는 원자료에 없다 → [문서주장].
+  또 그 결합 실행(08:14:26 이전)은 `test_contract_random.py` 가 커밋(b062a1a 08:16:51)되기 전이다 — 미커밋 시험으로 돌았다.
 - 그 밖의 수치(golden 오차, smoke 처리량, 휴리스틱 성공, PPO 처리량 22.8k/42.3k)는 원자료와 같다.
 
 ## 실행 목록에 등록한 run (`runs/b1-backfill.jsonl`, entry = 이 파일)
@@ -81,3 +84,16 @@ Isaac 함정 (이 호스트, Isaac Sim 5.1 / Lab 2.3.2 / RTX 5090 / Rocky 8.10):
 | `W1_r1_golden_in_sim_first` | test | isaac | unknown-noHEAD | n/a | [측정] |
 | `W1_r1_golden_in_sim_f262d91` | test | isaac | f262d91 | n/a | [측정] |
 | `W1_r1_golden_in_sim_review_fix` | test | isaac | 29eba4d | n/a | [측정] |
+
+## 리뷰 반영으로 더 등록한 run (변이 검사·학습 스모크)
+A4 리뷰 비차단 6("등록하지 않은 원자료")을 반영해 소급 등록했다 (`runs/b1-backfill.jsonl`, `revision` 필드).
+커밋이 `unknown-noHEAD` 인 것은 config 에 추정 근거를 적었다. 시각이 파일 mtime 인 것은 상·하한이다.
+
+| run_id | 종류 | 시뮬 | 커밋 | dirty | 결과 [측정] |
+|---|---|---|---|---|---|
+| `W1_r1_mutation_contract_torch` | test | offline | unknown-noHEAD | true | 13/14 잡힘 — 생존: M10 곡률 모드 이탈 재설정 없음 (등가 변이 — 리뷰 동의) |
+| `W1_r1_review_mutation_f8feb56` | test | offline | f8feb56 | unknown | 4/8 잡힘 — 생존: R4 footprint_hits 장애물 축; R5 approach_distance 안쪽 점; R6 충돌 시 정지 (등가); R8 시작 여유 필터 |
+| `W1_r1_fix_mutation_c55ea9d` | test | offline | c55ea9d | true | 17/17 잡힘 |
+| `W1_r1_fix_mutation2_f9aff27` | test | offline | f9aff27 | false | 5/5 잡힘 |
+| `W1_r1_fix_mutation3_29eba4d` | test | offline | 29eba4d | false | 3/4 잡힘 — 생존: R8c 목표 통행 가능 조건 제거 (등가 주장: GOAL_CLEARANCE 0.40 > INSCRIBED 0.20 — [문서주장]) |
+| `W1_r1_recheck_mutation_1afe9dc` | test | offline | 1afe9dc | unknown | 12/13 잡힘 — 생존: N11 env.py 접촉 래치 반영 누락 (copy_ 제거) — Isaac 접착 코드, CPU 시험 밖 |
