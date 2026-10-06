@@ -243,6 +243,7 @@ class FleetAgentCore:
         self.deadlock: Tuple[Tuple[str, ...], str] = ((), '')
         self._out = Outbox()
         self.counters: Dict[str, int] = {}
+        self._held_seen: frozenset = frozenset()
 
     # ------------------------------------------------------------------ 기동
     @classmethod
@@ -291,9 +292,23 @@ class FleetAgentCore:
         self._out.events.append(ev)
         self.counters[event] = self.counters.get(event, 0) + 1
 
+    def note(self, event: str, **kw: Any) -> None:
+        """사건을 송신함에 남긴다 (노드가 프록시 결과 등을 같은 사건 흐름에 싣는다)."""
+        self._note(event, **kw)
+
     def drain(self) -> Outbox:
-        """쌓인 송신 거리를 꺼낸다."""
+        """
+        쌓인 송신 거리를 꺼낸다.
+
+        허가(held) 집합이 바뀌었으면 'held' 사건을 남긴다 — 투표 코어는 허가를 먼저 지운 뒤 RELEASE 를 내므로
+        이 사건의 sim 시각이 그 로봇의 허가 구간 끝이다 (launch 시험이 로봇별 허가 구간의 겹침을 센다).
+        """
         self._push(CH_TASK, self.lock.drain())
+        held = frozenset(self.zone.authorized() | self.task.authorized())
+        if held != self._held_seen:
+            self._note('held', added=sorted(held - self._held_seen),
+                       removed=sorted(self._held_seen - held), held=sorted(held))
+            self._held_seen = held
         out, self._out = self._out, Outbox()
         return out
 
@@ -311,15 +326,34 @@ class FleetAgentCore:
 
     # ------------------------------------------------------------------ 입력: 서버 · 비컨 · 협상
     def on_heartbeat(self, epoch: int, leader_id: str, seq: int, role: int, now: float) -> bool:
-        """서버 하트비트. 펜스보다 낮은 (epoch, leader_id) 는 생존 신호로 세지 않는다."""
+        """
+        서버 하트비트. 펜스보다 낮은 (epoch, leader_id) 는 생존 신호로 세지 않는다.
+
+        관찰자(ROLE_OBSERVER) 하트비트는 펜스를 올리지 않고 비교만 한다 — 관찰자는 로봇들이 본 최고 epoch + 1 을
+        후보로 내는데, 그 후보로 펜스를 올리면 관찰자가 다시 +1 하는 되먹임이 생긴다 (smoke1 에서 epoch 1 → 4).
+        """
         self.now = float(now)
-        if not self._fence_ok(int(epoch), str(leader_id), what='heartbeat'):
+        if int(role) == ROLE_OBSERVER:
+            if not self._fence_peek(int(epoch), str(leader_id), what='heartbeat'):
+                return False
+        elif not self._fence_ok(int(epoch), str(leader_id), what='heartbeat'):
             return False
         ok = self.monitor.observe(now, int(epoch), int(seq))
         if ok:
             self.server_active = int(role) == ROLE_ACTIVE
             self.server_leader = str(leader_id)
         return ok
+
+    def _fence_peek(self, epoch: int, leader_id: str, what: str) -> bool:
+        """펜스를 바꾸지 않고 비교만 한다 (최댓값보다 작으면 거부)."""
+        if epoch == 0:
+            return self._fence_ok(epoch, leader_id, what)
+        mx = self.fence.max
+        if mx is None or (epoch, leader_id) >= mx:
+            return True
+        self.low_epoch_rejected += 1
+        self._note('fence_reject', what=what, epoch=epoch, leader=leader_id, max=list(mx))
+        return False
 
     def _fence_ok(self, epoch: int, leader_id: str, what: str) -> bool:
         if epoch == 0:

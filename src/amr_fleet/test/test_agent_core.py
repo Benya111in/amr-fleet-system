@@ -237,3 +237,22 @@ def test_partition_minority_negotiates_but_cannot_start_pickups():
     # 공허 검사: 소수 쪽도 작업 잠금을 청했다 (협상은 했지만 과반을 못 모았다)
     assert all(f.cores[r].lock.n_requests > 0 for r in groups[0])
     assert len(starts) == len(tasks)                          # 분할이 풀린 뒤 모두 끝난다 (진단)
+
+
+def test_observer_heartbeat_does_not_raise_the_fence():
+    """관찰자 하트비트는 펜스를 올리지 않는다 (올리면 관찰자 epoch 가 되먹임으로 계속 오른다)."""
+    from amr_fleet.agent.core import ROLE_OBSERVER
+    f = LoopbackFleet(_cfgs(), poses=POSES)
+    f.run(2.0)
+    s = f.server()
+    s.alive = False
+    f.run(9.0)
+    assert set(f.modes().values()) == {DEGRADED}
+    s.alive, s.role, s.epoch, s.seq = True, ROLE_OBSERVER, 2, 0
+    f.run(5.0)
+    assert set(f.modes().values()) == {RESYNC}               # 관찰 중: 정상으로 돌아가지 않는다
+    assert {c.fence.max[0] for c in f.cores.values()} == {1}  # 펜스는 그대로
+    s.role = 0                                   # 관찰 끝 → ACTIVE (같은 epoch 2, seq 는 이어서)
+    f.run(4.0)
+    assert set(f.modes().values()) == {NORMAL}
+    assert {c.fence.max[0] for c in f.cores.values()} == {2}
