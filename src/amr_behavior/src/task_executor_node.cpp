@@ -507,10 +507,15 @@ void TaskExecutorNode::refreshTrafficManagement()
     // 받은 뒤에도 매칭 변화는 남긴다 (관리자 재기동 · 사망 진단)
     const size_t matched = traffic_hold_sub_->get_publisher_count();
     const TrafficLinkStep link = ctx_->stepTrafficLink(since, matched);
-    if (link.matched_changed) {
+    if (link.matched_changed && !ctx_->trafficHoldReceived()) {
       RCLCPP_INFO(
         get_logger(), "traffic/hold 매칭 발행자 %zu → %zu (그래프 %zu, 상태 %s, 구독 재생성 %d)",
         link.previous_matched, matched, publisher_count_, toString(state), link.resubscribes);
+    } else if (link.matched_changed) {
+      // 첫 값 뒤에는 그래프 수를 세지 않는다 (비용) → 그래프 수 없이 남긴다
+      RCLCPP_INFO(
+        get_logger(), "traffic/hold 매칭 발행자 %zu → %zu (상태 %s, 첫 값 받은 뒤)",
+        link.previous_matched, matched, toString(state));
     }
     if (link.resubscribe) {
       RCLCPP_WARN(
