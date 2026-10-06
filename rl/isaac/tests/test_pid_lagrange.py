@@ -122,3 +122,23 @@ def test_lambda_cap_applies_to_proportional_term():
     pid = PL.PIDLagrangian(kp=1.0, ki=0.0, kd=0.0, budget=0.2, lambda_max=3.0)
     lam = pid.update(10.0)                 # e = 49 → 비례 49
     assert pid.integral == 0.0 and pid.last['raw'] == pytest.approx(49.0) and lam == 3.0
+
+
+def test_err_clip_limits_windup():
+    """오차 자르기 (−1, 1): J = 100·d 여도 적분은 반복당 K_i 만 오른다 — 안 자르면 한 번에 상한."""
+    raw = PL.PIDLagrangian(kp=0.0, ki=0.05, kd=0.0, budget=0.2, lambda_max=10.0)
+    clp = PL.PIDLagrangian(kp=0.0, ki=0.05, kd=0.0, budget=0.2, lambda_max=10.0,
+                           err_clip=(-1.0, 1.0))
+    assert raw.update(20.0) == pytest.approx(min(10.0, 0.05 * 99.0))
+    assert clp.update(20.0) == pytest.approx(0.05)
+    assert clp.last['error'] == pytest.approx(99.0) and clp.last['error_used'] == 1.0
+    with pytest.raises(ValueError):
+        PL.PIDLagrangian(0.1, 0.1, 0.1, budget=0.5, err_clip=(1.0, -1.0))
+
+
+def test_start_iter_holds_lambda_at_zero():
+    """처음 start_iter 번은 λ = 0 이고 적분·EMA 를 건드리지 않는다, 그 뒤부터 보통 갱신."""
+    pid = PL.PIDLagrangian(kp=0.0, ki=0.1, kd=0.0, budget=0.5, start_iter=3)
+    assert [pid.update(5.0) for _ in range(3)] == [0.0, 0.0, 0.0]
+    assert pid.integral == 0.0 and pid.p_ema is None and pid.last['held']
+    assert pid.update(1.0) == pytest.approx(0.1)     # e = 1

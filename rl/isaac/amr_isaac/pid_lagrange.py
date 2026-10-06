@@ -14,6 +14,12 @@ PID 갱신 (반복마다, 그 반복 롤아웃에서 끝난 에피소드의 J �
   D   = max(0, J̄_t − J̄_{t−k})/d                    미분 (비용이 늘 때만, J̄ = EMA_d(J), k = d_delay)
   λ   = clip(K_p·P + I + K_d·D, 0, λ_max)
 λ_init 은 I 의 초기값이다 (e = 0 이면 λ = λ_init).
+
+선택 (기본 꺼짐 — 스모크 B0_smoke_pid_d0p2 에서 본 적분 포화 때문에 둔다, 노트 infra-smokes 항목):
+  err_clip (lo, hi) — e 를 [lo, hi] 로 자른 뒤 P·I 에 쓴다. 정규화 오차는 아래로 −1 에 막히고 위로는 끝이 없어서 (학습 초반
+                      J ≫ d 면 e 가 수백) 적분이 한두 반복 만에 상한에 붙고, 풀릴 때는 반복당 K_i 만큼만 내려온다 (비대칭 와인드업).
+                      1차 물결 쌍대 상승은 [−1, 5] 로 잘랐다.
+  start_iter N      — 처음 N 번의 update 는 λ = 0 으로 두고 상태를 갱신하지 않는다 (무제약으로 먼저 배우게 하는 지연 시작).
 """
 
 import collections
@@ -25,7 +31,7 @@ class PIDLagrangian:
     """승수 하나의 PID 제어기 (상태: I, EMA, 지연 창)."""
 
     def __init__(self, kp, ki, kd, budget, lambda_max=10.0, lambda_init=0.0, d_delay=1,
-                 ema_p=0.0, ema_d=0.0):
+                 ema_p=0.0, ema_d=0.0, err_clip=None, start_iter=0):
         """이득·예산·상한."""
         if not budget > 0:
             raise ValueError(f'예산 d 는 양수여야 한다 (Slater, 계약 §7.2): {budget}')
@@ -33,6 +39,11 @@ class PIDLagrangian:
             raise ValueError(f'λ 상한은 양수여야 한다: {lambda_max}')
         if d_delay < 1:
             raise ValueError('d_delay ≥ 1')
+        if err_clip is not None and not err_clip[0] < err_clip[1]:
+            raise ValueError(f'err_clip 은 (lo < hi): {err_clip}')
+        self.err_clip = None if err_clip is None else (float(err_clip[0]), float(err_clip[1]))
+        self.start_iter = int(start_iter)
+        self.calls = 0
         self.kp, self.ki, self.kd = float(kp), float(ki), float(kd)
         self.d = float(budget)
         self.lmax = float(lambda_max)
@@ -47,7 +58,14 @@ class PIDLagrangian:
     def update(self, J):
         """끝난 에피소드 비용 평균 J 로 λ 갱신 → λ."""
         J = float(J)
-        e = (J - self.d) / self.d
+        self.calls += 1
+        e_raw = (J - self.d) / self.d
+        if self.calls <= self.start_iter:
+            self.lam = 0.0
+            self.last = {'J': J, 'error': e_raw, 'P': None, 'I': self.integral, 'D': None,
+                         'raw': None, 'lambda': 0.0, 'held': True}
+            return self.lam
+        e = e_raw if self.err_clip is None else min(max(e_raw, self.err_clip[0]), self.err_clip[1])
         self.integral = min(max(self.integral + self.ki * e, 0.0), self.lmax)
         self.p_ema = e if self.p_ema is None else self.ema_p * self.p_ema + (1 - self.ema_p) * e
         self.j_ema = J if self.j_ema is None else self.ema_d * self.j_ema + (1 - self.ema_d) * J
@@ -55,15 +73,16 @@ class PIDLagrangian:
         D = max(0.0, self.hist[-1] - self.hist[0]) / self.d
         raw = self.kp * self.p_ema + self.integral + self.kd * D
         self.lam = min(max(raw, 0.0), self.lmax)
-        self.last = {'J': J, 'error': e, 'P': self.p_ema, 'I': self.integral, 'D': D, 'raw': raw,
-                     'lambda': self.lam}
+        self.last = {'J': J, 'error': e_raw, 'error_used': e, 'P': self.p_ema, 'I': self.integral,
+                     'D': D, 'raw': raw, 'lambda': self.lam, 'held': False}
         return self.lam
 
     def state_dict(self):
         """저장용."""
         return {'kp': self.kp, 'ki': self.ki, 'kd': self.kd, 'd': self.d, 'lmax': self.lmax,
                 'ema_p': self.ema_p, 'ema_d': self.ema_d, 'I': self.integral, 'p_ema': self.p_ema,
-                'j_ema': self.j_ema, 'hist': list(self.hist), 'lam': self.lam}
+                'j_ema': self.j_ema, 'hist': list(self.hist), 'lam': self.lam,
+                'err_clip': self.err_clip, 'start_iter': self.start_iter, 'calls': self.calls}
 
 
 @torch.no_grad()

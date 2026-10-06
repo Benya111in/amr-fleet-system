@@ -47,6 +47,10 @@ ap.add_argument('--lambda_init', type=float, default=0.0)
 ap.add_argument('--pid_d_delay', type=int, default=5, help='미분항 지연 (반복)')
 ap.add_argument('--pid_ema', default='0.0,0.5', help="'α_p,α_d' 비례항·미분항 EMA")
 ap.add_argument('--cost_lr', type=float, default=3e-4)
+ap.add_argument('--pid_err_clip', default='',
+                help="'LO,HI' 정규화 오차 자르기 (빈 값 = 안 자름) — 적분 포화 완화, pid_lagrange 머리말")
+ap.add_argument('--constraint_start', type=int, default=0,
+                help='처음 N 반복은 λ = 0 (PID 상태 갱신 안 함, 비용 critic 은 배운다)')
 ap.add_argument('--vcap_curriculum', default='',
                 help="v_cap 커리큘럼 'LO:HI0:N0:N1:P1' — 반복 N0 까지 v_cap ~ U[LO, HI0], "
                      "N1 까지 상한을 명목값(1.0)으로·명목 비율을 P1 로 선형, 빈 값 = 끔")
@@ -213,9 +217,12 @@ def main():
         ch = list(C.COST_NAMES).index(args.constraint)
         kp, ki, kd = (float(x) for x in args.pid.split(','))
         ema_p, ema_d = (float(x) for x in args.pid_ema.split(','))
+        clip = tuple(float(x) for x in args.pid_err_clip.split(',')) if args.pid_err_clip \
+            else None
         pid = PIDLagrangian(kp, ki, kd, args.cost_budget, lambda_max=args.lambda_max,
                             lambda_init=args.lambda_init, d_delay=args.pid_d_delay,
-                            ema_p=ema_p, ema_d=ema_d)
+                            ema_p=ema_p, ema_d=ema_d, err_clip=clip,
+                            start_iter=args.constraint_start)
         alg_kw = dict(runner.alg_cfg)
         alg_kw.pop('class_name', None)
         alg_kw.pop('multi_gpu_cfg', None)
@@ -230,6 +237,7 @@ def main():
                    'kp': kp, 'ki': ki, 'kd': kd, 'lambda_max': args.lambda_max,
                    'lambda_init': args.lambda_init, 'd_delay': args.pid_d_delay,
                    'ema_p': ema_p, 'ema_d': ema_d, 'cost_lr': args.cost_lr,
+                   'err_clip': clip, 'constraint_start': args.constraint_start,
                    'objective': '(std(A_r) - lambda*center(A_c))/(1+lambda)',
                    'J': 'mean undiscounted episode sum of the cost over episodes finished in the '
                         'iteration rollout'}
