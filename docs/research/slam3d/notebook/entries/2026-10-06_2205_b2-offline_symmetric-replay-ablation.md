@@ -169,3 +169,39 @@ H5 미달 · H6 미달 2 행.
 replay.md §8 의 녹화 계획 (Gazebo 필요, 보너스 1 측정과 겹치지 않는 시간대): 기록 madgwick 제거 + 잠금 단계 파생, 기록 직후 공백 검사,
 출발 전 정지 구간, 구독 확인 뒤 재생 시작, S1·S3·S6 bag 3 개씩, 행 6 개 × 재생 3. LIO-SAM 원인 1 의 직접 확인(R5), 휠 열화·guess 없음 행.
 사전 등록에는 실용 동등 한계를 넣는다.
+
+## 리뷰 반영 (2026-10-07, 리뷰 판정 fix_needed — 차단 2 건)
+
+### 사전 등록 (고치기·실행 전에 커밋)
+
+리뷰 차단 문제 (리뷰어 원자료 `/home/CAPYI_AI/runs/b24/b2-offline/review/rmut.json`):
+- **B1 (fail-open)**: `replaystat.summarize()` 가 RTAB-Map 누락을 `probe 입력 수 − 로그 처리 줄 수` 로 낸다. probe(Python 측정 노드) 수는
+  bag 장 수가 아니다. 측정 노드가 k 장을 놓치고 RTAB-Map 도 k 장을 놓치면 누락 0 으로 잘못 통과한다. 이번 실행에서 측정 노드는
+  실제로 장을 놓쳤다 (`liosam_rpy0` r0 1 785, `g001`·`oracle`·`planar` r1·`liosam_loop@orig` r0 1 786 / bag 1 788). 지금 숫자에는
+  영향이 없다 (RTAB-Map 16 재생 모두 probe = bag 1 788, 로그 기준 = bag 대응 = 1).
+- **B2 (공허한 단언)**: `differs()` 의 "재생 범위 겹침" 조건을 시험이 가르지 못한다 — `apart = True` 변이가 살아남았다. "# 겹침" 사례는
+  평균 차 0.67 < 문턱 1.0 이라 문턱 조건만으로 False 였다.
+- 비차단: R6 (z 최대 → z RMSE 변이 놓침 — 창 안 z 가 상수라 최대 = RMSE), H5 수치 반올림 (0.7710 → 0.7709, 차 0.0014 → 0.0013 cm).
+
+고칠 것:
+1. B1: RTAB-Map 누락 분모를 **bag 장 수**(match 의 `input`, `bagstat.matched` 가 입력 bag 에서 센 수)로 바꾼다.
+   `missing_log = bag − 로그 처리 줄`, `match_missing = 기록기 대응 판정 누락`, **주 열 `missing = max(둘)`**, 둘이 다르면
+   `missing_disagree = True`. match 가 없으면 분모가 없으므로 `missing = None` (미측정 — 측정 노드 수로 대신하지 않는다).
+   표의 `input` 은 bag 수로 바꾸고 측정 노드 수는 `input_probe`, 차이는 `probe_short` 열로 따로 둔다 (LIO-SAM 도 같은 열).
+2. B2: 범위는 겹치지만 평균 차가 문턱보다 큰 사례 `sp([0,0,3])` 대 `sp([2.9,6,6])` (평균 차 3.97 > 문턱 3.58) → False 를 단언.
+   인자 순서를 바꿔도 같은 답인지(대칭)도 단언한다.
+3. R6: 창 안 z 가 변하는 사례로 z 최대 ≠ z RMSE 를 단언한다.
+4. 고친 도구로 기존 43 재생의 누락 표를 다시 만든다 (`summary_review/{derived,orig}`, 재생 없음 — JSON 읽기만).
+
+판정 규칙 (결과 보기 전):
+- 변이 (사본에서 하나씩 되돌림, `cpu_slot`): B1 분모를 probe 로 되돌림, max 를 로그 기준만으로, max 를 match 기준만으로,
+  `missing_disagree` 항상 False, match 없을 때 probe 로 대신함, 기존 M13(누락 0); B2 `apart = True`, 한 방향 겹침만 검사;
+  R6 z 최대 → RMSE. **모두 잡혀야 통과**. 하나라도 놓치면 시험을 더하고 다시 돈다.
+- 다시 만든 누락 표: 43 재생 모두 **주 열 `missing` 이 이전 표와 같아야** 한다 (리뷰어 직접 확인: RTAB-Map 은 로그 = bag 대응 = 1).
+  다르면 그 재생을 진단해 적는다. `missing_disagree` 는 RTAB-Map 16 재생 모두 False 로 예측.
+  `probe_short` > 0 은 리뷰가 든 5 재생(1 785 ×1, 1 786 ×4)으로 예측.
+- 시험: amr_slam3d·amr_evaluation slam3d pytest 통과, flake8(99)·pep257 0.
+
+### 리뷰 반영 결과
+
+(실행 뒤 채운다)
