@@ -492,3 +492,6 @@ gz p1_base $W/base_ws 61 & gz p1_fix /home/CAPYI_AI/wt/hold-dds 63 & wait    # �
 | HDDS_E4b_stability | 새 시험 반복 | a91bbfe | 10/10 · 10/10 | [측정] |
 | HDDS_E5_mutation | 변이 21 | a91bbfe | 21/21 잡힘 | [측정] |
 | HDDS_E7_realnodes | 실제 관리자 · 실행기, 두 프로파일 (사전 등록 밖) | f0ec40e | udponly SHM 0 · 첫 값 수신 | [측정] |
+| HDDS_fix3_build_test | 첫 값 뒤 매칭 로그에서 낡은 그래프 수 제거 (로그만) | 0f9fd62+ | 경고 0 · 20/20 · 374/374 | [측정] |
+
+E5 변이 검사는 `a91bbfe` 에서 돌았다. 그 뒤 실행기 코드 변경은 로그 문구 갈래 하나(첫 값 뒤에는 그래프 수를 찍지 않음)뿐이라 다시 돌리지 않았다.
