@@ -41,15 +41,20 @@ ros2 run amr_bringup lifecycle_watchdog --ros-args -p use_sim_time:=false \
   -p nodes:="['/amr_01/planner_server','/amr_01/controller_server','/amr_01/behavior_server','/amr_01/bt_navigator']" \
   -p grace:="${GRACE:-40.0}" > "$OUT/watchdog.log" 2>&1 &
 WP=$!
-for i in $(seq 1 60); do
+# Nav2 수명주기: lifecycle_watchdog(한 노드가 계속 산다)의 "모두 active" 를 기다린다. CLI(ros2 lifecycle get)는
+# 부를 때마다 새 참여자라 부하 아래에서 get_state 응답을 잃는다 (A5 흔들기 2: 실제로는 2 s 만에 active 였는데
+# 300 s 동안 0/4). 실행기도 navigate_to_pose 서버를 따로 기다린다.
+for i in $(seq 1 120); do
   sleep 5
-  ok=0
-  for n in planner_server controller_server behavior_server bt_navigator; do
-    timeout 10 ros2 lifecycle get /amr_01/$n 2>/dev/null | grep -q "^active" && ok=$((ok+1))
-  done
-  echo "t=$((i*5))s active=$ok/4" >> "$OUT/lifecycle.txt"
-  [ $ok -eq 4 ] && break
+  if grep -q "모두 active" "$OUT/watchdog.log" 2>/dev/null; then
+    echo "t=$((i*5))s watchdog: 모두 active" >> "$OUT/lifecycle.txt"; break
+  fi
+  echo "t=$((i*5))s 기다림" >> "$OUT/lifecycle.txt"
 done
+ros2 run amr_rl_bench gzbench_runner.py --controller "$CTRL" --out "$OUT" --commit "${COMMIT:-unknown}" \
+  "$@" --ros-args -r __ns:=/amr_01 -p use_sim_time:=true > "$OUT/runner.log" 2>&1
+echo "runner rc=$?" >> "$OUT/load.txt"
+# 실린 파라미터·/clock 주기는 실행기 뒤에 (CLI 가 응답을 잃어도 에피소드를 늦추지 않게)
 for prm in general_goal_checker.xy_goal_tolerance general_goal_checker.yaw_goal_tolerance \
     controller_frequency DWA.plugin DWA.rl.model_path DWA.rl.mode DWA.rl.handover_radius \
     RL.plugin; do
@@ -57,9 +62,6 @@ for prm in general_goal_checker.xy_goal_tolerance general_goal_checker.yaw_goal_
     >> "$OUT/params.txt"
 done
 timeout 12 ros2 topic hz /clock --window 2000 > "$OUT/clock_hz.txt" 2>&1
-ros2 run amr_rl_bench gzbench_runner.py --controller "$CTRL" --out "$OUT" --commit "${COMMIT:-unknown}" \
-  "$@" --ros-args -r __ns:=/amr_01 -p use_sim_time:=true > "$OUT/runner.log" 2>&1
-echo "runner rc=$?" >> "$OUT/load.txt"
 echo "loadavg end $(cat /proc/loadavg)" >> "$OUT/load.txt"
 kill -INT $WP $NP; sleep 5; kill -INT $SP; sleep 10; kill -9 $WP $NP $SP 2>/dev/null
 grep -E "RLController '|DWA 폴백|RLController:|Failed|failed to|ERROR" "$OUT/nav.log" | head -300 \

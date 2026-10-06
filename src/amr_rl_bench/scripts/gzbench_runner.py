@@ -96,6 +96,7 @@ class Bench(Node):
         self.cm_contacts_last = None
         sub = self.create_subscription
         sub(Odometry, 'ground_truth/odom', self._gt, 50)
+        sub(Odometry, 'odometry/filtered', self._odom, 50)
         sub(Path, 'plan', self._plan, 10)
         sub(Twist, 'cmd_vel_nav', lambda m: self._cmd('cmd_nav', m, True), 50)
         sub(Twist, 'cmd_vel_smoothed', lambda m: self._cmd('cmd_in', m), 50)
@@ -143,6 +144,11 @@ class Bench(Node):
         self._put('gt', row)
         if self.rec is not None:
             self._put('clear_static', [t, self.world.footprint_clearance(row[1], row[2], row[3])])
+
+    def _odom(self, m):
+        # 제어기가 받는 측정 속도 (controller_server odom_topic = odometry/filtered, EKF) — 전이 점검 5 의 관측 사슬
+        t = m.header.stamp.sec + m.header.stamp.nanosec * 1e-9
+        self._put('odom', [t, m.twist.twist.linear.x, m.twist.twist.angular.z])
 
     def _plan(self, m):
         pts = [[round(ps.pose.position.x, 4), round(ps.pose.position.y, 4)] for ps in m.poses]
@@ -193,9 +199,9 @@ class Bench(Node):
     def start_record(self):
         """새 기록 버퍼."""
         with self.lock:
-            self.rec = {k: [] for k in ('gt', 'clear_static', 'plans', 'cmd_nav', 'cmd_in',
-                                        'cmd_out', 'stats', 'prof', 'zone', 'lost', 'cm_min',
-                                        'cm_contacts', 'scan_stamps', 'diag', 'est')}
+            self.rec = {k: [] for k in ('gt', 'odom', 'clear_static', 'plans', 'cmd_nav',
+                                        'cmd_in', 'cmd_out', 'stats', 'prof', 'zone', 'lost',
+                                        'cm_min', 'cm_contacts', 'scan_stamps', 'diag', 'est')}
             # 래치 토픽은 구간 시작 전 마지막 값을 넣어 둔다
             if getattr(self, 'zone_last', None):
                 self.rec['zone'].append(list(self.zone_last))
@@ -459,7 +465,7 @@ class Bench(Node):
         return R.gzbench_row(meta, mt), raw
 
     # ------------------------------------------------------------ 점검 탐침
-    def probe_scan(self, out_dir, pose, n=20):
+    def probe_scan(self, out_dir, pose, n=20, name='probe_scan.json'):
         """전이 점검 2: scan_filtered·scan 표본 n 개와 그 시각 지면 진실 (분석은 rl/eval/gazebo)."""
         ok, info = self.place({'start': pose})
         rows = []
@@ -486,7 +492,7 @@ class Bench(Node):
                                  'ranges': [None if not math.isfinite(r) else r
                                             for r in raw.ranges]}})
             time.sleep(0.02)
-        R.write_json(os.path.join(out_dir, 'probe_scan.json'),
+        R.write_json(os.path.join(out_dir, name),
                      {'pose': pose, 'place_ok': ok, 'place': info, 'scans': rows})
         return ok and len(rows) == n
 
@@ -508,7 +514,8 @@ class Bench(Node):
         rec = self.stop_record()
         R.write_json(os.path.join(out_dir, 'probe_step.json'),
                      {'pose': pose, 'place_ok': ok, 'place': info, 'phases': marks,
-                      'gt': rec['gt'], 'cmd_nav': rec['cmd_nav'], 'cmd_in': rec['cmd_in'],
+                      'gt': rec['gt'], 'odom': rec['odom'], 'cmd_nav': rec['cmd_nav'],
+                      'cmd_in': rec['cmd_in'],
                       'cmd_out': rec['cmd_out'], 'prof': rec['prof'],
                       'prof_fields': 'v_target w_target v_ref w_ref a_ref v_out w_out v_meas '
                                      'w_meas jerk resynced jerk_out a_out correction '
@@ -539,8 +546,9 @@ def main():
     ap.add_argument('--map-frame', default='map')
     ap.add_argument('--base-frame', default='base_footprint')
     ap.add_argument('--probe', default='', help='쉼표 목록: scan,step')
-    ap.add_argument('--probe-scan-pose', default='0.0,0.0,0.0',
-                    help='x,y,yaw — 스캔 탐침 자세 (구조물이 둘러싼 통로, 기본 랙 B-C 통로 중앙)')
+    ap.add_argument('--probe-scan-pose', default='0.0,0.0,0.0;-6.0,-7.0,2.0',
+                    help='x,y,yaw[;x,y,yaw…] — 스캔 탐침 자세들 (첫째 = 랙 B-C 통로 중앙, 둘째 = 좌우가 다른 '
+                         '자리 — 대칭 통로에서는 빔 순서 뒤집기 대조가 약하다, A5 흔들기 2)')
     ap.add_argument('--probe-step-pose', default='-15.9,-9.2,0.0',
                     help='x,y,yaw — 계단 응답 탐침 자세 (정적 상자와 10.8 m 떨어진 홀, 앞 5 m 넘게 빔)')
     args, ros_args = ap.parse_known_args()
@@ -567,8 +575,10 @@ def main():
         say('navigate_to_pose 서버가 없다 — 끝')
         return
     if 'scan' in args.probe:
-        pose = [float(v) for v in args.probe_scan_pose.split(',')]
-        say(f'탐침 scan @ {pose}: {node.probe_scan(args.out, pose)}')
+        for k, txt in enumerate(args.probe_scan_pose.split(';')):
+            pose = [float(v) for v in txt.split(',')]
+            name = 'probe_scan.json' if k == 0 else f'probe_scan_{k}.json'
+            say(f'탐침 scan @ {pose}: {node.probe_scan(args.out, pose, name=name)}')
     if 'step' in args.probe:
         pose = [float(v) for v in args.probe_step_pose.split(',')]
         say(f'탐침 step @ {pose}: {node.probe_step(args.out, pose)}')

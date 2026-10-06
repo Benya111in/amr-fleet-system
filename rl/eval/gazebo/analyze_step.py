@@ -11,6 +11,7 @@ safety_node → cmd_vel → Gazebo DiffDrive. 두 가지를 본다.
       가속 한계, rl/isaac/amr_isaac/env.py)으로 격자 최소제곱 식별 →
       Isaac DR 범위(T_m 0.048–0.112 s, T_d 0.02–0.08 s)와 대조.
   (2) 사슬 전체 = cmd_vel_nav(제어기 출력) 계단 → 지면 진실: 첫 움직임 지연, 10–90 % 상승 시간, 넘침, 정상 오차, 최대 가속.
+  (3) 관측 사슬 = cmd_vel → odometry/filtered (제어기가 v_meas 로 받는 EKF 속도) — 같은 모형으로 식별, 지면 진실 대비 지연.
 """
 
 import argparse
@@ -40,17 +41,19 @@ def simulate(t_u, u, t_out, tm, td, a_up, a_down):
 
 
 def fit(t_u, u, t_y, y, a_up, a_down):
-    """격자 최소제곱 (T_m, T_d) → (최적, RMSE, 최소 RMSE × 1.1 안의 범위)."""
-    grid_m = np.arange(0.01, 0.30 + 1e-9, 0.005)
-    grid_d = np.arange(0.0, 0.20 + 1e-9, 0.005)
-    best, surf = None, []
-    for tm in grid_m:
-        for td in grid_d:
-            e = simulate(t_u, u, t_y, tm, td, a_up, a_down) - y
-            rmse = float(np.sqrt(np.mean(e * e)))
-            surf.append((rmse, tm, td))
-            if best is None or rmse < best[0]:
-                best = (rmse, tm, td)
+    """격자 최소제곱 (T_m, T_d): 거친 격자(5 ms) 뒤 최적 근처 ±20 ms 를 1 ms 로 → (최적, RMSE, RMSE × 1.1 안의 범위)."""
+    surf = []
+
+    def run(grid_m, grid_d):
+        for tm in grid_m:
+            for td in grid_d:
+                e = simulate(t_u, u, t_y, tm, td, a_up, a_down) - y
+                surf.append((float(np.sqrt(np.mean(e * e))), float(tm), float(td)))
+    run(np.arange(0.005, 0.30 + 1e-9, 0.005), np.arange(0.0, 0.20 + 1e-9, 0.005))
+    b = min(surf)
+    run(np.arange(max(0.001, b[1] - 0.02), b[1] + 0.02 + 1e-9, 0.001),
+        np.arange(max(0.0, b[2] - 0.02), b[2] + 0.02 + 1e-9, 0.001))
+    best = min(surf)
     near = [s for s in surf if s[0] <= 1.1 * best[0]]
     return {'T_m_s': round(best[1], 4), 'T_d_s': round(best[2], 4), 'rmse': round(best[0], 5),
             'T_m_range_within_10pct': [round(min(s[1] for s in near), 4),
@@ -59,9 +62,9 @@ def fit(t_u, u, t_y, y, a_up, a_down):
                                        round(max(s[2] for s in near), 4)]}
 
 
-def chain(t_cmd, cmd, t_y, y, t_on, level):
-    """사슬 전체: 계단 시각 t_on, 목표 level → 지연·상승·넘침·정상 오차."""
-    m = t_y >= t_on
+def chain(t_y, y, t_on, t_off, level):
+    """사슬 전체: 계단 구간 [t_on, t_off), 목표 level → 지연·상승·넘침·정상 오차 (끝 0.5 s 평균)."""
+    m = (t_y >= t_on) & (t_y < t_off)
     ty, yy = t_y[m] - t_on, y[m]
     moving = np.abs(yy) > 0.02 * abs(level) + 0.005
     first = ty[np.argmax(moving)] if np.any(moving) else None
@@ -86,7 +89,8 @@ def main():
     co = np.array(d['cmd_out'], dtype=float)
     cn = np.array(d['cmd_nav'], dtype=float)
     ph = d['phases']                        # [[t, v, w], …] 0 / v 0.5 / 0 / ω 1.0 / 0
-    t_v_on, t_w_on, t_end = ph[1][0], ph[3][0], ph[4][0] + 2.5
+    t_v_on, t_v_off, t_w_on, t_w_off = ph[1][0], ph[2][0], ph[3][0], ph[4][0]
+    t_end = t_w_off + 2.5
     out = {'phases': ph, 'n_gt': int(gt.shape[0]), 'n_cmd_out': int(co.shape[0])}
     # (1) 플랜트 식별: 선속도 (v 계단 ~ 그 뒤 정지까지), 각속도
     lin = (gt[:, 0] >= t_v_on - 0.2) & (gt[:, 0] <= t_w_on - 0.1)
@@ -94,8 +98,25 @@ def main():
     ang = (gt[:, 0] >= t_w_on - 0.2) & (gt[:, 0] <= t_end)
     out['plant_angular'] = fit(co[:, 0], co[:, 2], gt[ang, 0], gt[ang, 5], A_ANG, A_ANG)
     # (2) 사슬 전체
-    out['chain_linear'] = chain(cn[:, 0], cn[:, 2], gt[:, 0], gt[:, 4], t_v_on, 0.5)
-    out['chain_angular'] = chain(cn[:, 0], cn[:, 3], gt[:, 0], gt[:, 5], t_w_on, 1.0)
+    out['chain_linear'] = chain(gt[:, 0], gt[:, 4], t_v_on, t_v_off, 0.5)
+    out['chain_angular'] = chain(gt[:, 0], gt[:, 5], t_w_on, t_w_off, 1.0)
+    out['cmd_nav_span'] = [round(float(cn[0, 0]), 3), round(float(cn[-1, 0]), 3)] if cn.size \
+        else []
+    # (3) 관측 사슬: 제어기가 받는 측정 속도(odometry/filtered, EKF) — Isaac 은 관측 v_meas = 플랜트 속도 그대로다
+    od = np.array(d.get('odom') or [], dtype=float).reshape(-1, 3)
+    if od.shape[0] > 10:
+        lin_o = (od[:, 0] >= t_v_on - 0.2) & (od[:, 0] <= t_w_on - 0.1)
+        ang_o = (od[:, 0] >= t_w_on - 0.2) & (od[:, 0] <= t_end)
+        out['observed_linear'] = fit(co[:, 0], co[:, 1], od[lin_o, 0], od[lin_o, 1], A_LIN_UP,
+                                     A_LIN_DOWN)
+        out['observed_angular'] = fit(co[:, 0], co[:, 2], od[ang_o, 0], od[ang_o, 2], A_ANG, A_ANG)
+        # 지면 진실 대비 측정 속도의 지연 (상호상관 최대, 선속도 계단 구간)
+        tt = np.arange(t_v_on - 0.2, t_w_on - 0.1, 0.005)
+        g = np.interp(tt, gt[:, 0], gt[:, 4])
+        o = np.interp(tt, od[:, 0], od[:, 1])
+        lags = np.arange(0, 41)
+        err = [float(np.mean((o[k:] - g[:len(g) - k]) ** 2)) for k in lags]
+        out['odom_vs_gt_lag_s'] = round(float(lags[int(np.argmin(err))] * 0.005), 4)
     # 최대 가속 (지면 진실 속도의 50 ms 차분)
     for key, col, t0, t1 in (('linear', 4, t_v_on, t_w_on), ('angular', 5, t_w_on, t_end)):
         m = (gt[:, 0] >= t0) & (gt[:, 0] <= t1)
@@ -113,7 +134,9 @@ def main():
                                       round(float(np.max(np.abs(co[ok, 2] - ci[k[ok], 2]))), 4)]
     out['isaac_dr'] = {'T_m_s': [0.048, 0.112], 'T_d_s': [0.02, 0.08], 'accel_scale': [0.84, 1.0],
                        'nominal': {'T_m_s': 0.08, 'T_d_s': 0.04}}
-    for key in ('plant_linear', 'plant_angular'):
+    for key in ('plant_linear', 'plant_angular', 'observed_linear', 'observed_angular'):
+        if key not in out:
+            continue
         f = out[key]
         f['in_isaac_dr'] = bool(0.048 <= f['T_m_s'] <= 0.112 and 0.02 <= f['T_d_s'] <= 0.08)
     txt = json.dumps(out, ensure_ascii=False, indent=1)

@@ -30,6 +30,11 @@ NEAR_GOAL_LO, NEAR_GOAL_HI = STRICT_XY, 0.50
 STOP_V, STOP_W = 0.02, 0.05             # 정지 판정 (A3 eval_metrics MOVE_V·MOVE_W 와 같다)
 MOVING_V = 0.05                         # CTE 표본: 이보다 빠를 때만
 INTERVENTION_TOL = 0.01                 # PROTOCOL.md §5: |Δv| > 0.01 m/s 또는 |Δω| > 0.01 rad/s
+# 출력과 짝지을 입력의 시각 창 [s]: safety_node 는 50 Hz 타이머로 직전 입력을 내므로 출력은 입력보다 약 20 ms 늦게,
+# 그리고 기록 노드의 수신 시각은 두 토픽 사이에서 앞뒤가 바뀔 수 있다 (A5 흔들기 2: 같은 시각에 받은 다음 입력과 짝지어
+# 램프 중 거짓 개입 31 건). 창 안의 입력 하나라도 출력과 같으면 개입이 아니다.
+INTERVENTION_LAG = 0.06
+INTERVENTION_LEAD = 0.005
 CONTACT_RELEASE = 0.05                  # 접촉 사건 분리 (collision_monitor contact_release 와 같다)
 LOC_COLLAPSE = 0.5                      # 위치추정 붕괴 문턱 (b1-plugin 다음 ④)
 ROTATING_W = 0.1                        # goal checker 가 회전 중 성공을 낸 것 (b1-plugin 다음 ⑨)
@@ -121,21 +126,30 @@ def contact_events(t, clearance, release=CONTACT_RELEASE):
     return ev
 
 
-def interventions(t_in, v_in, w_in, t_out, v_out, w_out, tol=INTERVENTION_TOL):
+def interventions(t_in, v_in, w_in, t_out, v_out, w_out, tol=INTERVENTION_TOL,
+                  lag=INTERVENTION_LAG, lead=INTERVENTION_LEAD):
     """
     안전 노드 개입 구간을 센다 (PROTOCOL.md §5).
 
-    출력 표본마다 그 시각 이전의 마지막 입력과 비교해 |Δv| > tol 또는 |Δω| > tol 이 연속된 구간 하나 = 1 회.
-    반환 (횟수, 총 시간 [s], 구간 목록 [(시작, 끝)]).
+    출력 표본마다 시각 창 [t − lag, t + lead] 안의 입력과 비교해, 어느 입력과도 |Δv| ≤ tol 이고 |Δω| ≤ tol 이
+    아니면 그 출력은 바뀐 것이다. 바뀐 출력이 연속된 구간 하나 = 1 회. 반환 (횟수, 총 시간 [s], 구간 목록).
     """
     t_in = np.asarray(t_in, dtype=float)
+    v_in = np.asarray(v_in, dtype=float)
+    w_in = np.asarray(w_in, dtype=float)
     if t_in.size == 0 or len(t_out) == 0:
         return 0, 0.0, []
-    idx = np.searchsorted(t_in, np.asarray(t_out, dtype=float), side='right') - 1
+    to_arr = np.asarray(t_out, dtype=float)
+    lo = np.searchsorted(t_in, to_arr - lag, side='left')
+    hi = np.searchsorted(t_in, to_arr + lead, side='right')
     segs, cur = [], None
     for k, (to, vo, wo) in enumerate(zip(t_out, v_out, w_out)):
-        i = idx[k]
-        diff = i >= 0 and (abs(vo - v_in[i]) > tol or abs(wo - w_in[i]) > tol)
+        a, b = lo[k], hi[k]
+        if b <= a:
+            diff = False      # 짝지을 입력이 없다 (기록 시작·끝) — 판정하지 않는다
+        else:
+            same = (np.abs(vo - v_in[a:b]) <= tol) & (np.abs(wo - w_in[a:b]) <= tol)
+            diff = not bool(same.any())
         if diff and cur is None:
             cur = [to, to]
         elif diff:

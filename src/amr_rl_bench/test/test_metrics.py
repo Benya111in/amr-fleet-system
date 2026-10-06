@@ -144,6 +144,23 @@ def test_interventions_pairing():
     assert M.interventions([], [], [], t_out, v_out, [0.0] * 6)[0] == 0
 
 
+def test_interventions_tolerates_echo_lag_and_receive_order():
+    """
+    램프 (0.0156 m/s / 20 ms) 를 safety 가 20 ms 늦게 그대로 내고, 출력과 다음 입력을 같은 시각에 받아도 개입 0.
+
+    흔들기 2 의 원자료 모양 — 직전 입력과만 짝지으면 램프 동안 거짓 개입이 생긴다.
+    """
+    t_in = [0.02 * k for k in range(50)]
+    v_in = [0.0156 * k for k in range(50)]
+    t_out = [t + 0.02 for t in t_in]          # 다음 입력과 같은 시각에 받는다
+    v_out = list(v_in)                         # 20 ms 전 입력 그대로
+    assert M.interventions(t_in, v_in, [0.0] * 50, t_out, v_out, [0.0] * 50)[0] == 0
+    # 진짜 제한: 출력이 0.2 에서 묶이면 개입
+    v_cap = [min(v, 0.2) for v in v_out]
+    n, dur, _ = M.interventions(t_in, v_in, [0.0] * 50, t_out, v_cap, [0.0] * 50)
+    assert n == 1 and dur > 0.5
+
+
 def test_first_stall_progress_checker_semantics():
     """기준점에서 0.3 m 넘게 움직이면 기준 갱신 — 천천히(0.01 m/s) 움직여도 30 s 마다 0.3 m 라 20 s 안에 갱신 안 됨."""
     t = np.arange(0.0, 60.0, 0.1)
