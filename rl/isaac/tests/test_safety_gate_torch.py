@@ -192,6 +192,35 @@ def test_latch_released_when_motion_changes_but_held_by_intent():
     assert not bool(back['prox'][0]) and float(back['v'][0]) == pytest.approx(-0.2)
 
 
+def test_lidar_latch_releases_only_beyond_release_distance():
+    """라이다 원인 래치는 D > stop_release_distance (0.50) 에서만 풀린다 — 정지 거리(0.30) 위라고 풀리지 않는다."""
+    g = gate()
+    o = run(g, 1.0, 0.3, 0.0, beams=wall(0.3 + 0.24))         # 0.24 ≤ 0.25 → 한 프레임 확정
+    assert bool(o['prox'][0]) and int(o['causes'][0]) == SG.CAUSE_LIDAR
+    o = run(g, 1.1, 0.3, 0.0, beams=wall(0.3 + 0.40))         # 0.30 < 0.40 ≤ 0.50 → 유지
+    assert float(o['lidar_distance'][0]) == pytest.approx(0.40)
+    assert bool(o['prox'][0]) and float(o['v'][0]) == 0.0
+    o = run(g, 1.2, 0.3, 0.0, beams=wall(0.3 + 0.55))         # 0.55 > 0.50 → 해제
+    assert not bool(o['prox'][0]) and float(o['v'][0]) > 0.0
+
+
+def test_latency_correction_moves_points_by_measured_motion():
+    """스캔 나이 0.2 s · 신선한 측정 0.4 m/s 전진 → 점이 0.08 m 다가온다 (지연 보정, 최대 0.5 s)."""
+    d = {}
+    for age in (0.0, 0.2, 0.8):
+        g = gate()
+        o = run(g, 2.0, 0.4, 0.0, vm=0.4, beams=wall(0.3 + 0.9), stamp=2.0 - age)
+        d[age] = float(o['lidar_distance'][0])
+    assert d[0.0] == pytest.approx(0.9)
+    assert d[0.2] == pytest.approx(0.9 - 0.4 * 0.2)
+    assert d[0.8] == pytest.approx(0.9 - 0.4 * 0.5)               # max_compensation_age 0.5
+    g = gate()                                                    # 측정이 없으면 보정 없음
+    g.set_scan(wall(0.3 + 0.9), 1.8)
+    g.set_cloud(None, 2.0, 2.0)
+    g.set_command(t([0.4]), t([0.0]), 2.0)
+    assert float(g.evaluate(2.0)['lidar_distance'][0]) == pytest.approx(0.9)
+
+
 def test_measured_motion_extends_region():
     """명령 0·측정 전진이면 측정 운동의 영역이 남는다 (gtest MeasuredVelocityExtendsRegion)."""
     g = gate()
@@ -318,10 +347,15 @@ def test_window_half_cap_is_noop_for_valid_beams():
 
 
 # ---------------------------------------------------------------- C++ 교차 시험 (작은 묶음)
-@pytest.mark.skipif(shutil.which('g++') is None or not os.path.isdir('/usr/include/eigen3'),
-                    reason='g++·Eigen 없음 (amr-ai/rl:0.3 에서 돈다)')
+HAVE_CPP = shutil.which('g++') is not None and os.path.isdir('/usr/include/eigen3')
+REQUIRE_CPP = os.environ.get('AMR_ISAAC_REQUIRE_CPP', '') == '1'
+
+
+@pytest.mark.skipif(not HAVE_CPP and not REQUIRE_CPP,
+                    reason='g++·Eigen 없음 (amr-ai/rl:0.3 에서 돈다; AMR_ISAAC_REQUIRE_CPP=1 이면 실패)')
 def test_cpp_crosscheck_small(tmp_path):
     """C++ 원본 SafetyGate 와 같은 입력 열에서 불일치 0 (전체 묶음은 tools/phi_crosscheck/crosscheck.sh)."""
+    assert HAVE_CPP, 'AMR_ISAAC_REQUIRE_CPP=1 인데 g++·Eigen 이 없다 — C++ 교차 시험을 건너뛸 수 없다'
     pe = os.path.join(REPO, 'src', 'amr_perception')
     binary = str(tmp_path / 'gate_runner')
     srcs = [os.path.join(XCHECK, 'gate_runner.cpp'), os.path.join(pe, 'src', 'safety_gate.cpp'),
@@ -370,6 +404,127 @@ def test_canonical_phi_stops_before_wall_and_latches():
     assert float(o['v'][0]) == 0.0 and bool(o['prox'][0])
     o = phi.step(t([-0.2]), t([0.0]), t([0.0]), t([0.0]), 0.02)
     assert float(o['v'][0]) == pytest.approx(-0.2) and not bool(o['prox'][0])
+
+
+def _wall_ranges(n, x_wall):
+    """base_link x = x_wall [n] 인 정면 벽 (|각| < 0.6 rad) 의 스캔 거리 [n, 720] — 나머지 빔은 무효(범위 밖)."""
+    ang = C.LIDAR_ANGLE_MIN + torch.arange(C.LIDAR_SAMPLES, dtype=F64) * C.LIDAR_ANGLE_INC
+    r = torch.full((n, C.LIDAR_SAMPLES), 30.0, dtype=F64)
+    front = ang.abs() < 0.6
+    r[:, front] = (x_wall.unsqueeze(1) - C.LIDAR_X) / torch.cos(ang[front]).unsqueeze(0)
+    r[:, 5] = math.nan                                           # 무효 빔 하나
+    return r
+
+
+def _spec_gate(n):
+    """명세대로 직접 만든 게이트 — 배포 설정, LiDAR 원점·빔각, 고정 패딩 (CanonicalPhi 와 독립)."""
+    cap = SG.max_half_for_range(0.99 * C.LIDAR_RANGE_MIN, C.LIDAR_ANGLE_INC)
+    return SG.SafetyGateBatch(n, 'cpu', SG.DEPLOYED, n_beams=C.LIDAR_SAMPLES,
+                              angle_increment=C.LIDAR_ANGLE_INC, circular=True,
+                              origin=(C.LIDAR_X, C.LIDAR_Y), half_cap=cap)
+
+
+def _spec_beams(r):
+    """빔 끝점 = (LIDAR_X, LIDAR_Y) + r(cos, sin), 무효(비유한·범위 밖) = NaN — numpy 로 따로 계산."""
+    a = C.LIDAR_ANGLE_MIN + np.arange(C.LIDAR_SAMPLES) * C.LIDAR_ANGLE_INC
+    rn = r.numpy()
+    ok = np.isfinite(rn) & (rn >= C.LIDAR_RANGE_MIN) & (rn <= C.LIDAR_RANGE_MAX)
+    bx = np.where(ok, C.LIDAR_X + rn * np.cos(a), np.nan)
+    by = np.where(ok, C.LIDAR_Y + rn * np.sin(a), np.nan)
+    return torch.from_numpy(np.stack([bx, by], -1))
+
+
+def test_canonical_phi_matches_spec_driven_gate():
+    """
+    정본 φ 결선(CanonicalPhi) = 명세대로 부른 게이트: 스캔 시각 = 결정 시작, 측정 = 플랜트 속도, 명령 = 프로파일러 출력.
+
+    두 env 가 다가오는 벽 앞에서 (측정 ≠ 명령, 0.1 s 마다 새 스캔) 감속하다 STOP 래치까지 간다. 모든 출력이 같아야 한다.
+    """
+    n = 2
+    phi = EM.CanonicalPhi(n, 'cpu')
+    ref = _spec_gate(n)
+    x = t([0.3 + 1.6, 0.3 + 1.1])
+    v_meas = t([0.5, 0.35])
+    w_meas = t([0.0, 0.2])
+    latched = False
+    for k in range(40):
+        stamp = 0.1 * k
+        r = _wall_ranges(n, x)
+        phi.set_scan(r, stamp)
+        ref.set_scan(_spec_beams(r), stamp)
+        ref.set_cloud(None, stamp, stamp)
+        for j in range(5):
+            now = stamp + 0.02 * j
+            v_ref = v_meas + 0.1
+            w_ref = w_meas * 0.5
+            a = phi.step(v_ref, w_ref, v_meas, w_meas, now)
+            ref.set_measured(v_meas, w_meas, now)
+            ref.set_command(v_ref, w_ref, now)
+            b = ref.evaluate(now)
+            for key in ('v', 'w', 'zone', 'prox', 'causes', 'escaping', 'min_distance',
+                        'lidar_distance', 'contact_distance', 'speed_limit'):
+                assert torch.equal(a[key], b[key]), (k, j, key, a[key], b[key])
+            latched |= bool(a['prox'].any())
+            # 플랜트: 게이트 출력 쪽으로 (측정은 다음 틱에)
+            v_meas = v_meas + 0.3 * (a['v'] - v_meas)
+            w_meas = w_meas + 0.3 * (a['w'] - w_meas)
+            x = x - (v_meas + 0.25) * 0.02                         # 벽도 0.25 m/s 로 다가온다
+    assert latched
+
+
+def _gate_state(g, i):
+    """게이트의 env i 상태 (텐서 속성 전부)."""
+    out = {}
+    for k, v in vars(g).items():
+        if torch.is_tensor(v) and v.dim() >= 1 and v.shape[0] == g.n:
+            out[k] = v[i].clone()
+    return out
+
+
+def _same(a, b):
+    return a.shape == b.shape and bool(((a == b) | (torch.isnan(a) & torch.isnan(b))).all()) \
+        if a.is_floating_point() else torch.equal(a, b)
+
+
+def test_canonical_phi_reset_gives_fresh_gate():
+    """리셋한 env 의 게이트 상태 = 새 게이트 (래치·측정 필터·의도·스캔 전부), 리셋 안 한 env 는 그대로."""
+    phi = EM.CanonicalPhi(2, 'cpu')
+    fresh = _gate_state(EM.CanonicalPhi(2, 'cpu').gate, 0)
+    phi.set_scan(_wall_ranges(2, t([0.3 + 0.2, 0.3 + 0.2])), 0.0)
+    o = phi.step(t([0.3, 0.3]), t([0.1, 0.1]), t([0.2, 0.2]), t([0.0, 0.0]), 0.0)
+    assert bool(o['prox'].all())
+    before1 = _gate_state(phi.gate, 1)
+    phi.reset(torch.tensor([0]))
+    after0 = _gate_state(phi.gate, 0)
+    after1 = _gate_state(phi.gate, 1)
+    assert set(after0) == set(fresh)
+    for k in fresh:
+        assert _same(after0[k], fresh[k]), k
+        assert _same(after1[k], before1[k]), k
+    assert any(not _same(before1[k], fresh[k]) for k in fresh)    # 리셋 안 한 쪽은 새 게이트가 아니다
+
+
+def test_nav2_update_excludes_collision_steps_and_later_episodes():
+    """Nav2 호환: 목표 ≤ 0.25 m 인 비충돌 결정 스텝만, 첫 에피소드가 끝난 env 는 더 바꾸지 않는다."""
+    nav2 = torch.zeros(4, dtype=torch.bool)
+    got = torch.tensor([False, False, False, True])
+    d = t([0.20, 0.25, 0.20, 0.10])
+    coll = torch.tensor([False, False, True, False])
+    nav2 = EV.nav2_update(nav2, got, d, coll, 0.25)
+    assert nav2.tolist() == [True, True, False, False]
+    nav2 = EV.nav2_update(nav2, got, t([0.5, 0.5, 0.5, 0.5]), coll, 0.25)
+    assert nav2.tolist() == [True, True, False, False]
+    src = open(os.path.join(HERE, '..', 'scripts', 'eval_unbiased.py'), encoding='utf-8').read()
+    assert "EV.nav2_update(nav2, got, sd['d_goal'], sd['collision'], args.nav2_radius)" in src
+
+
+def test_wiring_mutants_target_current_source():
+    """결선 변이 도구(mutate_wiring.py)의 치환 대상이 지금 소스에 정확히 한 번씩 있다 (변이가 조용히 무효가 되지 않게)."""
+    sys.path.insert(0, XCHECK)
+    import mutate_wiring as MW
+    for name, (_d, rel, old, _new) in MW.MUTANTS.items():
+        src = open(os.path.join(HERE, '..', rel), encoding='utf-8').read()
+        assert src.count(old) == 1, name
 
 
 def test_env_wires_canonical_phi_and_dwell():

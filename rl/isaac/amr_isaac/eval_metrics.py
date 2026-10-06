@@ -131,6 +131,17 @@ def stop_diagnosis(ep):
     return {'n': int(idx.size), 'counts': counts, 'episodes': rows}
 
 
+def nav2_update(nav2, got, d_goal, collision, radius=0.25):
+    """
+    Nav2 호환 도달 누적 (torch) — 결정 스텝 하나.
+
+    nav2·got·collision [N] bool (got = 첫 에피소드가 이미 끝난 env), d_goal [N] (전이 뒤 목표 직선거리).
+    첫 에피소드 동안 목표 ≤ radius 인 **충돌이 아닌** 결정 스텝이 한 번이라도 있으면 True (속도·yaw 무관,
+    Nav2 SimpleGoalChecker 기본 xy 0.25 m). 첫 에피소드가 끝난 env 는 더 바꾸지 않는다.
+    """
+    return nav2 | (~got & (d_goal <= radius) & ~collision)
+
+
 def dwell_success(success, terminated, dwell, k):
     """
     평가 전용 dwell 판정 (torch).

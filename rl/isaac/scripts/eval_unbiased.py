@@ -161,7 +161,7 @@ def main():
             for nm in ('d_goal', 'v_meas', 'w_meas', 'D', 'guard', 'zone', 'causes', 'prox',
                        'escaping'):
                 ring[nm][slot] = sd[nm]
-            nav2 |= (~got) & (sd['d_goal'] <= args.nav2_radius) & ~sd['collision']
+            nav2 = EV.nav2_update(nav2, got, sd['d_goal'], sd['collision'], args.nav2_radius)
             steps += 1
             new = (log.fin_count > 0) & ~got
             if bool(new.any()):
