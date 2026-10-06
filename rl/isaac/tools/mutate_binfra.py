@@ -15,6 +15,7 @@ B 단계 기반 코드(b1-binfra)의 가드·불변식 변이 검사 — 하나�
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -131,11 +132,14 @@ def run_copy(a, name, f, old, new, tests):
     r = subprocess.run([a.python, '-m', 'pytest', '-q', '-x', '-p', 'no:cacheprovider', *tests],
                        cwd=os.path.join(w, 'rl', 'isaac'), capture_output=True, text=True,
                        env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
+    # pytest 요약 줄만 ("1 failed, 3 passed in 2.0s")
+    # — Isaac 래퍼의 "There was an error running python" 은 빼야 한다
     lines = [x for x in r.stdout.strip().splitlines()
-             if ' passed' in x or ' failed' in x or ' error' in x]
+             if re.search(r'\d+ (failed|passed|errors?)\b.* in [\d.]+s', x)]
     tail = lines[-1] if lines else (r.stdout.strip().splitlines() or [''])[-1]
     shutil.rmtree(w)
-    kind = 'failed' if ' failed' in tail else 'error' if ' error' in tail else 'other'
+    kind = ('failed' if ' failed' in tail else
+            'error' if re.search(r' errors?\b', tail) else 'other')
     return {'mutant': name, 'file': f, 'tests': tests, 'rc': r.returncode,
             'caught': r.returncode != 0, 'kind': kind, 'summary': tail,
             'seconds': round(time.time() - t0, 1)}
