@@ -150,3 +150,41 @@ def test_idle_robots_wait_at_their_waiting_pose():
             assert (r.x, r.y) == pytest.approx(w.places[f'spawn_{r.id}'])
         if r.stage == 'return':
             assert not r.idle()
+
+
+@pytest.mark.parametrize('seed,t_fault', [(1, 200.0), (4, 200.0), (5, 300.0)])
+def test_dead_robot_inside_zone_keeps_it_closed(seed, t_fault):
+    """
+    F6: 이탈 로봇이 도크 구역 안에서 멈추면 그 구역은 fail-closed 로 닫힌 채 남는다.
+
+    중앙(lost → 몸체가 걸친 구역 토큰만 유지)에서 다른 로봇이 그 구역 정지선에 서고, 동시 점유는 0 이다.
+    시드는 피해 로봇이 구역 안에서 멈추는 경우를 찾아 고정했다 (P4 노트 P4-1 변이 검사).
+    """
+    sim = FleetSim(cfg('A1_nearest_central', fault='F6', seed=seed, t_fault=t_fault,
+                       horizon_s=t_fault + 300.0, arrival_rate=1.0 / 45.0))
+    res = sim.run()
+    v = sim.by_id[res['victim']]
+    held = sim.world.body_zones(v.x, v.y, v.th)
+    assert held, '피해 로봇이 구역 안에 있지 않다 — 시나리오가 가드를 시험하지 못한다'
+    assert any(r.alive and r.wait_zone in held for r in sim.robots)
+    assert res['cooccupancy_events'] == 0, res['cooccupancy_detail']
+
+
+def test_task_lock_prevents_duplicates_under_aggressive_commit(monkeypatch):
+    """
+    작업 ID 투표 잠금의 힘: 확정을 일부러 이르게(K=1, 전원 수신 없음) 하고 손실 0.4 로 협상 표가 갈리게 한다.
+
+    낙관(잠금 없음) A7 은 중복 실행이 생기고(오라클 양성 대조), 엄격 A6 은 0 이어야 한다.
+    """
+    from amr_fleet.negotiation import agent as nego_agent
+    early = classmethod(lambda c: c(rule='cbba', stable_rounds=1, require_all_heard=False,
+                                    heartbeat_timeout=5.0, liveness='indirect'))
+    monkeypatch.setattr(nego_agent.AgentConfig, 'strict_mode', early)
+    monkeypatch.setattr(nego_agent.AgentConfig, 'optimistic_mode', early)
+    opt = strict = 0
+    for s in (2, 5, 6):
+        base = dict(loss=0.4, seed=s, arrival_rate=1.0 / 30.0, horizon_s=600.0)
+        opt += run(cfg('A7_cbaa_opt_vote', **base))['dup_tasks']
+        strict += run(cfg('A6_cbaa_vote', **base))['dup_tasks']
+    assert opt > 0
+    assert strict == 0
