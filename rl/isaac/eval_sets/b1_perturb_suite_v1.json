@@ -1,0 +1,42 @@
+{
+ "format": "amr_isaac_perturb_suite_v1",
+ "version": "1.0.0",
+ "fixed_at": "2026-10-06, b1-binfra, before any perturbation result (pre-registration: notebook entry 2026-10-06_*_b1-binfra_perturb-suite.md)",
+ "eval_set": "perturb_3_15 (= first 1024 of main_3_15 in b1_eval_sets_v1.json; main set = front straight clearance >= 0.40 m)",
+ "per_condition_n": 1024,
+ "eval_rules": "eval_unbiased.py --phi canonical --seed 4242, first episode per env, deterministic tanh(mu), DR off nominal values then the condition params override, unfinished must be 0",
+ "train_dr_ranges": {
+  "plant_time_constant_s": [0.048, 0.112],
+  "plant_delay_s": [0.02, 0.08],
+  "accel_limit_scale": [0.84, 1.0],
+  "lidar_sigma_m": [0.01, 0.06],
+  "beam_dropout_p": [0.0, 0.02],
+  "drive_gain": [1.0, 1.0],
+  "obs_scan_delay_s": [0.0, 0.0]
+ },
+ "contract_11_coverage": {
+  "1_map_diversity": "NOT COVERED - single warehouse map; training has no map DR and this suite has no map perturbation (the Isaac scene mesh and path pool are built from one map)",
+  "2_accel_dynamics": "covered: plant delay 0.12/0.16 s, plant time constant 0.16 s, plant accel limit scale 0.6, drive gain 0.8/1.2 (not in contract table); payload not modeled",
+  "3_obstacle_behavior": "NOT COVERED - static map only (dynamic obstacles out of bonus 1 scope, plan section 2)",
+  "4_latency": "covered partly: policy observation scan latency 0.1/0.2 s (scan_age reported like the plugin), action latency via plant pure delay; contract eval sweep goes to 0.3 s",
+  "5_perception_noise": "covered: LiDAR range sigma 0.09/0.12 m, beam dropout 0.05/0.10; track dropout / position / velocity noise not applicable (no tracks)"
+ },
+ "recommended_primary_endpoint": "per seed: mean strict success over the 12 single-axis 'unseen' conditions (equal weight); DR on vs off difference of arm means with stratified bootstrap 95% interval over seeds; per-condition table and the combo / dr_edge rows reported separately (b1-dr fixes the final rule in its own pre-registration)",
+ "conditions": [
+  {"name": "nominal", "group": "nominal", "params": {}, "why": "reference: DR off nominal values"},
+  {"name": "delay_0p12", "group": "unseen", "params": {"plant_delay_s": 0.12}, "why": "plant pure delay 1.5x training max 0.08 s"},
+  {"name": "delay_0p16", "group": "unseen", "params": {"plant_delay_s": 0.16}, "why": "plant pure delay 2x training max"},
+  {"name": "obslat_0p1", "group": "unseen", "params": {"obs_scan_delay_s": 0.1}, "why": "policy scan one decision step old (contract axis 4, not trained)"},
+  {"name": "obslat_0p2", "group": "unseen", "params": {"obs_scan_delay_s": 0.2}, "why": "policy scan two decision steps old"},
+  {"name": "sigma_0p09", "group": "unseen", "params": {"lidar_sigma_m": 0.09}, "why": "LiDAR range noise 1.5x training max 0.06 m"},
+  {"name": "sigma_0p12", "group": "unseen", "params": {"lidar_sigma_m": 0.12}, "why": "LiDAR range noise 2x training max"},
+  {"name": "drop_0p05", "group": "unseen", "params": {"beam_dropout_p": 0.05}, "why": "beam dropout 2.5x training max 0.02"},
+  {"name": "drop_0p10", "group": "unseen", "params": {"beam_dropout_p": 0.10}, "why": "beam dropout 5x training max"},
+  {"name": "gain_0p8", "group": "unseen", "params": {"drive_gain": 0.8}, "why": "plant follows 0.8x command (wheel radius error), never randomized"},
+  {"name": "gain_1p2", "group": "unseen", "params": {"drive_gain": 1.2}, "why": "plant follows 1.2x command, never randomized"},
+  {"name": "accel_0p6", "group": "unseen", "params": {"accel_limit_scale": 0.6}, "why": "plant accel limit 0.6x (training 0.84-1.0)"},
+  {"name": "tm_0p16", "group": "unseen", "params": {"plant_time_constant_s": 0.16}, "why": "plant first-order lag 2x nominal (training 0.048-0.112 s)"},
+  {"name": "combo", "group": "unseen", "params": {"plant_delay_s": 0.12, "obs_scan_delay_s": 0.1, "lidar_sigma_m": 0.09, "beam_dropout_p": 0.05, "drive_gain": 0.9, "accel_limit_scale": 0.8, "plant_time_constant_s": 0.14}, "why": "moderate shift on all axes at once (reported separately from the single-axis mean)"},
+  {"name": "dr_edge", "group": "edge", "params": {"plant_time_constant_s": 0.112, "plant_delay_s": 0.08, "accel_limit_scale": 0.84, "lidar_sigma_m": 0.06, "beam_dropout_p": 0.02}, "why": "adverse corner of the training DR box (seen by DR-on arm only; secondary)"}
+ ]
+}

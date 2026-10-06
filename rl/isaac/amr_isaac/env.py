@@ -13,6 +13,11 @@ safety φ 는 cfg.safety_filter 로 고른다 (README 「safety φ — 근사와
                 의도 유지·빔 창 통계·STOP 확정·원인별 해제·존 히스테리시스·접촉 가드·탈출·지연 보정 전부.
                 STOP 래치는 관측의 근접 정지 비트(safety 블록)로 나간다 (lite 에서는 늘 0).
 평가 전용 cfg.success_dwell_steps = k > 1: 성공 조건이 k 결정 스텝 연속 유지돼야 성공 종단 (층위 성공 지표).
+평가 전용 고정 경로 (B 단계 평가 집합, eval_sets): forced_path_ids [N] 를 넣으면 리셋 때 무작위 경로 대신 그 번호.
+평가 전용 교란 (B 단계 교란 묶음, perturb): set_perturbation 으로 env 별 플랜트·센서·구동 이득·관측 스캔 지연을
+  리셋 때 덮어쓴다 (DR/명목값 표본 뒤). 관측 스캔 지연은 **정책 관측의 스캔만** k 결정 스텝 늦추고 scan_age 를 k·0.1 s
+  로 적는다 (플러그인이 now − stamp 로 재는 값) — safety φ 는 새 스캔을 그대로 쓴다 (safety_node 는 스캔 도착마다
+  판정하고 지연 보정을 한다). 구동 이득 g 는 플랜트가 따라가는 명령을 g 배 한다 (바퀴 반경 오차 꼴, v·ω 같은 배율).
 
 보상 판은 cfg.reward_version ('1.2.0' = 계약 기본, '1.1.0' = 대조) 으로 고른다. 전이 전 거리 d(s) =
 max(d_arc, 목표 직선거리) 는 관측과 같은 자세에서 캐시해 두고(build_obs → observe_with_cache) 다음 전이의
@@ -23,6 +28,7 @@ max(d_arc, 목표 직선거리) 는 관측과 같은 자세에서 캐시해 두�
 
 from __future__ import annotations
 
+import dataclasses
 import math
 
 import torch
@@ -39,10 +45,11 @@ from .env_cfg import AmrNavEnvCfg, BODY_Z, WAREHOUSE_PRIM
 from .eval_metrics import dwell_success
 from .env_math import (approach_distance, CanonicalPhi, EpisodeLog, move_and_collide,
                        reward_spec_for, SAFETY_FILTERS, select_paths_by_length)
+from . import perturb as PT
 
 PHYS_DT = C.PROFILER_DT
 N_SUB = int(round(C.DT / PHYS_DT))       # 5
-MAX_DELAY = 4                            # 플랜트 순수 지연 최대 0.08 s = 4 서브스텝
+MAX_DELAY = 4                            # 학습 DR 플랜트 순수 지연 최대 0.08 s = 4 서브스텝
 OUTCOMES = ('success', 'collision', 'time_limit', 'stall')
 DIAG_NAMES = ('progress', 'near_goal_0p5', 'spin_frac', 'offpath_1m_frac')
 
@@ -99,13 +106,23 @@ class AmrNavEnv(DirectRLEnv):
         self.stall_t = z()
         self.profiler = CT.ProfilerBatch(N, dev)
         self.plant_v, self.plant_w = z(), z()
-        self.delay_buf = torch.zeros(N, MAX_DELAY + 1, 2, dtype=F64, device=dev)
+        # 지연 버퍼는 평가 교란(cfg.delay_buffer_steps, 기본 0.2 s)까지 담는다 — 학습 DR 은 1–4 서브스텝만 쓴다
+        self.delay_buf = torch.zeros(N, max(MAX_DELAY, cfg.delay_buffer_steps) + 1, 2, dtype=F64,
+                                     device=dev)
         self.delay_steps = torch.full((N,), 2, dtype=torch.long, device=dev)
         self.plant_tm = torch.full((N,), cfg.dr.nominal_plant_time_constant_s, dtype=F64,
                                    device=dev)
         self.acc_scale = torch.ones(N, dtype=F64, device=dev)
         self.lidar_sigma = torch.full((N,), cfg.dr.nominal_lidar_sigma_m, dtype=F64, device=dev)
         self.beam_drop = z()
+        # 평가 전용: 구동 이득·정책 관측 스캔 지연 (학습에서는 늘 1·0)
+        self.drive_gain = torch.ones(N, dtype=F64, device=dev)
+        self.obs_delay = torch.zeros(N, dtype=torch.long, device=dev)
+        self._gain_active = False
+        self._obs_delay_active = False
+        self.scan_hist = None              # [N, k_max + 1, 720] — 관측 지연을 켤 때만 만든다
+        self.perturb = None                # {축: [N] float64} (perturb.KEYS) 또는 None
+        self.forced_path_ids = None        # [N] long (풀 번호, path_len 필터 뒤) 또는 None
         self.scan = torch.full((N, C.LIDAR_SAMPLES), math.nan, dtype=F64, device=dev)
         self.scan_pts_w = torch.zeros(N, C.LIDAR_SAMPLES, 2, dtype=F64, device=dev)
         self.scan_valid = torch.zeros(N, C.LIDAR_SAMPLES, dtype=torch.bool, device=dev)
@@ -243,6 +260,8 @@ class AmrNavEnv(DirectRLEnv):
         self.delay_buf[:, 0, 1] = out['w']
         idx = self.delay_steps.view(-1, 1, 1).expand(-1, 1, 2)
         u_del = self.delay_buf.gather(1, idx).squeeze(1)
+        if self._gain_active:
+            u_del = u_del * self.drive_gain.unsqueeze(1)
         alpha = 1.0 - torch.exp(-PHYS_DT / self.plant_tm)
         dv = (alpha * (u_del[:, 0] - self.plant_v)).clamp(
             -C.A_MAX * self.acc_scale * PHYS_DT, C.A_MAX * self.acc_scale * PHYS_DT)
@@ -361,6 +380,9 @@ class AmrNavEnv(DirectRLEnv):
         n = len(env_ids)
         dev = self.device
         pid = torch.randint(0, self.pool_size, (n,), device=dev)
+        if self.forced_path_ids is not None:
+            # 평가 집합: env 마다 정한 경로 (무작위 뽑기는 그대로 소비해 이후 난수열이 같은 꼴로 흐르게)
+            pid = self.forced_path_ids[env_ids]
         if self.curriculum_lmax is not None:
             k = int(torch.searchsorted(self.pool_len_sorted,
                                        torch.tensor([self.curriculum_lmax], dtype=F64,
@@ -431,9 +453,72 @@ class AmrNavEnv(DirectRLEnv):
         else:
             self.plant_tm[env_ids] = dr.nominal_plant_time_constant_s
             self.delay_steps[env_ids] = int(round(dr.nominal_plant_delay_s / PHYS_DT))
-            self.acc_scale[env_ids] = 1.0
+            self.acc_scale[env_ids] = dr.nominal_accel_limit_scale
             self.lidar_sigma[env_ids] = dr.nominal_lidar_sigma_m
-            self.beam_drop[env_ids] = 0.0
+            self.beam_drop[env_ids] = dr.nominal_beam_dropout_p
+        if self.perturb is not None:
+            self._apply_perturbation(env_ids)
+
+    def set_perturbation(self, params):
+        """
+        평가 전용 교란 — params = {perturb.KEYS 의 축: [N] 값} (없는 축은 그대로). 다음 리셋부터 적용된다.
+
+        None 이면 끈다. 구동 이득·관측 스캔 지연은 1·0 이 아닌 env 가 하나라도 있을 때만 계산 경로를 켠다.
+        """
+        if params is None:
+            self.perturb = None
+            self.drive_gain.fill_(1.0)
+            self.obs_delay.zero_()
+            self._gain_active = self._obs_delay_active = False
+            return
+        bad = set(params) - set(PT.KEYS)
+        if bad:
+            raise ValueError(f'모르는 교란 축 {sorted(bad)}')
+        self.perturb = {k: torch.as_tensor(v, dtype=F64, device=self.device).reshape(-1)
+                        for k, v in params.items()}
+        for k, v in self.perturb.items():
+            if v.shape[0] != self.num_envs:
+                raise ValueError(f'교란 {k} 길이 {v.shape[0]} ≠ num_envs {self.num_envs}')
+        g = self.perturb.get('drive_gain')
+        self._gain_active = g is not None and bool((g != 1.0).any())
+        od = self.perturb.get('obs_scan_delay_s')
+        kmax = self.cfg.obs_scan_delay_max_steps
+        self._obs_delay_active = od is not None and bool((od > 0).any())
+        if self._obs_delay_active and self.scan_hist is None:
+            self.scan_hist = torch.full((self.num_envs, kmax + 1, C.LIDAR_SAMPLES), math.nan,
+                                        dtype=F64, device=self.device)
+
+    def _apply_perturbation(self, env_ids):
+        """리셋한 env 에 교란 값을 덮어쓴다 (DR/명목 표본 뒤)."""
+        p = self.perturb
+        if 'plant_time_constant_s' in p:
+            self.plant_tm[env_ids] = p['plant_time_constant_s'][env_ids]
+        if 'plant_delay_s' in p:
+            nbuf = self.delay_buf.shape[1] - 1
+            self.delay_steps[env_ids] = torch.round(
+                p['plant_delay_s'][env_ids] / PHYS_DT).long().clamp(1, nbuf)
+        if 'accel_limit_scale' in p:
+            self.acc_scale[env_ids] = p['accel_limit_scale'][env_ids]
+        if 'lidar_sigma_m' in p:
+            self.lidar_sigma[env_ids] = p['lidar_sigma_m'][env_ids]
+        if 'beam_dropout_p' in p:
+            self.beam_drop[env_ids] = p['beam_dropout_p'][env_ids]
+        if 'drive_gain' in p:
+            self.drive_gain[env_ids] = p['drive_gain'][env_ids]
+        if 'obs_scan_delay_s' in p:
+            k = torch.round(p['obs_scan_delay_s'][env_ids] / C.DT).long()
+            self.obs_delay[env_ids] = k.clamp(0, self.cfg.obs_scan_delay_max_steps)
+
+    def dr_snapshot(self):
+        """지금 env 별 DR·교란 값의 요약 (학습 summary·평가 기록용 — DR 끔이 실제로 명목값인지 확인)."""
+        out = {}
+        for nm, t in (('plant_time_constant_s', self.plant_tm),
+                      ('plant_delay_s', self.delay_steps.to(F64) * PHYS_DT),
+                      ('accel_limit_scale', self.acc_scale), ('lidar_sigma_m', self.lidar_sigma),
+                      ('beam_dropout_p', self.beam_drop), ('drive_gain', self.drive_gain),
+                      ('obs_scan_delay_s', self.obs_delay.to(F64) * C.DT)):
+            out[nm] = {'min': float(t.min()), 'max': float(t.max()), 'mean': float(t.mean())}
+        return out
 
     # ------------------------------------------------------------------ 관측
     def _read_scan(self):
@@ -479,7 +564,20 @@ class AmrNavEnv(DirectRLEnv):
         r = r + noise
         drop = torch.rand_like(r) < self.beam_drop.unsqueeze(1)
         self.set_scan(torch.where(drop, torch.full_like(r, math.nan), r))
+        if self._obs_delay_active:
+            return {'policy': self.build_obs(*self._delayed_scan())}
         return {'policy': self.build_obs()}
+
+    def _delayed_scan(self):
+        """정책 관측용 지연 스캔 [N, 720] 과 그 나이 [N] (방금 리셋한 env 는 이력을 새 스캔으로 채운다)."""
+        h = torch.roll(self.scan_hist, 1, dims=1)
+        h[:, 0] = self.scan
+        fresh = self.episode_length_buf == 0
+        if bool(fresh.any()):
+            h[fresh] = self.scan[fresh].unsqueeze(1).expand(-1, h.shape[1], -1)
+        self.scan_hist = h
+        idx = self.obs_delay.view(-1, 1, 1).expand(-1, 1, h.shape[2])
+        return h.gather(1, idx).squeeze(1), self.obs_delay.to(F64) * C.DT
 
     def set_scan(self, r):
         """스캔 거리 [N, 720] (무효 = nan/inf/범위 밖) 를 넣고 세계 좌표 끝점을 갱신한다."""
@@ -495,9 +593,16 @@ class AmrNavEnv(DirectRLEnv):
             # 정본 φ: base_link 빔으로 (촬영 시각 = 이 결정의 시작, 50 Hz 서브스텝이 지연 보정)
             self.phi.set_scan(r, self._phi_clock)
 
-    def build_obs(self):
-        """현재 버퍼의 계약 관측 [N, 291] (전이 전 거리 캐시 d_prog 도 갱신)."""
-        obs, self.d_prog = CT.observe_with_cache(self.contract_state(), self.reward_spec)
+    def build_obs(self, scan=None, scan_age=None):
+        """
+        현재 버퍼의 계약 관측 [N, 291] (전이 전 거리 캐시 d_prog 도 갱신).
+
+        scan·scan_age 를 주면 관측의 스캔과 스캔 나이만 바꾼다 (평가 전용 관측 지연 — 보상·φ 는 그대로).
+        """
+        st = self.contract_state()
+        if scan is not None:
+            st = dataclasses.replace(st, scan=scan, scan_age=scan_age)
+        obs, self.d_prog = CT.observe_with_cache(st, self.reward_spec)
         return obs
 
     def inject_state(self, st, ids):

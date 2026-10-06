@@ -44,7 +44,12 @@ class ContractLidarPatternCfg(PatternBaseCfg):
 
 @configclass
 class DomainRandCfg:
-    """DR 범위 (rl/contract/amr_rl_contract/dr.py DR_AXES 의 부분집합 — 1 차 구현분)."""
+    """
+    DR 범위 (rl/contract/amr_rl_contract/dr.py DR_AXES 의 부분집합 — 1 차 구현분).
+
+    enable False (학습 --dr off, 평가 기본) = 아래 nominal_* 값 고정. 축 목록·우선순위는 README 「DR 축과 교란 평가」.
+    리셋마다 env 별로 균일 표본 (같은 에피소드 안에서는 고정).
+    """
 
     enable: bool = True
     plant_time_constant_s: tuple = (0.048, 0.112)    # 축 2 (V:16 × [0.6, 1.4])
@@ -56,6 +61,8 @@ class DomainRandCfg:
     nominal_plant_time_constant_s: float = 0.08
     nominal_plant_delay_s: float = 0.04
     nominal_lidar_sigma_m: float = 0.03
+    nominal_accel_limit_scale: float = 1.0
+    nominal_beam_dropout_p: float = 0.0
 
 
 @configclass
@@ -119,6 +126,10 @@ class AmrNavEnvCfg(DirectRLEnvCfg):
     safety_filter: str = 'lite'
     phi_cloud_mode: str = 'empty'    # 정본 φ 의 깊이 점군 모델 (env_math.CanonicalPhi)
     success_dwell_steps: int = 1     # 평가 전용: >1 이면 성공 조건을 이 결정 스텝 수만큼 연속 유지해야 성공
+    # 평가 전용 교란 (env.set_perturbation) 의 버퍼 크기: 플랜트 순수 지연 최대 서브스텝 (0.02 s 단위),
+    # 정책 관측 스캔 지연 최대 결정 스텝 (0.1 s 단위). 학습 DR 은 지연 1–4 서브스텝만 쓴다.
+    delay_buffer_steps: int = 10
+    obs_scan_delay_max_steps: int = 3
 
 
 @configclass
