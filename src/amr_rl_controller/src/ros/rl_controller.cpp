@@ -25,11 +25,16 @@ namespace
 // rl_controller/stats 의 필드 순서 (Float64MultiArray.data)
 constexpr const char * kStatsFields =
   "0 cycle_ms, 1 obs_ms, 2 mask_ms, 3 infer_ms, 4 source(0 policy 1 fallback_cell 2 dwa 3 align), "
-  "5 dwa_reason(0 none 1 state 2 policy_error 3 timeout 4 nonfinite), 6 action, 7 model_action, "
-  "8 n_valid, 9 saturated, 10 v, 11 w, 12 new_decision, 13 decisions, 14 dwa_decisions, "
+  "5 dwa_reason(0 none 1 state 2 policy_error 3 timeout 4 nonfinite 5 handover), 6 action, "
+  "7 model_action, "
+  "8 n_valid, 9 saturated, 10 v, 11 w, 12 new_decision, 13 decisions, "
+  "14 dwa_decisions(근접 인계 포함), "
   "15 fallback_cell, 16 invalid_action, 17 timeouts, 18 scan_age, 19 track_age, 20 n_tracks, "
   "21 v_cap, 22 dev_in, 23 dev_peak, 24 dwa_limited(누적: 계약 동적 창으로 자른 DWA 틱), "
-  "25 dwa_window_syncs(누적: DWA 창 중심을 실제 직전 명령으로 맞춘 틱 — 어긋나 있던 틱만)";
+  "25 dwa_window_syncs(누적: DWA 창 중심을 실제 직전 명령으로 맞춘 틱 — 어긋나 있던 틱만), "
+  "26 tick_dt(sim s, 재동기 틱 0), 27 now(sim s), "
+  "28 last_period(sim s, 가장 최근 결정 틱에서 닫힌 결정 주기), "
+  "29 dt_est(s, 램프의 다음 틱 추정), 30 handover(0/1 근접 인계 중)";
 
 double toDouble(const std::string & s, double dflt)
 {
@@ -89,6 +94,16 @@ void RLController::configure(
   ec.hysteresis_beta = nav::param(node, p + "hysteresis_beta", 0.0);
   ec.yaw_tol = nav::param(node, p + "yaw_goal_tolerance", 0.05);
   ec.align_latency = nav::param(node, p + "align_latency", 0.3);
+  ec.handover_radius = nav::param(node, p + "handover_radius", 0.0);
+  ec.handover_hysteresis = nav::param(node, p + "handover_hysteresis", 0.1);
+  if (ec.handover_radius > 0.0 && !dwa_fallback_) {
+    throw std::runtime_error(
+            "RLController: " + p +
+            "handover_radius > 0 은 내부 DWA 가 필요하다 (dwa_fallback true)");
+  }
+  if (ec.handover_radius < 0.0 || ec.handover_hysteresis < 0.0) {
+    throw std::runtime_error("RLController: handover_radius·handover_hysteresis 는 0 이상");
+  }
   engine_ = std::make_unique<DecisionEngine>(ec, policy_.get());
 
   v_cap_op_ = nav::param(node, name_ + ".max_vel_x", C::kVMaxOp);
@@ -146,11 +161,13 @@ void RLController::configure(
 
   RCLCPP_INFO(
     logger_,
-    "RLController '%s' 로드: 모델 %s (%s) | 모드 %s, 결정 %.2f s = 틱 %.3f s x %d, 추론 상한 "
-    "%.1f ms, β %.2f, v_cap %.2f m/s, DWA 폴백 %s | 스캔 %s",
+    "RLController '%s' 로드: 모델 %s (%s) | 모드 %s, "
+    "결정 %.2f s (노드 시계 격자, 공칭 틱 %.3f s x %d), "
+    "추론 상한 %.1f ms, β %.2f, v_cap %.2f m/s, DWA 폴백 %s, 근접 인계 %.2f m (+%.2f) | 스캔 %s",
     name_.c_str(), model_path.c_str(), policy_->describe().c_str(), mode.c_str(),
     ec.decision_period, ec.control_period, engine_->ticksPerDecision(), ec.max_inference_ms,
-    ec.hysteresis_beta, v_cap_op_, dwa_fallback_ ? "on" : "off", scan_topic.c_str());
+    ec.hysteresis_beta, v_cap_op_, dwa_fallback_ ? "on" : "off", ec.handover_radius,
+    ec.handover_hysteresis, scan_topic.c_str());
   RCLCPP_INFO(logger_, "RLController stats (%s): %s", stats_topic.c_str(), kStatsFields);
 }
 
@@ -440,7 +457,7 @@ geometry_msgs::msg::TwistStamped RLController::computeVelocityCommands(
     if (r.invalid_action) {
       ++counters_.invalid_action;
     }
-    if (r.source == Source::kDwa) {
+    if (r.source == Source::kDwa && r.dwa_reason != DwaReason::kHandover) {
       RCLCPP_WARN_THROTTLE(
         logger_, *clock_, 2000, "RLController: DWA 폴백 (사유 %d): %s",
         static_cast<int>(r.dwa_reason), r.error.c_str());
@@ -466,8 +483,8 @@ geometry_msgs::msg::TwistStamped RLController::computeVelocityCommands(
     RCLCPP_INFO(
       logger_,
       "RLController: 틱 %zu, 결정 %zu, DWA 폴백(입력 %zu, 오류 %zu, 시간초과 %zu, 비유한 %zu), "
-      "계약 폴백 셀 %zu, 마스크 밖 %zu, 정렬 %zu, DWA 자름 %zu, DWA 창 맞춤 %zu",
-      c.ticks, c.decisions, c.dwa[1], c.dwa[2], c.dwa[3], c.dwa[4], c.fallback_cell,
+      "근접 인계 %zu, 계약 폴백 셀 %zu, 마스크 밖 %zu, 정렬 %zu, DWA 자름 %zu, DWA 창 맞춤 %zu",
+      c.ticks, c.decisions, c.dwa[1], c.dwa[2], c.dwa[3], c.dwa[4], c.dwa[5], c.fallback_cell,
       c.invalid_action, c.align, c.dwa_limited, c.dwa_window_syncs);
   }
   return cmd;
@@ -493,7 +510,8 @@ void RLController::publishStats(const TickResult & r, double cycle_ms, const Tic
     static_cast<double>(c.dwa[static_cast<std::size_t>(DwaReason::kTimeout)]),
     in.state.scan_age, in.state.track_age, static_cast<double>(in.state.tracks.size()),
     in.state.v_cap, engine_->dev().in_dev ? 1.0 : 0.0, engine_->dev().peak,
-    static_cast<double>(c.dwa_limited), static_cast<double>(c.dwa_window_syncs)};
+    static_cast<double>(c.dwa_limited), static_cast<double>(c.dwa_window_syncs),
+    r.tick_dt, r.sim_now, r.last_period, r.dt_est, r.handover ? 1.0 : 0.0};
   stats_pub_->publish(st);
 }
 

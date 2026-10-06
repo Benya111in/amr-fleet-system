@@ -10,9 +10,14 @@
 // 실제 직전 명령 기준 계약 동적 창(a_max·Δt_c, α_max·Δt_c, v_cap)으로 자른다 (계약 불변식 —
 // DWA 가 측정 속도로 창을 다시 잡는 경우에만 걸린다).
 //
+// 결정 주기는 노드 시계(Gazebo 에서는 /clock sim 시각) 0.1 s 격자다 (A5-1,
+// core/decision_engine.hpp) —
+// controller_server 가 벽시계로 부르더라도 RTF 와 무관하게 sim 기준 0.1 s 마다 결정한다.
+//
 // 파라미터 (<name>.rl.*): model_path, mode (B|C), intra_op_threads, max_inference_ms,
-//   hysteresis_beta, require_metadata, dwa_fallback, align_latency, scan_topic, scan_timeout,
-//   track_timeout, profiler_timeout, goal_reset_distance, transform_tolerance, stats_topic.
+//   hysteresis_beta, require_metadata, dwa_fallback, align_latency, handover_radius (0 = 끔),
+//   handover_hysteresis, scan_topic, scan_timeout, track_timeout, profiler_timeout,
+//   goal_reset_distance, transform_tolerance, stats_topic.
 //   v_cap 은 DWA 와 같은 <name>.max_vel_x (계약 v_cap = 1.0) 와 setSpeedLimit 의 최솟값.
 // 구독 (controller_server 네임스페이스 상대): scan_filtered (LaserScan),
 //   perception/tracked_obstacles, safety/zone (UInt8, latched), diagnostics (safety_node 항목),
@@ -68,13 +73,13 @@ public:
     nav2_core::GoalChecker * goal_checker) override;
   void setSpeedLimit(const double & speed_limit, const bool & percentage) override;
 
-  /// 누적 계수 (시험·진단): 결정, DWA 폴백(사유별 5), 계약 폴백 셀, 마스크 밖 행동,
+  /// 누적 계수 (시험·진단): 결정, DWA 폴백(사유별 6 — 5 = 근접 인계), 계약 폴백 셀, 마스크 밖 행동,
   /// 계약 동적 창으로 자른 DWA 틱, DWA 창 중심을 실제 직전 명령으로 맞춘 틱 (어긋나 있던 틱만).
   struct Counters
   {
     std::size_t ticks{0};
     std::size_t decisions{0};
-    std::array<std::size_t, 5> dwa{{0, 0, 0, 0, 0}};
+    std::array<std::size_t, kNumDwaReasons> dwa{{0, 0, 0, 0, 0, 0}};
     std::size_t fallback_cell{0};
     std::size_t invalid_action{0};
     std::size_t align{0};

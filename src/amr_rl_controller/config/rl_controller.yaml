@@ -17,4 +17,6 @@ rl:
   transform_tolerance: 0.2
   yaw_goal_tolerance: 0.05    # [rad] N:99 제자리 정렬 목표
   align_latency: 0.3          # [s] 정렬 정지각의 명령→실속도 지연 (각저크 램프 + 서보 + ZOH, DWA approach_latency 와 같음)
+  handover_radius: 0.0        # [m] 근접 인계: 목표 직선거리 ≤ 이 값이면 내부 DWA 가 끝까지 (0 = 끔 = "RL 단독")
+  handover_hysteresis: 0.1    # [m] 인계를 풀려면 반경 + 이 값보다 멀어져야 한다
   stats_topic: rl_controller/stats

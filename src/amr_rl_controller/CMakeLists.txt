@@ -191,9 +191,11 @@ if(BUILD_TESTING)
       FIXTURE_DIR="${FIXTURE_DIR}"
       MAKE_MODELS="${CMAKE_CURRENT_SOURCE_DIR}/test/make_test_models.py")
     set_target_properties(test_onnx_policy PROPERTIES BUILD_RPATH "${ORT_LIB_DIR}")
+    # 시험 노드는 sim 시계(/clock 을 시험이 낸다)로 돈다 — 결정이 sim 시각 격자라서 (A5-1)
+    find_package(rosgraph_msgs REQUIRED)
     ament_add_gtest(test_rl_controller_plugin test/test_rl_controller_plugin.cpp TIMEOUT 300)
     target_link_libraries(test_rl_controller_plugin amr_rl_controller)
-    ament_target_dependencies(test_rl_controller_plugin ${ROS_DEPS})
+    ament_target_dependencies(test_rl_controller_plugin ${ROS_DEPS} rosgraph_msgs)
     target_compile_definitions(test_rl_controller_plugin PRIVATE
       FIXTURE_DIR="${FIXTURE_DIR}"
       MAKE_MODELS="${CMAKE_CURRENT_SOURCE_DIR}/test/make_test_models.py"

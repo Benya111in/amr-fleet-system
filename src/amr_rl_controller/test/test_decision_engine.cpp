@@ -1,10 +1,14 @@
 // DecisionEngine 시험 (가짜 정책, ROS·ORT 비의존).
 //  20 Hz 틱 → 10 Hz 결정 (ZOH 가속도), prev_actions 갱신, DWA 폴백 네 사유, 계약 폴백(99),
 //  히스테리시스, 목표 정렬, 재동기, 이탈 상태.
+//  A5-1: 결정 경계 = sim 시각 격자 (RTF ≠ 1 에서 틱 간격이 0.05 가 아니어도 결정 주기 평균 0.1 s),
+//  램프 = 실제 sim 경과, 시계 멈춤, DWA 주기의 실행 가속도·이탈 타이머 = 실제 경과, 근접 인계.
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -455,4 +459,242 @@ TEST(DecisionEngine, GoldenStateDecisionUsesContractMask)
   for (int i = 0; i < C::kNActionsC; ++i) {
     EXPECT_EQ(p.last_mask[static_cast<std::size_t>(i)] > 0.5f, em[i].get<bool>()) << i;
   }
+}
+
+// ---------------------------------------------------------------- A5-1 sim 시각 결정
+namespace
+{
+struct DecisionLog
+{
+  std::vector<double> t_dec;      ///< 결정 틱 시각
+  std::vector<double> t_tick;
+  std::vector<double> v;
+  std::vector<double> last_period;
+};
+
+/// 틱 시각 목록으로 엔진을 돌린다 (정책 B, a_v = u0·1.0 고정, 개활지).
+DecisionLog runTicks(const std::vector<double> & times, float u0 = 0.5f)
+{
+  FakePolicy p(Arm::kB);
+  p.u0 = u0;
+  DecisionEngine eng(EngineConfig{}, &p);
+  DecisionLog log;
+  for (const double t : times) {
+    auto in = openInput(t);
+    const auto r = eng.tick(in);
+    EXPECT_FALSE(r.need_dwa);
+    if (r.new_decision) {
+      log.t_dec.push_back(t);
+      log.last_period.push_back(r.last_period);
+    }
+    log.t_tick.push_back(t);
+    log.v.push_back(r.v);
+  }
+  return log;
+}
+
+std::vector<double> uniformTicks(double dt, double t_end)
+{
+  std::vector<double> t;
+  for (int k = 0; k * dt <= t_end + 1e-12; ++k) {
+    t.push_back(k * dt);
+  }
+  return t;
+}
+
+std::vector<double> periodsOf(const DecisionLog & log)
+{
+  std::vector<double> p;
+  for (std::size_t i = 1; i < log.t_dec.size(); ++i) {
+    p.push_back(log.t_dec[i] - log.t_dec[i - 1]);
+  }
+  return p;
+}
+
+double mean(const std::vector<double> & x)
+{
+  double s = 0.0;
+  for (const double v : x) {
+    s += v;
+  }
+  return x.empty() ? std::numeric_limits<double>::quiet_NaN() : s / static_cast<double>(x.size());
+}
+}  // namespace
+
+// RTF 0.5·0.7·1.0·1.4·1.6 의 sim 틱 간격 (controller_server 는 벽시계 20 Hz). 결정 주기 평균이 0.1
+// ± 0.002,
+// 각 주기가 [0.1 − dt, 0.1 + dt] 안이고, 엔진이 보고한 last_period 가 실제 간격과 같다.
+// 틱 수 결정(1차 물결·A2)이면 dt 0.035 에서 평균 0.07, 0.07 에서 0.14 라 걸린다.
+TEST(DecisionEngineSimTime, DecisionPeriodFollowsSimTimeGrid)
+{
+  for (const double dt : {0.025, 0.035, 0.04, 0.05, 0.07, 0.08}) {
+    const auto log = runTicks(uniformTicks(dt, 30.0));
+    const auto per = periodsOf(log);
+    ASSERT_GT(per.size(), 250U) << dt;
+    EXPECT_NEAR(mean(per), 0.1, 0.002) << dt;
+    for (std::size_t i = 0; i < per.size(); ++i) {
+      EXPECT_GE(per[i], 0.1 - dt - 1e-9) << dt << " " << i;
+      EXPECT_LE(per[i], 0.1 + dt + 1e-9) << dt << " " << i;
+      EXPECT_NEAR(log.last_period[i + 1], per[i], 1e-12) << dt << " " << i;
+    }
+  }
+}
+
+// 벽시계 지터 + 부하로 sim 틱 간격이 매 틱 U[0.02, 0.07] 로 바뀌어도 평균 주기 0.1 ± 0.002 (격자
+// 고정 — 결정이
+// 늦거나 일러도 오차가 쌓이지 않는다). 격자 대신 "결정 틱 + 0.1" 로 다시 잡으면 평균이 0.1 + 평균
+// 넘침이 된다.
+TEST(DecisionEngineSimTime, RandomTickJitterKeepsMeanPeriod)
+{
+  std::mt19937 rng(20261006);
+  std::uniform_real_distribution<double> U(0.02, 0.07);
+  for (int rep = 0; rep < 5; ++rep) {
+    std::vector<double> t{0.0};
+    while (t.back() < 60.0) {
+      t.push_back(t.back() + U(rng));
+    }
+    const auto per = periodsOf(runTicks(t));
+    EXPECT_NEAR(mean(per), 0.1, 0.002) << rep;
+    // 다음 틱 간격을 모르고 직전 간격으로 반 틱을 재므로 한 주기는 0.1 ± 한 틱보다 조금 더 벗어날
+    // 수 있다
+    EXPECT_LE(*std::max_element(per.begin(), per.end()), 0.1 + 2 * 0.07) << rep;
+    EXPECT_GE(*std::min_element(per.begin(), per.end()), 0.1 - 2 * 0.07) << rep;
+  }
+}
+
+// 램프는 sim 초당 a: 일정 가속 a_v 0.5 를 RTF 0.7 (dt 0.035) 틱으로 1 s 돌리면 명령이 0.5·1.0 근처
+// (틱 수 램프면 0.5·(1.0/0.035)·0.05 = 0.71). 틱 간격이 일정하면 한 틱의 명령 변화는 a·dt 를 넘지
+// 않는다
+// (결정 경계 포함 — 짧게 끝난 주기의 끝 명령으로 건너뛰지 않는다).
+TEST(DecisionEngineSimTime, ZohRampSlopeIsPerSimSecond)
+{
+  for (const double dt : {0.025, 0.035, 0.05, 0.08}) {
+    const auto log = runTicks(uniformTicks(dt, 1.2));
+    for (std::size_t i = 1; i < log.v.size(); ++i) {
+      if (i >= 2) {   // 첫 틱은 간격을 모르고 공칭 0.05 로 추정한다
+        EXPECT_LE(log.v[i] - log.v[i - 1], 0.5 * dt + 1e-9) << dt << " " << i;
+        EXPECT_GE(log.v[i] - log.v[i - 1], -1e-9) << dt << " " << i;
+      }
+      // 이 틱이 낸 값 = 다음 틱까지 붙잡을 값 ≈ a·(t + dt), 결정 격자 오차(≤ 한 틱) 만큼만 어긋난다
+      EXPECT_NEAR(log.v[i], 0.5 * (log.t_tick[i] + dt), 0.5 * dt + 1e-9) << dt << " " << i;
+    }
+  }
+}
+
+// 시계가 멈춘 틱 (sim 시각이 같다 — /clock 이 벽시계 틱 사이에 안 왔다): 새 결정 없이 같은 명령을
+// 낸다.
+TEST(DecisionEngineSimTime, ClockStallRepeatsCommandWithoutDecision)
+{
+  FakePolicy p(Arm::kB);
+  DecisionEngine eng(EngineConfig{}, &p);
+  auto in0 = openInput(0.0);
+  const auto r0 = eng.tick(in0);
+  auto in1 = openInput(0.0);
+  const auto r1 = eng.tick(in1);
+  EXPECT_TRUE(r0.new_decision);
+  EXPECT_FALSE(r1.new_decision);
+  EXPECT_NEAR(r1.v, r0.v, 1e-12);
+  EXPECT_EQ(p.calls, 1);
+  EXPECT_NEAR(r1.tick_dt, 0.0, 1e-12);
+  auto in2 = openInput(0.05);
+  const auto r2 = eng.tick(in2);
+  EXPECT_FALSE(r2.new_decision);
+  EXPECT_NEAR(r2.v, 0.05, 1e-12);   // a 0.5 × 0.1 (결정 뒤 0.05 + 다음 틱 추정 0.05)
+}
+
+// DWA 주기의 실행 가속도 = 실제로 바뀐 명령 / 실제 경과 (0.105 s 주기), 이탈 타이머도 실제 경과로
+// 간다.
+TEST(DecisionEngineSimTime, DwaAccelAndDevTimerUseElapsedSimTime)
+{
+  FakePolicy p(Arm::kB);
+  p.ok = false;   // 정책 실패 → DWA
+  DecisionEngine eng(EngineConfig{}, &p);
+  const double dt = 0.035;
+  auto in = openInput(0.0);
+  in.state.pose = {1.0, 0.4, 0.0};   // 경로에서 0.4 m (이탈 구간)
+  ASSERT_TRUE(eng.tick(in).need_dwa);
+  eng.commitDwa(0.01, 0.0);
+  for (int k = 1; k <= 2; ++k) {
+    auto ik = openInput(k * dt);
+    ik.state.pose = {1.0, 0.4, 0.0};
+    ASSERT_TRUE(eng.tick(ik).need_dwa);
+    eng.commitDwa(0.01 + 0.03 * k, 0.0);
+  }
+  p.ok = true;
+  p.u0 = 0.0f;
+  auto i3 = openInput(3 * dt);   // 0.105 ≥ 0.1 − 0.0175 → 결정
+  i3.state.pose = {1.05, 0.35, 0.0};
+  const auto r = eng.tick(i3);
+  ASSERT_TRUE(r.new_decision);
+  EXPECT_NEAR(r.last_period, 3 * dt, 1e-12);
+  EXPECT_NEAR(eng.prevActions()[0].first, 0.07 / (3 * dt), 1e-9);
+  EXPECT_NEAR(eng.vCmd(), 0.07, 1e-12);
+  EXPECT_NEAR(eng.dev().t_since_peak, 3 * dt, 1e-12);
+}
+
+// 근접 인계: 반경 0.4 m 안이면 DWA (사유 5, 정렬보다 먼저), 히스테리시스 0.1 m 밖으로 나가야
+// 정책으로 돌아간다.
+// 새 목표(resetEpisode)는 인계를 푼다.
+TEST(DecisionEngineSimTime, HandoverWithinRadiusUsesDwaWithHysteresis)
+{
+  FakePolicy p(Arm::kB);
+  EngineConfig cfg;
+  cfg.handover_radius = 0.4;
+  cfg.handover_hysteresis = 0.1;
+  DecisionEngine eng(cfg, &p);
+  double t = 0.0;
+  auto step = [&](double dist, double v_meas = 0.3) {
+      auto in = openInput(t, v_meas);
+      in.dist_to_goal = dist;
+      t += 0.1;
+      return eng.tick(in);
+    };
+  auto r = step(0.5);
+  EXPECT_EQ(r.source, Source::kPolicy);
+  EXPECT_FALSE(r.handover);
+  r = step(0.39);
+  EXPECT_TRUE(r.need_dwa);
+  EXPECT_EQ(r.dwa_reason, DwaReason::kHandover);
+  EXPECT_TRUE(r.handover);
+  r = step(0.45);   // 반경 밖이지만 0.5 안 → 인계 유지
+  EXPECT_EQ(r.dwa_reason, DwaReason::kHandover);
+  r = step(0.05, 0.0);   // 정렬 조건이어도 인계 중이면 DWA
+  EXPECT_EQ(r.dwa_reason, DwaReason::kHandover);
+  r = step(0.51);
+  EXPECT_EQ(r.source, Source::kPolicy);
+  EXPECT_FALSE(eng.inHandover());
+  r = step(0.3);
+  EXPECT_TRUE(eng.inHandover());
+  eng.resetEpisode();
+  EXPECT_FALSE(eng.inHandover());
+  // 끔(0)이면 정렬이 그대로
+  FakePolicy q(Arm::kB);
+  DecisionEngine e2(EngineConfig{}, &q);
+  auto in = openInput(0.0);
+  in.dist_to_goal = 0.05;
+  in.yaw_error_to_goal = 0.5;
+  EXPECT_EQ(e2.tick(in).source, Source::kAlign);
+}
+
+// 틱 간격이 매 틱 바뀌면(지터) dt_est 가 틀린 몫을 다음 결정에서 바로잡는다 — 명령이 a·t 에서
+// 멀어지지 않는다
+// (마지막으로 낸 값을 v_cmd 로 이으면 추정 오차가 결정마다 쌓여 a·t 에서 걷는다).
+TEST(DecisionEngineSimTime, JitterDoesNotAccumulateIntegrationError)
+{
+  std::mt19937 rng(7);
+  std::uniform_real_distribution<double> U(0.02, 0.07);
+  std::vector<double> t{0.0};
+  while (t.back() < 1.6) {   // a 0.5 로 v ≤ 0.85 (상한 1.0 전)
+    t.push_back(t.back() + U(rng));
+  }
+  const auto log = runTicks(t);
+  for (std::size_t i = 0; i < log.v.size(); ++i) {
+    // 낸 값 = 다음 틱까지 붙잡을 값: a·t 와 한 결정 주기 안 오차(≤ a·(dt_max − dt_min) + a·dt_max)
+    // 이내
+    EXPECT_NEAR(log.v[i], 0.5 * log.t_tick[i], 0.5 * (0.07 + 0.05) + 1e-9) << i;
+  }
+  for (std::size_t i = 2; i < log.v.size(); ++i) {
+    EXPECT_LE(std::abs(log.v[i] - log.v[i - 1]), 0.5 * (0.07 + 0.05) + 1e-9) << i;
+  }
+  EXPECT_NEAR(log.v.back(), 0.5 * log.t_tick.back(), 0.5 * 0.07 + 0.5 * 0.05);
 }
