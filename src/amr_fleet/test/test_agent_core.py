@@ -256,3 +256,71 @@ def test_observer_heartbeat_does_not_raise_the_fence():
     f.run(4.0)
     assert set(f.modes().values()) == {NORMAL}
     assert {c.fence.max[0] for c in f.cores.values()} == {2}
+
+
+# ---------------------------------------------------------------------- 해제 게이트 · 재기동
+SQUARE = {'zone:sq': [(0.0, 0.0), (2.0, 0.0), (2.0, 2.0), (0.0, 2.0)]}
+
+
+def _gate_fleet():
+    cfgs = _cfgs(release_gate='zone_map')
+    f = LoopbackFleet(cfgs, poses=POSES)
+    for r in ROBOTS:
+        f.cores[r].zone_polygons = dict(SQUARE)
+    return f
+
+
+def test_zone_map_gate_releases_only_when_body_is_outside_and_localized():
+    f = _gate_fleet()
+    f.run(1.0)
+    c = f.cores['amr_01']
+    c.set_pose(1.0, 1.0, 0.0)                         # 구역 안
+    assert f.command('amr_01', OP_ACQUIRE, ['zone:sq'])[0]
+    f.run(1.0)
+    assert f.holders('zone:sq') == ['amr_01']
+    f.command('amr_01', OP_RELEASE, ['zone:sq'])
+    f.run(1.0)
+    assert f.holders('zone:sq') == ['amr_01']         # 몸체가 안이라 RELEASE 보류
+    c.set_pose(2.3, 1.0, 0.0)                         # 변에서 0.3 m < 반경 0.36 + 여유 0.1
+    f.run(1.0)
+    assert f.holders('zone:sq') == ['amr_01']
+    c.set_pose(3.0, 1.0, 0.0, healthy=False)          # 밖이지만 위치추정 상실 → 판정 불가
+    f.run(1.0)
+    assert f.holders('zone:sq') == ['amr_01']
+    c.set_pose(3.0, 1.0, 0.0, healthy=True)
+    f.run(1.0)
+    assert f.holders('zone:sq') == []
+
+
+def test_restart_with_unknown_pose_keeps_zone_until_body_is_seen_outside():
+    f = _gate_fleet()
+    f.run(1.0)
+    f.cores['amr_02'].set_pose(1.0, 1.0, 0.0)
+    f.command('amr_02', OP_ACQUIRE, ['zone:sq'])
+    f.run(1.0)
+    assert f.holders('zone:sq') == ['amr_02']
+    f.crash('amr_02')
+    f.poses.pop('amr_02')                             # 재기동 직후 자세를 모른다
+    core = f.boot('amr_02')
+    core.zone_polygons = dict(SQUARE)
+    f.run(2.0)
+    assert f.holders('zone:sq') == ['amr_02']         # 모르면 놓지 않는다 (fail-closed)
+    core.set_pose(1.5, 1.5, 0.0)
+    f.run(1.0)
+    assert f.holders('zone:sq') == ['amr_02']         # 안에 있으면 그대로
+    core.set_pose(5.0, 5.0, 0.0)
+    f.run(1.0)
+    assert f.holders('zone:sq') == []                 # 밖을 확인하고 푼다
+    assert f.command('amr_03', OP_ACQUIRE, ['zone:sq'])[0]
+    f.run(1.0)
+    assert f.holders('zone:sq') == ['amr_03']
+
+
+def test_disc_clear_of_polygon_geometry():
+    from amr_fleet.agent.core import disc_clear_of_polygon
+    sq = SQUARE['zone:sq']
+    assert not disc_clear_of_polygon(1.0, 1.0, 0.1, sq)
+    assert not disc_clear_of_polygon(2.3, 1.0, 0.36, sq)
+    assert disc_clear_of_polygon(2.5, 1.0, 0.36, sq)
+    assert not disc_clear_of_polygon(2.2, 2.2, 0.36, sq)      # 꼭짓점 근처
+    assert disc_clear_of_polygon(2.3, 2.3, 0.36, sq)

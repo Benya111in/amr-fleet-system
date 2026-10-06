@@ -235,7 +235,7 @@ class FleetAgentCore:
         self._beacon_seq = 0
         self._last_beacon: Optional[float] = None
         self.pending_release: Set[str] = set()
-        self._boot_unknown_inside = False             # 부팅 때 몸체 위치를 몰라 보유를 모두 남겼다
+        self.orphan_zones: Set[str] = set()           # 재기동 때 남긴 구역 보유 (BT 는 모른다)
         self._wait_since: Optional[float] = None
         self._wait_priority = 0
         self.central_task = ''                        # NORMAL 에서 프록시로 받은 작업
@@ -272,7 +272,8 @@ class FleetAgentCore:
                                     inside=keep_tasks)
         fence = EpochFence(fence_store)
         core = cls(cfg, zone, task, fence, now, zone_polygons)
-        core._boot_unknown_inside = unknown and bool(inside_zones)
+        # 재기동 뒤 남은 구역 보유는 BT 가 모른다 → 몸체가 밖으로 나온 것을 확인하면 에이전트가 푼다
+        core.orphan_zones = set(zone.authorized())
         core._push(CH_ZONE, zout)
         core._push(CH_TASK, tout)
         for res in keep_tasks:
@@ -428,6 +429,7 @@ class FleetAgentCore:
             if want == self.zone.requested():
                 return True, 'in progress'           # 멱등 — 재요청이 나이(since)를 잃지 않게
             self.pending_release -= set(res)
+            self.orphan_zones -= set(res)                # BT 가 다시 원하면 고아가 아니다
             self._push(CH_ZONE, self.zone.request(sorted(want), now, priority=int(priority)))
             self._wait_since, self._wait_priority = self.now, int(priority)
             self._note('zone_request', resources=sorted(want), priority=int(priority))
@@ -589,13 +591,12 @@ class FleetAgentCore:
     def _process_releases(self) -> None:
         held = self.zone.authorized()
         self.pending_release &= held
-        if self._boot_unknown_inside and self.cfg.release_gate == GATE_ZONE_MAP:
-            # 부팅 때 몰라서 남긴 보유: 자세를 받은 뒤 몸체가 밖이면 푼다
-            for res in held:
+        self.orphan_zones &= held
+        if self.cfg.release_gate == GATE_ZONE_MAP:
+            # 재기동 때 남긴 보유: 몸체가 밖인 것을 확인하면 푼다 (판정 불가면 계속 쥔다 — fail-closed)
+            for res in self.orphan_zones:
                 if self._body_outside(res):
                     self.pending_release.add(res)
-            if self.pose is not None and self.loc_healthy:
-                self._boot_unknown_inside = False
         ready = set()
         for res in self.pending_release:
             if self.cfg.release_gate == GATE_NONE or self._body_outside(res):
