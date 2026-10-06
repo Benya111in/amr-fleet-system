@@ -488,7 +488,8 @@ def build_cases():
 
     pre = base_state(pose=(2.0, 0.0, 0.0), v_meas=0.9, v_cmd=0.9)
     post = base_state(pose=(2.09, 0.0, 0.0), v_meas=0.9, v_cmd=0.9)
-    cases.append(step_case('s03_collision', '충돌: 종단, 비용[0]=1, 벌점 −10', pre, post,
+    cases.append(step_case('s03_collision', '충돌: 종단, 비용[0]=1, 벌점 −30, 진행 효용은 실제 d\' 까지',
+                           pre, post,
                            (0.0, 0.0), True))
 
     pre = base_state(pose=(3.0, 0.25, 0.3), v_meas=0.5)
@@ -508,7 +509,8 @@ def build_cases():
 
     pre = base_state(pose=(5.0, 1.15, 0.0), dev=DevState(True, 1.15, 0.0))
     post = base_state(pose=(5.05, 1.2, 0.0))
-    cases.append(step_case('s07_deviation_1m', '이탈 1.2 m > 1.0: deviation_1m 비용 1', pre, post,
+    cases.append(step_case('s07_deviation_1m',
+                           '이탈 1.2 m > 1.0: deviation_1m 비용 1, 힌지 −0.05 (v1.2.0)', pre, post,
                            (0.0, 0.0), False))
 
     pre = base_state(pose=(1.0, 0.0, 0.0), v_meas=0.8, v_cmd=0.8)
@@ -532,6 +534,12 @@ def build_cases():
     post = base_state(path=lpath, pose=(3.92, -1.43, 1.5708), v_meas=0.7, v_cmd=0.7)
     cases.append(step_case('s11_curved_path_track', 'L 자 경로 모서리 근처 추종 (CTE 0.08)', pre, post,
                            (0.0, 0.0), False))
+
+    # v1.2.0: 경로 끝 너머 — d_arc 는 0 으로 평평하고 d = max(d_arc, 목표 직선거리) 가 직선거리를 센다
+    pre = base_state(path=p2, pose=(3.30, 0.05, 0.0), v_meas=0.4, v_cmd=0.4)
+    post = base_state(path=p2, pose=(3.34, 0.05, 0.0), v_meas=0.4, v_cmd=0.4)
+    cases.append(step_case('s12_beyond_goal_eff', '목표를 0.30 → 0.34 m 지나침 (v1.2.0): d_arc 0 이지만 '
+                           'Φ·진행 효용은 목표 직선거리로 음수', pre, post, (0.0, 0.0), False))
 
     # ---------------- integrate
     rows_b = []

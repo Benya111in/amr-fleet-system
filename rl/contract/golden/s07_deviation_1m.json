@@ -1,7 +1,7 @@
 {
  "kind": "step",
  "name": "s07_deviation_1m",
- "description": "이탈 1.2 m > 1.0: deviation_1m 비용 1",
+ "description": "이탈 1.2 m > 1.0: deviation_1m 비용 1, 힌지 −0.05 (v1.2.0)",
  "pre": {
   "pose": [
    5.0,
@@ -3149,14 +3149,16 @@
  "collision": false,
  "safety_pairs": [],
  "expected": {
-  "reward": 0.05475,
+  "reward": 0.011218479,
   "terms": {
    "time": -0.02,
-   "shape": 0.07475,
+   "shape": 0.062634616,
    "smooth": -0.0,
    "track": 0.0,
    "goal": 0.0,
-   "collision": 0.0
+   "collision": 0.0,
+   "progress": 0.018583863,
+   "dev": -0.05
   },
   "cost": [
    0.0,
@@ -3180,10 +3182,10 @@
   "terminated": false,
   "success": false,
   "e": 1.2,
-  "phi_pre": -5.0,
-  "phi_post": -4.95
+  "phi_pre": -5.13054578,
+  "phi_post": -5.093378054
  },
- "contract_version": "1.1.0",
+ "contract_version": "1.2.0",
  "tolerance": {
   "obs": 1e-05,
   "vo_time": 0.0001,

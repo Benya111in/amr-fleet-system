@@ -1,7 +1,7 @@
 {
  "kind": "step",
  "name": "s03_collision",
- "description": "충돌: 종단, 비용[0]=1, 벌점 −10",
+ "description": "충돌: 종단, 비용[0]=1, 벌점 −30, 진행 효용은 실제 d' 까지",
  "pre": {
   "pose": [
    2.0,
@@ -3149,14 +3149,16 @@
  "collision": true,
  "safety_pairs": [],
  "expected": {
-  "reward": -22.02,
+  "reward": -21.975,
   "terms": {
    "time": -0.02,
    "shape": 8.0,
    "smooth": -0.0,
    "track": -0.0,
    "goal": 0.0,
-   "collision": -30.0
+   "collision": -30.0,
+   "progress": 0.045,
+   "dev": 0.0
   },
   "cost": [
    1.0,
@@ -3183,7 +3185,7 @@
   "phi_pre": -8.0,
   "phi_post": 0.0
  },
- "contract_version": "1.1.0",
+ "contract_version": "1.2.0",
  "tolerance": {
   "obs": 1e-05,
   "vo_time": 0.0001,

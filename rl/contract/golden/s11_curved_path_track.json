@@ -2989,14 +2989,16 @@
  "collision": false,
  "safety_pairs": [],
  "expected": {
-  "reward": 0.06191,
+  "reward": 0.097496639,
   "terms": {
    "time": -0.02,
-   "shape": 0.09215,
+   "shape": 0.092542297,
    "smooth": -0.0,
    "track": -0.01024,
    "goal": 0.0,
-   "collision": 0.0
+   "collision": 0.0,
+   "progress": 0.035194343,
+   "dev": 0.0
   },
   "cost": [
    0.0,
@@ -3020,10 +3022,10 @@
   "terminated": false,
   "success": false,
   "e": 0.08,
-  "phi_pre": -4.5,
-  "phi_post": -4.43
+  "phi_pre": -4.501110974,
+  "phi_post": -4.430722289
  },
- "contract_version": "1.1.0",
+ "contract_version": "1.2.0",
  "tolerance": {
   "obs": 1e-05,
   "vo_time": 0.0001,
