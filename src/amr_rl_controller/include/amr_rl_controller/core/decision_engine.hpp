@@ -9,8 +9,8 @@
 //  - 목표 성공 조건(xy ≤ 0.10 m, |v| ≤ 0.05 m/s)에서는 정책 대신 제자리 yaw 정렬 (contract.md §8).
 //  - prev_actions = 실제로 낸 명령의 결정 주기 가속도 (DWA·정렬 주기 포함), 최근 순.
 //  - DWA 명령도 직전에 실제로 낸 명령 기준 계약 동적 창(a_max·Δt_c, α_max·Δt_c, v_cap) 안으로
-//    자른다 (commitDwa). 내부 DWA 의 창 중심(v_last)은 DWA 가 돈 틱에만 갱신되므로 정책·정렬
-//    구간 뒤에는 낡아 있고, DWAController 에 그것을 맞출 공개 API 가 없다.
+//    자른다 (commitDwa). 내부 DWA 의 창 중심은 실제 직전 명령과 다를 수 있다 (낡은 v_last,
+//    또는 재설정 뒤 측정 속도) — 플러그인 쪽 처리는 rl_controller.hpp.
 #ifndef AMR_RL_CONTROLLER__CORE__DECISION_ENGINE_HPP_
 #define AMR_RL_CONTROLLER__CORE__DECISION_ENGINE_HPP_
 

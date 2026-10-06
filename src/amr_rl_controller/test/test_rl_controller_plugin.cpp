@@ -5,7 +5,8 @@
 //  - 스캔 없음 → DWA 폴백(입력 무효), 스캔 있음 → 정책 결정(C·B), 명령 한계
 //  - 계약 위반 모델·모드 불일치·빈 경로 → configure 예외
 //  - 추론 시간 초과 → DWA, DWA 폴백 끔 → 계약 제동 규칙, setSpeedLimit → v_cap
-//  - 정책 → DWA 폴백 전환에서도 틱당 계약 가속 한계·속도 제한 (내부 DWA 의 창 중심이 낡음)
+//  - 정책 → DWA 폴백 전환에서도 틱당 계약 가속 한계·속도 제한·벽 앞 제동 (내부 DWA 의 창 중심이
+//    낡음 → 재설정 + 계약 동적 창 자름)
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -22,6 +23,7 @@
 #include "amr_rl_controller/rl_controller.hpp"
 #include "nav2_core/controller.hpp"
 #include "nav2_core/exceptions.hpp"
+#include "nav2_costmap_2d/cost_values.hpp"
 #include "nav2_costmap_2d/costmap_2d_ros.hpp"
 #include "pluginlib/class_loader.hpp"
 #include "rclcpp/rclcpp.hpp"
@@ -243,7 +245,7 @@ TEST(RLControllerPlugin, ModeCRunsPolicyWhenScanArrives)
   EXPECT_EQ(c.dwa[1], 1U);
   rig.spin();
   ASSERT_FALSE(rig.stats.empty());
-  EXPECT_EQ(rig.stats.back().data.size(), 25U);
+  EXPECT_EQ(rig.stats.back().data.size(), 26U);
   ctrl.deactivate();
   ctrl.cleanup();
 }
@@ -395,24 +397,24 @@ TEST(RLControllerPlugin, PolicyToDwaHandoverKeepsContractStepLimits)
     reached = loop.vel.linear.x >= 0.30 - 1e-9 && !r.new_decision;   // 결정 주기 끝
   }
   ASSERT_TRUE(reached);
-  const double v_hand = loop.vel.linear.x;
-  ASSERT_LE(v_hand, 0.10 + 0.3);   // 내부 DWA 가 측정값으로 창을 다시 잡지 않는 범위 (0.3)
-  const auto limited0 = ctrl.counters().dwa_limited;
+  ASSERT_LE(loop.vel.linear.x, 0.10 + 0.3);   // 내부 DWA 가 측정값으로 창을 다시 잡지 않는 범위
+  const auto resets0 = ctrl.counters().dwa_window_resets;
   for (int j = 0; j < 6; ++j) {
     rig.publishScan(std::numeric_limits<double>::infinity(), 1.0);   // 낡은 스캔 → DWA
     const auto r = loop.step();
     ASSERT_EQ(r.source, Source::kDwa) << j;
     if (j == 0) {
-      EXPECT_TRUE(r.dwa_limited);   // 시험이 낡은 창을 실제로 밟았다
+      EXPECT_EQ(ctrl.counters().dwa_window_resets, resets0 + 1U);   // 전환 틱에 창 재설정
     }
   }
   EXPECT_LE(loop.max_dv, kDvTick + 1e-9);
   EXPECT_LE(loop.max_dw, kDwTick + 1e-9);
-  const auto limited = ctrl.counters().dwa_limited;
-  EXPECT_GE(limited, limited0 + 1U);
+  EXPECT_EQ(ctrl.counters().dwa_window_resets, resets0 + 1U);   // 그 뒤는 DWA 명령 = 낸 명령
   rig.spin();
   ASSERT_FALSE(rig.stats.empty());
-  EXPECT_NEAR(rig.stats.back().data[24], static_cast<double>(limited), 1e-12);
+  EXPECT_NEAR(
+    rig.stats.back().data[25], static_cast<double>(ctrl.counters().dwa_window_resets), 1e-12);
+  EXPECT_NEAR(rig.stats.back().data[24], static_cast<double>(ctrl.counters().dwa_limited), 1e-12);
 }
 
 // 리뷰 반영 (낡은 창 중심, 높은 쪽 + 속도 제한): DWA 8 틱(내부 v_last 0.40) → 속도 제한 0.20 아래로
@@ -442,15 +444,126 @@ TEST(RLControllerPlugin, DwaAfterPolicyDecelerationStaysUnderSpeedLimit)
   ASSERT_TRUE(reached);
   ASSERT_GE(loop.vel.linear.x, 0.40 - 0.3);   // 내부 DWA 가 낡은 v_last 를 창 중심으로 쓰는 범위
   loop.resetMax();
-  std::size_t limited = 0;
+  const auto resets0 = ctrl.counters().dwa_window_resets;
   for (int j = 0; j < 8; ++j) {
     rig.publishScan(std::numeric_limits<double>::infinity(), 1.0);
     const auto r = loop.step();
     ASSERT_EQ(r.source, Source::kDwa) << j;
     EXPECT_LE(loop.vel.linear.x, 0.20 + 1e-9) << j;
-    limited += r.dwa_limited ? 1U : 0U;
   }
   EXPECT_LE(loop.max_dv, kDvTick + 1e-9);
   EXPECT_LE(loop.max_dw, kDwTick + 1e-9);
-  EXPECT_GE(limited, 2U);   // 둘째 틱 이후도 잘라야 했다 (DWA v_last 0.35 → 0.30 …)
+  EXPECT_GE(ctrl.counters().dwa_window_resets, resets0 + 1U);
+}
+
+/// 정책 구간을 끝까지 돌린 뒤의 상태: DWA (스캔 없음) n_dwa 틱 → 속도 제한 0.20 아래로 정책 감속.
+void dwaThenPolicyDecel(Rig & rig, RLController & ctrl, Loop & loop, int n_dwa)
+{
+  for (int k = 0; k < n_dwa; ++k) {
+    ASSERT_EQ(loop.step().source, Source::kDwa) << k;
+  }
+  ctrl.setSpeedLimit(0.20, false);
+  bool reached = false;
+  for (int k = 0; k < 40 && !reached; ++k) {
+    rig.publishScan();
+    const auto r = loop.step();
+    ASSERT_NE(r.source, Source::kDwa) << k << " " << r.error;
+    reached = loop.vel.linear.x <= 0.20 + 1e-9 && !r.new_decision;
+  }
+  ASSERT_TRUE(reached);
+}
+
+// 리뷰 반영 (낡은 창 중심 + 제동): DWA 8 틱(내부 v_last 0.40) → 속도 제한 0.20 아래로 정책 감속 →
+// 제한 해제, 바로 앞에 벽 → 낡은 스캔 → DWA. 유효 후보가 없으면 DWA 는 "창 중심 − 감속" 을 낸다
+// (dwa.cpp 제동 후보). 중심이 낡은 0.40 이면 그 제동이 0.35 (수정 전) — 자르기만 해도
+// 0.25 → 0.30 으로 벽 쪽 가속이었다. 창을 측정 속도로 되돌리면 0.20 에서 제동한다.
+TEST(RLControllerPlugin, DwaBrakeAfterPolicyStretchDoesNotAccelerateTowardWall)
+{
+  REQUIRE_MODELS();
+  Rig rig("hw", params("heuristic_c.onnx", "C"));
+  RLController ctrl;
+  ctrl.configure(rig.node, "FollowPath", rig.tf, rig.costmap);
+  ctrl.activate();
+  ctrl.setPlan(straightPlan(1.0, 3.0, 8.0));
+  Loop loop(ctrl);
+  dwaThenPolicyDecel(rig, ctrl, loop, 8);
+  if (HasFatalFailure()) {
+    return;
+  }
+  ctrl.setSpeedLimit(0.0, false);   // NO_SPEED_LIMIT
+  // 로봇 앞면(+0.30 m)에서 0.20 m 앞, 폭 2 m 벽. 이 시험 코스트맵은 갱신 루프가 없어 팽창이
+  // 안 돌고, DWA 풋프린트 검사는 중심 셀 비용이 외접 비용보다 낮으면 외곽선을 보지 않는다
+  // (footprint.cpp:36) → 벽 앞 0.36 m (외접 반경) 띠를 내접 팽창 비용 253 으로 직접 칠한다.
+  // 중심이 그 띠에 들어가는 롤아웃 = 충돌. 0.15 m/s 이상 1.5 s 롤아웃은 모두 닿는다.
+  auto * cm = rig.costmap->getCostmap();
+  const double wx = loop.x + 0.30 + 0.20;
+  int n_cells = 0;
+  for (double y = 1.5; y <= 4.5 + 1e-9; y += 0.025) {
+    for (double x = wx - 0.36; x <= wx + 0.10 + 1e-9; x += 0.025) {
+      unsigned int mx = 0;
+      unsigned int my = 0;
+      if (cm->worldToMap(x, y, mx, my)) {
+        const bool wall = x >= wx && y >= 2.0 && y <= 4.0;
+        cm->setCost(
+          mx, my,
+          wall ? nav2_costmap_2d::LETHAL_OBSTACLE : nav2_costmap_2d::INSCRIBED_INFLATED_OBSTACLE);
+        ++n_cells;
+      }
+    }
+  }
+  ASSERT_GT(n_cells, 0);
+  loop.resetMax();
+  const double v0 = loop.vel.linear.x;
+  for (int j = 0; j < 6; ++j) {
+    rig.publishScan(std::numeric_limits<double>::infinity(), 1.0);
+    const double v_prev = loop.vel.linear.x;
+    const auto r = loop.step();
+    ASSERT_EQ(r.source, Source::kDwa) << j;
+    EXPECT_LE(loop.vel.linear.x, v_prev + 1e-9) << j << " 벽 앞에서 가속";
+  }
+  EXPECT_LT(loop.vel.linear.x, v0 - 0.1);
+  EXPECT_LE(loop.max_dv, kDvTick + 1e-9);
+  EXPECT_LE(loop.max_dw, kDwTick + 1e-9);
+}
+
+// 리뷰 반영 (재설정 뒤 추종 지연): 창 중심을 측정 속도로 되돌려도 측정이 명령보다 0.15 m/s 늦으면
+// DWA 명령은 직전 명령에서 a_max·Δt_c 넘게 떨어진다 → 계약 동적 창으로 자른다. 자르면 DWA 가 기억한
+// 명령과 실제로 낸 명령이 달라지므로 다음 틱에도 창을 재설정한다.
+TEST(RLControllerPlugin, DwaCommandIsClampedWhenMeasuredSpeedLags)
+{
+  REQUIRE_MODELS();
+  Rig rig("hl", params("heuristic_c.onnx", "C"));
+  RLController ctrl;
+  ctrl.configure(rig.node, "FollowPath", rig.tf, rig.costmap);
+  ctrl.activate();
+  ctrl.setPlan(straightPlan(1.0, 3.0, 8.0));
+  Loop loop(ctrl);
+  for (int k = 0; k < 2; ++k) {
+    ASSERT_EQ(loop.step().source, Source::kDwa) << k;
+  }
+  bool reached = false;
+  for (int k = 0; k < 200 && !reached; ++k) {
+    rig.publishScan();
+    const auto r = loop.step();
+    ASSERT_NE(r.source, Source::kDwa) << k << " " << r.error;
+    reached = loop.vel.linear.x >= 0.30 - 1e-9 && !r.new_decision;
+  }
+  ASSERT_TRUE(reached);
+  const double v_cmd = loop.vel.linear.x;
+  const auto resets0 = ctrl.counters().dwa_window_resets;
+  geometry_msgs::msg::Twist lag;
+  lag.linear.x = v_cmd - 0.15;   // 측정이 명령보다 늦다
+  rig.publishScan(std::numeric_limits<double>::infinity(), 1.0);
+  auto cmd = ctrl.computeVelocityCommands(pose(loop.x, 3.0, 0.0), lag, nullptr);
+  auto r = ctrl.lastResult();
+  ASSERT_EQ(r.source, Source::kDwa);
+  EXPECT_TRUE(r.dwa_limited);
+  EXPECT_NEAR(cmd.twist.linear.x, v_cmd - kDvTick, 1e-9);
+  EXPECT_EQ(ctrl.counters().dwa_window_resets, resets0 + 1U);
+  const double v1 = cmd.twist.linear.x;
+  lag.linear.x = v1;
+  rig.publishScan(std::numeric_limits<double>::infinity(), 1.0);
+  cmd = ctrl.computeVelocityCommands(pose(loop.x, 3.0, 0.0), lag, nullptr);
+  EXPECT_EQ(ctrl.counters().dwa_window_resets, resets0 + 2U);
+  EXPECT_LE(std::abs(cmd.twist.linear.x - v1), kDvTick + 1e-9);
 }

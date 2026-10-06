@@ -277,11 +277,10 @@ FallbackCommand DecisionEngine::brakeStep() const
 
 FallbackCommand DecisionEngine::commitDwa(double v, double w)
 {
-  // (리뷰 반영) 내부 DWA 는 자기가 마지막으로 낸 명령을 창 중심으로 쓴다. 정책·정렬 구간 뒤에는
-  // 그 값이 낡아, 창이 실제 직전 명령과 어긋난 채 고른 명령이 한 틱에 a_max·Δt_c 를 넘게 뛰었다
-  // (0.30 → 0.15 m/s, 또는 속도 제한 0.20 아래에서 0.35 로 재가속). 그래서 실제로 낸 명령을
-  // 중심으로 계약 동적 창에 다시 넣는다. 매 DWA 틱마다 — 첫 틱만 자르면 DWA 의 v_last 가 계속
-  // 어긋난 채라 다음 틱에 다시 뛴다.
+  // (리뷰 반영) 내부 DWA 의 창 중심이 실제 직전 명령과 다르면 (정책 구간 뒤 낡은 v_last, 재설정
+  // 뒤 측정 속도와 명령의 추종 지연) 그 창에서 고른 명령은 한 틱에 a_max·Δt_c 를 넘게 뛸 수 있다
+  // (수정 전 0.30 → 0.15 m/s, 속도 제한 0.20 아래에서 0.35 로 재가속). 그래서 매 DWA 틱 명령을
+  // 실제로 낸 명령 기준 계약 동적 창에 다시 넣는다 — 첫 틱만 자르면 다음 틱에 다시 뛴다.
   FallbackCommand c;
   if (!std::isfinite(v) || !std::isfinite(w)) {
     c = brakeStep();

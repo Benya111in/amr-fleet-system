@@ -4,8 +4,9 @@
 // (core/state.hpp), 결정 엔진(core/decision_engine.hpp)이 10 Hz 로 ONNX 정책을 부른다.
 // 정책을 쓸 수 없는 결정 주기(입력 무효·추론 실패·시간 초과·비유한 출력)는 같은 이름의
 // 파라미터를 읽는 내부 amr_navigation::DWAController 가 명령을 낸다 (rl.dwa_fallback, 기본 참).
-// 그 명령은 실제 직전 명령 기준 계약 동적 창(a_max·Δt_c, α_max·Δt_c, v_cap)으로 자른다 —
-// 내부 DWA 의 창 중심은 DWA 가 돈 틱에만 갱신돼 정책 구간 뒤에는 낡아 있다.
+// 내부 DWA 의 창 중심(마지막 DWA 명령)은 DWA 가 돈 틱에만 갱신돼 정책 구간 뒤에는 낡는다 →
+// 실제로 낸 명령과 어긋나 있으면 DWA 를 activate() 로 재설정해 창 중심을 측정 속도로 되돌리고,
+// 그 명령을 실제 직전 명령 기준 계약 동적 창(a_max·Δt_c, α_max·Δt_c, v_cap)으로 자른다.
 //
 // 파라미터 (<name>.rl.*): model_path, mode (B|C), intra_op_threads, max_inference_ms,
 //   hysteresis_beta, require_metadata, dwa_fallback, scan_topic, scan_timeout, track_timeout,
@@ -66,7 +67,7 @@ public:
   void setSpeedLimit(const double & speed_limit, const bool & percentage) override;
 
   /// 누적 계수 (시험·진단): 결정, DWA 폴백(사유별 5), 계약 폴백 셀, 마스크 밖 행동,
-  /// 계약 동적 창으로 자른 DWA 틱.
+  /// 계약 동적 창으로 자른 DWA 틱, DWA 창 중심 재설정.
   struct Counters
   {
     std::size_t ticks{0};
@@ -76,6 +77,7 @@ public:
     std::size_t invalid_action{0};
     std::size_t align{0};
     std::size_t dwa_limited{0};
+    std::size_t dwa_window_resets{0};
   };
   Counters counters() const;
   /// 마지막 틱의 엔진 결과 (시험·진단).
@@ -104,6 +106,10 @@ private:
   std::unique_ptr<DecisionEngine> engine_;
   std::shared_ptr<amr_navigation::DWAController> dwa_;
   bool dwa_fallback_{true};
+  // 내부 DWA 의 창 중심 거울 (= DWA 가 마지막으로 돌려준 명령, has_last_)
+  bool dwa_has_last_{false};
+  double dwa_v_last_{0.0};
+  double dwa_w_last_{0.0};
 
   mutable std::mutex mutex_;          // 경로·엔진·계수
   nav_msgs::msg::Path plan_;
