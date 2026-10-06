@@ -85,3 +85,18 @@ def test_metadata_final_and_bc():
     assert 'no RL fine-tuning' in b['algo']
     assert not any(k.startswith('lagrange') for k in b)
     assert all(isinstance(v, str) for v in list(m.values()) + list(b.values()))
+
+
+def test_pure_ppo_says_unconstrained():
+    """BC·라그랑주 없이 학습한 정책: algo 와 constraint 가 '제약 없는 PPO' 를 밝히고 보상 판을 적는다."""
+    s = {'lagrange': '', 'lagrange_final': [0.0] * 5, 'bc_steps': 0, 'seed': 1,
+         'env_steps': 39321600, 'reward_version': '1.2.0', 'path_len': '3:15'}
+    f = PE.lagrange_facts(s, _rows([[0.0] * 5] * 3))
+    assert not f['configured']
+    algo = PE.describe_algo('final', s, f)
+    assert algo == 'PPO (rsl_rl 3.1.2), unconstrained (no Lagrangian / cost constraint)'
+    assert PE.algo_claim_ok(algo, f)
+    m = PE.onnx_metadata('final', s, f, 'abc', C.CONTRACT_VERSION)
+    assert m['constraint'] == 'none' and m['reward_version'] == '1.2.0'
+    assert m['train_path_len_m'] == '3:15' and m['contract_version'] == '1.2.0'
+    assert not any(k.startswith('lagrange') for k in m)

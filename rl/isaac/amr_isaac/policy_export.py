@@ -123,7 +123,8 @@ def describe_algo(kind, summary, facts, bc_info=None):
         return f'BC (expert pure pursuit, {n} samples), no RL fine-tuning'
     pre = 'BC warm start + ' if summary.get('bc_steps', 0) > 0 else ''
     if not facts['configured']:
-        return pre + f'PPO ({RSL_RL})'
+        # 승수를 켜지 않은 학습 = 비용 제약 없는 PPO (계약 §7 의 제약을 쓰지 않았다는 사실을 적는다)
+        return pre + f'PPO ({RSL_RL}), unconstrained (no Lagrangian / cost constraint)'
     where = 'in' if facts['d1_in_contract_sweep'] else 'outside'
     if facts['active_at_end']:
         return pre + (f'PPO-Lagrangian ({RSL_RL}, d1={facts["d1"]:g}, {where} contract 7.2 sweep,'
@@ -153,6 +154,12 @@ def onnx_metadata(kind, summary, facts, head, contract_version, algo=None, bc_in
         meta['bc_samples'] = str((bc_info or {}).get('bc_samples', ''))
         return meta
     meta['train_steps'] = str(summary.get('env_steps', ''))
+    if summary.get('reward_version'):
+        meta['reward_version'] = str(summary['reward_version'])
+    if summary.get('path_len'):
+        meta['train_path_len_m'] = str(summary['path_len'])
+    if not facts['configured']:
+        meta['constraint'] = 'none'
     if facts['configured']:
         meta['lagrange_spec'] = facts['spec']
         meta['lagrange_final'] = json.dumps(facts['final'])
