@@ -263,8 +263,7 @@ class CommEmulator:
             raise ValueError(f'모르는 통신 모의 설정 키: {sorted(unknown)}')
         links = [(str(e.get('src', '*')), str(e.get('dst', '*')), link_model(e, default))
                  for e in config.get('links') or []]
-        partitions = [Partition(float(e['start_s']), float(e['end_s']),
-                                tuple(frozenset(str(n) for n in g) for g in e['groups']))
+        partitions = [Partition(float(e['start_s']), float(e['end_s']), _groups(e.get('groups')))
                       for e in config.get('partitions') or []]
         outages = [Outage(float(e['start_s']), float(e['end_s']), str(e.get('src', '*')),
                           str(e.get('dst', '*')))
@@ -368,6 +367,15 @@ class CommEmulator:
         if tr is None:
             tr = self._bursts[key] = _BurstTrack(self.seed, key[0], key[1], model)
         return tr
+
+
+def _groups(value: Any) -> Tuple[FrozenSet[str], ...]:
+    """분할 그룹 [[이름…], …] 검사 (문자열 하나를 그룹으로 주면 글자 집합이 되므로 거절한다)."""
+    def ok(g: Any) -> bool:
+        return isinstance(g, (list, tuple)) and bool(g) and all(isinstance(n, str) for n in g)
+    if not isinstance(value, (list, tuple)) or not all(ok(g) for g in value):
+        raise ValueError(f'분할 groups 는 이름 목록의 목록이어야 한다: {value!r}')
+    return tuple(frozenset(g) for g in value)
 
 
 def link_model(entry: Mapping[str, Any], default: LinkModel = LinkModel()) -> LinkModel:

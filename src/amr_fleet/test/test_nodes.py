@@ -197,6 +197,7 @@ def test_assign_task_service_auto(fleet):
     dup = fleet['srv'].call_async(req)
     assert fleet['spin'](dup.done)
     assert not dup.result().success          # 같은 task_id 는 거절
+    assert 'duplicate' in dup.result().message   # 같은 작업의 재전송: 알림 없이 한 번만 처리 (p0.md §4)
 
 
 def _alerts(got, name):

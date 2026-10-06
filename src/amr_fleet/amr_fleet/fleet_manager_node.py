@@ -70,8 +70,8 @@ from amr_fleet.alerts import (
 from amr_fleet.allocation import (
     RobotInfo, allocate, available_strategies, create_strategy, select_batch,
 )
-from amr_fleet.kpi import STATUS_ERROR, STATUS_ESTOP, STATUS_IDLE, KpiTracker
 from amr_fleet.comm_emulator import FLEET, from_node_params
+from amr_fleet.kpi import STATUS_ERROR, STATUS_ESTOP, STATUS_IDLE, KpiTracker
 from amr_fleet.scheduler import SchedulerConfig, TaskScheduler
 from amr_fleet.task_board import (
     ACCEPT, BOARD_DEPTH, CONFLICT, DUPLICATE, STALE, UPDATE, CommandStamp, TaskLedger,
@@ -278,7 +278,7 @@ class FleetManagerNode(Node):
             'simulate_latency': True,        # false = 지연·유실 없이 바로 호출 (실기)
             'comm_latency_ms': [0.0, 100.0],  # assign_task 호출마다 U(lo, hi) ms (숫자면 [0, 값])
             'drop_rate': 0.0,                # 호출 유실 확률 → assign_timeout_s 뒤 재할당
-            'seed': 0,                       # 통신 모의 루트 시드. 0 = 무작위로 뽑아 로그에 남김
+            'seed': 1,                       # 통신 모의 루트 시드 (fleet.yaml 과 같다). 0 = 무작위 + 로그
             'comm_model_file': '',           # '' = 기본 링크만. YAML: 링크별 규칙 · 버스트 · 분할 · 단절
             'log_dir': '',                   # '' = $ROS_WS/logs
             'log_time_format': 'iso',        # iso | epoch
@@ -474,12 +474,14 @@ class FleetManagerNode(Node):
             resp.success, resp.robot_id, resp.message = False, '', safe_text(exc)
             return resp
         if not fresh:
+            # 예전 계약 그대로 거절(success=false)하되 INVALID_TASK 알림은 내지 않는다 — 같은 작업의 재전송은
+            # 잘못된 입력이 아니다. 작업은 한 번만 처리된다
             self._duplicate(spec, 'assign_task')
             rec = self._sm.get(spec.task_id)
             d = self._inflight.get(spec.task_id)
-            resp.success = True
+            resp.success = False
             resp.robot_id = (d.robot_id if d is not None else '') or (rec.robot_id if rec else '')
-            resp.message = f'{spec.task_id}: duplicate'
+            resp.message = f'{spec.task_id}: duplicate (이미 접수한 작업)'
             return resp
         self._admit(spec, now)
         self._allocate_round()      # 응답에 robot_id 를 주려고 배치 창 없이 바로 할당

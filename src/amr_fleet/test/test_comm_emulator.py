@@ -196,6 +196,9 @@ def test_from_config_partitions_outages_seed_and_validation():
     assert em.cut_reason('amr_01', 'amr_05', 3.5) is None
     with pytest.raises(ValueError):
         CommEmulator.from_config({'linkz': []})
+    for bad in (['fleet'], 'fleet', [[]], [[1]]):                       # 문자열 그룹 = 글자 집합 사고
+        with pytest.raises(ValueError, match='groups'):
+            CommEmulator.from_config({'partitions': [{'start_s': 0, 'end_s': 1, 'groups': bad}]})
     with pytest.raises(ValueError):
         CommEmulator.from_config({'links': [{'comm_latency_ms': [50, 10]}]})
     with pytest.raises(ValueError):

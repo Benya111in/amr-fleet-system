@@ -63,7 +63,7 @@ class FleetAdapterNode(Node):
             'simulate_latency': True,        # false = robot_state 를 지연 없이 발행 (실기)
             'comm_latency_ms': [0.0, 100.0],  # robot_state 메시지마다 U(lo, hi) ms (숫자면 [0, 값])
             'drop_rate': 0.0,                # robot_state 유실 확률
-            'seed': 0,                       # 통신 모의 루트 시드 (0 = 무작위로 뽑아 로그에 남김).
+            'seed': 1,                       # 통신 모의 루트 시드 (0 = 무작위로 뽑아 로그에 남김).
                                              # 로봇마다 링크 이름이 달라 같은 시드여도 열이 다르다
             'comm_model_file': '',           # '' = 기본 링크만. YAML: 링크별 규칙 · 버스트 · 분할 · 단절
             'auto_complete_after_s': 0.0,    # > 0 이면 수락 N s 뒤 COMPLETED 를 흉내 (테스트용)
