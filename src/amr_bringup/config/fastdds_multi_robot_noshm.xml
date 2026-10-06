@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
+  주의: 이름과 달리 SHM 을 끄지 않는다. "16 MB SHM 세그먼트 확대 없음" 이라는 뜻이다. 전송은 Fast DDS 기본값(SHM 0.5 MB +
+  UDPv4)이라 같은 호스트 참가자 사이는 여전히 SHM 으로 간다 (2026-10-06 실측 E1: 새 컨테이너의 /dev/shm 에 fastrtps_port
+  파일이 생김, ROS_LOCALHOST_ONLY 0·1 모두). SHM 을 끈 비교 갈래는 fastdds_multi_robot_udponly.xml 이다
+  (docs/research/fleet-traffic-deadlock/hold_failsafe.md 7 절).
+
   /dev/shm 가 작은 환경용 변형 (docker 기본 64 MB — compose 는 ipc: host 라 해당 없음): 참가자 수 설정만 두고 전송은
   Fast DDS 기본(SHM 0.5 MB 세그먼트 + UDP, ROS_LOCALHOST_ONLY 는 rmw 가 처리)을 쓴다.
 

@@ -15,7 +15,7 @@
 | D5 | traffic_manager 기동 시 초기 `hold=false` | **내지 않는다.** 처음 관측한 주기에 평가한 값을 처음 낸다 | 평가 전 false 는 "허가" 다 — 재기동한 관리자가 이전 인스턴스가 세워 둔 로봇을 첫 주기까지 풀어 줬다 |
 | D6 | 한 번도 관측하지 못한 로봇 | 그 로봇의 hold 구독자(실행기)가 붙은 주기부터 `obs_timeout_s`(3 s) 뒤 `hold=false` + 경고 | odometry/filtered_map 이 없는 구성(slam·odom 측위)에서 D2·D5 가 로봇을 영영 세우지 않게 |
 | D7 | "포켓 먼저" 규칙이 hold=true 를 한 주기 미룰 때 | 이전 값을 유지 (아직 낸 적이 없으면 아무것도 내지 않는다) | 미루는 동안 false 를 내던 경로를 막는다 (지금은 도달 불가 — §3.3) |
-| D8 | 재연결 시 hold 재발행 | **하지 않는다** | 바뀔 때만 내고 depth 1 이므로 writer 이력 = 현재 값. D1 만으로 재연결한 구독자가 현재 값을 받는다 |
+| D8 | 재연결 시 hold 재발행 | ~~하지 않는다~~ → **§7 D9 로 대체** (평가된 값 1 Hz 재발행) | (당시) 바뀔 때만 내고 depth 1 이므로 writer 이력 = 현재 값. D1 만으로 재연결한 구독자가 현재 값을 받는다 — 이 전제가 §6 실측에서 깨졌다 |
 
 ## 1. 결함 — 코드로 다시 확인한 것
 
@@ -115,7 +115,7 @@ reliable transient_local)로 구독한다. 발행자 `LATCHED_QOS` 와 정확히
   없었다. hold 를 낸 적이 없는(`None`) 로봇이면 false 를 **냈다**. 지금은 이전 값(`r.hold`)을 유지하고 `None` 이면 내지
   않는다. 이 경로는 현재 도달하지 않는다 — 사건(incident)은 `confirm_s` 동안 관측된 로봇에만 열리고, 그 전 주기에 이미
   첫 값이 나간다. 그래서 동작 변화는 없고 시험으로만 고정한다.
-- **D8 재발행 불필요.** `_publish_hold` 만 hold 를 내고 바뀔 때만 부르며(`_apply`, D6), 매번 `r.hold` 를 갱신한다
+- **D8 재발행 불필요.** (→ §7 D9 로 대체: 아래 전제가 §6 의 B·A/B 실측에서 깨졌다.) `_publish_hold` 만 hold 를 내고 바뀔 때만 부르며(`_apply`, D6), 매번 `r.hold` 를 갱신한다
   → writer 의 depth 1 이력은 항상 `r.hold` 와 같다. 재연결한 transient_local 구독자는 그 값을 받는다
   (기존 시험 `test_deadlock_detected_counted_and_resolved` 의 `_late_value(... hold).data is True` 가 이미 확인).
   주기 재발행(하트비트)은 관리자 사망 감지용으로는 의미가 있지만 그것은 P1 의 하트비트 설계로 넘긴다.
@@ -244,3 +244,254 @@ B 와 A/B 수정 갈래의 amr_04 는 **양쪽이 다 매칭됐는데도**(실�
 기준선(수정 전) 시나리오 12 는 handover1006 §4 의 측위 수정 뒤 7 실행 4 통과(`Z12`·`R12c`·`S12a`·`S12c` 통과, `R12a`·`R12b`
 `test_20` 378 행, `S12b` `test_10` 337 행)이고, 그 실행들의 시작 loadavg 는 3.3~48 이었다. 이번 날의 수정 전 대조는 2 회 중
 1 회 통과, 1 회 하네스 정지다.
+
+## 7. DDS 늦은 참여자 대응 (브랜치 `feature/traffic-hold-dds`, 2026-10-06 22시~)
+
+작성: hold-dds 에이전트, 기준 `b33817f`. 원자료 `/home/CAPYI_AI/runs/b24/hold-dds/`, 실행 목록
+`/home/CAPYI_AI/runs/b24/hold-dds/notebook/runs/hold-dds.jsonl` (보너스 4 의 `scripts/notebook.py --nb <그 절대 경로>` 로
+필수 필드를 검사한다 — 이 브랜치에는 notebook 폴더가 없다). **7.1–7.4 는 실험·시험을 돌리기 전에 커밋했다(사전 등록).**
+7.5 이후가 결과다. Gazebo 는 이 과제에서 돌리지 않는다(COORDINATION §9) — 효과 판정은 7.4 의 짝 실행 몫이다.
+
+### 7.1 문제와 근거 — 이 브랜치가 고칠 수 있는 것과 없는 것
+
+- **실측(§6)**: 늦게 뜬 실행기(amr_04·05)가 발행자와 매칭된 뒤(실행기 쪽 "발행자 1, QoS 맞는 것 1")에도 latched 값을
+  수 분~19 분 받지 못했다. SHM `open_and_lock_file failed` 는 `f0_s12_a` 18 건 · `f0_s12_b` 10 건 · `f0_ab_fix` 19 건
+  (localhost 프로파일 + `ROS_LOCALHOST_ONLY=1`), `f0_s12_c61`·`f0_s12_d`·`f0_base_s12`·`f0_ab_base` 0 건
+  **[측정]** (`grep -rh open_and_lock_file /home/CAPYI_AI/wt/f0-holdfix/logs/<태그>`, 2026-10-06 22:10 다시 셈).
+- **리서치**: 「실측 기반 후속 기술 조사」 "Fast DDS 늦은 참여자" 절과 노트 `fastdds_late_joiner.md`.
+  원인 후보 1 = 참가자 쌍 단위 데이터 경로 고장(SHM 포트 재생성 등), 2 = writer 쪽 비대칭 매칭(SEDP 유실),
+  3 = 관리자가 아직 안 냄(관측 전 — D5 로 의도한 대기), 기여 = 도메인 210 의 임시 포트 겹침. 권고 = 1 Hz 재발행 ·
+  30 s 재구독 · 120 s 재시작 · 양쪽 매칭 수 로그 · UDP 전용 A/B · 도메인 102–214 금지.
+- **불리한 것 먼저 — 이 브랜치의 한계** (DDS 동작에서 끌어낸 추론, 측정 아님):
+  - 재발행은 writer 가 매칭하지 않은 reader(후보 2)에는 닿지 않는다 — DataWriter 는 매칭된 reader 에만 보낸다.
+    경로가 고장 난 쌍(후보 1)에도 닿지 않는다. 재발행이 직접 고치는 것은 "매칭됐고 경로도 살아 있는데 transient_local
+    재생이 한 번 실패한" 경우뿐이고, 그런 경우가 실제로 있었는지는 모른다. 확실한 효과는 **감지**다: 재발행이 있으면
+    "매칭됐는데 30 s 동안 값이 없다" 는 정상 지연이 아니라 경로 고장이다.
+  - 구독 재생성은 새 DataReader(새 GUID)를 SEDP 로 다시 알리므로 후보 2 에 기회를 준다. 같은 참가자(같은 수신 포트)를
+    쓰므로 후보 1 은 못 고친다 — 후보 1 은 새 참가자, 즉 프로세스 재시작이 필요하다(D12 는 경보만 한다).
+  - 시나리오 12 통과율에 주는 영향은 **미측정**이다.
+
+### 7.2 결정 (D9–D14)
+
+| # | 무엇을 | 어떻게 | 왜 |
+|---|---|---|---|
+| D9 | 관리자 hold 재발행 (D8 대체) | 평가된 값(`r.hold` 가 None 아님)만 `hold_republish_s`(1.0 s, 0 = 끔) 마다 다시 낸다(노드 시계, 평가 주기 안에서). 평가 전에는 내지 않는다(**D5 유지**). hold=true 이고 포켓이 있으면 포켓을 먼저 다시 낸다. 포켓-먼저 미룸 중(포켓 있음 ∧ hold≠true)에는 내지 않는다. 바뀐 값 발행도 재발행 시계를 0 으로 돌린다 | D8 의 전제("depth 1 이력 = 현재 값이면 재연결한 구독자가 받는다")가 §6 B·A/B 의 amr_04 에서 깨졌다. 비용은 로봇당 Bool 1 Hz. **미룸 예외**: 실행기는 false 를 받을 때마다 포켓을 지운다(`executor_context.cpp` `updateTrafficHold`) → 포켓과 hold=true 사이에 false 를 다시 내면 새 포켓이 지워진다. **포켓 재발행**: 실행기는 hold 시작보다 2 s 넘게 먼저 받은 포켓을 버린다(`kYieldPoseGrace`) → 재발행으로 hold=true 를 늦게 받은 실행기가 예전 포켓을 버리고 제자리에 선다 |
+| D10 | 관리자 매칭 수 로그 | 주기마다 로봇별 `pub_hold.get_subscription_count()`(writer 쪽 DDS 매칭 수)를 보고 바뀌면 INFO (마지막 hold 값과 함께). 바뀐 기록을 진단용으로 남긴다 | 후보 1·2 를 가르는 측정(리서치 Gaps 첫 줄: writer matched 수가 측정되지 않았다) |
+| D11 | 실행기 매칭 로그 · 구독 재생성 | 200 ms 마다 `get_publisher_count()`(reader 쪽 DDS 매칭 수)를 보고 바뀌면 INFO (그래프 발행자 수 · 첫 값 여부 · 재생성 횟수). awaiting ∧ 매칭 > 0 이 `traffic_hold.resubscribe_after_s`(30 s, 0 = 끔)를 넘으면 hold · yield_pose 구독을 새로 만들고, 새 구독이 매칭되면 시계를 다시 잰다 | 후보 2 에 기회. 매칭 0 이면 재생성하지 않는다: 그래프에 보이는데 매칭 0 이면 QoS 불일치(§3.1 의 volatile 발행자)이고 재생성으로 안 고쳐진다 |
+| D12 | 실행기 경보 | awaiting 이 `traffic_hold.alarm_after_s`(120 s, 0 = 끔)를 넘으면 ERROR 한 번(awaiting 을 벗어났다 다시 들어오면 다시). 기존 10 s 경고는 그대로. **프로세스는 스스로 끝내지 않는다** | 재시작은 런치 정책이다: `behavior.launch.py` 의 실행기에 respawn 이 없어 스스로 끝내면 그 로봇 실행기가 영영 없어진다. 작업 · 적재 · 충전소 점유 상태도 잃는다. 재시작은 170 참가자 발견 폭주를 더한다(후보 2 의 원인 후보). 관리자 쪽 원인(관측 못 함 → D6 해제 전)이면 재시작해도 소용없다. respawn · lifecycle 감시는 bringup 소유자에게 요청한다 |
+| D13 | `run_integration.sh` 도메인 | 명시값 102–214 · 233 이상을 **거부**(종료 코드 2). `auto` 의 1–101 무작위 선택은 유지. 앞자리 0 은 10 진수로 정규화. 선택한 도메인의 "임시 포트 범위 · 65535 에 닿기 전 참가자 수" 를 계산해 200 미만이면 안내 | ROS 2 문서 안전 범위(0–101 · 215–232). 경고는 사람이 놓친다(§6 의 B 실행이 210 을 명시했고 경고 대상이었다) |
+| D14 | UDP 전용 프로파일 | 새 파일 `fastdds_multi_robot_udponly*.xml` — 구성은 E1 결과로 확정 | 후보 1(SHM) A/B. `_noshm` 은 이름과 달리 SHM 을 쓴다 → 머리말에서 바로잡는다 |
+
+**과제 문구와 다르게 한 것**: 경보 조건을 "첫 값 미수신 + 발행자 매칭됨이 120 s" 대신 "awaiting 120 s(매칭 여부 무관)" 로 했다.
+그래프에는 보이는데 매칭이 0 인 채(QoS 불일치 · reader 쪽 매칭 실패) 영영 선 로봇도 경보 대상이어야 해서다. 매칭된 경우는 둘이
+거의 같다(awaiting 시작 ≤ 매칭 시작).
+
+### 7.3 사전 등록 — 실험 · 시험과 판정 규칙
+
+| id | 질문 | 가설 · 예측 | 설정 | 판정 규칙 |
+|---|---|---|---|---|
+| E1 | Humble rmw_fastrtps 6.2.10 에서 각 프로파일이 오류 없이 읽히고 실제로 무슨 전송을 쓰나. `ROS_LOCALHOST_ONLY=1` 은 XML 사용자 전송에 무엇을 하나 | 모두 읽힌다. multi_robot · localhost · noshm 은 SHM 을 쓰고 udponly 는 안 쓴다. **[코드 기억, 미확인]** rmw 는 localhost_only 일 때 XML 사용자 전송 뒤에 UDPv4(127.0.0.1)+SHM 을 **덧붙인다** → udponly + `ROS_LOCALHOST_ONLY=1` 에서도 SHM 이 생긴다 (그렇다면 `test_launch.py` 주석 "사용자 전송이 rmw 의 localhost 설정을 대체" 와 어긋난다) | `amr-ai/rl:0.3` 새 컨테이너(사설 IPC · 기본 브리지), DOMAIN 43, 프로파일 5(기존 3 + 새 것) × `ROS_LOCALHOST_ONLY` {0, 1}. 프로세스 2 개(발행 · 구독, rclpy, reliable + transient_local), 값 하나 | SHM 사용 ⇔ 새 IPC 이름공간의 /dev/shm 에 `fastrtps_*` 파일 ≥ 1. "읽힘" ⇔ stderr 에 `XMLPARSER`·`Error` 없음 ∧ 값 수신. 새 파일을 "UDP 전용" 이라 부를 조건 = 그 조합에서 SHM 파일 0 ∧ 수신 |
+| E2 | 새 · 기존 프로파일이 Fast DDS 2.6.12 XSD 에 맞나 | 맞는다 | `xmllint --schema fastRTPS_profiles.xsd`(Fast-DDS v2.6.12 태그의 파일, 저장소에 넣지 않음) | 종료 코드 0 |
+| E3 | 실행기 "QoS 맞는 것"(`get_publisher_count`)과 관리자 `get_subscription_count` 가 DDS 매칭 수인가 (리서치 노트 22 행 [미검증]) | 그렇다: QoS 비호환이면 그래프 수 1 · 매칭 0 | 노드 시험: volatile 발행자 + 실행기(transient_local 구독), deadline 을 요구하는 구독자 + 관리자 latched 발행자 | 그래프 1 ∧ 매칭 0 이면 확인 |
+| E4 | 새 동작이 시험되고 회귀가 없나 | 새 단위 · 노드 시험 통과, 기존 774 시험 그대로 통과 | `colcon build` Release `-Wall -Wextra -Wpedantic -Werror`, `colcon test --packages-select amr_behavior amr_fleet amr_bringup`, DOMAIN 43, `ROS_LOCALHOST_ONLY=1` | 경고 0, 실패 0, 시험 수 = 기준선 + 새 시험 (기준선: amr_behavior · amr_fleet 774 · 0 실패 · 60 skip, `runs/b24/hold-dds/logs/base_*`) |
+| E5 | 시험이 공허하지 않은가 (변이 검사, `cpu_slot.sh`) | 아래 21 개 변이를 모두 시험이 잡는다 | 변이 하나씩 적용 → 관련 시험만 → 되돌림 | 하나라도 살아남으면 시험을 더하거나 "동치 변이" 근거를 적는다 |
+| E6 | 도메인 규칙이 맞게 거부 · 허용하나 | 0–101 · 215–232 허용(정규화 값 출력), 102–214 · 233+ · 정수 아님 거부, auto 는 1–101 이고 호출 셸 값을 피한다 | `run_integration.sh --self-test` (ROS 없이) | 표 전부 일치 |
+
+E5 변이 목록 (f0 의 M1–M15 에 이어 번호):
+
+| # | 되돌릴 가드 | 잡을 것으로 예상한 시험 |
+|---|---|---|
+| M16 | 재생성 조건에서 매칭 무시 (매칭 0 이어도 재생성) | 감시 단위 시험, 노드 시험(volatile 발행자 = 재생성 없음) |
+| M17 | 재생성 경계 `>=` → `>` | 감시 단위 시험(경계값) |
+| M18 | 재생성 뒤 매칭 시계를 다시 재지 않음 | 감시 단위 시험 |
+| M19 | 매칭이 0 이 돼도 재생성 시계 유지 | 감시 단위 시험 |
+| M20 | 경보가 한 번이 아니라 매 단계 | 감시 단위 시험 |
+| M21 | 첫 값 수신 · unmanaged 에서 시계를 비우지 않음 | 감시 단위 시험 |
+| M22 | 노드가 재생성 신호를 받고도 구독을 다시 만들지 않음 | 노드 시험(구독 GID 가 바뀜) |
+| M23 | 노드가 매칭 대신 그래프 발행자 수를 감시에 넘김 | 노드 시험(volatile 발행자) |
+| M24 | 매칭 수 변화 표시 안 함 | 감시 단위 시험 |
+| M25 | 평가 전(None)에도 재발행 (None → false) | `test_hold_published_only_after_evaluation` |
+| M26 | 재발행 끔 (주기 판정이 늘 거짓) | 새 재발행 시험 |
+| M27 | 재발행 주기 무시 (매 주기) | 새 재발행 시험 |
+| M28 | 포켓-먼저 미룸 중에도 false 재발행 | 새 미룸 시험 |
+| M29 | hold=true 재발행 때 포켓을 다시 내지 않음 | 새 재발행 시험 |
+| M30 | 바뀐 값 발행이 재발행 시계를 0 으로 돌리지 않음 | 새 재발행 시험 |
+| M31 | writer 매칭 수 변화 기록 안 함 | 새 매칭 기록 시험 |
+| M32 | 시계가 뒤로 가면(sim 재시작) 재발행을 영영 안 함 | 재발행 판정 단위 시험 |
+| M33 | 102–214 거부 → 경고만 (기존 동작) | E6 |
+| M34 | 거부 범위 102–213 (214 허용) | E6 |
+| M35 | 233 이상 허용 | E6 |
+| M36 | 앞자리 0 정규화 제거 | E6 |
+
+### 7.4 Gazebo 시나리오 12 짝 실행 계획 (이번에는 돌리지 않음 — 조용한 시간대, `exclusive.sh`/`gz_slot.sh`)
+
+- **짝**: 수정 전(`b33817f`) · 수정 후(이 브랜치 HEAD) 를 같은 이미지(`amr-ai/rl:0.3`), 같은 Release `-Werror` 빌드로
+  **같은 시각에 나란히**(gz 슬롯 2 개) 돌린다 — 부하 조건을 짝 안에서 맞춘다. **≥ 6 쌍**, 짝마다 어느 쪽이 슬롯 0 인지 번갈아.
+- **도메인**: 짝마다 안전 범위의 서로 다른 값(예: 61 · 63, 71 · 73 …, 간격 2 이상 — 170 참가자는 d+1 범위까지 쓴다),
+  IGN 파티션도 따로. `--domain-id` 를 명시하고 `ROS_LOCALHOST_ONLY` 는 두 갈래 같게.
+- **로그 태그**: `hdds_s12_<쌍>_{base,fix}`, 각 로그 디렉터리에 HEAD.txt · `git diff --stat` · loadavg 시작/끝 (§3 규칙).
+- **1차 지표(사전 등록)**: 로봇별 time-to-first-hold(실행기 시작 → 첫 값, 실행기 로그), awaiting 이 120 s 를 넘은 로봇 수
+  (수정 후는 ERROR 경보 수와 같아야 한다), 관리자 writer 매칭 시각(D10 로그)과 실행기 reader 매칭 시각(D11 로그)의 쌍.
+  **2차**: 시나리오 판정(통과 · 실패 · 판정 없음), 하네스 정지, `open_and_lock_file` 건수, 재생성 횟수, 재발행 뒤 첫 값까지 시간.
+- **판정 규칙**: (a) 수정 후 갈래의 "120 s 넘게 awaiting" 로봇 수 합 ≤ 수정 전 갈래의 "120 s 넘게 값 없음" 로봇 수 합이면
+  "나빠지지 않음". 6 쌍으로는 통계적 차이를 주장하지 않고 쌍별 값을 모두 적는다. (b) 수정 후에 writer 매칭 ≥ 1 ∧ reader
+  매칭 ≥ 1 ∧ 재생성 뒤에도 값 없음인 로봇이 하나라도 나오면 후보 1(경로 고장) 쪽 증거 → 다음 단계 UDP 전용 A/B
+  (수정 후 코드로 SHM 현행 vs UDP 전용, ≥ 6 쌍). (c) writer 매칭 0 ∧ reader 매칭 ≥ 1 이 오래 가면 후보 2 쪽 증거.
+  UDP 전용 갈래는 카메라 영상이 UDP 조각 전송으로 떨어져 인식 처리율이 낮아질 수 있으므로(프로파일 머리말의 실측 0.32–0.54)
+  **판정은 1차 지표로만** 하고 시나리오 통과율은 참고로 둔다.
+
+### 7.5 결과 (사전 등록 뒤, 2026-10-06 22:10–23:20, 공유 서버 · 결과는 Gazebo 없이 낸 것)
+
+**불리한 것 먼저.**
+- 이 절의 어떤 결과도 **시나리오 12 의 늦은 참여자 문제가 줄었는지 보여 주지 않는다** — 그것은 7.4 의 짝 실행 몫이고
+  **미측정**이다. 아래는 "코드가 설계대로 동작하고 시험이 공허하지 않다" 와 "전송 설정의 실제 동작" 까지다.
+- 기존 `_localhost` 프로파일 + `ROS_LOCALHOST_ONLY=1`(f0 의 A/B 실행 `f0_ab_*` 구성)에서 참가자마다 **SHM 전송이 2 개**다
+  (E1). 소규모 탐침에서는 오류 없이 통신했지만 170 참가자에서 무슨 영향이 있는지는 모른다. f0 의 A/B 수정 갈래
+  `open_and_lock_file` 19 건 · 수정 전 갈래 0 건이 이 구성에서 나왔으므로 원인 후보에서 뺄 수 없다.
+- Fast DDS 2.6.12 의 공식 XSD 는 그대로는 쓸 수 없다 (E2). 스키마 검사는 XSD 를 두 군데 고친 사본으로 했고, 그 사본은
+  전송 `type` 값을 제한하지 않는다(음성 대조 `UDPv5` 통과). **프로파일이 실제로 무엇을 하는지는 E1 의 실행 확인이 근거다.**
+- 재생성(D11)은 재발행(D9)이 매 초 값을 보내는 한 드물어야 하는데, 그 빈도는 Gazebo 로만 잴 수 있다 (미측정).
+- 남은 위험: 재발행한 hold=false 가 다음 주기의 새 포켓보다 늦게 도착하면(다른 토픽 사이 순서 보장 없음) 실행기가 새 포켓을
+  지운다 → hold=true 뒤 제자리 대기(안전 쪽, 교착 해소 지연). 같은 참가자 쌍 · 같은 수신 큐라 드물 것으로 **본다(미측정)**.
+  또 BT `Yield` 는 시작할 때 포켓을 한 번 읽으므로 hold=true 를 포켓보다 먼저 받은 늦은 참여자는 뒤에 온 포켓으로 가지
+  않는다 — 수정 전부터 있던 성질이고 이 브랜치가 바꾸지 않았다(BT 는 소유 밖 — 요청).
+
+**E1 — 프로파일별 실제 전송 [측정]** (`runs/b24/hold-dds/E1/e1_results.txt`, v2; v1 은 오류 검사가 stderr 만 봐서 다시 돌렸다 —
+Fast DDS 로그는 stdout 으로 나온다). 새 컨테이너(사설 IPC)마다 발행 · 구독 프로세스 2 개, 값 1 개, DOMAIN 43. 10 조합 모두 수신,
+XMLPARSER · Error 0 줄.
+
+| 프로파일 | `ROS_LOCALHOST_ONLY=0`: /dev/shm `fastrtps_*` | `=1` | `=1` 의 UDP 바인드 |
+|---|---|---|---|
+| `fastdds_multi_robot.xml` | 8 | **12** | 0.0.0.0 + 127.0.0.1 + 컨테이너 주소 |
+| `fastdds_multi_robot_localhost.xml` | 8 | **12** | 127.0.0.1 만 |
+| `fastdds_multi_robot_noshm.xml` | **8** | 8 | 127.0.0.1 만 |
+| `fastdds_multi_robot_udponly.xml` (새) | **0** | **8** | 0.0.0.0 + 127.0.0.1 + 컨테이너 주소 |
+| (후보 `udponly_localhost`, 지움) | 0 | 8 | 127.0.0.1 만 |
+
+8 = 참가자 2 × (세그먼트 + 잠금 + 포트 + 포트 잠금), 12 = 참가자마다 세그먼트가 2 개(SHM 전송 2 개).
+- (a) 모두 오류 없이 읽힌다. (b) `_noshm` 은 SHM 을 쓴다(이름이 틀렸다 → 머리말 정정). (c) **예측대로** rmw 는
+  `ROS_LOCALHOST_ONLY=1` 이면 XML 사용자 전송을 대체하지 않고 UDPv4(127.0.0.1)+SHM 을 덧붙인다: udponly 에 SHM 파일 8 개와
+  127.0.0.1 바인드가 생긴다. → **UDP 전용 갈래는 `ROS_LOCALHOST_ONLY=0` 으로만 성립한다.** `test_launch.py` 의 주석
+  "사용자 전송이 rmw 의 localhost 설정을 대체" 는 틀렸다(소유 밖 — 요청). `_localhost` 변형이 필요한 것은 맞다 — XML 의
+  묶이지 않은 UDPv4 는 0.0.0.0 에 묶이므로 — 그러나 이유가 다르다(머리말 정정).
+- 결정 D14 확정: 새 파일은 `fastdds_multi_robot_udponly.xml` **하나**(모든 인터페이스, SHM 없음). A/B 의 두 갈래가
+  `fastdds_multi_robot.xml` 과 SHM 유무만 다르게 하려고 127.0.0.1 변형은 지웠다.
+- 단일 표본 지연(v1 의 2.67 s 수신)은 v2 에서 재현되지 않았다(0.01–0.14 s) — 해석하지 않는다.
+
+**E2 — XSD [측정]** (`runs/b24/hold-dds/E2/`). Fast-DDS v2.6.12 `resources/xsd/fastRTPS_profiles.xsd`(sha256 `92e54009…`):
+- 원본은 컴파일되지 않는다 (정의 없는 타입 `int32` · `uint64` · `uint32` 3 곳). 전역 루트도 `<dds>` 뿐이라 `<profiles>`
+  문서는 `<dds>` 로 감싸 검사했다.
+- 타입을 고친 사본은 `userTransports` 의 자식으로 `<id>` 를 요구한다. 그런데 **2.6.12 파서는 `<id>` 를 거부한다**:
+  `<id>` 로 쓴 변형을 실제로 띄우면 `XMLPARSER Error: Node 'userTransports' without content` → 프로파일 전체를 버리고
+  **기본 전송(SHM + UDP)으로 조용히 돌아간다**(SHM 파일 8 개, 통신은 된다). 파서가 읽는 것은 `<transport_id>` 다.
+- `transport_id` 로 고친 사본(`xsd_patch2.diff`, 4 줄)에서 4 프로파일 모두 유효, 오타 태그(`mutation_triez`) 음성 대조는 거부,
+  전송 `type` 오값(`UDPv5`)은 통과(스키마가 값을 제한하지 않는다).
+- 덤: 2.6.12 XSD 에 SHM 전송의 `healthy_check_timeout_ms` 가 있다(리서치 Gaps "2.6 XML 지원 미확인" 의 스키마 쪽 답. 파서 지원은 미확인).
+
+**E3 — 매칭 수의 뜻 [시험]**: 실행기 `get_publisher_count` 와 관리자 `get_subscription_count` 는 그래프(발견)가 아니라 **DDS 매칭**
+수다. QoS 비호환 끝점은 그래프에 1 로 보이고 매칭은 0 이다 — 실행기 쪽 `IncompatiblePublisherIsSeenButNotMatchedSoNoResubscribe`
+(volatile 발행자: `count_publishers` 1, 매칭 0), 관리자 쪽 `test_hold_matching_logged_and_incompatible_not_counted`(deadline 을
+요구하는 구독자: `count_subscribers` 1, 매칭 0). → §6 B 실행의 실행기 경고 "QoS 맞는 것 1" 은 **reader 쪽 DDS 매칭**이었다
+(리서치 노트 22 행의 [미검증] 해소). writer 쪽 매칭은 그때 측정되지 않았다 — D10 이 이제 그것을 남긴다.
+
+**E4 — 시험 · 빌드 [측정]** (`runs/b24/hold-dds/logs/`, `amr-ai/rl:0.3`, DOMAIN 43, `ROS_LOCALHOST_ONLY=1`):
+- 전 패키지 11 개 Release `-Wall -Wextra -Wpedantic -Werror` 빌드 rc 0, 경고 0 (`fix1_build.log`).
+- `colcon test amr_behavior amr_fleet amr_bringup`: **892 시험, 0 실패, 60 skip(cppcheck)** (`fix2_*`). amr_behavior · amr_fleet 만
+  786 = 기준선 774(`b33817f`, `base_*`) + 새 12 (`test_task_executor_node` 11 → 20: 노드 2 + 감시 단위 7, amr_fleet pytest
+  371 → 374). amr_bringup 106 통과(xmllint 가 fastdds 프로파일 4 개 + package.xml 을 본다). 첫 실행(`fix1`)은 린트만 28 건 실패(cpplint 한글 폭 23 · uncrustify 1 ·
+  pep257 D403 1)라 고친 뒤 다시 돌렸다.
+- 안정성: 새 gtest 10 개(감시 7 + 노드 3) `--gtest_repeat=10` 10/10, 새 · 바꾼 pytest 4 개 × 10 회 10/10 (loadavg 표는 실행 목록).
+- 시험 소요 [측정, 공유 부하 하 예비값]: `test_task_executor_node` 11.5 s (새 노드 시험 2 개가 약 1.8 s · 3.3 s).
+
+**E5 — 변이 검사 [측정]** (`runs/b24/hold-dds/E5/results.jsonl`, `cpu_slot.sh`, loadavg 19.5 → 26.6): **21 개 모두 잡혔다**, 같은 실행기의
+변이 없는 대조는 gtest 20 · pytest 11 · self-test 통과, 끝난 뒤 worktree 변경 0.
+
+| # | 되돌린 가드 | 잡은 시험 |
+|---|---|---|
+| M16 | 매칭 0 이어도 재생성 | `IncompatiblePublisher…`(노드), `MatchLoss…ZeroMatchNeverResubscribes` |
+| M17 | 재생성 경계 `>=` → `>` | 감시 단위 4 개 (경계값) |
+| M18 | 재생성 뒤 시계 유지 | `ResubscribesAtBoundaryAndRestartsClockAfterward`, `ContextSteps…` |
+| M19 | 매칭이 끊겨도 시계 유지 | `MatchLossRestartsResubscribeClock…` |
+| M20 | 경보 매 단계 | `ResubscribesWhileMatched…AlarmsOnce`(노드), `AlarmsOncePerAwaiting…` |
+| M21 | awaiting 을 벗어나도 시계 · 경보 유지 | `AlarmsOncePerAwaiting…RearmsAfterLeaving`, `FirstValueClearsClocks` |
+| M22 | 재생성 신호에도 구독을 안 만듦 | `ResubscribesWhileMatched…`(구독 GID 가 바뀌지 않음) |
+| M23 | 감시에 그래프 수를 넘김 | `IncompatiblePublisher…`(노드) |
+| M24 | 매칭 변화 표시 안 함 | `MatchedChangeIsFlaggedInEveryState` |
+| M25 | 평가 전(None)에도 재발행 | `test_hold_published_only_after_evaluation`, 판정 단위, 재발행 노드 |
+| M26 | 재발행 끔 | 판정 단위, `test_hold_republished_at_period_pocket_first` |
+| M27 | 매 주기 재발행 | 같은 두 시험 |
+| M28 | 포켓-먼저 미룸 중 false 재발행 | 같은 두 시험 |
+| M29 | hold=true 재발행에 포켓 안 붙임 | `test_hold_republished_at_period_pocket_first` |
+| M30 | 바뀐 값 발행이 재발행 시계를 안 돌림 | 같음 |
+| M31 | writer 매칭 변화 기록 안 함 | `test_hold_matching_logged_and_incompatible_not_counted` |
+| M32 | 시계가 뒤로 가면 재발행 안 함 | 판정 단위 |
+| M33 | 102–214 경고만 | `--self-test` (102–214 전부) |
+| M34 | 214 허용 | `--self-test` (214) |
+| M35 | 233 이상 허용 | `--self-test` (233–240) |
+| M36 | 앞자리 0 정규화 제거 | `--self-test` (`0101` · `007` · `000` · 긴 0) |
+
+**E6 — 도메인 규칙 [측정]** (`runs/b24/hold-dds/E6/e6_results.txt`): `--self-test` 통과(0–240 전부 · 정수 아님 · 앞자리 0 · 긴 값 ·
+auto 2000 회 · 참가자 상한). 실제 경로(ROS 소싱 뒤 도메인 블록)에서 210 · 102 · 214 · 233 · `env`(150) 는 종료 코드 2 와 이유,
+`0101` → 101(+ "참가자 54 개" 안내), 215 · 61 허용, auto(호출 셸 43)는 65 — 호출 셸 값을 피하는 규칙은 self-test 가 2000 회로 확인. 계산 확인: 도메인 232 의 상한 63 이 ROS 2 문서의
+"232 는 63 프로세스" 와 같다. **도메인 100 · 101 은 참가자 179 · 54 개를 넘으면 임시 포트 범위에 든다** — auto(1–101)가 1/101 씩의
+확률로 고를 수 있다. 과제 지시대로 auto 범위는 바꾸지 않았고 안내만 낸다 (요청: 1–99 로 좁히는 것을 검토).
+
+**E7 — 실제 노드가 그 프로파일로 뜨는지 [측정, 사전 등록 밖 추가]** (`runs/b24/hold-dds/E7/e7_results.txt`): `ros2 run` 으로
+`traffic_manager_node`(amr_01, 구역 없음, `obs_timeout_s` 1 s) + `task_executor_node`(/amr_01)를 20 s, `ROS_LOCALHOST_ONLY=0`.
+`fastdds_multi_robot.xml`: SHM 파일 10, 파서 오류 0. `fastdds_multi_robot_udponly.xml`: **SHM 파일 0**, 파서 오류 0. 두 경우 모두
+관리자 `amr_01 traffic/hold 매칭 구독자 0 → 1`(D10) → 관측 없음 해제 `hold=False (첫 값) unobserved`(D6) → 실행기
+`traffic/hold 매칭 발행자 0 → 1 (그래프 1, 상태 awaiting, 구독 재생성 0)`(D11) → `첫 값 수신 clear`. 첫 시도는 탐침 스크립트가
+빈 파라미터(`charger_claims_topic:=`)를 넘겨 rcl 이 실행기를 띄우지 못했다 — 탐침 결함이라 그 인자를 빼고 다시 돌렸다(v1 로그 보존).
+
+### 7.6 해석 · 다음
+
+- 이 브랜치가 바꾼 동작 (수정 후 정상 경로에서 보이는 것): 관리자는 로봇마다 hold 를 1 Hz 로 다시 내고(포켓 양보 중이면
+  포켓도), 매칭 구독자 수 변화를 `… traffic/hold 매칭 구독자 A → B` 로 남긴다. 실행기는 `traffic/hold 매칭 발행자 A → B` 를
+  남긴다. 값이 오는 한 재생성 · 경보는 일어나지 않는다(E4 의 노드 시험 `LateExecutor…` 에서 재생성 0 · 경보 0).
+- 다음 (조용한 시간대): 7.4 의 짝 실행 ≥ 6 쌍 → 판정 (a)(b)(c) → 필요하면 UDP 전용 A/B. 둘 다 `ROS_LOCALHOST_ONLY=0`(E1).
+- 소유 밖 요청: (1) `src/amr_behavior/launch/behavior.launch.py` 실행기 respawn 정책 결정(D12 — 재시작이 후보 1 의 유일한 회복책),
+  (2) `task_executor_node.hpp` 머리말에 새 파라미터 두 개 문서화, (3) `tests/integration/unit` 에서 `run_integration.sh --self-test`
+  를 부르는 시험 한 줄(CI 에 걸리게), (4) `src/amr_bringup/test/test_launch.py:310` 주석 정정(E1), (5) auto 도메인 범위 1–99
+  검토(E6), (6) BT `Yield` 가 뒤에 온 포켓을 쓰게 할지(7.5 남은 위험).
+
+### 7.7 짝 실행 절차 (사전 등록 뒤 추가 — 판정 규칙은 7.4 그대로)
+
+```bash
+# 0) 조용한 시간대: gz 슬롯 2 개가 비고 loadavg(1 분) < 8. 보너스 1 측정 시간대(exclusive.sh)와 겹치지 않게.
+W=/home/CAPYI_AI/runs/b24/hold-dds/s12
+mkdir -p $W/base_ws && git -C /home/CAPYI_AI/wt/hold-dds archive b33817f | tar -x -C $W/base_ws
+# 1) 두 갈래 모두 같은 이미지 · 같은 빌드 (Release, -Wall -Wextra -Wpedantic -Werror, --packages-up-to amr_bringup)
+# 2) 쌍 k: 두 갈래를 동시에 (도메인 간격 2 이상, 파티션 따로, ROS_LOCALHOST_ONLY 는 비움 = fastdds_multi_robot.xml)
+gz() {  # $1 = 태그, $2 = 워크스페이스, $3 = 도메인
+  /home/CAPYI_AI/env/gz_slot.sh hold-dds docker run --rm --name amr-ai-hold-dds-gz-$1 --gpus all --shm-size=8g \
+    -v $2:/ros2_ws -w /ros2_ws amr-ai/rl:0.3 bash -lc "./scripts/run_integration.sh --no-unit --timeout-scale 3 \
+    --domain-id $3 --ign-partition amr_ai_hdds_$1 --log-dir /ros2_ws/logs/hdds_s12_$1 12"
+}
+gz p1_base $W/base_ws 61 & gz p1_fix /home/CAPYI_AI/wt/hold-dds 63 & wait    # 다음 쌍은 슬롯 순서를 바꾼다
+# UDP 전용 A/B (수정 후 코드 두 갈래): docker run 에 -e FASTRTPS_DEFAULT_PROFILES_FILE=\
+#   /ros2_ws/install/amr_bringup/share/amr_bringup/config/fastdds_multi_robot_udponly.xml 를 한쪽에만
+```
+
+각 로그 디렉터리에 HEAD.txt · `git diff --stat` · 시작/끝 loadavg 를 직접 쓴다(§3). 지표 추출(`launch.log`):
+- 실행기 시작 `BT 로드`, 첫 값 `traffic/hold: 첫 값 수신`, 대기 경고 `traffic/hold 첫 값을 N s 째` (두 갈래 공통).
+- 수정 후만: reader 매칭 `traffic/hold 매칭 발행자 A → B`, writer 매칭 `<로봇> traffic/hold 매칭 구독자 A → B`,
+  재생성 `구독을 다시 만든다`, 경보 `첫 값을 N s 째 못 받았다 (매칭`.
+- 공통: `grep -c open_and_lock_file`, `XMLPARSER`(0 이어야 한다), UDP 갈래는 실행 중 `ls /dev/shm | grep -c fastrtps`(0 이어야 한다).
+
+### 7.8 실행 목록 (요약 — 원본 `/home/CAPYI_AI/runs/b24/hold-dds/notebook/runs/hold-dds.jsonl`, `check --paths` 문제 0)
+
+| run_id | 무엇 | 커밋 | 결과 | 표기 |
+|---|---|---|---|---|
+| HDDS_base_test_b33817f | 기준선 빌드 · 시험 | b33817f | 774 · 0 실패 · 경고 0 | [측정] |
+| HDDS_E1_v1 | 프로파일 × LOCALHOST_ONLY (오류 검사 결함) | afa22f0+ | v2 로 대체 | [측정] |
+| HDDS_E1_v2 | 같음, stdout 포함 | afa22f0+ | 위 E1 표 | [측정] |
+| HDDS_E2_xsd | XSD 검사 · `<id>` 변형 실행 | afa22f0+ | 위 E2 | [측정] |
+| HDDS_fix1_build_test | 전 패키지 -Werror · 시험 | afa22f0+ | 경고 0, 린트 28 실패 | [측정] |
+| HDDS_fix2_build_test | 린트 고친 뒤 | afa22f0+ (= c8d64e8 내용) | 892 · 0 실패 | [측정] |
+| HDDS_E6_domain | 도메인 규칙 | c8d64e8 | 위 E6 | [측정] |
+| HDDS_E4b_stability | 새 시험 반복 | a91bbfe | 10/10 · 10/10 | [측정] |
+| HDDS_E5_mutation | 변이 21 | a91bbfe | 21/21 잡힘 | [측정] |
+| HDDS_E7_realnodes | 실제 관리자 · 실행기, 두 프로파일 (사전 등록 밖) | f0ec40e | udponly SHM 0 · 첫 값 수신 | [측정] |
+| HDDS_fix3_build_test | 첫 값 뒤 매칭 로그에서 낡은 그래프 수 제거 (로그만) | 0f9fd62+ | 경고 0 · 20/20 · 374/374 | [측정] |
+
+E5 변이 검사는 `a91bbfe` 에서 돌았다. 그 뒤 실행기 코드 변경은 로그 문구 갈래 하나(첫 값 뒤에는 그래프 수를 찍지 않음)뿐이라 다시 돌리지 않았다.

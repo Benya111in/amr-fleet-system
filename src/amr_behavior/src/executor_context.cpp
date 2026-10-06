@@ -253,10 +253,83 @@ bool ExecutorContext::trafficHoldReceived() const
 TrafficHoldState ExecutorContext::trafficHoldState() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
+  return trafficHoldStateLocked();
+}
+
+TrafficHoldState ExecutorContext::trafficHoldStateLocked() const
+{
   if (traffic_hold_received_) {
     return traffic_hold_ ? TrafficHoldState::kHold : TrafficHoldState::kClear;
   }
   return traffic_managed_ ? TrafficHoldState::kAwaiting : TrafficHoldState::kUnmanaged;
+}
+
+TrafficLinkWatch::TrafficLinkWatch(TrafficLinkConfig config)
+: config_(config)
+{
+}
+
+void TrafficLinkWatch::setConfig(const TrafficLinkConfig & config)
+{
+  config_ = config;
+}
+
+TrafficLinkStep TrafficLinkWatch::step(double now_s, TrafficHoldState state, size_t matched)
+{
+  TrafficLinkStep out;
+  out.previous_matched = matched_;
+  out.matched_changed = matched != matched_;
+  matched_ = matched;
+  if (state != TrafficHoldState::kAwaiting) {
+    // 첫 값을 받았거나(hold · clear) 교통 관리가 아니다(unmanaged): 기다리는 것이 없다
+    awaiting_since_.reset();
+    matched_since_.reset();
+    alarmed_ = false;
+    out.resubscribes = resubscribes_;
+    return out;
+  }
+  if (!awaiting_since_) {
+    awaiting_since_ = now_s;
+  }
+  out.awaiting_s = now_s - *awaiting_since_;
+  if (matched == 0U) {
+    matched_since_.reset();   // 매칭 없음: 재생성으로 고쳐지지 않는다 (QoS 불일치 · 발행자 없음)
+  } else {
+    if (!matched_since_) {
+      matched_since_ = now_s;
+    }
+    out.matched_waiting_s = now_s - *matched_since_;
+    if (config_.resubscribe_after_s > 0.0 && out.matched_waiting_s >= config_.resubscribe_after_s) {
+      out.resubscribe = true;
+      ++resubscribes_;
+      matched_since_.reset();   // 새 구독이 매칭된 때부터 다시 잰다
+    }
+  }
+  if (config_.alarm_after_s > 0.0 && !alarmed_ && out.awaiting_s >= config_.alarm_after_s) {
+    out.alarm = true;
+    alarmed_ = true;
+    ++alarms_;
+  }
+  out.resubscribes = resubscribes_;
+  return out;
+}
+
+void ExecutorContext::setTrafficLinkConfig(const TrafficLinkConfig & config)
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  traffic_link_.setConfig(config);
+}
+
+TrafficLinkStep ExecutorContext::stepTrafficLink(double now_s, size_t matched)
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  return traffic_link_.step(now_s, trafficHoldStateLocked(), matched);
+}
+
+TrafficLinkWatch ExecutorContext::trafficLink() const
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  return traffic_link_;
 }
 
 void ExecutorContext::updateYieldPose(const geometry_msgs::msg::PoseStamped & pose)

@@ -122,6 +122,58 @@ bool trafficManaged(
   TrafficHoldPolicy policy, double since_start_s, double grace_s,
   size_t publishers);
 
+/// traffic/hold 첫 값 감시 설정 — DDS 늦은 참여자 대응 (hold_failsafe.md §7 D11·D12).
+struct TrafficLinkConfig
+{
+  /// [s] awaiting 인데 reader 가 발행자와 매칭된 채 값이 없는 시간이 이만큼이면
+  /// 구독을 다시 만든다. ≤ 0 = 끔
+  double resubscribe_after_s{30.0};
+  /// [s] awaiting 이 이만큼 이어지면 경보 (awaiting 한 번에 한 번, 매칭 여부 무관). ≤ 0 = 끔
+  double alarm_after_s{120.0};
+};
+
+/// TrafficLinkWatch::step 결과 — 노드가 할 일과 기록할 값.
+struct TrafficLinkStep
+{
+  bool matched_changed{false};   ///< reader 의 DDS 매칭 발행자 수가 지난 단계와 다르다 (기록)
+  size_t previous_matched{0};    ///< 바뀌기 전 매칭 수
+  bool resubscribe{false};       ///< hold · yield_pose 구독을 다시 만들 것
+  bool alarm{false};             ///< 경보를 낼 것
+  double awaiting_s{0.0};        ///< 이번 awaiting 이 이어진 시간 [s] (awaiting 이 아니면 0)
+  double matched_waiting_s{0.0};  ///< 지금 구독이 매칭된 채 값 없이 기다린 시간 [s]
+  int resubscribes{0};           ///< 지금까지 재생성 횟수
+};
+
+/// traffic/hold 첫 값 감시 (ROS 비의존). 첫 값을 받기 전 교통 관리 중(kAwaiting)일 때만 잰다:
+/// - reader 가 발행자와 **DDS 매칭**(그래프 발견이 아니다)된 채 값이 없는 시간이
+///   resubscribe_after_s 를 넘으면 구독 재생성 — 새 DataReader 를 다시 알려 writer 쪽이 놓친
+///   매칭에 기회를 준다. 매칭 0 이면 하지 않는다 (QoS 불일치는 재생성으로 고쳐지지 않는다).
+///   재생성 뒤에는 새 구독이 매칭된 때부터 다시 잰다.
+/// - awaiting 이 alarm_after_s 를 넘으면 경보 한 번. awaiting 을 벗어나면(첫 값 · unmanaged)
+///   시계와 경보를 비운다.
+/// 프로세스 재시작은 하지 않는다 (런치 정책 — hold_failsafe.md §7 D12).
+class TrafficLinkWatch
+{
+public:
+  explicit TrafficLinkWatch(TrafficLinkConfig config = {});
+  void setConfig(const TrafficLinkConfig & config);
+  const TrafficLinkConfig & config() const {return config_;}
+  /// now_s = 단조 시각 [s], state = 지금 게이트 상태, matched = reader 의 DDS 매칭 발행자 수.
+  TrafficLinkStep step(double now_s, TrafficHoldState state, size_t matched);
+  size_t matched() const {return matched_;}
+  int resubscribes() const {return resubscribes_;}
+  int alarms() const {return alarms_;}
+
+private:
+  TrafficLinkConfig config_;
+  size_t matched_{0};
+  std::optional<double> awaiting_since_;
+  std::optional<double> matched_since_;
+  bool alarmed_{false};
+  int resubscribes_{0};
+  int alarms_{0};
+};
+
 /// 작업 수락 결과.
 struct AcceptDecision
 {
@@ -185,6 +237,12 @@ public:
   bool trafficHold() const;
   bool trafficHoldReceived() const;
   TrafficHoldState trafficHoldState() const;
+  /// 첫 값 감시 (TrafficLinkWatch). now_s 는 노드의 단조 시각 [s] (sim 시간이 아니다 —
+  /// /clock 전에도 흐른다), matched = traffic/hold 구독의 DDS 매칭 발행자 수.
+  /// 지금 게이트 상태로 한 단계 진행한다.
+  void setTrafficLinkConfig(const TrafficLinkConfig & config);
+  TrafficLinkStep stepTrafficLink(double now_s, size_t matched);
+  TrafficLinkWatch trafficLink() const;   ///< 사본 (기록 · 시험)
   void updateYieldPose(const geometry_msgs::msg::PoseStamped & pose);
   /// hold 가 걸린 뒤 받은 양보 자세. 없으면 nullopt.
   std::optional<geometry_msgs::msg::PoseStamped> yieldPose() const;
@@ -246,6 +304,7 @@ public:
 
 private:
   static double yawOf(const geometry_msgs::msg::PoseStamped & pose);
+  TrafficHoldState trafficHoldStateLocked() const;   ///< mutex_ 를 쥔 채로
   std::string resolveDockLocked(const geometry_msgs::msg::PoseStamped & pose) const;
 
   Clock clock_;
@@ -264,6 +323,7 @@ private:
   bool traffic_hold_{false};           ///< 마지막 수신값 (traffic_hold_received_ 일 때만 유효)
   bool traffic_hold_received_{false};
   bool traffic_managed_{false};
+  TrafficLinkWatch traffic_link_;
   double hold_since_{0.0};
   std::optional<geometry_msgs::msg::PoseStamped> yield_pose_;
   double yield_stamp_{0.0};

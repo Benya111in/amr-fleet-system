@@ -1,9 +1,11 @@
 // task_executor_node 통합 시험: 실제 트리 XML + 프로세스 안 모의 Nav2/도킹 서버로 assign_task →
 // 대기-이동-인식-작업-복귀 → task_status COMPLETED, 실행 중 재할당 거절, Groot 퍼블리셔 기동
 // (여는 데 실패해도 실행기는 계속), clear_payload, 도크 없는 작업 거절, 충전소 점유 메시지,
-// traffic/hold latched 구독과 첫 값 전 규칙 (hold_failsafe.md).
+// traffic/hold latched 구독과 첫 값 전 규칙 (hold_failsafe.md), 첫 값 감시 — 매칭 수 기록 ·
+// 구독 재생성 · 경보 (hold_failsafe.md §7, TrafficLinkWatch 단위 시험 포함).
 #include <gtest/gtest.h>
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <functional>
@@ -486,9 +488,10 @@ namespace
 /// traffic/hold 시험용 실행기 (네임스페이스 /<ns>, Groot·점유 공유 끔).
 /// init() 로 tick 타이머까지 띄운다.
 std::shared_ptr<amr_behavior::TaskExecutorNode> makeTrafficExecutor(
-  const std::string & ns, double grace_s, const std::string & policy = "auto")
+  const std::string & ns, double grace_s, const std::string & policy = "auto",
+  const std::vector<rclcpp::Parameter> & extra = {})
 {
-  const std::vector<rclcpp::Parameter> overrides = {
+  std::vector<rclcpp::Parameter> overrides = {
     rclcpp::Parameter(
       "bt_xml", std::string(AMR_BEHAVIOR_SOURCE_DIR) + "/behavior_trees/task_executor.xml"),
     rclcpp::Parameter("groot.enabled", false),
@@ -496,6 +499,7 @@ std::shared_ptr<amr_behavior::TaskExecutorNode> makeTrafficExecutor(
     rclcpp::Parameter("traffic_hold.policy", policy),
     rclcpp::Parameter("traffic_hold.discovery_grace_s", grace_s),
   };
+  overrides.insert(overrides.end(), extra.begin(), extra.end());
   auto node = std::make_shared<amr_behavior::TaskExecutorNode>(
     rclcpp::NodeOptions().parameter_overrides(overrides).arguments(
       {"--ros-args", "-r", "__ns:=/" + ns}));
@@ -548,6 +552,10 @@ TEST_F(ExecutorNodeTest, LateExecutorReceivesLatchedHoldAndPocket)
   ASSERT_TRUE(waitFor([&probe]() {return probe->get_publisher_count() == 1U;}, 5s));
   std::this_thread::sleep_for(300ms);
   EXPECT_EQ(volatile_got.load(), 0);
+  // 첫 값 감시: 받은 뒤에도 매칭 수는 기록하고, 재생성 · 경보는 없다 (hold_failsafe.md §7)
+  ASSERT_TRUE(waitFor([&late]() {return late->context()->trafficLink().matched() == 1U;}, 5s));
+  EXPECT_EQ(late->context()->trafficLink().resubscribes(), 0);
+  EXPECT_EQ(late->context()->trafficLink().alarms(), 0);
 }
 
 TEST_F(ExecutorNodeTest, AwaitsFirstValueWhileTrafficPublisherExists)
@@ -600,4 +608,233 @@ TEST_F(ExecutorNodeTest, RequiredPolicyWaitsWithoutPublisher)
   std::this_thread::sleep_for(500ms);
   EXPECT_EQ(ex->context()->trafficHoldState(), TrafficHoldState::kAwaiting);
   EXPECT_TRUE(ex->context()->trafficHold());
+  // 첫 값 감시 기본값 (hold_failsafe.md §7 D11·D12): 재생성 30 s, 경보 120 s
+  EXPECT_DOUBLE_EQ(ex->context()->trafficLink().config().resubscribe_after_s, 30.0);
+  EXPECT_DOUBLE_EQ(ex->context()->trafficLink().config().alarm_after_s, 120.0);
+  EXPECT_EQ(ex->context()->trafficLink().resubscribes(), 0);
+}
+
+namespace
+{
+
+/// 토픽의 구독 끝점 GID 목록 (재생성 확인: 새 DataReader 는 새 GID).
+std::vector<std::array<uint8_t, RMW_GID_STORAGE_SIZE>> subscriptionGids(
+  const rclcpp::Node::SharedPtr & node, const std::string & topic)
+{
+  std::vector<std::array<uint8_t, RMW_GID_STORAGE_SIZE>> out;
+  for (const auto & info : node->get_subscriptions_info_by_topic(topic)) {
+    out.push_back(info.endpoint_gid());
+  }
+  return out;
+}
+
+}  // namespace
+
+TEST_F(ExecutorNodeTest, ResubscribesWhileMatchedWithoutValueThenAlarmsOnce)
+{
+  using amr_behavior::TrafficHoldState;
+  // 관리자 발행자와 매칭됐는데 값이 오지 않는다 (시나리오 12 의 늦은 참여자) →
+  // resubscribe_after_s 뒤 구독 재생성, awaiting 이 alarm_after_s 를 넘으면 경보 한 번.
+  // 값이 오면(재생성한 구독으로) 멈춘다
+  auto tm = std::make_shared<rclcpp::Node>("fake_traffic_manager_mute");
+  auto hold_pub = tm->create_publisher<std_msgs::msg::Bool>("/amr_15/traffic/hold", tmLatchedQos());
+  auto pose_pub = tm->create_publisher<geometry_msgs::msg::PoseStamped>(
+    "/amr_15/traffic/yield_pose", tmLatchedQos());
+  auto ex = makeTrafficExecutor(
+    "amr_15", 0.0, "auto",
+    {rclcpp::Parameter("traffic_hold.resubscribe_after_s", 0.6),
+      rclcpp::Parameter("traffic_hold.alarm_after_s", 1.5)});
+  rclcpp::executors::SingleThreadedExecutor exec;
+  exec.add_node(tm);
+  exec.add_node(ex);
+  amr_behavior_test::SpinThread spinner(exec);
+  const auto link = [&ex]() {return ex->context()->trafficLink();};
+  ASSERT_TRUE(waitFor([&link]() {return link().matched() == 1U;}, 5s));
+  EXPECT_EQ(ex->context()->trafficHoldState(), TrafficHoldState::kAwaiting);
+  const auto hold_gids = subscriptionGids(tm, "/amr_15/traffic/hold");
+  const auto pose_gids = subscriptionGids(tm, "/amr_15/traffic/yield_pose");
+  ASSERT_EQ(hold_gids.size(), 1U);
+  ASSERT_EQ(pose_gids.size(), 1U);
+  ASSERT_TRUE(waitFor([&link]() {return link().resubscribes() >= 1;}, 5s));
+  // 새 DataReader 두 개 (옛 것은 사라진다)
+  ASSERT_TRUE(
+    waitFor(
+      [&tm, &hold_gids, &pose_gids]() {
+        const auto h = subscriptionGids(tm, "/amr_15/traffic/hold");
+        const auto p = subscriptionGids(tm, "/amr_15/traffic/yield_pose");
+        return h.size() == 1U && p.size() == 1U && h[0] != hold_gids[0] && p[0] != pose_gids[0];
+      }, 5s));
+  ASSERT_TRUE(waitFor([&link]() {return link().alarms() == 1;}, 5s));
+  std::this_thread::sleep_for(500ms);
+  EXPECT_EQ(link().alarms(), 1);   // 한 번만
+  EXPECT_EQ(ex->context()->trafficHoldState(), TrafficHoldState::kAwaiting);
+  std_msgs::msg::Bool on;
+  on.data = true;
+  hold_pub->publish(on);
+  ASSERT_TRUE(
+    waitFor([&ex]() {return ex->context()->trafficHoldState() == TrafficHoldState::kHold;}, 5s));
+  const int after = link().resubscribes();
+  std::this_thread::sleep_for(1s);
+  EXPECT_EQ(link().resubscribes(), after);   // 받은 뒤에는 재생성하지 않는다
+  EXPECT_EQ(link().alarms(), 1);
+}
+
+TEST_F(ExecutorNodeTest, IncompatiblePublisherIsSeenButNotMatchedSoNoResubscribe)
+{
+  using amr_behavior::TrafficHoldState;
+  // volatile 발행자: 그래프에는 보이지만(auto → awaiting) transient_local 구독과 DDS 매칭되지
+  // 않는다 (hold_failsafe.md §7 E3). 매칭이 0 이면 재생성하지 않고 (재생성으로 고쳐지지
+  // 않는다), 경보는 awaiting 시간으로 낸다
+  auto tm = std::make_shared<rclcpp::Node>("fake_traffic_manager_volatile");
+  auto hold_pub = tm->create_publisher<std_msgs::msg::Bool>(
+    "/amr_16/traffic/hold", rclcpp::QoS(10).reliable());
+  auto ex = makeTrafficExecutor(
+    "amr_16", 0.0, "auto",
+    {rclcpp::Parameter("traffic_hold.resubscribe_after_s", 0.5),
+      rclcpp::Parameter("traffic_hold.alarm_after_s", 1.0)});
+  rclcpp::executors::SingleThreadedExecutor exec;
+  exec.add_node(tm);
+  exec.add_node(ex);
+  amr_behavior_test::SpinThread spinner(exec);
+  ASSERT_TRUE(
+    waitFor(
+      [&ex]() {return ex->context()->trafficHoldState() == TrafficHoldState::kAwaiting;}, 5s));
+  ASSERT_TRUE(waitFor([&ex]() {return ex->context()->trafficLink().alarms() == 1;}, 5s));
+  std_msgs::msg::Bool on;
+  on.data = true;
+  hold_pub->publish(on);
+  std::this_thread::sleep_for(700ms);
+  EXPECT_EQ(ex->count_publishers("/amr_16/traffic/hold"), 1U);   // 그래프: 보인다
+  EXPECT_EQ(ex->context()->trafficLink().matched(), 0U);         // DDS 매칭: 없다
+  EXPECT_EQ(ex->context()->trafficLink().resubscribes(), 0);
+  EXPECT_EQ(ex->context()->trafficHoldState(), TrafficHoldState::kAwaiting);   // fail-closed
+}
+
+TEST(TrafficLinkWatch, MatchedChangeIsFlaggedInEveryState)
+{
+  using amr_behavior::TrafficHoldState;
+  const std::vector<size_t> seq = {0, 0, 1, 1, 0, 2};
+  const std::vector<bool> changed = {false, false, true, false, true, true};
+  const std::vector<size_t> prev = {0, 0, 0, 1, 1, 0};
+  const TrafficHoldState states[] = {
+    TrafficHoldState::kUnmanaged, TrafficHoldState::kAwaiting, TrafficHoldState::kClear};
+  for (const auto state : states) {
+    amr_behavior::TrafficLinkWatch fresh;
+    for (size_t i = 0; i < seq.size(); ++i) {
+      const auto step = fresh.step(static_cast<double>(i), state, seq[i]);
+      EXPECT_EQ(step.matched_changed, changed[i]) << i;
+      EXPECT_EQ(step.previous_matched, prev[i]) << i;
+      EXPECT_EQ(fresh.matched(), seq[i]);
+    }
+  }
+}
+
+TEST(TrafficLinkWatch, NotAwaitingNeverResubscribesOrAlarms)
+{
+  using amr_behavior::TrafficHoldState;
+  for (const auto state :
+    {TrafficHoldState::kUnmanaged, TrafficHoldState::kHold, TrafficHoldState::kClear})
+  {
+    amr_behavior::TrafficLinkWatch w;
+    for (double t = 0.0; t <= 1000.0; t += 0.5) {
+      const auto step = w.step(t, state, 1U);
+      EXPECT_FALSE(step.resubscribe);
+      EXPECT_FALSE(step.alarm);
+      EXPECT_DOUBLE_EQ(step.awaiting_s, 0.0);
+    }
+    EXPECT_EQ(w.resubscribes(), 0);
+    EXPECT_EQ(w.alarms(), 0);
+  }
+}
+
+TEST(TrafficLinkWatch, ResubscribesAtBoundaryAndRestartsClockAfterward)
+{
+  using amr_behavior::TrafficHoldState;
+  const auto kA = TrafficHoldState::kAwaiting;
+  amr_behavior::TrafficLinkWatch w;   // 기본 30 s / 120 s
+  EXPECT_FALSE(w.step(0.0, kA, 1U).resubscribe);
+  EXPECT_FALSE(w.step(29.9, kA, 1U).resubscribe);
+  const auto at = w.step(30.0, kA, 1U);   // 경계 포함
+  EXPECT_TRUE(at.resubscribe);
+  EXPECT_DOUBLE_EQ(at.matched_waiting_s, 30.0);
+  EXPECT_EQ(at.resubscribes, 1);
+  // 새 구독이 매칭된 때(30.2)부터 다시 잰다
+  EXPECT_FALSE(w.step(30.2, kA, 1U).resubscribe);
+  EXPECT_FALSE(w.step(60.1, kA, 1U).resubscribe);
+  EXPECT_TRUE(w.step(60.2, kA, 1U).resubscribe);
+  EXPECT_EQ(w.resubscribes(), 2);
+}
+
+TEST(TrafficLinkWatch, MatchLossRestartsResubscribeClockAndZeroMatchNeverResubscribes)
+{
+  using amr_behavior::TrafficHoldState;
+  const auto kA = TrafficHoldState::kAwaiting;
+  amr_behavior::TrafficLinkWatch w(amr_behavior::TrafficLinkConfig{30.0, 0.0});   // 경보 끔
+  w.step(0.0, kA, 1U);
+  w.step(20.0, kA, 0U);                     // 매칭이 끊겼다 → 시계 비움
+  EXPECT_FALSE(w.step(25.0, kA, 1U).resubscribe);
+  EXPECT_FALSE(w.step(54.9, kA, 1U).resubscribe);
+  EXPECT_TRUE(w.step(55.0, kA, 1U).resubscribe);
+  amr_behavior::TrafficLinkWatch zero(amr_behavior::TrafficLinkConfig{30.0, 0.0});
+  for (double t = 0.0; t <= 1000.0; t += 0.5) {
+    EXPECT_FALSE(zero.step(t, kA, 0U).resubscribe) << t;
+  }
+  EXPECT_EQ(zero.resubscribes(), 0);
+  EXPECT_EQ(zero.alarms(), 0);              // 끔
+}
+
+TEST(TrafficLinkWatch, AlarmsOncePerAwaitingEvenWithoutMatchAndRearmsAfterLeaving)
+{
+  using amr_behavior::TrafficHoldState;
+  const auto kA = TrafficHoldState::kAwaiting;
+  amr_behavior::TrafficLinkWatch w(amr_behavior::TrafficLinkConfig{0.0, 120.0});   // 재생성 끔
+  EXPECT_FALSE(w.step(0.0, kA, 0U).alarm);
+  EXPECT_FALSE(w.step(119.9, kA, 0U).alarm);
+  const auto at = w.step(120.0, kA, 0U);   // 매칭 없어도 awaiting 시간으로
+  EXPECT_TRUE(at.alarm);
+  EXPECT_DOUBLE_EQ(at.awaiting_s, 120.0);
+  EXPECT_FALSE(w.step(121.0, kA, 1U).alarm);   // 한 번만
+  EXPECT_FALSE(w.step(500.0, kA, 1U).resubscribe);   // 재생성 끔
+  EXPECT_EQ(w.alarms(), 1);
+  // awaiting 을 벗어났다(unmanaged) 다시 들어오면 시계 · 경보를 새로
+  w.step(510.0, TrafficHoldState::kUnmanaged, 0U);
+  EXPECT_FALSE(w.step(511.0, kA, 0U).alarm);
+  EXPECT_FALSE(w.step(630.9, kA, 0U).alarm);
+  EXPECT_TRUE(w.step(631.0, kA, 0U).alarm);
+  EXPECT_EQ(w.alarms(), 2);
+}
+
+TEST(TrafficLinkWatch, FirstValueClearsClocks)
+{
+  using amr_behavior::TrafficHoldState;
+  const auto kA = TrafficHoldState::kAwaiting;
+  amr_behavior::TrafficLinkWatch w;
+  w.step(0.0, kA, 1U);
+  w.step(29.0, kA, 1U);
+  // 첫 값(clear) 을 받았다 → 기다리는 것이 없다. (auto 의 발행자 깜빡임처럼) 다시 awaiting 이
+  // 되면 새로 잰다
+  EXPECT_FALSE(w.step(29.5, TrafficHoldState::kClear, 1U).resubscribe);
+  EXPECT_FALSE(w.step(30.5, kA, 1U).resubscribe);
+  EXPECT_FALSE(w.step(60.4, kA, 1U).resubscribe);
+  EXPECT_TRUE(w.step(60.5, kA, 1U).resubscribe);
+  EXPECT_FALSE(w.step(150.4, kA, 1U).alarm);   // awaiting 시작 30.5 + 120
+  EXPECT_TRUE(w.step(150.5, kA, 1U).alarm);
+}
+
+TEST(TrafficLinkWatch, ContextStepsWithItsOwnGateState)
+{
+  // ExecutorContext 는 자기 게이트 상태(받은 값 · 교통 관리 여부)로 감시를 진행한다
+  amr_behavior::ExecutorContext ctx([]() {return 0.0;});
+  ctx.setTrafficLinkConfig(amr_behavior::TrafficLinkConfig{1.0, 2.0});
+  EXPECT_FALSE(ctx.stepTrafficLink(0.0, 1U).resubscribe);   // unmanaged
+  EXPECT_FALSE(ctx.stepTrafficLink(5.0, 1U).resubscribe);
+  ctx.setTrafficManaged(true);                                // awaiting
+  EXPECT_FALSE(ctx.stepTrafficLink(10.0, 1U).resubscribe);
+  EXPECT_TRUE(ctx.stepTrafficLink(11.0, 1U).resubscribe);
+  EXPECT_TRUE(ctx.stepTrafficLink(12.0, 1U).alarm);
+  ctx.updateTrafficHold(false);                               // 첫 값
+  EXPECT_FALSE(ctx.stepTrafficLink(100.0, 1U).resubscribe);
+  EXPECT_EQ(ctx.trafficLink().resubscribes(), 1);
+  EXPECT_EQ(ctx.trafficLink().alarms(), 1);
+  EXPECT_DOUBLE_EQ(ctx.trafficLink().config().alarm_after_s, 2.0);
 }

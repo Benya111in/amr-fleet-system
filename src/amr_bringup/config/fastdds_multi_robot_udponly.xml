@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  UDP 전용 변형 (SHM 없음): DDS 늦은 참여자 A/B 실험용 (docs/research/fleet-traffic-deadlock/hold_failsafe.md 7 절).
+  가설: 같은 호스트 참가자 사이는 SHM 만 쓰므로, 과부하에서 SHM 포트가 고장 나면 그 쌍의 데이터가 UDP 로 우회하지 않고
+  영영 멎는다 (시나리오 12 의 amr_04·05 가 매칭된 채 hold 값을 수 분 받지 못함). 이 파일은 그 가설을 가르는 비교 갈래다.
+
+  쓰는 법: 자동으로 고르지 않는다 (launch_utils.dds_profile_name 은 이 파일을 모른다). FASTRTPS_DEFAULT_PROFILES_FILE 에
+  이 파일의 설치 경로를 직접 주면 bringup 과 scripts/run_integration.sh 가 그 값을 유지한다.
+  반드시 ROS_LOCALHOST_ONLY 를 비우거나 0 으로 둔다. Humble rmw_fastrtps 6.2.10 은 ROS_LOCALHOST_ONLY=1 이면 이 파일의 사용자
+  전송을 대체하지 않고 그 뒤에 UDPv4(127.0.0.1)와 SHM(기본 0.5 MB)을 덧붙인다. 그러면 다시 SHM 을 쓴다
+  (2026-10-06 실측 E1: 새 컨테이너의 /dev/shm 에 fastrtps_port 파일이 생김. ROS_LOCALHOST_ONLY=0 이면 0 개).
+  확인: 실행 중 /dev/shm 에 fastrtps_ 로 시작하는 파일이 없어야 하고, 노드 출력(stdout)에 XMLPARSER 오류가 없어야 한다.
+  Fast DDS 2.6 은 프로파일을 못 읽으면 오류를 찍고 기본 전송(SHM + UDP)으로 조용히 돌아간다 (E2: Fast DDS 2.6.12 XSD 가
+  요구하는 userTransports/id 형식은 파서가 거부한다. 파서는 transport_id 를 읽는다).
+
+  비용: 카메라 영상(640×480 RGB 921 KB)이 UDP 조각 전송으로 간다. fastdds_multi_robot.xml 머리말의 실측에서 SHM 확대가 없을 때
+  인식 처리율이 0.32~0.54 였다. 그러니 이 갈래의 시나리오 통과율은 전송 효과와 인식 저하가 섞인다. 판정은 hold 첫 값 지연으로 한다.
+  참가자 수 설정(builtin.mutation_tries 400)은 fastdds_multi_robot.xml 과 같다 (머리말 1 항).
+-->
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <transport_descriptors>
+    <transport_descriptor>
+      <transport_id>udp_only</transport_id>
+      <type>UDPv4</type>
+    </transport_descriptor>
+  </transport_descriptors>
+  <participant profile_name="amr_system_udponly" is_default_profile="true">
+    <rtps>
+      <builtin>
+        <mutation_tries>400</mutation_tries>
+      </builtin>
+      <useBuiltinTransports>false</useBuiltinTransports>
+      <userTransports>
+        <transport_id>udp_only</transport_id>
+      </userTransports>
+    </rtps>
+  </participant>
+</profiles>

@@ -7,7 +7,9 @@ traffic_manager_node ROS 배선 시험 (한 프로세스).
 비키면 RESOLVED + hold=false. latched 토픽(hold · yield_pose · keepout_mask · costmap_filter_info)은
 늦게 뜬 구독자가 받는지, yield_pose 가 hold=true 보다 먼저 나가고 양보가 끝나면 비워지는지 본다.
 hold 는 평가한 값만 낸다: 기동 시 초기값이 없고, 관측한 로봇은 첫 평가 뒤, 한 번도 관측 못 한 로봇은
-hold 구독자가 붙고 obs_timeout_s 뒤 false (hold_failsafe.md).
+hold 구독자가 붙고 obs_timeout_s 뒤 false (hold_failsafe.md). 평가한 값은 hold_republish_s 마다 다시 낸다 — 평가 전에는
+내지 않고, 포켓-먼저 미룸 중에는 false 를 다시 내지 않으며, hold=true 는 포켓 뒤에. hold writer 의 DDS 매칭 구독자 수가
+바뀌면 기록한다 (hold_failsafe.md §7, D9 · D10).
 rclpy·amr_msgs·nav2_msgs 가 없는 환경에서는 건너뛴다.
 """
 
@@ -22,8 +24,8 @@ try:
     from amr_fleet.traffic_manager import RobotCommand
     from amr_fleet.traffic_geometry import GridSpec
     from amr_fleet.traffic_manager_node import (
-        TrafficManagerNode, default_zones_path, mask_to_msg, parse_ids, path_to_array,
-        yaw_from_quaternion,
+        TrafficManagerNode, default_zones_path, hold_republish_due, mask_to_msg, parse_ids,
+        path_to_array, yaw_from_quaternion,
     )
     from amr_fleet.traffic_resolution import KeepoutMask
     from amr_msgs.msg import RobotState, Task
@@ -33,6 +35,7 @@ try:
     from nav2_msgs.msg import CostmapFilterInfo
     from nav_msgs.msg import OccupancyGrid, Odometry, Path
     import rclpy
+    from rclpy.duration import Duration
     from rclpy.executors import SingleThreadedExecutor
     from rclpy.parameter import Parameter
     from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
@@ -435,9 +438,9 @@ def test_hold_published_only_after_evaluation(ros):
         assert [v for v, _ in got[ids[1]]] == [False]
         assert got[ids[1]][0][1] - node._robots[ids[1]].listen_since >= 1.0
         assert node._robots[ids[1]].hold is False
-        # 바뀔 때만 낸다: 해제 뒤에도, 평가 값이 그대로인 동안에도 다시 내지 않는다
+        # 값은 평가가 바뀔 때만 바뀐다: 그 뒤의 수신은 같은 값의 재발행(D9, 기본 1 s)뿐이다
         spin(lambda: False, 0.6, publish_odom)
-        assert [v for v, _ in got[ids[0]]] == [False] and [v for v, _ in got[ids[1]]] == [False]
+        assert {v for v, _ in got[ids[0]]} == {False} and {v for v, _ in got[ids[1]]} == {False}
         # 구독자가 없는 로봇: 기다리는 실행기가 없다 → 내지 않는다
         w3 = node._robots['amr_w3']
         assert w3.hold is None and w3.listen_since is None
@@ -469,6 +472,111 @@ def test_first_hold_behind_new_pocket_is_deferred_not_false(ros):
         node._apply(r, cmd)                                         # 다음 주기: hold=true
         assert spin(lambda: bool(holds))
         assert [m.data for m in holds] == [True] and r.hold is True
+    finally:
+        ex.shutdown()
+        node.destroy_node()
+        client.destroy_node()
+
+
+def test_hold_republish_due_rules():
+    """재발행 판정 (D9): 평가 전 없음 · 포켓-먼저 미룸 중 false 없음 · 주기 경계 · 시계 되감김 · 끔."""
+    due = hold_republish_due
+    for pocket in (False, True):
+        assert not due(None, pocket, None, 10.0, 1.0)            # 평가 전 (D5)
+        assert not due(None, pocket, 0.0, 10.0, 1.0)
+    assert not due(False, True, 0.0, 10.0, 1.0)                  # 포켓-먼저 미룸: false 를 다시 내면 포켓이 지워진다
+    assert due(True, True, 0.0, 10.0, 1.0)                       # 양보 중 (포켓 + hold)
+    assert due(False, False, 0.0, 10.0, 1.0) and due(True, False, 0.0, 10.0, 1.0)
+    assert due(False, False, None, 0.0, 1.0)                     # 시각 기록 없음 → 바로
+    assert due(False, False, 9.0, 10.0, 1.0)                     # 경계 포함
+    assert not due(False, False, 9.0 + 1e-6, 10.0, 1.0)
+    assert due(False, False, 50.0, 10.0, 1.0)                    # sim 재시작으로 시계가 뒤로
+    for period in (0.0, -1.0):
+        assert not due(False, False, 0.0, 10.0, period)          # 끔
+
+
+def test_hold_republished_at_period_pocket_first(ros):
+    """
+    평가한 hold 를 주기마다 다시 낸다 (D9).
+
+    바뀐 값 발행 뒤 첫 재발행까지도 한 주기. 포켓-먼저 미룸(포켓은 냈고 hold=true 는 다음 주기) 동안에는 false 를 다시
+    내지 않는다 — 실행기는 false 를 받으면 포켓을 지운다. hold=true 를 다시 낼 때는 포켓을 먼저 다시 낸다.
+    """
+    period = 0.3
+    node = TrafficManagerNode(namespace='/fleet_r', parameter_overrides=_params({
+        'robot_ids': 'amr_r1', 'update_rate_hz': 20.0, 'map_topic': '/traffic_test_r/map',
+        'zones.source': 'none', 'hold_republish_s': period,
+    }))
+    ex, spin = _own_executor((node,))
+    calls = []
+    r = node._robots['amr_r1']
+    pose_pub, hold_pub = r.pub_yield.publish, r.pub_hold.publish
+    r.pub_yield.publish = lambda m: (calls.append(('pose', m.header.frame_id, node._now())),
+                                     pose_pub(m))
+    r.pub_hold.publish = lambda m: (calls.append(('hold', m.data, node._now())), hold_pub(m))
+    try:
+        # 평가 전(None): 주기가 돌아도 재발행 없음 (이 로봇은 관측되지 않고 구독자도 없다 → D6 해제도 없음)
+        spin(lambda: False, 2 * period)
+        assert calls == [] and node.republished == 0
+        node._publish_hold(r, False)                         # 평가한 값 (바뀐 값 발행)
+        t0 = calls[-1][2]
+        spin(lambda: False, 4 * period + 0.05)
+        holds = [c for c in calls if c[0] == 'hold']
+        assert [c[1] for c in holds] == [False] * len(holds) and len(holds) >= 4
+        times = [c[2] for c in holds]
+        assert times[0] == t0
+        gaps = [b - a for a, b in zip(times, times[1:])]
+        assert min(gaps) >= period - 0.02, gaps              # 주기마다 (매 평가 주기가 아니다)
+        assert max(gaps) <= 2 * period + 0.1, gaps            # 공유 부하 여유
+        assert node.republished == len(holds) - 1
+        # 포켓-먼저 미룸: 포켓만 나가고 hold 는 다음 평가 → 그동안 false 재발행 없음
+        cmd = RobotCommand(True, 'yield:incident1', (18.0, 8.0, 0.0), None, 1)
+        node._apply(r, cmd)
+        n_before = len(calls)
+        assert calls[-1][:2] == ('pose', 'map') and r.hold is False
+        spin(lambda: False, 3 * period)
+        assert calls[n_before:] == [], calls[n_before:]
+        node._apply(r, cmd)                                  # 다음 평가: hold=true (바뀐 값)
+        assert calls[-1][:2] == ('hold', True)
+        n_change = len(calls)
+        spin(lambda: False, 3 * period + 0.05)
+        again = [c[:2] for c in calls[n_change:]]
+        assert len(again) >= 4 and again == [('pose', 'map'), ('hold', True)] * (len(again) // 2)
+        assert calls[n_change][2] - calls[n_change - 1][2] >= period - 0.02
+    finally:
+        ex.shutdown()
+        node.destroy_node()
+
+
+def test_hold_matching_logged_and_incompatible_not_counted(ros):
+    """
+    로봇별 hold writer 의 DDS 매칭 구독자 수가 바뀌면 기록한다 (D10).
+
+    get_subscription_count 는 그래프(발견)가 아니라 매칭 수다: QoS 가 맞지 않는 구독자(deadline 요구 — 발행자는
+    무한)는 그래프에는 보이고 매칭에는 들지 않는다 (hold_failsafe.md §7 E3).
+    """
+    node = TrafficManagerNode(namespace='/fleet_m', parameter_overrides=_params({
+        'robot_ids': 'amr_m1,amr_m2', 'update_rate_hz': 20.0, 'map_topic': '/traffic_test_m/map',
+        'zones.source': 'none',
+    }))
+    client = rclpy.create_node('traffic_test_m_client')
+    ex, spin = _own_executor((node, client))
+    try:
+        assert spin(lambda: False, 0.3) is False and list(node.hold_match_log) == []
+        sub = client.create_subscription(Bool, '/amr_m1/traffic/hold', lambda m: None, _latched())
+        assert spin(lambda: [e[1:] for e in node.hold_match_log] == [('amr_m1', 0, 1)])
+        strict = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                            deadline=Duration(seconds=1))
+        client.create_subscription(Bool, '/amr_m2/traffic/hold', lambda m: None, strict)
+        assert spin(lambda: node.count_subscribers('/amr_m2/traffic/hold') == 1)
+        spin(lambda: False, 0.3)
+        assert node._robots['amr_m2'].pub_hold.get_subscription_count() == 0
+        assert node._robots['amr_m2'].hold_matched == 0
+        assert all(e[1] != 'amr_m2' for e in node.hold_match_log)
+        client.destroy_subscription(sub)
+        assert spin(lambda: [e[1:] for e in node.hold_match_log][-1:] == [('amr_m1', 1, 0)])
+        assert node._robots['amr_m1'].hold_matched == 0
     finally:
         ex.shutdown()
         node.destroy_node()

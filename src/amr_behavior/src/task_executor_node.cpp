@@ -36,6 +36,28 @@ rclcpp::QoS latchedQos()
 {
   return rclcpp::QoS(1).reliable().transient_local();
 }
+
+// traffic/hold · traffic/yield_pose 는 traffic_manager_node 가 latched
+// (reliable + transient_local, depth 1)로 낸다 → 같은 QoS 로 구독해야 늦게 뜬(재기동한)
+// 실행기도 현재 값을 받는다. volatile 구독은 매칭은 되지만 지난 표본을 받지 못해 hold=true 를
+// 놓친다 (hold_failsafe.md §1). volatile 발행자와는 짝이 맺어지지 않는다 → 발행자는 보이고
+// 값은 없으므로 auto 정책이 대기를 유지하고 경고한다 (fail-closed).
+// 첫 값 감시가 구독을 다시 만들 때도 이 함수를 쓴다 (hold_failsafe.md §7 D11).
+rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr subscribeTrafficHold(
+  rclcpp::Node & node, const std::shared_ptr<ExecutorContext> & ctx)
+{
+  return node.create_subscription<std_msgs::msg::Bool>(
+    "traffic/hold", latchedQos(),
+    [ctx](const std_msgs::msg::Bool::SharedPtr msg) {ctx->updateTrafficHold(msg->data);});
+}
+
+rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr subscribeYieldPose(
+  rclcpp::Node & node, const std::shared_ptr<ExecutorContext> & ctx)
+{
+  return node.create_subscription<geometry_msgs::msg::PoseStamped>(
+    "traffic/yield_pose", latchedQos(),
+    [ctx](const geometry_msgs::msg::PoseStamped::SharedPtr msg) {ctx->updateYieldPose(*msg);});
+}
 }  // namespace
 
 int robotIndexFromId(const std::string & robot_id)
@@ -143,6 +165,14 @@ void TaskExecutorNode::declareAndLoadParameters()
   }
   traffic_hold_grace_s_ = std::max(
     0.0, declare_parameter<double>("traffic_hold.discovery_grace_s", traffic_hold_grace_s_));
+  // DDS 늦은 참여자 대응 (hold_failsafe.md §7 D11·D12): 첫 값 전 awaiting 인데 발행자와
+  // 매칭된 채 값이 없으면 resubscribe_after_s 뒤 구독 재생성, awaiting 이 alarm_after_s 를
+  // 넘으면 ERROR 경보 (0 = 끔). 프로세스는 스스로 끝내지 않는다 — 재시작은 런치(respawn)·운영자 몫
+  TrafficLinkConfig link;
+  link.resubscribe_after_s = declare_parameter<double>(
+    "traffic_hold.resubscribe_after_s", link.resubscribe_after_s);
+  link.alarm_after_s = declare_parameter<double>("traffic_hold.alarm_after_s", link.alarm_after_s);
+  ctx_->setTrafficLinkConfig(link);
 
   // 작업 수락 정책
   AcceptPolicy policy;
@@ -336,18 +366,9 @@ void TaskExecutorNode::createInterfaces()
     "localization/lost", latchedQos(), [this](const std_msgs::msg::Bool::SharedPtr msg) {
       ctx_->updateLocalizationLost(msg->data);
     });
-  // traffic/hold · traffic/yield_pose 는 traffic_manager_node 가 latched
-  // (reliable + transient_local, depth 1)로 바뀔 때만 낸다 → 같은 QoS 로 구독해야
-  // 늦게 뜬(재기동한) 실행기도 현재 값을 받는다. volatile 구독은 매칭은 되지만 지난 표본을
-  // 받지 못해 hold=true 를 놓친다 (hold_failsafe.md §1). volatile 발행자와는 짝이 맺어지지
-  // 않는다 → 발행자는 보이고 값은 없으므로 auto 정책이 대기를 유지하고 경고한다 (fail-closed).
-  traffic_hold_sub_ = create_subscription<std_msgs::msg::Bool>(
-    "traffic/hold", latchedQos(), [this](const std_msgs::msg::Bool::SharedPtr msg) {
-      ctx_->updateTrafficHold(msg->data);
-    });
-  yield_pose_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
-    "traffic/yield_pose", latchedQos(),
-    [this](const geometry_msgs::msg::PoseStamped::SharedPtr msg) {ctx_->updateYieldPose(*msg);});
+  // traffic/hold · traffic/yield_pose: latched 구독 (subscribeTrafficHold 설명)
+  traffic_hold_sub_ = subscribeTrafficHold(*this, ctx_);
+  yield_pose_sub_ = subscribeYieldPose(*this, ctx_);
   objects_sub_ = create_subscription<amr_msgs::msg::DetectedObjectArray>(
     "perception/detected_objects", rclcpp::SensorDataQoS(),
     [this](const amr_msgs::msg::DetectedObjectArray::SharedPtr msg) {
@@ -466,18 +487,56 @@ void TaskExecutorNode::refreshTrafficManagement()
     return;
   }
   const auto wall = std::chrono::steady_clock::now();
-  if (!ctx_->trafficHoldReceived()) {
-    // count_publishers 는 rmw 그래프 캐시의 발행자를 모두 훑는다 (5 대 구성에서 수천 개)
-    // → 200 ms 마다만. 발행자가 나타난 것을 그만큼 늦게 알 뿐, 받은 값은 구독 콜백이 바로 반영한다
-    if (wall - last_publisher_count_ >= std::chrono::milliseconds(200)) {
-      last_publisher_count_ = wall;
+  const double since = std::chrono::duration<double>(wall - started_).count();
+  // 그래프 · 매칭 조회는 200 ms 마다만: count_publishers 는 rmw 그래프 캐시의 발행자를 모두
+  // 훑는다 (5 대 구성에서 수천 개). 발행자가 나타난 것을 그만큼 늦게 알 뿐, 받은 값은 구독
+  // 콜백이 바로 반영한다
+  const bool poll = wall - last_publisher_count_ >= std::chrono::milliseconds(200);
+  if (poll) {
+    last_publisher_count_ = wall;
+    if (!ctx_->trafficHoldReceived()) {
       publisher_count_ = count_publishers(traffic_hold_sub_->get_topic_name());
     }
-    const double since = std::chrono::duration<double>(wall - started_).count();
+  }
+  if (!ctx_->trafficHoldReceived()) {
     ctx_->setTrafficManaged(
       trafficManaged(traffic_hold_policy_, since, traffic_hold_grace_s_, publisher_count_));
   }
   const TrafficHoldState state = ctx_->trafficHoldState();
+  if (poll) {
+    // DDS 늦은 참여자 (hold_failsafe.md §7 D11·D12). get_publisher_count 는 그래프(발견)가
+    // 아니라 이 DataReader 의 DDS 매칭 수다 (QoS 가 안 맞으면 그래프 1 · 매칭 0). 첫 값을
+    // 받은 뒤에도 매칭 변화는 남긴다 (관리자 재기동 · 사망 진단)
+    const size_t matched = traffic_hold_sub_->get_publisher_count();
+    const TrafficLinkStep link = ctx_->stepTrafficLink(since, matched);
+    if (link.matched_changed && !ctx_->trafficHoldReceived()) {
+      RCLCPP_INFO(
+        get_logger(), "traffic/hold 매칭 발행자 %zu → %zu (그래프 %zu, 상태 %s, 구독 재생성 %d)",
+        link.previous_matched, matched, publisher_count_, toString(state), link.resubscribes);
+    } else if (link.matched_changed) {
+      // 첫 값 뒤에는 그래프 수를 세지 않는다 (비용) → 그래프 수 없이 남긴다
+      RCLCPP_INFO(
+        get_logger(), "traffic/hold 매칭 발행자 %zu → %zu (상태 %s, 첫 값 받은 뒤)",
+        link.previous_matched, matched, toString(state));
+    }
+    if (link.resubscribe) {
+      RCLCPP_WARN(
+        get_logger(),
+        "traffic/hold: 발행자와 매칭된 지 %.1f s 동안 첫 값이 없다 (매칭 %zu, 그래프 %zu) → "
+        "hold · yield_pose 구독을 다시 만든다 (%d 번째)",
+        link.matched_waiting_s, matched, publisher_count_, link.resubscribes);
+      traffic_hold_sub_ = subscribeTrafficHold(*this, ctx_);
+      yield_pose_sub_ = subscribeYieldPose(*this, ctx_);
+    }
+    if (link.alarm) {
+      RCLCPP_ERROR(
+        get_logger(),
+        "traffic/hold: 첫 값을 %.0f s 째 못 받았다 (매칭 %zu, 그래프 %zu, 구독 재생성 %d) → "
+        "정지 유지. 매칭됐다면 DDS 전송 경로 고장 의심 — 실행기 재시작은 런치·운영자 판단 "
+        "(hold_failsafe.md §7)",
+        link.awaiting_s, matched, publisher_count_, link.resubscribes);
+    }
+  }
   const TrafficHoldState prev = traffic_state_;
   traffic_state_ = state;
   if (state == TrafficHoldState::kAwaiting) {
@@ -488,10 +547,11 @@ void TaskExecutorNode::refreshTrafficManagement()
     if (waited > traffic_hold_grace_s_ + 5.0) {
       RCLCPP_WARN_THROTTLE(
         get_logger(), steady_clock_, 10000,
-        "traffic/hold 첫 값을 %.0f s 째 못 받았다 (발행자 %zu, QoS 맞는 것 %zu) → 정지 유지. "
-        "traffic_manager 가 이 로봇을 관측하는지(odometry/filtered_map), "
+        "traffic/hold 첫 값을 %.0f s 째 못 받았다 (발행자 %zu, QoS 맞는 것 %zu, 구독 재생성 %d) → "
+        "정지 유지. traffic_manager 가 이 로봇을 관측하는지(odometry/filtered_map), "
         "발행 QoS 가 latched 인지 확인",
-        waited, publisher_count_, traffic_hold_sub_->get_publisher_count());
+        waited, publisher_count_, traffic_hold_sub_->get_publisher_count(),
+        ctx_->trafficLink().resubscribes());
     }
   }
   // 첫 값을 받기 전의 전이만 기록한다 (받은 뒤의 hold ↔ clear 는 traffic_manager 가 기록한다)

@@ -10,8 +10,10 @@ traffic_manager_node — 중앙 교통 관리 · 교착 탐지/해소 (component
        평가한 값만 낸다: 기동 시 초기값을 내지 않고 그 로봇을 처음 관측한 주기에 처음 낸다 (실행기는 첫 값
        전 대기 — amr_behavior traffic_hold.policy). hold 구독자(실행기)가 붙은 뒤 obs_timeout_s 동안 한 번도
        관측하지 못한 로봇은 교통 관리 밖으로 보고 false 를 낸다 (그 로봇은 관리할 수 없다 — 영영 세우지 않는다).
-       재연결에 재발행은 필요 없다: 바뀔 때만 내므로 depth 1 이력 = 현재 값이다
-       (docs/research/fleet-traffic-deadlock/hold_failsafe.md)
+       평가한 값은 hold_republish_s(1 s) 마다 다시 낸다: 시나리오 12 에서 늦게 뜬 실행기가 매칭된 채 latched 값을
+       수 분 받지 못했다 (DDS 늦은 참여자). 평가 전에는 재발행도 없고, 포켓-먼저 미룸 중에는 false 를 다시 내지 않으며
+       (실행기는 false 를 받으면 포켓을 지운다), hold=true 를 다시 낼 때는 포켓을 먼저 다시 낸다. 로봇별 hold writer 의
+       DDS 매칭 구독자 수가 바뀌면 남긴다 (docs/research/fleet-traffic-deadlock/hold_failsafe.md §7)
 - Pub  /amr_XX/traffic/yield_pose (geometry_msgs/PoseStamped, latched)  대기 포켓. 새 포켓은 hold=true 보다
        한 주기 먼저 내고(hold=true 는 다음 주기), 양보가 끝나면 hold 뒤에 frame_id 가 빈 PoseStamped
        (= 포켓 없음)를 낸다. 실행기 규칙: hold=true 이고 frame_id 있는 포켓이 있으면 포켓으로, 없으면
@@ -26,7 +28,8 @@ traffic_manager_node — 중앙 교통 관리 · 교착 탐지/해소 (component
 - Pub  /fleet/alerts (DiagnosticArray)          fleet/DEADLOCK (탐지 ERROR · 해소 OK · 해소 실패 ERROR),
        fleet/TRAFFIC_STALE (토큰 보유 로봇 관측 끊김 WARN · lost ERROR · 재수신 OK)
 
-update_rate_hz(2 Hz) 마다 관측을 모아 TrafficManager.update() 한 번 → 바뀐 명령만 발행한다.
+update_rate_hz(2 Hz) 마다 관측을 모아 TrafficManager.update() 한 번 → 바뀐 명령만 발행한다
+(hold 는 그에 더해 평가한 값을 hold_republish_s 마다 다시 낸다).
 관측 시각은 수신 시각(노드 시계)이다. obs_timeout_s 보다 오래된 로봇은 빼지 않고 마지막 자세에 멈춘
 장애물로 둔다(토큰 유지, fail closed — traffic_manager 참고).
 로직은 순수 모듈(traffic_manager · traffic_prediction · traffic_zones · deadlock · traffic_resolution)이
@@ -74,6 +77,20 @@ KEEPOUT_FILTER_TYPE = 0          # nav2_costmap_2d KEEPOUT_FILTER
 TASK_TABLE_MAX = 2000            # task_id → (우선순위, 마감) 표 상한 (오래된 것부터 버린다)
 _LEVELS = {LEVEL_OK: DiagnosticStatus.OK, LEVEL_WARN: DiagnosticStatus.WARN,
            LEVEL_ERROR: DiagnosticStatus.ERROR}
+
+
+def hold_republish_due(hold: Optional[bool], pocket: bool, last_sent: Optional[float],
+                       now: float, period: float) -> bool:
+    """
+    평가한 hold 를 다시 낼 때인지 (D9, hold_failsafe.md §7).
+
+    hold 가 None(아직 평가해 낸 적 없음)이면 내지 않는다 — 평가 전 false 는 허가다 (D5). 포켓이 있는데 hold 가 true 가
+    아니면 포켓-먼저 미룸 중이다: 실행기는 false 를 받을 때마다 포켓을 지우므로 내지 않는다. period ≤ 0 이면 끈다.
+    마지막 발행보다 시계가 뒤로 가 있으면(sim 재시작) 바로 낸다.
+    """
+    if period <= 0.0 or hold is None or (pocket and not hold):
+        return False
+    return last_sent is None or now < last_sent or now - last_sent >= period
 
 
 def _guarded(fn):
@@ -155,6 +172,8 @@ class _Robot:
         self.pub_mask = None
         self.pub_info = None
         self.hold: Optional[bool] = None            # 마지막으로 발행한 값 (None = 아직 안 냄)
+        self.hold_sent: Optional[float] = None      # 마지막 hold 발행 시각 (바뀐 값 · 재발행 모두, 노드 시계)
+        self.hold_matched = 0                        # hold writer 의 DDS 매칭 구독자 수 (마지막으로 본 값)
         self.listen_since: Optional[float] = None    # hold 구독자를 처음 본 주기 시각 (관측 못 한 로봇 해제)
         self.yield_pose: Optional[Tuple[float, float, float]] = None
         self.keepout: Optional[KeepoutMask] = None
@@ -180,6 +199,10 @@ class TrafficManagerNode(Node):
         self._tasks: 'collections.OrderedDict[str, Tuple[int, Optional[float]]]' = \
             collections.OrderedDict()
         self._map_warned = False
+        self.hold_republish_s = float(p('hold_republish_s'))
+        self.republished = 0                                     # hold 재발행 횟수 (진단 · 시험)
+        # (시각, 로봇, 이전, 지금) — hold writer 매칭 구독자 수가 바뀐 기록 (진단 · 시험)
+        self.hold_match_log: Deque[Tuple[float, str, int, int]] = collections.deque(maxlen=500)
 
         self._pub_events = self.create_publisher(DiagnosticArray, '/fleet/traffic_events',
                                                  EVENTS_QOS)
@@ -195,7 +218,8 @@ class TrafficManagerNode(Node):
         self.create_timer(1.0 / rate, self._on_tick)
         self.get_logger().info(
             f'traffic_manager 시작: mode={self.cfg.mode}, robots={sorted(self._robots)}, '
-            f'rate={rate:g} Hz, zones={self.tm.describe_zones()}, pockets={len(self.tm.pockets)} '
+            f'rate={rate:g} Hz, hold 재발행 {self.hold_republish_s:g} s, '
+            f'zones={self.tm.describe_zones()}, pockets={len(self.tm.pockets)} '
             f'({self.cfg.zones_file or "파일 없음"})')
         self._warned = 0
         self._log_layout_warnings()
@@ -207,6 +231,7 @@ class TrafficManagerNode(Node):
             'update_rate_hz': 2.0,           # 평가 주기 (components.md §3.6: 2 Hz)
             'map_topic': '/map',
             'frame_id': 'map',               # plan · 자세 · 마스크 프레임
+            'hold_republish_s': 1.0,         # 평가한 hold 재발행 주기 [s], 0 = 끔 (D9)
         }
         defaults.update(TrafficConfig().to_flat())
         for name, value in defaults.items():
@@ -349,6 +374,8 @@ class TrafficManagerNode(Node):
         for rid, cmd in res.commands.items():
             self._apply(self._robots[rid], cmd)
         self._release_unobserved(now, res.commands)
+        self._republish_holds(now)
+        self._log_hold_matching(now)
         if res.events:
             self._publish_events(res.events)
         self.tick_ms.append((time.perf_counter() - t0) * 1e3)
@@ -376,6 +403,37 @@ class TrafficManagerNode(Node):
                     f'{rid}: hold 구독자가 붙은 뒤 {self.cfg.obs_timeout_s:g} s 동안 관측 없음 '
                     f'(odometry/filtered_map) → hold=false, 교통 관리 밖 (관측되면 평가 값으로 바뀐다)')
                 self._publish_hold(r, False, 'unobserved')
+
+    def _republish_holds(self, now: float) -> None:
+        """
+        평가한 hold 를 hold_republish_s 마다 다시 낸다 (D9).
+
+        transient_local 재생만 믿지 않는다: 매칭된 늦은 구독자가 재생을 놓쳐도 다음 발행으로 받을 기회를 주고, 받지 못하면
+        실행기가 "매칭됐는데 값 없음" 을 경로 고장으로 판정할 근거가 된다. hold=true 를 다시 낼 때는 포켓을 먼저 다시 낸다
+        — 실행기는 hold 시작보다 2 s 넘게 먼저 받은 포켓을 버리므로 늦게 hold 를 받은 실행기가 제자리에 서지 않게.
+        """
+        stamp = None
+        for r in self._robots.values():
+            if not hold_republish_due(r.hold, r.yield_pose is not None, r.hold_sent, now,
+                                      self.hold_republish_s):
+                continue
+            if r.hold and r.yield_pose is not None:
+                stamp = stamp or self.get_clock().now().to_msg()
+                self._publish_pose(r, r.yield_pose, stamp)
+            r.pub_hold.publish(Bool(data=bool(r.hold)))
+            r.hold_sent = now
+            self.republished += 1
+
+    def _log_hold_matching(self, now: float) -> None:
+        """로봇별 hold writer 의 DDS 매칭 구독자 수가 바뀌면 남긴다 (D10 — 늦은 참여자 원인 후보를 가르는 측정)."""
+        for rid, r in self._robots.items():
+            n = r.pub_hold.get_subscription_count()
+            if n == r.hold_matched:
+                continue
+            self.get_logger().info(
+                f'{rid} traffic/hold 매칭 구독자 {r.hold_matched} → {n} (마지막 hold={r.hold})')
+            self.hold_match_log.append((now, rid, r.hold_matched, n))
+            r.hold_matched = n
 
     def _apply(self, r: _Robot, cmd: RobotCommand) -> None:
         stamp = self.get_clock().now().to_msg()
@@ -420,6 +478,7 @@ class TrafficManagerNode(Node):
         first = '' if r.hold is not None else ' (첫 값)'
         self.get_logger().info(f'{r.robot_id} hold={hold}{first} {reason}'.rstrip())
         r.hold = bool(hold)
+        r.hold_sent = self._now()                    # 바뀐 값 발행도 재발행 시계를 0 으로
 
     def _publish_events(self, events: List[TrafficEvent]) -> None:
         stamp = self.get_clock().now().to_msg()
