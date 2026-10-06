@@ -435,6 +435,17 @@ def episode_summary(eps):
            'fallback_rate': float((cat['fallback'].double() / cat['length'].double()).mean())}
     for i, nm in enumerate(C.COST_NAMES):
         out['cost_' + nm] = float(cost[:, i].mean())
+    if 'd_start' in cat:      # 진단 (env 에피소드 기록): 진행 비율·이동 거리·제자리 회전·경로 이탈·목표 최소 거리
+        d0 = cat['d_start'].double().clamp_min(1e-6)
+        ln = cat['length'].double().clamp_min(1.0)
+        out['progress'] = float((1.0 - cat['d_final'].double() / d0).mean())
+        out['travel_ratio'] = float((cat['travel'].double() /
+                                     cat['path_len'].double().clamp_min(1e-6)).mean())
+        out['spin_frac'] = float((cat['spin_steps'].double() / ln).mean())
+        out['offpath_1m_frac'] = float((cost[:, 2] / ln).mean())
+        out['max_e'] = float(cat['max_e'].double().mean())
+        out['goal_min_median'] = float(cat['goal_min'].double().median())
+        out['near_goal_0p5'] = float((cat['goal_min'] <= 0.5).double().mean())
     return out
 
 

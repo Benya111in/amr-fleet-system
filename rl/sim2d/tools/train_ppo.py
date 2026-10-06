@@ -59,18 +59,26 @@ def main():
     ap.add_argument('--eval-every', type=int, default=20, help='갱신 수')
     ap.add_argument('--eval-envs', type=int, default=1024)
     ap.add_argument('--eval-episodes', type=int, default=1024)
+    ap.add_argument('--reward', default='v1.1.0',
+                    help='보상 설계 (amr_rl_contract.reward_variants.CANDIDATES 이름)')
+    ap.add_argument('--eval-seed', type=int, default=None,
+                    help='평가 env 시드 (경로 풀·첫 에피소드 고정). None = seed + 1000')
     ap.add_argument('--run-dir', required=True)
     ap.add_argument('--git-commit', default='unknown')
     a = ap.parse_args()
     os.makedirs(a.run_dir, exist_ok=True)
 
+    eval_seed = a.seed + 1000 if a.eval_seed is None else a.eval_seed
+
     def env_cfg(n, seed):
         return EnvConfig(num_envs=n, seed=seed, arm=a.arm, obstacle_mode=a.obstacles,
                          n_obstacles=tuple(a.n_obstacles), path_len=tuple(a.path_len),
-                         dr=not a.no_dr, safety=not a.no_safety, compile=not a.no_compile)
+                         dr=not a.no_dr, safety=not a.no_safety, compile=not a.no_compile,
+                         reward=a.reward)
     log = print
+    t_wall0 = time.time()
     env = Sim2DEnv(env_cfg(a.envs, a.seed), log=log)
-    eval_env = Sim2DEnv(env_cfg(a.eval_envs, a.seed + 1000), log=log)
+    eval_env = Sim2DEnv(env_cfg(a.eval_envs, eval_seed), log=log)
     pcfg = PPOConfig(rollout=a.rollout, epochs=a.epochs, minibatches=a.minibatches, lr=a.lr,
                      ent_coef=a.ent_coef, target_kl=a.target_kl, lagrangian=a.lagrangian,
                      lag_ki=a.lag_ki,
@@ -80,7 +88,8 @@ def main():
         k: (list(v) if isinstance(v, tuple) else v) for k, v in env.cfg.__dict__.items()
         if k not in ('dr_ranges', 'nominal')}, 'dr_ranges': env.cfg.dr_ranges,
         'gpu': torch.cuda.get_device_name(0), 'torch': torch.__version__,
-        'loadavg_start': os.getloadavg()}
+        'loadavg_start': os.getloadavg(), 'reward_spec': env.spec.__dict__,
+        'eval_seed': eval_seed}
     with open(os.path.join(a.run_dir, 'config.json'), 'w') as f:
         json.dump(cfg, f, indent=1, default=str)
     ftr = open(os.path.join(a.run_dir, 'train.jsonl'), 'a')
@@ -89,15 +98,16 @@ def main():
     def do_eval(upd):
         t0 = time.time()
         tr.model.eval()
-        s = evaluate(tr.model, eval_env, a.eval_episodes, seed=a.seed + 1000)
+        s = evaluate(tr.model, eval_env, a.eval_episodes, seed=eval_seed)
         tr.model.train()
         s.update({'update': upd, 'env_steps': tr.steps, 'eval_s': time.time() - t0})
         fev.write(json.dumps(s) + '\n')
         fev.flush()
         log(f"[eval] upd {upd} steps {tr.steps:.3g}: success {s.get('success', 0):.3f} "
             f"collision {s.get('collision', 0):.3f} stall {s.get('stalled', 0):.3f} "
-            f"timeout {s.get('timeout', 0):.3f} (n={s['episodes']}, "
-            f"unfinished {s.get('unfinished', 0)})", flush=True)
+            f"timeout {s.get('timeout', 0):.3f} progress {s.get('progress', 0):.3f} "
+            f"spin {s.get('spin_frac', 0):.3f} off1m {s.get('offpath_1m_frac', 0):.3f} "
+            f"(n={s['episodes']}, unfinished {s.get('unfinished', 0)})", flush=True)
         torch.save({'model': tr.model.state_dict(), 'steps': tr.steps, 'arm': a.arm},
                    os.path.join(a.run_dir, f'model_{upd:05d}.pt'))
         return s
@@ -144,7 +154,13 @@ def main():
                 f"kl {st['kl']:.4f} ep {st['epochs_run']} ent {st['entropy']:.3f}", flush=True)
         if upd % a.eval_every == 0 or upd == n_upd:
             do_eval(upd)
-    meta = {'algo': 'ppo', 'seed': a.seed, 'git_commit': a.git_commit, 'train_steps': tr.steps}
+    with open(os.path.join(a.run_dir, 'wall.json'), 'w') as f:
+        json.dump({'wall_s': time.time() - t_wall0, 'train_loop_s': time.time() - t_start,
+                   'loadavg_end': os.getloadavg(),
+                   'gpu_max_alloc_gb': torch.cuda.max_memory_allocated() / 1e9,
+                   'gpu_max_reserved_gb': torch.cuda.max_memory_reserved() / 1e9}, f)
+    meta = {'algo': 'ppo', 'seed': a.seed, 'git_commit': a.git_commit, 'train_steps': tr.steps,
+            'reward_spec': env.spec.name}
     path = os.path.join(a.run_dir, 'policy.onnx')
     props = export_onnx(tr.model, path, meta)
     from onnx_check import roundtrip
