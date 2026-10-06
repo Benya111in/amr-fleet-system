@@ -16,4 +16,5 @@ rl:
   goal_reset_distance: 0.25   # [m] 경로 끝이 이만큼 바뀌면 새 목표 (은닉·이탈 상태 0)
   transform_tolerance: 0.2
   yaw_goal_tolerance: 0.05    # [rad] N:99 제자리 정렬 목표
+  align_latency: 0.3          # [s] 정렬 정지각의 명령→실속도 지연 (각저크 램프 + 서보 + ZOH, DWA approach_latency 와 같음)
   stats_topic: rl_controller/stats

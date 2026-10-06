@@ -11,8 +11,8 @@
 // DWA 가 측정 속도로 창을 다시 잡는 경우에만 걸린다).
 //
 // 파라미터 (<name>.rl.*): model_path, mode (B|C), intra_op_threads, max_inference_ms,
-//   hysteresis_beta, require_metadata, dwa_fallback, scan_topic, scan_timeout, track_timeout,
-//   profiler_timeout, goal_reset_distance, transform_tolerance, stats_topic.
+//   hysteresis_beta, require_metadata, dwa_fallback, align_latency, scan_topic, scan_timeout,
+//   track_timeout, profiler_timeout, goal_reset_distance, transform_tolerance, stats_topic.
 //   v_cap 은 DWA 와 같은 <name>.max_vel_x (계약 v_cap = 1.0) 와 setSpeedLimit 의 최솟값.
 // 구독 (controller_server 네임스페이스 상대): scan_filtered (LaserScan),
 //   perception/tracked_obstacles, safety/zone (UInt8, latched), diagnostics (safety_node 항목),

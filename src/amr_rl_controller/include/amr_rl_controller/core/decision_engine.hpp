@@ -7,6 +7,7 @@
 //    입력 무효(스캔·경로), 추론 실패(예외·모양), 시간 초과(추론 > max_inference_ms), 비유한 출력.
 //    그 주기의 모든 틱은 호출자가 DWA 로 명령을 만들고 commitDwa() 로 알려 준다.
 //  - 목표 성공 조건(xy ≤ 0.10 m, |v| ≤ 0.05 m/s)에서는 정책 대신 제자리 yaw 정렬 (contract.md §8).
+//    정렬 속도 상한은 저크·지연을 넣은 정지 속도 (A2-5 — 사다리꼴은 지나쳤다).
 //  - prev_actions = 실제로 낸 명령의 결정 주기 가속도 (DWA·정렬 주기 포함), 최근 순.
 //  - DWA 명령도 직전에 실제로 낸 명령 기준 계약 동적 창(a_max·Δt_c, α_max·Δt_c, v_cap) 안으로
 //    자른다 (commitDwa). 내부 DWA 의 창 중심은 실제 직전 명령과 다를 수 있다 (낡은 v_last,
@@ -38,6 +39,10 @@ struct EngineConfig
   double goal_xy_tol{contract::kGoalXyTol};
   double goal_stop_speed{contract::kGoalStopSpeed};
   double yaw_tol{0.05};             ///< [rad] 정렬 목표 (N:99)
+  /// [s] 정렬 정지각에 넣는 명령→실속도 지연: 각저크 램프 평균 α/2j 0.17 + 서보 0.04–0.12 +
+  /// 결정 ZOH 반 주기 0.05 ≈ 0.3 (DWA approach_latency 와 같은 값, nav2_params.yaml:140)
+  double align_latency{0.3};
+  double align_gain{2.0};           ///< [1/s] 정렬 비례 이득 (ω ≤ k·|e|)
 };
 
 enum class Source : int {kPolicy = 0, kFallbackCell = 1, kDwa = 2, kAlign = 3};

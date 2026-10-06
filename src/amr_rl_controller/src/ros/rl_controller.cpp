@@ -88,6 +88,7 @@ void RLController::configure(
   ec.max_inference_ms = nav::param(node, p + "max_inference_ms", 25.0);
   ec.hysteresis_beta = nav::param(node, p + "hysteresis_beta", 0.0);
   ec.yaw_tol = nav::param(node, p + "yaw_goal_tolerance", 0.05);
+  ec.align_latency = nav::param(node, p + "align_latency", 0.3);
   engine_ = std::make_unique<DecisionEngine>(ec, policy_.get());
 
   v_cap_op_ = nav::param(node, name_ + ".max_vel_x", C::kVMaxOp);

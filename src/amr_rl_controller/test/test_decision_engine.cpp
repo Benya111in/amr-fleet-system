@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "amr_navigation/core/velocity_profiler.hpp"
 #include "amr_rl_controller/core/decision_engine.hpp"
 #include "golden_io.hpp"
 
@@ -318,6 +319,76 @@ TEST(DecisionEngine, GoalAlignRotatesInPlaceWithAlphaLimit)
   in2.dist_to_goal = 0.05;
   r = eng.tick(in2);
   EXPECT_EQ(r.source, Source::kPolicy);
+}
+
+namespace
+{
+// 폐루프 정렬 (A2-5): 엔진 20 Hz → amr_navigation VelocityProfiler 코어 50 Hz (PI 끔, 배포 한계
+// — 각저크 6.0, α 2.0) → 순수 지연 0.04 s + 1 차 지연 0.08 s 플랜트 (V:16-17) → yaw 적분
+// (기준 단계 0.01 s).
+// goal checker 흉내: 엔진 틱마다 |오차| < tol 이면 성공 → 그 뒤 명령 0 (controller_server 가 0 을
+// 낸다). 3 s 더 굴려 멈춘 뒤의 오차를 돌려준다.
+double alignFinalError(double e0, const EngineConfig & cfg, double tol = 0.05)
+{
+  FakePolicy p(Arm::kB);
+  DecisionEngine eng(cfg, &p);
+  amr_navigation::core::VelocityProfilerConfig pc;
+  pc.linear = {-0.5, C::kVMaxHw, C::kAMax, C::kJerkMax};
+  pc.angular = {-C::kWMax, C::kWMax, C::kAlphaMax, C::kAngJerkMax};
+  pc.use_pid = false;
+  amr_navigation::core::VelocityProfiler prof(pc);
+  const double dt = 0.01;
+  const double tm = 0.08;
+  std::vector<double> delay(4, 0.0);   // 0.04 s
+  double yaw = 0.0;
+  double w = 0.0;
+  double w_cmd = 0.0;
+  double w_ref = 0.0;
+  double a_ref = 0.0;   // 플러그인처럼 ω_ref 를 50 Hz 차분 (velocity_profiler/state)
+  bool reached = false;
+  for (int k = 0; k < 2000; ++k) {
+    const double t = k * dt;
+    if (k % 5 == 0 && !reached) {
+      const double err = std::remainder(e0 - yaw, 2.0 * M_PI);
+      if (std::abs(err) < tol) {
+        reached = true;
+        w_cmd = 0.0;
+      } else {
+        auto in = openInput(t);
+        in.dist_to_goal = 0.0;
+        in.yaw_error_to_goal = err;
+        in.state.w_meas = w;
+        in.state.a_w_meas = a_ref;
+        w_cmd = eng.tick(in).w;
+      }
+    }
+    if (k % 2 == 0) {
+      const double prev = w_ref;
+      w_ref = prof.update(0.0, w_cmd, false, 0.0, 0.0, 0.02).w;
+      a_ref = (w_ref - prev) / 0.02;
+    }
+    delay.insert(delay.begin(), w_ref);
+    const double u = delay.back();
+    delay.pop_back();
+    w += (u - w) * (1.0 - std::exp(-dt / tm));
+    yaw += w * dt;
+    if (reached && k > 1500) {
+      break;
+    }
+  }
+  EXPECT_TRUE(reached) << e0;
+  EXPECT_LT(std::abs(w), 1e-3) << e0;
+  return std::remainder(e0 - yaw, 2.0 * M_PI);
+}
+}  // namespace
+
+// A2-5: Gazebo 에서 정렬이 goal checker 성공 뒤 0.16–0.26 rad 더 돌았다 (사다리꼴 정지 속도).
+// 저크·지연을 넣은 정지 속도로 바꾼 뒤에는 하류 사슬을 거쳐 멈춘 오차가 yaw 허용치 0.05 안이다.
+TEST(DecisionEngine, GoalAlignStopsWithinYawToleranceThroughJerkLimitedChain)
+{
+  for (const double e0 : {0.3, -0.3, 1.0, -1.0, 2.06, -2.06, 3.0, -3.0}) {
+    EXPECT_LE(std::abs(alignFinalError(e0, EngineConfig{})), 0.05) << e0;
+  }
 }
 
 TEST(DecisionEngine, ResyncsAfterGapAndOnReset)
