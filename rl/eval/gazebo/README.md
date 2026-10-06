@@ -12,6 +12,7 @@
 | `recompute.py` | 세션 원자료(`episodes/*.json.gz`)에서 지표를 지금의 정의로 다시 계산 → `gzbench_recomputed.csv`·`episodes_v1_recomputed.csv` |
 | `analyze_smoke.py` | 세션 요약: 판정 H1–H4 (A5-4), 집합별 층위 성공·시간·CTE·개입, 전이 점검 3·4·6, 소요 |
 | `analyze_scan.py` · `analyze_step.py` · `transfer_limits.py` | 전이 점검 2 (LaserScan 규약·광선 잔차) · 5 (플랜트 T_m·T_d, 관측 사슬) · 1 (한계 대조표) |
+| `compare_sessions.py` | 부하 조건이 다른 세션(공유 대 독점)의 RTF·지연·주기·플랜트·벽시계를 나란히, 단계 C 소요 추정 (A5-5) |
 
 ## 1. 시나리오 집합 v1 (`gz_static_v1`)
 
@@ -50,7 +51,8 @@
 | 지표 | 정의 |
 | --- | --- |
 | `outcome_contract` | 계약 §8 종단 사건 중 시간순 첫째: collision(지면 진실 풋프린트–정적 상자 부호 거리 < 0, 또는 collision_monitor 접촉) → success(strict_gt) → stall(SimpleProgressChecker 0.3 m·20 s) → timeout. 접촉·성공은 Nav2 종료 뒤 정착 구간까지 본다 (goal checker 는 속도를 안 봐 DWA 가 움직이며 성공을 낸다). 사건 없이 시스템이 먼저 끝나면 stall + `contract_note = ended_without_success`. 준비 실패·감시견은 error |
-| `strict_gt` / `strict_est` | 목표 xy ≤ 0.10 m 이고 \|v\| ≤ 0.05 m/s 인 순간 (지면 진실 / 위치추정 자세) |
+| `strict_gt` / `strict_est` | 목표 xy ≤ 0.10 m 이고 \|v\| ≤ 0.05 m/s 인 순간 (지면 진실 / 위치추정 자세)이 계약 종단 사건 중 첫째 — 두 기준 모두 같은 순서 규칙(접촉 → 성공 → 정체 → 상한, 접촉·정체·상한은 지면 진실). 추정 자세는 실제 표본 사이 틈 ≤ 0.25 s 에서만 보간하고 최종 추정은 잰 시각의 표본으로 덧붙인다 (A5-5 리뷰 반영, `0fd7157` 부터 — 그 전 지표는 정착 구간의 낡은 추정을 끌어 썼다) |
+| `outcome_contract_est` · `est_end_gap_s` | 추정 기준 계약 결과 · 기록 끝 − 마지막 실제 추정 표본 (실행기가 정착 구간까지 표집하면 ≤ 0.1 s; A5-4 원자료는 0.13–0.80 s 라 그 재계산은 근사). 2026-10-07 에 덧붙인 열 |
 | `nav2compat_gt` / `_est` | 목표 xy ≤ 0.25 m 에 접촉 전 닿았다 (Nav2 기본 goal checker, 속도·yaw 무관) |
 | `system_success` | Nav2 navigate_to_pose SUCCEEDED (배포 goal checker: 추정 xy 0.10, yaw 0.05) |
 | `final_*` | 끝나고 정착 뒤 최종 거리·yaw 오차·속도 (지면 진실·추정) |
@@ -72,8 +74,13 @@
 
 ## 3. 단계 C 에 넘기는 것 (A5-4 스모크에서)
 
-- 에피소드 벽시계 (공유 부하 하): DWA 주 34.7 s · 스트레스 72.1 s, RL 38.0 · 38.3 s, 준비 5–9 s, 세션 고정비 약 3 min.
-  팔당 200 (주 100 + 스트레스 100) ≈ DWA 3.0 h, RL 2.1 h. 50 에피소드 묶음(`--start/--count`)으로 끊어 돈다.
-- 지표를 바꾸면 Gazebo 를 다시 돌리지 말고 `recompute.py` 로 다시 계산한다 (원자료가 다 있다). 원래 CSV 는 지우지 않는다.
+- 에피소드 벽시계 — **독점 시간대** (`exclusive.sh`, A5-5): DWA 주 31.9 s · 스트레스 69.7 s, RL 32.7 · 34.2 s, 준비 5.3 s, 세션 고정비 약 3 min
+  (공유 부하 하 예비값: DWA 34.7 · 72.1, RL 38.0 · 38.3). 팔당 200 (주 100 + 스트레스 100), 50 에피소드 묶음(`--start/--count`) 4 세션 ≈
+  **DWA 3.0 h (± 0.7), RL 2.1 h (± 0.2)** — ± 는 스모크 n 10 의 평균 추정 불확실성. RTF 는 독점에서도 중앙 0.88 (위 한계 약 0.9).
+- 부하에 민감한 측정(RTF·벽시계·지연·구동 응답)은 `exclusive.sh` 로 돈다 (COORDINATION §8.1). Gazebo 스택 자체가 loadavg 를 약 20 까지
+  올리므로 loadavg 만으로는 외부 오염을 판단할 수 없다. Isaac 슬롯은 독점 대상이 아니다 — 동시 Isaac 작업을 기록한다.
+- 지표를 바꾸면 Gazebo 를 다시 돌리지 말고 `recompute.py` 로 다시 계산한다 (원자료가 다 있다). 원래 CSV 는 지우지 않고 바꿀 때마다
+  새 접미사를 쓴다 (`_recomputed` = 5222f95 지표, `_recomputed_estfix` = 0fd7157 지표). **단, 원자료에 없는 것은 재계산으로 못 만든다** —
+  A5-4 원자료에는 정착 구간 추정 표본이 없어 strict_est 재계산이 근사다 (A5 리뷰 차단 1). 지표가 새 시계열을 요구하면 실행기도 고친다.
 - 세 제어기 모두로 짧은 흔들기를 먼저 한다 — A5 에서는 RL 로만 흔들어 DWA 의 "움직이며 성공" 꼴의 지표 결함을 스모크에서야 찾았다.
 - 노트: A5-2 (하네스·지표 정의), A5-3 (전이 점검 표), A5-4 (스모크·소요).
