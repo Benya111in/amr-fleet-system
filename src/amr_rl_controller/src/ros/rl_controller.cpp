@@ -29,7 +29,7 @@ constexpr const char * kStatsFields =
   "8 n_valid, 9 saturated, 10 v, 11 w, 12 new_decision, 13 decisions, 14 dwa_decisions, "
   "15 fallback_cell, 16 invalid_action, 17 timeouts, 18 scan_age, 19 track_age, 20 n_tracks, "
   "21 v_cap, 22 dev_in, 23 dev_peak, 24 dwa_limited(누적: 계약 동적 창으로 자른 DWA 틱), "
-  "25 dwa_window_resets(누적: DWA 창 중심을 측정 속도로 되돌린 횟수)";
+  "25 dwa_window_syncs(누적: DWA 창 중심을 실제 직전 명령으로 맞춘 틱 — 어긋나 있던 틱만)";
 
 double toDouble(const std::string & s, double dflt)
 {
@@ -390,16 +390,15 @@ geometry_msgs::msg::TwistStamped RLController::computeVelocityCommands(
   if (r.need_dwa) {
     if (dwa_) {
       // 내부 DWA 는 자기가 마지막으로 낸 명령(v_last_)을 창 중심으로 쓰고, 그 값은 DWA 가 돈 틱에만
-      // 갱신된다 (amr_navigation dwa_controller.cpp:491-493·551-553, dwa.cpp:98-105). 정책·정렬
-      // 구간, 재동기, 아래 자름 뒤에는 실제로 낸 명령과 다르다. 낡은 중심의 창에서는 "제동"(유효
-      // 후보 없음 → 중심 − 감속)이 실제 명령보다 빠를 수 있다 → 어긋나 있으면 activate() 로
-      // has_last_ 를 지워 창 중심을 측정 속도로 되돌린다 (dwa_controller.cpp:259-267). 공개 동기화
-      // API 가 없어서 쓰는 우회다 — 게이트 상태도 지운다 (배포 설정은 yield_gate 끔).
-      const bool synced = dwa_has_last_ && dwa_v_last_ == engine_->lastV() &&
+      // 갱신된다 (dwa.cpp windowCenter). 정책·정렬 구간, 재동기, 아래 자름 뒤에는 실제로 낸 명령과
+      // 다르다 — 낡은 중심의 창에서는 0.30 → 0.15 m/s 로 뛰거나(1차 물결 리뷰 재현) 제동이 가속이
+      // 된다. 그래서 매 DWA 틱 실제로 낸 직전 명령(엔진의 lastV·lastW)을 알린다. 1차 물결은 공개
+      // API 가 없어 activate() 로 창을 측정 속도로 되돌렸고 게이트 상태까지 지웠다.
+      const bool in_sync = dwa_has_last_ && dwa_v_last_ == engine_->lastV() &&
         dwa_w_last_ == engine_->lastW();
-      if (!synced) {
-        dwa_->activate();
-        ++counters_.dwa_window_resets;
+      dwa_->syncLastCommand(engine_->lastV(), engine_->lastW());
+      if (!in_sync) {
+        ++counters_.dwa_window_syncs;
       }
       const auto cmd = dwa_->computeVelocityCommands(pose, velocity, goal_checker);
       v = cmd.twist.linear.x;
@@ -466,9 +465,9 @@ geometry_msgs::msg::TwistStamped RLController::computeVelocityCommands(
     RCLCPP_INFO(
       logger_,
       "RLController: 틱 %zu, 결정 %zu, DWA 폴백(입력 %zu, 오류 %zu, 시간초과 %zu, 비유한 %zu), "
-      "계약 폴백 셀 %zu, 마스크 밖 %zu, 정렬 %zu, DWA 자름 %zu, DWA 창 재설정 %zu",
+      "계약 폴백 셀 %zu, 마스크 밖 %zu, 정렬 %zu, DWA 자름 %zu, DWA 창 맞춤 %zu",
       c.ticks, c.decisions, c.dwa[1], c.dwa[2], c.dwa[3], c.dwa[4], c.fallback_cell,
-      c.invalid_action, c.align, c.dwa_limited, c.dwa_window_resets);
+      c.invalid_action, c.align, c.dwa_limited, c.dwa_window_syncs);
   }
   return cmd;
 }
@@ -493,7 +492,7 @@ void RLController::publishStats(const TickResult & r, double cycle_ms, const Tic
     static_cast<double>(c.dwa[static_cast<std::size_t>(DwaReason::kTimeout)]),
     in.state.scan_age, in.state.track_age, static_cast<double>(in.state.tracks.size()),
     in.state.v_cap, engine_->dev().in_dev ? 1.0 : 0.0, engine_->dev().peak,
-    static_cast<double>(c.dwa_limited), static_cast<double>(c.dwa_window_resets)};
+    static_cast<double>(c.dwa_limited), static_cast<double>(c.dwa_window_syncs)};
   stats_pub_->publish(st);
 }
 

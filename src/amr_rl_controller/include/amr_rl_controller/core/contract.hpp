@@ -1,4 +1,6 @@
-// RL 내비게이션 계약 v1.1.0 상수 — rl/contract/amr_rl_contract/constants.py 의 C++ 사본.
+// RL 내비게이션 계약 v1.2.0 상수 — rl/contract/amr_rl_contract/constants.py 의 C++ 사본.
+// v1.2.0 은 보상만 바꿨다 (관측·행동·마스크·ONNX 입출력은 v1.1.0 과 같다, contract.md 변경 이력) →
+// 이 플러그인의 계산은 그대로이고 판 문자열만 올린다. 모델은 주 버전이 같으면 받는다 (onnx_io.md).
 //
 // 단일 진실 공급원은 파이썬 constants.py 다. 이 파일의 값은 golden JSON 의 "constants" 블록과
 // test/test_contract_golden.cpp 가 대조한다 (값이 어긋나면 시험이 깨진다).
@@ -14,7 +16,7 @@ namespace amr_rl_controller
 namespace contract
 {
 
-constexpr const char * kContractVersion = "1.1.0";
+constexpr const char * kContractVersion = "1.2.0";
 constexpr int kContractMajor = 1;
 
 // 로봇 기하·한계
