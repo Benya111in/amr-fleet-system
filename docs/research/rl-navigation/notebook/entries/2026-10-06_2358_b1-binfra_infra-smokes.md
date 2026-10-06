@@ -96,7 +96,16 @@ effectively unconstrained at end)", `constraint` = "intervention <= d (undiscoun
 처음 생존한 L2 (λ 상한 없음) 는 시험이 적분 상한만 보고 있어서였다 → 비례항 상한 시험을 더해 잡았다. 처음 판의 G1 (승수를 `self.lam` 에 저장해
 rsl_rl 의 GAE λ 를 덮어씀) 은 **실제로 내가 처음 짠 코드의 결함**이었고 vanilla 비트 동일 시험이 잡았다.
 
-(SAC·학습 env 동치·오차 자르기 결과는 아래에 이어 적는다.)
+**6. 학습 env 동치** [측정, `B0_equiv_f007e2e`·`B0_equiv_aa07062_a`·`_b`; 비교 [계산] `B0_equiv_compare`, `analysis/B0_equiv/equiv.{py,json}`]:
+새 코드 두 번 = 비트 동일, 옛 코드 = 새 코드 두 번과 비트 동일 (정책·정규화 통계 전 매개변수 최대 차 0, curve.jsonl 값 같음) — **"같은 env"
+통과**. 예측대로다. 이 점검은 512 env·3 반복·시드 0·DR 켬·정본 φ 한 설정이다 (DR 끔·PID 경로는 덮지 않는다 — 그 경로는 옛 코드에 없다).
+
+**7. PID 오차 자르기 스모크 — 취소 (결과 없음)**: SAC 스모크가 공유 부하로 예상보다 느려 (2 600–4 800 env-step/s) 이 항목까지 돌리면 하류
+실행자(b1-sweep·b1-sac·b1-dr·b1-ppo10-eval — 이 브랜치의 마지막 커밋에서 갈라진다)가 약 20 분 더 기다린다. 그래서 돌리지 않았다 (결과를 본 적
+없다). `--pid_err_clip`·`--constraint_start` 는 단위 시험(`test_pid_lagrange.py` 12 개)과 변이 L7·L8 만 거쳤고 **Isaac 에서는 미측정**이다 —
+b1-sweep 이 쓰려면 자기 사전 등록에 스모크를 넣는다.
+
+(SAC 결과는 아래에 이어 적는다.)
 
 ## 해석
 (스모크 뒤)

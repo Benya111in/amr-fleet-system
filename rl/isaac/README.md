@@ -276,6 +276,9 @@ isaac pert_s0 rl/isaac/scripts/eval_unbiased.py --policy <run>/policy_final.pt -
 예산은 COORDINATION §8.3 (2026-10-07 01:15) 이 정한다: **B2·B3 는 160 반복 = 20 971 520 env-step** 이고 비교 기준은 b1-ppo10 각 시드의
 `policy_it160.pt` (같은 스텝), **B4 의 DR 끔은 300 반복 = 39.3M** (DR 켬 팔 = b1-ppo10 의 최종 정책). GPU 가 정본 φ run 하나로 거의 포화라 동시
 실행은 총 처리량을 늘리지 않는다 [측정, §8.3: 혼자 약 14 600, 3 개 동시 각 약 4 050 env-step/s].
+이 브랜치의 env 변경(평가 전용 경로·교란·관측 지연·지연 버퍼 확장)은 학습 동작을 바꾸지 않는다 — `f007e2e`(b1-ppo10 코드) 1 회와 이 브랜치
+코드 2 회의 3 반복 학습(512 env, 시드 0)이 정책 매개변수까지 **비트 단위로 같다** [측정, 노트 infra-smokes 항목 6, `B0_equiv_*`]. 그래서 B4 의
+DR 켬 팔로 b1-ppo10 정책을 그대로 쓸 수 있다.
 
 ```bash
 # B1 PPO (지금 코드 그대로 — b1-ppo10 의 명령과 같다)
