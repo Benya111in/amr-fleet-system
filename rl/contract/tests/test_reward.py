@@ -127,7 +127,12 @@ def _ret(rews, gamma):
 
 
 def test_trajectory_ordering_knox():
-    """τ_crash ≺ τ_idle ≺ τ_succ, τ_loiter ≺ τ_succ — 할인(shaping 포함)과 무할인(기저) 모두."""
+    """
+    τ_crash ≺ τ_idle ≺ τ_succ, τ_loiter ≺ τ_succ — 할인(shaping 포함)과 무할인(기저) 모두.
+
+    충돌은 **조기 충돌**(5 m 지점, 5 s)이다. 진행을 오래 모은 뒤의 늦은 충돌은 계약 v1.2.0 의 할인 가치에서
+    대기보다 높아질 수 있다 (§6.3 알려진 대가) — test_reward_variants.py::test_late_crash_* 가 그 위치를 고정한다.
+    """
     def run(xs, collision=False, success=False):
         states = [_st(x, 0.0) for x in xs]
         if success:

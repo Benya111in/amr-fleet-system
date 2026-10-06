@@ -7,6 +7,11 @@
   - 무할인 기저(shaping 제외): 계약 에피소드(첫 정체·시간 상한 truncation 또는 종단)까지의 합.
 v1.1.0 과 pbrs_eff 는 "대기 = 진행 후 정지" 가 같은 값(평평)임을 고정하고, 진행형 후보(prog*)는 엄격한
 순서를 요구한다.
+
+충돌 궤적은 두 갈래로 본다 (리뷰 B2): 20 m 경로의 5 m 지점 **조기 충돌**은 모든 후보에서 할인·무할인 모두 대기보다
+낮다. 진행을 오래 모은 뒤의 **늦은 충돌**은 진행형 후보에서 할인 가치가 대기보다 높아진다 — 할인 조건
+κ_b·Σ_{t<T} γ^t Δd_t < γ^{T−1}(C − γ·c̄) 가 깨진다. 이것은 계약 §6.3 의 알려진 대가이고 아래 시험이 위반의
+위치를 고정한다. 결정 수준(같은 지점까지 와서 정지 ≻ 충돌)은 C > γ·c̄ 만으로 모든 후보에서 성립한다.
 """
 
 import math
@@ -129,7 +134,8 @@ def test_outcomes_are_what_the_trajectory_says(values):
 
 
 @pytest.mark.parametrize('name', list(RV.CANDIDATES))
-def test_crash_idle_success_order_discounted_and_undiscounted(values, name):
+def test_early_crash_idle_success_order_discounted_and_undiscounted(values, name):
+    """조기 충돌(20 m 경로의 5 m) ≺ 대기 ≺ 성공 — 늦은 충돌은 test_late_crash_* 가 따로 본다."""
     v = values[name]
     for k in (0, 1):
         assert v['crash'][k] < v['idle'][k] < v['succ'][k], (name, k, v['crash'], v['idle'])
@@ -176,20 +182,151 @@ def test_candidates_spell_out_every_term():
 
 
 @pytest.mark.parametrize('name', list(RV.CANDIDATES))
-def test_suicide_window_holds_to_30m(name):
+def test_undiscounted_suicide_window_arithmetic(name):
     """
-    자살 하한 (「이론」 201행).
+    무할인 계약 에피소드의 자살 창 — 산술만 본다 (궤적은 test_undiscounted_late_crash_below_idle).
 
-    진행 효용은 종단에서 돌려받지 않으므로 "진행 κ_b·d 를 모은 뒤 충돌" ≺ "대기" 가 C > c̄ + κ_b·d_max 를
-    요구한다 (d_max 30 m, §10). 정체 종단이면 대기 영구보다 이른 정체가 이득이 아니도록 P_s ≥ c̄, 무할인으로
-    충돌 ≺ 정체(20 s 대기 뒤)가 되도록 P_s < C − c·200.
+    정체 truncation 으로 20 s 에 끝나는 대기의 무할인 기저는 −c·200 (= c̄ = 4 와 같은 값). 30 m 진행 효용
+    κ_b·30 을 모은 뒤의 충돌이 그보다 낮으려면 C > c·200 + κ_b·d_max (κ_b 0.5 → 19). **할인 가치의 순서는
+    이것으로 보장되지 않는다** (늦은 충돌의 벌점이 γ^T 로 줄어든다 — test_late_crash_*). 정체 종단이면 대기
+    영구보다 이른 정체가 이득이 아니도록 P_s ≥ c̄, 무할인으로 충돌 ≺ 정체(20 s 대기 뒤)가 되도록 P_s < C − c·200.
     """
     sp = RV.get(name)
     cbar = sp.time_cost / (1.0 - C.GAMMA)
-    assert sp.collision_penalty > cbar + sp.progress_kappa * 30.0
+    steps = C.STALL_TIME / C.DT
+    assert sp.collision_penalty > sp.time_cost * steps + sp.progress_kappa * 30.0
     if sp.stall_terminal:
-        steps = C.STALL_TIME / C.DT
         assert cbar <= sp.stall_penalty < sp.collision_penalty - sp.time_cost * steps
+
+
+def _line(L):
+    return [(0.0, 0.0), (L, 0.0)]
+
+
+def _line_value(L, xs, spec, crash):
+    """
+    직선 L m 경로에서 위치열 xs(xs[0] = 0)를 행동 0 으로 따라간 (할인 가치, 무할인 기저 에피소드 합).
+
+    crash: 마지막 전이가 충돌. 아니면 끝에서 정지해 TAIL 스텝(정체 종단이면 종단까지) 대기 — 할인 가치는
+    truncation 을 넘는 연속 롤아웃(정확한 critic 부트스트랩), 무할인 기저는 첫 정체·시간 상한까지.
+    """
+    path = _line(L)
+    t_lim = R.time_limit(path)
+    pc = R.ProgressChecker((xs[0], 0.0), 0.0)
+    pre = State(pose=(xs[0], 0.0, 0.0), path=path, scan_ranges=empty_scan())
+    n = len(xs) - 1
+    total = n if crash else n + TAIL
+    disc, g, base, ep_open = 0.0, 1.0, 0.0, True
+    for k in range(total):
+        x = xs[k + 1] if k < n else xs[-1]
+        post = State(pose=(x, 0.0, 0.0), path=path, scan_ranges=empty_scan(),
+                     v_meas=1.0 if k < n else 0.0)
+        post.dev = pre.dev
+        t = (k + 1) * C.DT
+        stalled = pc.update((x, 0.0), t)
+        r = R.step(pre, post, (0.0, 0.0), crash and k == n - 1, spec=spec, stalled=stalled)
+        disc += g * r.reward
+        g *= C.GAMMA
+        if ep_open:
+            base += r.reward - r.terms['shape']
+        if r.terminated:
+            break
+        if stalled or t > t_lim:
+            ep_open = False
+        post.dev = r.dev
+        pre = post
+    return disc, base
+
+
+def _approach(x_end, v):
+    n = max(1, int(round(x_end / (v * C.DT))))
+    return [x_end * i / n for i in range(n + 1)]
+
+
+def _idle_disc(L, spec):
+    """경로 위 영구 대기의 할인 가치: 정체가 truncation 이면 닫힌 꼴 κ·L − c̄ (TAIL 절단 오차 없이)."""
+    if not spec.stall_terminal:
+        return spec.kappa * L - spec.time_cost / (1.0 - C.GAMMA)
+    return _line_value(L, [0.0], spec, False)[0]
+
+
+def _late_crash_minus_idle(L, v, spec):
+    """속도 v 로 목표 0.5 m 앞까지 간 뒤 충돌 − 영구 대기 (할인)."""
+    xs = _approach(L - 0.5, v)
+    return _line_value(L, xs, spec, True)[0] - _idle_disc(L, spec), xs
+
+
+@pytest.mark.parametrize('name', [n for n in RV.CANDIDATES if not RV.get(n).stall_terminal])
+def test_discounted_crash_vs_idle_is_closed_form(name):
+    """
+    할인 (진행 뒤 충돌) − (영구 대기) = κ_b·Σ_{t<T} γ^t Δd_t − γ^{T−1}(C − γ·c̄)  (경로 위, 행동 0).
+
+    T = 충돌 스텝을 포함한 스텝 수. PBRS 합은 두 궤적 모두 −Φ(s₀) 로 상쇄되고, 시간 비용 차는 γ^T·c̄ 다.
+    늦은 충돌일수록 벌점 항이 γ^{T−1} 로 줄고 진행 효용 항은 남는다 — κ_b > 0 이면 충분히 늦은 충돌이
+    대기보다 높아진다.
+    """
+    sp = RV.get(name)
+    cbar = sp.time_cost / (1.0 - C.GAMMA)
+    for L, v in ((6.0, 0.1), (15.0, 0.5), (30.0, 1.0), (30.0, 0.3)):
+        d, xs = _late_crash_minus_idle(L, v, sp)
+        T = len(xs) - 1
+        bank = sum(C.GAMMA ** t * (xs[t + 1] - xs[t]) for t in range(T))
+        penalty = C.GAMMA ** (T - 1) * (sp.collision_penalty - C.GAMMA * cbar)
+        want = sp.progress_kappa * bank - penalty
+        assert d == pytest.approx(want, abs=1e-9), (name, L, v)
+        if not sp.progress_kappa:
+            assert d < 0.0, (name, L, v)               # v1.1.0·pbrs_eff: 늘 대기보다 낮다
+
+
+def test_late_crash_beats_idle_discounted_known_cost():
+    """
+    알려진 대가 고정 (계약 §6.3, reward_v12.md §3.4): v1.2.0 의 할인 Knox τ_crash ≺ τ_idle 은 늦은 충돌에서 깨진다.
+
+    목표 0.5 m 앞 충돌이 대기보다 높아지는 최소 경로 길이 (0.5 m 격자): 1.0 m/s 26.5 m, 0.3 m/s 14.5 m.
+    30 m 를 1 m/s 로 29.5 m 간 뒤의 충돌은 대기보다 +1.76. prog25 도 0.5 m/s 25 m 에서 깨진다.
+    v1.1.0 은 30 m 안 어디서도 깨지지 않는다.
+    """
+    v12 = R.SPEC
+    for L, v in ((26.5, 1.0), (14.5, 0.3)):
+        assert _late_crash_minus_idle(L, v, v12)[0] > 0.0, (L, v)
+        assert _late_crash_minus_idle(L - 0.5, v, v12)[0] < 0.0, (L, v)
+    assert _late_crash_minus_idle(30.0, 1.0, v12)[0] == pytest.approx(1.76, abs=0.01)
+    assert _late_crash_minus_idle(25.0, 0.5, RV.PROG25)[0] > 0.0
+    assert _late_crash_minus_idle(24.5, 0.5, RV.PROG25)[0] < 0.0
+    for v in (0.3, 1.0):
+        assert _late_crash_minus_idle(30.0, v, R.SPEC_V110)[0] < 0.0
+
+
+@pytest.mark.parametrize('name', list(RV.CANDIDATES))
+def test_undiscounted_late_crash_below_idle(name):
+    """무할인 계약 에피소드: 30 m 를 1 m/s 로 29.5 m 간 뒤의 충돌도 정체 truncation 으로 끝나는 대기보다 낮다."""
+    sp = RV.get(name)
+    crash = _line_value(30.0, _approach(29.5, 1.0), sp, True)[1]
+    idle = _line_value(30.0, [0.0], sp, False)[1]
+    assert crash < idle, (name, crash, idle)
+
+
+@pytest.mark.parametrize('name', list(RV.CANDIDATES))
+def test_stop_beats_crash_at_every_point(name):
+    """
+    결정 수준의 자살은 없다: 같은 접근 뒤 그 자리 정지 ≻ 그 자리 충돌 (30 m 경로, 1 m/s·0.3 m/s, 2.5–29.5 m).
+
+    진행 효용은 두 궤적에서 같으므로 차이는 γ^{T−1}(C − γ·c̄) 이고 κ_b 와 무관하다 — C > γ·c̄ 이면 충분하다
+    (정체 종단 후보는 정지 뒤 정체 벌점 γ^{T+200}·P_s 를 더 낸다).
+    """
+    sp = RV.get(name)
+    cbar = sp.time_cost / (1.0 - C.GAMMA)
+    for v in (1.0, 0.3):
+        for xc in (2.5, 10.0, 20.0, 29.5):
+            xs = _approach(xc, v)
+            stop = _line_value(30.0, xs, sp, False)[0]
+            crash = _line_value(30.0, xs, sp, True)[0]
+            T = len(xs) - 1
+            gap = C.GAMMA ** (T - 1) * (sp.collision_penalty - C.GAMMA * cbar)
+            assert stop > crash, (name, v, xc)
+            if not sp.stall_terminal:
+                # TAIL 절단 오차 ≈ 1e-5
+                assert stop - crash == pytest.approx(gap, abs=1e-4), (name, v, xc)
 
 
 def _chain_rush_states(kb, p, n=300, gamma=C.GAMMA):
