@@ -4,8 +4,11 @@ B 단계 기반 코드(b1-binfra)의 가드·불변식 변이 검사 — 하나�
 
     python3 mutate_binfra.py --src <저장소 스냅숏> --work <임시 디렉터리> --out <json> [--image cpu|isaac]
 
-스냅숏의 rl/ 을 변이마다 임시 디렉터리로 복사해 파일 한 곳만 바꾼다 (원본·worktree 는 건드리지 않는다). 판정: 지정한
-시험 파일들의 pytest 가 실패하면(rc ≠ 0) 잡힘. --image cpu 는 amr-ai/rl:0.3 안에서 (rsl_rl 없음 → ppo_lag 변이는 건너뜀),
+스냅숏의 rl/ 과 src/amr_simulation/ (창고 SDF — 시험이 읽는다) 을 변이마다 임시 디렉터리로 복사해 파일 한 곳만
+바꾼다 (원본·worktree 는 건드리지 않는다). 먼저 **변이 없는 대조** 사본에서 모든 시험 파일이 통과해야 한다 — 통과하지
+않으면 변이 결과를 믿을 수 없으므로 rc 2 로 멈춘다 (처음 판은 대조가 없어 SDF 를 못 찾은 수집 오류를 "잡힘" 으로 셌다).
+판정: 지정한 시험 파일들의 pytest 가 실패하면(rc ≠ 0) 잡힘 — 실패(failed)인지 오류(error)인지도 적는다.
+--image cpu 는 amr-ai/rl:0.3 안에서 (rsl_rl 없음 → ppo_lag 변이는 건너뜀),
 --image isaac 은 Isaac 이미지 파이썬에서 ppo_lag 변이만 돈다. 컨테이너 안에서 이 스크립트를 부르면 된다 (README 「시험」).
 """
 
@@ -106,8 +109,40 @@ MUTANTS = [
 ]
 
 
+def run_copy(a, name, f, old, new, tests):
+    """사본 하나 (f 가 None 이면 변이 없는 대조) 에서 시험 → 결과 dict."""
+    w = os.path.join(a.work, name.split()[0])
+    if os.path.exists(w):
+        shutil.rmtree(w)
+    ign = shutil.ignore_patterns('__pycache__')
+    shutil.copytree(os.path.join(a.src, 'rl'), os.path.join(w, 'rl'), ignore=ign)
+    sim = os.path.join(a.src, 'src', 'amr_simulation')
+    if os.path.isdir(sim):
+        shutil.copytree(sim, os.path.join(w, 'src', 'amr_simulation'), ignore=ign)
+    if f is not None:
+        p = os.path.join(w, 'rl', 'isaac', f)
+        s = open(p, encoding='utf-8').read()
+        n = s.count(old)
+        if n != 1:
+            shutil.rmtree(w)
+            return {'mutant': name, 'status': f'원본 조각 {n} 번 (적용 실패)'}
+        open(p, 'w', encoding='utf-8').write(s.replace(old, new))
+    t0 = time.time()
+    r = subprocess.run([a.python, '-m', 'pytest', '-q', '-x', '-p', 'no:cacheprovider', *tests],
+                       cwd=os.path.join(w, 'rl', 'isaac'), capture_output=True, text=True,
+                       env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
+    lines = [x for x in r.stdout.strip().splitlines()
+             if ' passed' in x or ' failed' in x or ' error' in x]
+    tail = lines[-1] if lines else (r.stdout.strip().splitlines() or [''])[-1]
+    shutil.rmtree(w)
+    kind = 'failed' if ' failed' in tail else 'error' if ' error' in tail else 'other'
+    return {'mutant': name, 'file': f, 'tests': tests, 'rc': r.returncode,
+            'caught': r.returncode != 0, 'kind': kind, 'summary': tail,
+            'seconds': round(time.time() - t0, 1)}
+
+
 def main():
-    """변이마다 사본·적용·시험."""
+    """대조 → 변이마다 사본·적용·시험."""
     ap = argparse.ArgumentParser()
     ap.add_argument('--src', required=True, help='저장소 스냅숏 (rl/ 이 있는 곳)')
     ap.add_argument('--work', required=True)
@@ -115,34 +150,27 @@ def main():
     ap.add_argument('--image', default='cpu', choices=('cpu', 'isaac'))
     ap.add_argument('--python', default=sys.executable)
     a = ap.parse_args()
+    mine = [m for m in MUTANTS if m[5] == a.image]
+    all_tests = sorted({t for m in mine for t in m[4]})
+    ctl = run_copy(a, 'CONTROL', None, None, None, all_tests)
+    print(f'CONTROL rc={ctl["rc"]}: {ctl["summary"]}', flush=True)
+    if ctl['rc'] != 0:
+        with open(a.out, 'w', encoding='utf-8') as fh:
+            json.dump({'image': a.image, 'control': ctl, 'error': 'control failed'}, fh,
+                      ensure_ascii=False, indent=1)
+        return 2
     res = []
-    for name, f, old, new, tests, img in MUTANTS:
-        if img != a.image:
-            continue
-        w = os.path.join(a.work, name.split()[0])
-        if os.path.exists(w):
-            shutil.rmtree(w)
-        shutil.copytree(os.path.join(a.src, 'rl'), os.path.join(w, 'rl'),
-                        ignore=shutil.ignore_patterns('__pycache__'))
-        p = os.path.join(w, 'rl', 'isaac', f)
-        s = open(p, encoding='utf-8').read()
-        n = s.count(old)
-        if n != 1:
-            res.append({'mutant': name, 'status': f'원본 조각 {n} 번 (적용 실패)'})
-            continue
-        open(p, 'w', encoding='utf-8').write(s.replace(old, new))
-        t0 = time.time()
-        r = subprocess.run([a.python, '-m', 'pytest', '-q', '-x', '-p', 'no:cacheprovider',
-                            *tests], cwd=os.path.join(w, 'rl', 'isaac'), capture_output=True,
-                           text=True, env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
-        tail = (r.stdout.strip().splitlines() or [''])[-1]
-        res.append({'mutant': name, 'file': f, 'tests': tests, 'rc': r.returncode,
-                    'caught': r.returncode != 0, 'summary': tail,
-                    'seconds': round(time.time() - t0, 1)})
-        print(('CAUGHT  ' if r.returncode else 'SURVIVED') + f' {name}: {tail}', flush=True)
-        shutil.rmtree(w)
+    for name, f, old, new, tests, _img in mine:
+        r = run_copy(a, name, f, old, new, tests)
+        res.append(r)
+        if 'rc' in r:
+            print(('CAUGHT  ' if r['caught'] else 'SURVIVED') + f' {name}: {r["summary"]}',
+                  flush=True)
+        else:
+            print(f'NOT_APPLIED {name}: {r["status"]}', flush=True)
     caught = sum(1 for x in res if x.get('caught'))
-    out = {'image': a.image, 'mutants': len(res), 'caught': caught, 'results': res}
+    out = {'image': a.image, 'control': ctl, 'mutants': len(res), 'caught': caught,
+           'results': res}
     with open(a.out, 'w', encoding='utf-8') as fh:
         json.dump(out, fh, ensure_ascii=False, indent=1)
     print(f'MUTATION {a.image}: {caught}/{len(res)} 잡힘', flush=True)

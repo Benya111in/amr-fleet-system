@@ -143,8 +143,14 @@ def interval_block(ep, groups):
 
 
 def run_first_episodes(env, pol, keep_obs=None, keep_out=None):
-    """env.reset(seed) 뒤 모든 env 의 첫 에피소드를 끝까지 → (에피소드별 numpy dict, unfinished, 스텝, 벽시계)."""
-    obs, _ = env.reset(seed=args.seed)
+    """
+    env.reset(seed) 뒤 모든 env 의 첫 에피소드를 끝까지 → (에피소드별 numpy dict, unfinished, 스텝, 벽시계).
+
+    리셋도 inference_mode 안에서 한다 — 앞 라운드의 스텝이 env 버퍼를 inference 텐서로 바꿔 두어, 밖에서 리셋하면
+    제자리 갱신이 막힌다 (스모크 B0_smoke_perturb_A3c 1 회차가 둘째 라운드 리셋에서 이 오류로 멈췄다).
+    """
+    with torch.inference_mode():
+        obs, _ = env.reset(seed=args.seed)
     N = env.num_envs
     first_path = env.pool_kept[env.path_id.cpu().numpy()]
     max_tl = float(env.time_limit.max())

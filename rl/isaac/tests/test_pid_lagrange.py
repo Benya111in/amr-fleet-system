@@ -115,3 +115,10 @@ def test_episode_cost_tracker():
     tr.step(torch.tensor([0.0, 0.0, 1.0]), torch.tensor([False, False, True]))
     J, n = tr.pop()
     assert n == 1 and J == pytest.approx(3.0) and not math.isnan(J)
+
+
+def test_lambda_cap_applies_to_proportional_term():
+    """적분이 0 이어도 비례항이 상한을 넘으면 λ = λ_max (변이 L2 가 살아남아 더한 시험)."""
+    pid = PL.PIDLagrangian(kp=1.0, ki=0.0, kd=0.0, budget=0.2, lambda_max=3.0)
+    lam = pid.update(10.0)                 # e = 49 → 비례 49
+    assert pid.integral == 0.0 and pid.last['raw'] == pytest.approx(49.0) and lam == 3.0
