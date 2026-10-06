@@ -5,6 +5,7 @@
   /clock)에서 돈다. 벽시계 예외는 /clock 감시 하나뿐이다 (/clock 이 없다는 것 자체를 알리는 타이머).
 - TimerQueue(송신 지연 큐)와 EmulatedInbox(수신 측 통신 모의)는 sim 시각이 멈추면 벽시계가 흘러도
   내보내지 않고, sim 시각이 해제 시각을 넘으면 내보낸다.
+- EmulatedInbox 는 같은 송신자끼리 FIFO(지연이 뒤섞여도 추월 없음)이고, 다른 송신자는 그 뒤에 묶이지 않는다.
 목록과 근거: docs/research/fleet-distributed/p0.md §2. rclpy·amr_msgs 가 없으면 건너뛴다.
 """
 
@@ -102,6 +103,41 @@ def test_timer_queue_and_inbox_release_on_sim_time(ctx):
         clock.set_ros_time_override(Time(seconds=251))
         _spin_for(executor, 0.3)
         assert [o[1] for o in out if o[0] == 'in'] == ['self', 'beacon_1', 'beacon_3']
+    finally:
+        executor.remove_node(node)
+        node.destroy_node()
+
+
+def test_inbox_is_fifo_per_sender_and_independent_across_senders(ctx):
+    """
+    지연 0–100 ms 무작위 링크에서 amr_b 가 한 시각에 8 개를 보내면 보낸 순서로 나온다.
+
+    같은 시드의 쌍둥이 모의로 지연열을 미리 뽑아 전제를 확인한다: 뒤 항목이 앞 항목보다 짧은 쌍이 있고
+    (FIFO 가 없으면 추월), 그 뒤 amr_c 의 지연이 amr_b 의 최대 지연보다 짧다 (송신자 구분이 없으면 묶인다).
+    """
+    node = rclpy.create_node('st_fifo', parameter_overrides=_params({'use_sim_time': True}))
+    clock = node.get_clock()
+    clock.set_ros_time_override(Time(seconds=100))
+    executor = SingleThreadedExecutor()
+    executor.add_node(node)
+    out = []
+    try:
+        model = LinkModel(0.0, 100.0)
+        twin = CommEmulator(seed=11, default=model)
+        d_b = [twin.transmit('amr_b', 'amr_a', 100.0) for _ in range(8)]
+        d_c = twin.transmit('amr_c', 'amr_a', 100.0)
+        assert any(later < earlier for earlier, later in zip(d_b, d_b[1:]))
+        assert d_c < max(d_b)
+        inbox = EmulatedInbox(node, CommEmulator(seed=11, default=model), 'amr_a', out.append)
+        rel_b = [inbox.receive('amr_b', f'b{i}') for i in range(8)]
+        rel_c = inbox.receive('amr_c', 'c0')
+        assert rel_b == sorted(rel_b)                          # 해제 시각이 줄지 않는다 (링크 FIFO)
+        assert rel_b[-1] == pytest.approx(100.0 + max(d_b))
+        assert rel_c == pytest.approx(100.0 + d_c)             # 다른 송신자는 자기 지연대로
+        clock.set_ros_time_override(Time(seconds=101))
+        _spin_for(executor, 0.3)
+        assert [x for x in out if x.startswith('b')] == [f'b{i}' for i in range(8)]
+        assert sorted(out) == sorted([f'b{i}' for i in range(8)] + ['c0'])
     finally:
         executor.remove_node(node)
         node.destroy_node()
