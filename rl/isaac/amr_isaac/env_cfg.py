@@ -114,6 +114,11 @@ class AmrNavEnvCfg(DirectRLEnvCfg):
     stats_window: int = 1024         # 최근 에피소드 결과 창 (로그용)
     path_pad: int = 640              # 경로 점 패딩 (풀 최대 602)
     max_tracks: int = 16             # 트랙 버퍼 (관측은 상위 8, contract §4)
+    # safety φ: 'lite' = 근사 D + safety_lite (1·2차 물결, r7 정책이 이것으로 학습),
+    #           'canonical' = 정본 SafetyGate 이식 (safety_gate_torch)
+    safety_filter: str = 'lite'
+    phi_cloud_mode: str = 'empty'    # 정본 φ 의 깊이 점군 모델 (env_math.CanonicalPhi)
+    success_dwell_steps: int = 1     # 평가 전용: >1 이면 성공 조건을 이 결정 스텝 수만큼 연속 유지해야 성공
 
 
 @configclass

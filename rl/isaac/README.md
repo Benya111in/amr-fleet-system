@@ -14,13 +14,16 @@
 | `amr_isaac/contract_torch.py` | 계약 기준 구현(numpy)의 배치 torch 판 — 관측 291, 보상 8 항(v1.2.0, `reward.RewardSpec` 을 그대로 받는다), 전이 전 거리 캐시 `observe_with_cache`, 비용 5, 이탈 상태기계, `integrate_b`, 프로파일러, safety_lite | 아니오 |
 | `amr_isaac/warehouse_geom.py` | `warehouse.sdf`(읽기 전용) + include 모델 → 충돌 상자 229 개 → 삼각형 메시 / 2D 사각형 129 개 / 0.05 m 점유 격자 | 아니오 |
 | `amr_isaac/paths.py`, `assets.py` | 전역 코스트맵 팽창 + A* 간선 비용으로 비용 최단 경로 풀 (캐시 `$AMR_ISAAC_RUNS/assets`, 커밋 안 함 — 해시 `58eaa34ae5`) | 아니오 |
-| `amr_isaac/env_math.py` | env 의 순수 함수 — 풋프린트 분리축 충돌 `footprint_hits`, safety_lite 접근 거리 `approach_distance`, 원호 적분 `integrate_pose`, 서브스텝 이동·접촉 `move_and_collide`, 경로 길이 필터 `select_paths_by_length`, 보상 판 `reward_spec_for`, 에피소드 기록 `EpisodeLog` | 아니오 |
+| `amr_isaac/env_math.py` | env 의 순수 함수 — 풋프린트 분리축 충돌 `footprint_hits`, safety_lite 접근 거리 `approach_distance`, 원호 적분 `integrate_pose`, 서브스텝 이동·접촉 `move_and_collide`, 경로 길이 필터 `select_paths_by_length`, 보상 판 `reward_spec_for`, 에피소드 기록 `EpisodeLog`, 정본 φ 결선 `CanonicalPhi` | 아니오 |
+| `amr_isaac/safety_gate_torch.py` | **정본 safety φ** — C++ `amr_perception::SafetyGate` 상태기계 전체의 배치 torch 이식 (A3, 아래 「정본 safety φ」) | 아니오 |
+| `amr_isaac/eval_metrics.py` | 층위 성공 지표·목표 직전 정지 진단·dwell·목표 여유 기하 (평가·분석이 쓴다) | 아니오 |
+| `tools/phi_crosscheck/` | C++ 원본 SafetyGate 와 torch 이식의 교차 시험 (`crosscheck.sh`, `gate_runner.cpp`, `crosscheck.py`) 과 변이 검사 (`mutate.py`), env 안 교차 시험 재생 (`replay_env.{sh,py}` — `record_phi_wiring.py` 기록을 불변식 검사·C++ 재생) 과 결선 변이 (`mutate_wiring.py`) | 아니오 |
 | `amr_isaac/env_cfg.py`, `env.py`, `tasks.py` | `DirectRLEnv` — `AMR-Isaac-Nav-B-v0` (학습), `AMR-Isaac-Nav-B-Eval-v0` (held-out 경로·명목 동역학) | 예 |
 | `amr_isaac/agents/rsl_rl_ppo_cfg.py` | rsl_rl PPO 설정 (γ 0.995, λ 0.97, rollout 64) | 예 |
 | `amr_isaac/expert.py` | BC 예열용 특권 정보 전문가 (경로 순수 추종) | 아니오 |
 | `amr_isaac/policy_export.py` | rsl_rl state dict → 계약형 `PolicyB` → ONNX (`onnx_io.md`) | 아니오 |
-| `scripts/` | `build_assets` · `smoke_env` · `check_golden_in_sim` · `train_ppo` · `eval_unbiased`(판정용) · `eval_policy`(1차 물결, 편향 있음) · `export_onnx` · `plot_curves` · `gpu_monitor.sh` | 일부 |
-| `tests/` | golden 32 대조(직접·env 캐시 두 길), 기준 구현과 무작위 차분(v1.2.0·v1.1.0), v1.2.0 보상 손 사례(`test_reward_v12.py`), 창고 변환기·경로 풀, env 순수 함수(`test_env_math.py`), ONNX 메타데이터 | 아니오 |
+| `scripts/` | `build_assets` · `smoke_env` · `check_golden_in_sim` · `train_ppo` (`--phi`) · `eval_unbiased`(판정용, `--phi`·`--dwell_k`·층위 지표·진단) · `eval_policy`(1차 물결, 편향 있음) · `export_onnx` · `plot_curves` · `gpu_monitor.sh` · `analyze_rejudge`(A3b 분석) · `record_phi_wiring`(정본 φ 결선 기록, A3d) | 일부 |
+| `tests/` | golden 32 대조(직접·env 캐시 두 길), 기준 구현과 무작위 차분(v1.2.0·v1.1.0), v1.2.0 보상 손 사례(`test_reward_v12.py`), 창고 변환기·경로 풀, env 순수 함수(`test_env_math.py`), ONNX 메타데이터, 정본 φ (`test_safety_gate_torch.py` — 설정 원문 대조·원본 손 사례(해제 거리·지연 보정 포함)·창 통계 순차 기준판·작은 C++ 교차 시험(`AMR_ISAAC_REQUIRE_CPP=1` 이면 필수)·env 결선(명세 게이트 순차 대조·리셋 = 새 게이트)·평가 지표(`nav2_update`)·결선 변이 대상) | 아니오 |
 | `run_isaac.sh` | Isaac 컨테이너 실행기 (`env/verify/verify_isaac.sh` 의 마운트·환경변수). `AMR_AI_ID`(기본 `r7-isaac12`)로 이름 `amr-ai-<id>-<태그>`·산출 루트 `/home/CAPYI_AI/runs/<id>` 를 정하고 컨테이너에 `AMR_ISAAC_RUNS` 로 넘긴다 | — |
 
 ## 실행
@@ -119,16 +122,105 @@ docker run --rm -v $WT:/ws -v $R:$R -w /ws amr-ai/rl:0.3 python3 rl/isaac/script
 방향은 같다: v1.1.0 에서 두 시뮬레이터 모두 순수 PPO 가 실패했고, v1.2.0 에서 두 시뮬레이터 모두 BC 없이 약 98 % 에
 닿으며 주행 시간도 비슷하다. 다른 점은 Isaac 쪽의 충돌·개입이 크다는 것이다 (제약 없는 PPO + 근사 φ).
 
+## 정본 safety φ (A3, 2026-10-06, b1-isaac-phi)
+
+근거·원자료: 노트 `docs/research/rl-navigation/notebook/entries/2026-10-06_19{00,01,02}_b1-isaac-phi_*.md`, 실행 목록
+`notebook/runs/b1-isaac-phi.jsonl`, 원자료 `/home/CAPYI_AI/runs/bonus1/b1-isaac-phi/`.
+
+**불리한 것 먼저.**
+- **원본 C++ 의 창 통계가 문서와 다른 값을 낸다.** `safety_gate.cpp:255` 의 `values[i] >= best` 가지치기는 결과를 바꾼다
+  (창의 k 번째 값은 중심 값보다 작을 수 있다) — 배포 safety_node 의 D·가드 거리는 헤더 정의("창 통계의 최소")보다 크게
+  나올 수 있고 빔 순서에 따라 다르다 [측정: 탐침 300 개 중 20 개, 교차 시험의 **합성 무작위 폐루프 시나리오** 틱의 5.5 % —
+실제 주행 빈도가 아니다; 리뷰의 독립 C++ 탐침은 합성 스캔 꼴 배열 2 000 개 중 500 개에서 원본 값이 더 크고 차이 중앙 3.5 mm ·
+p90 11 mm · 최대 34.5 mm; **Isaac 실제 주행** (A3d 그림자 게이트, 960 000 틱): LiDAR D 가 유한한 틱의 약 20 % 에서 원본 D 가
+가지치기 없는 값보다 크고 (중앙 5 mm · p90 17 mm · 최대 0.44 m), 가지치기 없는 정의라면 STOP 래치였을 틱이 318 개 (반대 0)]. 이식은
+**원본 동작 그대로**다
+  (safety_node 가 실제로 적용하는 φ 가 목표라서). 결함 판단·수정은 amr_perception 소유자 몫이다.
+- **Isaac 의 입력 모델은 safety_node 의 입력과 같지 않다 — 낙관 쪽이다.** 깊이 점군은 "신선하고 비어 있음" 으로 둔다 (Isaac 에
+  깊이 카메라가 없다 — 창고 2D 장애물 상자 129 개가 모두 LiDAR 평면(지면 +0.20 m)을 지나 LiDAR 가 못 보는 낮은 물체는 없다
+  [시험 `test_warehouse_paths.py::test_all_2d_obstacles_cross_lidar_plane`]. 그러나 배포 점군 채널은 같은 면에서 3 번째로 가까운 점을
+  쓰므로 LiDAR 창 통계(60 % 순위)보다 일찍 멈출 수 있고, 이것은 목표 직전 정지에 직접 영향을 준다: **미측정** — Gazebo 하네스가
+  safety_node `/diagnostics` 의 `lidar_distance_m`·`depth_distance_m` 을 기록해 재도록 요청했다). 트랙(TTC)·도킹 예외는 정적 지도라 넣지 않는다. E-stop 래치·
+  센서 생존 감시는 옮기지 않았다.
+- **정본 φ 로 바꿔도 충돌은 줄지 않았다** (r7 정책, 3–15 m 합 3 → 5 건 / 6144), 그리고 근접 정지도 남는다 (아래).
+- 계산이 무겁다: 평가 결정 스텝당 약 99 ms 대 근사 23 ms (2048 env, 공유 부하 하 예비값).
+
+**무엇을 옮겼나** (`safety_gate_torch.py` 머리말에 원본 행): 스윕 풋프린트 접근 거리(직진·원호·끝 자세 접선 직선, 옆 여유,
+영역 길이), 운동 가설(명령 · 신선한 측정 · 정지 중 의도 유지), 측정 속도 저역 통과·지연 보정, 자기 차체 필터, 빔 창 순위 통계
+(4 cm·5 빔·60 %, 가드 6 cm·9 빔·중앙값, 원형/비원형, 원본 가지치기 포함), 점군 채널, STOP 확정(2 프레임 또는 0.25 m)·원인별
+해제(0.50 m)·존 히스테리시스(0.05 m), 존·여유 거리·도킹 예외·낡은 점군·TTC 상한, 곡률 보존 스케일, 접촉 가드 탈출, TTC 후퇴·
+몸 원통 양보 탈출(배포 설정 꺼짐), 명령 낡음. 매개변수 기본값 = safety_node 배포 설정 (시험이 config/robot_params.yaml·
+perception.yaml·safety_gate.hpp·safety_node.cpp 원문과 대조 — hpp 기본과 다른 것은 yield_escape 끔·점군 필수 둘).
+
+**env 결선** (`env_math.CanonicalPhi`): 결정 스텝마다 새 스캔(촬영 시각 = 결정 시작, base_link 빔 = 원점 + r(cos, sin),
+무효 빔 NaN), 50 Hz 서브스텝마다 측정(플랜트 속도) → 명령(프로파일러 출력) → 판정. STOP 래치는 관측의 근접 정지 비트로 나간다.
+리셋 = 새 게이트. lite 길은 그대로 남아 r7 평가를 비트 단위로 재현한다 [측정: 6 평가 × 14 배열].
+
+**env 안 교차 시험과 결선 변이 (A3d)** [측정, 노트 `2026-10-06_2129_b1-isaac-phi_env-wiring-check.md`]: Isaac 폐루프(DR 켬, A3c 정책 확률
+행동 + 무작위 행동)에서 게이트 입력의 독립 출처(env.scan, 플랜트 속도, `_pairs`, 리셋, 관측 비트)를 기록하고, 에피소드마다 새 C++
+SafetyGate 에 명세대로 재구성한 입력을 재생 — 960 000 틱 · 875 에피소드 · 1 920 만 비교에서 **불일치 0**, 결선 불변식(스캔 시각 = 0.1·k,
+측정 = 플랜트 속도, 리셋 = 새 게이트, 관측 래치 비트 = 게이트 래치) **위반 0**. 결선 변이 E1–E4 는 이 검사가, E2–E5·G3·G4 는 CPU 시험
+(g++ 없이)이 잡는다. pytest 는 `AMR_ISAAC_REQUIRE_CPP=1` 로 돌리면 g++·Eigen 이 없을 때 C++ 교차 시험이 skip 대신 실패한다.
+변이 계수 때 메타 시험 `test_wiring_mutants_target_current_source` (어떤 변이든 실패) 는 뺀다.
+
+```bash
+# 결선 검사 (B 단계 학습 스냅숏마다 한 번, 약 2 분): Isaac 기록 → amr-ai/rl:0.3 에서 C++ 재생 대조 (rc 0 = 통과)
+rl/isaac/run_isaac.sh wire rl/isaac/scripts/record_phi_wiring.py --policy <policy.pt> --num_envs 64 --steps 600 --out <dir>
+docker run --rm -v $WT:/ws:ro -v <dir>:<dir> -w /ws amr-ai/rl:0.3 bash -lc 'rl/isaac/tools/phi_crosscheck/replay_env.sh <dir> --out <dir>/replay.json'
+```
+
+**교차 시험** (`tools/phi_crosscheck/crosscheck.sh`, C++ 원본을 ROS 없이 직접 빌드) [측정]: 독립 seed 두 묶음 4 938 400 · 5 938 400
+비교 — 점별 접근 거리 20 만, 창 통계 2 만 + k 번째 1 만, 경계 시나리오 1 794 × 설정 3 종(직진 = 사칙연산이라 문턱 ±ulp 를 비트 단위로),
+무작위 폐루프 3 000 · 4 000 × 50 틱(통로·정면 벽·잡동사니·모서리·열린 곳, 점군·트랙·예외 다각형·명령 끊김), CUDA 대 CPU —
+**이산 불일치 0, 연속 최대 차 2.2e-12**. 변이 28 개 중 25 개 잡힘, 남은 3 개는 동치(옆 여유 규칙 = swept_margin 0, 창 순위 −1e-9 =
+0.6·len 반올림, 새 래치의 원인 지우기 = 불변식).
+
+```bash
+# 교차 시험 (amr-ai/rl:0.3)
+docker run --rm -v $WT:/ws -w /ws amr-ai/rl:0.3 bash -lc 'rl/isaac/tools/phi_crosscheck/crosscheck.sh --cuda_check --out /tmp/x.json'
+# 정본 φ 로 평가·학습
+rl/isaac/run_isaac.sh ev rl/isaac/scripts/eval_unbiased.py --policy <pt> --phi canonical --path_len 3:15 --out <dir>
+rl/isaac/run_isaac.sh tr rl/isaac/scripts/train_ppo.py --phi canonical ... (나머지는 r7 과 같음)
+```
+
+**r7 정책 재판정** (학습은 근사 φ, 평가만 바꿈; held-out 3–15 m, seed 4242, n 2048 첫 에피소드) [측정]:
+
+| 시드 | 엄격 성공 근사 → 정본 | Nav2 호환 0.25 m (근사 / 정본) | 개입 /에피소드 근사 → 정본 | 충돌 근사 / 정본 |
+|---|---|---|---|---|
+| 0 | 0.9790 → 0.9834 | 0.9985 / 0.9985 | 2.84 → 0.65 | 1 / 2 |
+| 1 | 0.9819 → 0.9888 | 0.9966 / 0.9976 | 1.66 → 0.74 | 0 / 0 |
+| 2 | 0.9834 → 0.9922 | 0.9946 / 0.9971 | 3.00 → 0.73 | 2 / 3 |
+
+- 목표 직전 정지의 원인: 근사 φ 에서 근접 실패의 94 % 가 φ 차단(정책은 계속 밀고 φ 가 깎는다) 이고 그중 40 % 는 근사의 외접원
+  회전 규칙에 막힌 제자리 회전이다. 실패는 **좁은 목표**에 몰린다: held-out 첫 에피소드의 2.3 % (47/2048) 는 경로 끝 접선 자세에서
+  앞 끝 직진 여유가 0.30 m 미만이라 **직진으로** 들어오면 두 φ 모두 여유 상한 0 이다 (근사 φ 실패의 67–73 %).
+- **정정 (리뷰 반영, 2026-10-06 21:40)**: 처음 판은 "φ 종류는 주원인 아님 / 실패의 주원인은 목표의 기하" 로 적었는데 틀렸다.
+  사전 규칙(±1 %p·2 %p)은 근사 실패율 1.66–2.10 %p 때문에 천장에 걸린 규칙이었다. 짝 비교로 정본 φ 는 근사 실패를 43→34 · 37→23 ·
+  34→16 (합 41/114 = **36 %**) 줄이고, 그 이득은 거의 전부 좁은 목표에서 난다 (좁은 +3 · +12 · +18, 넓은 +6 · +2 · 0). 좁은 목표의
+  "근사 실패 → 정본 성공" 37 건은 근사 쪽에서 회전 차단 16 · 원호 차단 17 이었다. **실패는 좁은 목표에 몰리고, 그 실패의 상당 부분은
+  근사 φ 의 회전·원호 차단 때문이다. 정본 φ 아래에서도 좁은 목표는 도달할 수 있고 정책에 따라 크게 다르다** (r7 21 · 32 · 41/47,
+  A3c 37/47; 직진 여유 < 0.10 m 인 7 개도 r7 s2 6/7). 성공한 좁은 목표는 접선에서 yaw 가 중앙 40–54° 벗어난 자세로 끝난다 —
+  직진 진입만 막힌다. 근거: 노트 `2026-10-06_1901_b1-isaac-phi_rejudge-r7.md` 「리뷰 반영」.
+
+**정본 φ 로 다시 학습한 1 시드** (`A3c_v12_canon_s0`: r7 G1 과 같은 설정 — 2048 env × 300 반복 = 39.3M, DR 켬, 3–15 m, 시드 0,
+`--phi canonical`) [측정]: 판정(마지막 반복, 정본 φ, 3–15 m) **0.9937 (2035/2048), 충돌 0** — 통과(≥ 0.90). 3–30 m 0.9883.
+좁은 목표 37/47·넓은 목표 1998/2001. **대가**: 개입 1.33/에피소드 (성공 에피소드 0.19) — 제약 없는 PPO 라 φ 를 브레이크로 쓴다.
+같은 정책을 근사 φ 로 평가하면 0.9800 (막힌 정지의 대부분이 근사가 막는 제자리 회전). B 단계를 정본 φ 로 학습하는 근거는
+**배포 φ(safety_node) = 정본** 이라는 것이다 — "학습과 평가의 φ 가 같아야 한다" 는 한쪽 방향만 뒷받침된다 (r7 정책은 근사로
+학습했는데 정본 평가에서 오히려 좋아졌다). 1 시드라 "정본 φ 아래 학습된다" 의 근거는 아니다 (B1 에서 시드 ≥ 10).
+학습 벽시계 (같은 기준, 공유 부하 하 예비값): 프로세스 시작~끝 A3c 2 709 s 대 r7 1 711–1 963 s, `train_wall_s` 2 694 대 1 695–1 945 s.
+
 ## 전이 한 번 (Δt = 0.1 s = 물리 0.02 s × 5)
 
 raw 행동 → `u = tanh(raw)` → `integrate_b` (ray 클램프) → 결정 주기 안 선형 명령 램프 → [50 Hz × 5]
-프로파일러 기준 경로 → safety_lite φ → 플랜트(순수 지연 + 1 차 지연 + 가속 한계) → 정확 원호 적분 →
+프로파일러 기준 경로 → safety φ (`--phi lite` 근사 또는 `canonical` 정본) → 플랜트(순수 지연 + 1 차 지연 + 가속 한계) → 정확 원호 적분 →
 풋프린트 대 정적 사각형 분리축 충돌 판정 (접촉 = 그 자리 정지·종단) → Warp `RayCaster` 720 빔 → 계약 관측.
 버퍼에는 rsl_rl 이 낸 원출력(raw)과 그 log-prob 가 들어간다 (contract §5). 결정론적 배포 행동 = `tanh(mu)` = ONNX `action`.
 
 ## 계약과 다르게, 또는 계약이 정하지 않아 여기서 정한 것
 
-1. **safety_lite 의 접근 거리 D** — 계약은 D 를 입력으로 받는다(§7.4). 여기서는 정본 `SweptFootprint` 대신
+1. **safety_lite 의 접근 거리 D (`--phi lite`, 기본 — r7 정책이 이것으로 학습됐다)** — 정본 φ 는 `--phi canonical`
+   (아래 「정본 safety φ」). 계약은 D 를 입력으로 받는다(§7.4). lite 는 정본 `SweptFootprint` 대신
    근사: 직진(|v| ≥ 1e-3)은 진행 방향 앞·차폭 띠(|y| ≤ 0.20) 안 점까지의 세로 거리, 제자리 회전은 외접원 밖
    반지름 거리, 정지는 +inf, 풋프린트 안 점은 0. 원호·꼬리 직선·가설 여러 개·강건 통계·지연 보정 일부가 빠졌다.
    STOP 래치는 lite 규칙대로 없다 (확정 전 STOP = CRITICAL). r2(2D) 와 같은 φ 가 아니다 — SRCC 보고에 적을 것.

@@ -8,6 +8,7 @@ rsl_rl PPO 학습 (비교군 B) — 학습 곡선 JSONL·체크포인트·요약
     rl/isaac/run_isaac.sh v12s0 rl/isaac/scripts/train_ppo.py --num_envs 2048 --iterations 300 \
         --run v12_s0 --seed 0 --reward 1.2.0 --path_len 3:15 --save_at_env_steps 20e6
 --lagrange 를 주지 않으면 라그랑주 승수는 0 그대로다 = 제약 없는 PPO (summary.json 의 constraint 에 적는다).
+--phi canonical 이면 전이 안 safety φ 가 정본 SafetyGate 이식이다 (A3, 기본 lite = 1·2차 물결 근사).
 
 산출: $AMR_ISAAC_RUNS/train/<run>/ — curve.jsonl (chunk 마다: 반복, env-step, 처리량,
 에피소드 결과율, 평균 반환, 비용 합, GPU 메모리), model_*.pt (rsl_rl), summary.json, HEAD.txt 는
@@ -49,6 +50,9 @@ ap.add_argument('--curriculum', default='',
 ap.add_argument('--reward', default='1.2.0', help="보상 판 '1.2.0'(계약) 또는 '1.1.0'(대조)")
 ap.add_argument('--path_len', default='',
                 help="학습 경로 길이 범위 'LO:HI' [m] (풀에서 고른다, 빈 값 = 풀 전체 3–30 m)")
+ap.add_argument('--phi', default='lite', choices=('lite', 'canonical'), help='전이 안 safety φ')
+ap.add_argument('--phi_cloud', default='empty', choices=('empty', 'none'),
+                help='정본 φ 의 깊이 점군 모델 (env_math.CanonicalPhi)')
 ap.add_argument('--save_at_env_steps', type=float, default=0.0,
                 help='0 보다 크면 env-step 이 이 값 이상이 된 첫 chunk 끝에 policy_it<N>.pt 를 남긴다')
 ap.add_argument('--root', default=os.path.join(os.environ.get(
@@ -156,6 +160,8 @@ def main():
     env_cfg.scene.num_envs = args.num_envs
     env_cfg.seed = args.seed
     env_cfg.reward_version = args.reward
+    env_cfg.safety_filter = args.phi
+    env_cfg.phi_cloud_mode = args.phi_cloud
     if args.path_len:
         env_cfg.path_len_min, env_cfg.path_len_max = (float(x) for x in args.path_len.split(':'))
     if args.no_dr:
@@ -295,6 +301,8 @@ def main():
                'train_wall_s': round(time.time() - t_train, 1),
                'policy_vs_rsl_mu_max_abs_diff': diff, 'seed': args.seed,
                'dr': not args.no_dr, 'curriculum': args.curriculum,
+               'safety_filter': args.phi,
+               'phi_cloud_mode': args.phi_cloud if args.phi == 'canonical' else None,
                'vcap_curriculum': args.vcap_curriculum, 'lagrange': args.lagrange,
                'lagrange_final': [float(x) for x in env.lagrange.tolist()],
                'entropy_coef': agent.algorithm.entropy_coef, 'bc_steps': args.bc_steps,

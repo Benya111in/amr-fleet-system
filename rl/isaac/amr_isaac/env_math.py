@@ -18,6 +18,7 @@ import numpy as np
 import torch
 
 from . import contract_torch as CT
+from . import safety_gate_torch as SG
 from .contract_torch import C, F64, RW
 
 # 진단: |ω| > 1.0 rad/s 이고 |v| < 0.1 m/s 인 결정 스텝 = 제자리 회전 (rl/sim2d env.py SPIN_W·SPIN_V 와 같다)
@@ -194,3 +195,60 @@ class EpisodeLog:
         self.maxe[ids] = 0.0
         self.spin[ids] = 0
         self.gmin[ids] = math.inf
+
+
+SAFETY_FILTERS = ('lite', 'canonical')
+CLOUD_MODES = ('empty', 'none')
+
+
+class CanonicalPhi:
+    """
+    정본 safety φ 의 env 결선 — `safety_gate_torch.SafetyGateBatch` 를 safety_node 처럼 부른다.
+
+    시간: 결정 스텝(0.1 s) 마다 새 스캔(촬영 시각 = 그 결정의 시작), 50 Hz 서브스텝마다
+    측정 속도(플랜트 속도 = wheel_odom) → 명령(프로파일러 출력 = cmd_vel_smoothed) → evaluate.
+    LiDAR: 720 빔 원형, 원점 base_link (LIDAR_X, LIDAR_Y), 무효(비유한·범위 밖) 빔 = NaN
+    (safety_node.cpp:412-428).
+    깊이 점군 (Isaac 에 깊이 카메라가 없다):
+      'empty' — 스캔마다 "신선하고 비어 있는" 점군 (카메라 정상, LiDAR 가 못 보는 낮은 물체 없음 — 창고 상자 129 개가
+                모두 LiDAR 평면을 지난다). 배포 설정 cloud_required 라 점군이 아예 없으면 전진이 0.2 m/s 로 묶인다.
+      'none'  — 점군을 넣지 않는다 (= 깊이 카메라 고장과 같다: 전진 0.2 m/s 상한, 후퇴 특례 없음). 진단용.
+    트랙(TTC)·도킹 예외: 정적 지도라 넣지 않는다 (+inf, 없음).
+    """
+
+    def __init__(self, n, device, params=SG.DEPLOYED, cloud_mode='empty'):
+        """게이트 배치와 빔 각."""
+        if cloud_mode not in CLOUD_MODES:
+            raise ValueError(f'cloud_mode {cloud_mode!r} (가능: {CLOUD_MODES})')
+        self.cloud_mode = cloud_mode
+        cap = SG.max_half_for_range(0.99 * C.LIDAR_RANGE_MIN, C.LIDAR_ANGLE_INC, params)
+        self.gate = SG.SafetyGateBatch(
+            n, device, params, n_beams=C.LIDAR_SAMPLES, angle_increment=C.LIDAR_ANGLE_INC,
+            circular=True, origin=(C.LIDAR_X, C.LIDAR_Y), half_cap=cap)
+        self.beam_ang = CT.beam_angles(device, F64)
+        self.cos_a = torch.cos(self.beam_ang).unsqueeze(0)
+        self.sin_a = torch.sin(self.beam_ang).unsqueeze(0)
+
+    def reset(self, ids):
+        """리셋한 env 의 게이트를 새로 (생성 직후 상태)."""
+        self.gate.reset(ids)
+
+    def beams(self, ranges):
+        """스캔 거리 [N, 720] → base_link 빔 끝점 [N, 720, 2] (무효 = NaN)."""
+        valid = CT.scan_valid(ranges)
+        rr = torch.where(valid, ranges, torch.zeros_like(ranges))
+        bx = torch.where(valid, C.LIDAR_X + rr * self.cos_a, torch.full_like(rr, math.nan))
+        by = torch.where(valid, C.LIDAR_Y + rr * self.sin_a, torch.full_like(rr, math.nan))
+        return torch.stack([bx, by], dim=-1)
+
+    def set_scan(self, ranges, stamp):
+        """새 스캔 (모든 env 같은 시각) — 'empty' 면 같은 시각의 빈 점군도."""
+        self.gate.set_scan(self.beams(ranges.to(F64)), stamp)
+        if self.cloud_mode == 'empty':
+            self.gate.set_cloud(None, stamp, stamp)
+
+    def step(self, v_ref, w_ref, v_meas, w_meas, now):
+        """서브스텝 하나: 측정 → 명령 → evaluate (반환 = SafetyGateBatch.evaluate 의 dict)."""
+        self.gate.set_measured(v_meas, w_meas, now)
+        self.gate.set_command(v_ref, w_ref, now)
+        return self.gate.evaluate(now)

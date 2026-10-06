@@ -3,9 +3,16 @@ Isaac Lab DirectRLEnv — 창고 AMR 내비게이션, 계약 v1.2.0 비교군 B 
 
 전이 한 번 (Δt = 0.1 s = 물리 0.02 s × 5):
   행동 raw → u = tanh(raw) → integrate_b (ray 클램프) → 명령 램프 (v_cmd → v_cmd', 주기 안 선형)
-  → [50 Hz × 5] 프로파일러 기준 경로 → safety_lite φ (D = 근사 접근 거리) → 플랜트 (순수 지연 + 1 차 지연 +
-  가속 한계, DR) → 정확 원호 적분 → 풋프린트 vs 정적 상자 충돌 판정 (접촉 = 그 자리 정지·종단)
+  → [50 Hz × 5] 프로파일러 기준 경로 → safety φ → 플랜트 (순수 지연 + 1 차 지연 + 가속 한계, DR)
+  → 정확 원호 적분 → 풋프린트 vs 정적 상자 충돌 판정 (접촉 = 그 자리 정지·종단)
   → Warp RayCaster 2D LiDAR (720 빔) → 계약 관측·보상·비용 (contract_torch).
+
+safety φ 는 cfg.safety_filter 로 고른다 (README 「safety φ — 근사와 정본」):
+  'lite'      = 1·2차 물결 그대로 — 근사 접근 거리 D (env_math.approach_distance) + safety_lite (래치 없음)
+  'canonical' = 정본 SafetyGate 의 배치 이식 (safety_gate_torch, env_math.CanonicalPhi) — 스윕 원호·운동 가설·
+                의도 유지·빔 창 통계·STOP 확정·원인별 해제·존 히스테리시스·접촉 가드·탈출·지연 보정 전부.
+                STOP 래치는 관측의 근접 정지 비트(safety 블록)로 나간다 (lite 에서는 늘 0).
+평가 전용 cfg.success_dwell_steps = k > 1: 성공 조건이 k 결정 스텝 연속 유지돼야 성공 종단 (층위 성공 지표).
 
 보상 판은 cfg.reward_version ('1.2.0' = 계약 기본, '1.1.0' = 대조) 으로 고른다. 전이 전 거리 d(s) =
 max(d_arc, 목표 직선거리) 는 관측과 같은 자세에서 캐시해 두고(build_obs → observe_with_cache) 다음 전이의
@@ -29,8 +36,9 @@ from . import contract_torch as CT
 from .assets import load_geometry, load_pool
 from .contract_torch import C, F64
 from .env_cfg import AmrNavEnvCfg, BODY_Z, WAREHOUSE_PRIM
-from .env_math import (approach_distance, EpisodeLog, move_and_collide, reward_spec_for,
-                       select_paths_by_length)
+from .eval_metrics import dwell_success
+from .env_math import (approach_distance, CanonicalPhi, EpisodeLog, move_and_collide,
+                       reward_spec_for, SAFETY_FILTERS, select_paths_by_length)
 
 PHYS_DT = C.PROFILER_DT
 N_SUB = int(round(C.DT / PHYS_DT))       # 5
@@ -105,7 +113,7 @@ class AmrNavEnv(DirectRLEnv):
         self.tracks = torch.zeros(N, T, 6, dtype=F64, device=dev)      # 동적 장애물 없음 = 전부 무효
         self.track_id = torch.zeros(N, T, dtype=torch.long, device=dev)
         self.scan_age, self.track_age = z(), z()
-        self.prox_stop = torch.zeros(N, dtype=torch.bool, device=dev)   # safety_lite: 래치 없음
+        self.prox_stop = torch.zeros(N, dtype=torch.bool, device=dev)   # lite 늘 False, 정본 래치
         self.min_ttc = torch.full((N,), math.inf, dtype=F64, device=dev)
         self.beam_ang = CT.beam_angles(dev, F64)
         # 결정 주기 안 버퍼
@@ -138,6 +146,19 @@ class AmrNavEnv(DirectRLEnv):
         self.win_ptr = torch.zeros((), dtype=torch.long, device=dev)
         self.win_fill = torch.zeros((), dtype=torch.long, device=dev)
         self.lidar_pose_err = torch.zeros((), dtype=torch.float32, device=dev)
+        # safety φ 선택 (lite = 근사, canonical = 정본 이식)과 마지막 서브스텝의 φ 상태 (평가 진단용)
+        if cfg.safety_filter not in SAFETY_FILTERS:
+            raise ValueError(f'safety_filter {cfg.safety_filter!r} (가능: {SAFETY_FILTERS})')
+        self.phi = CanonicalPhi(N, dev, cloud_mode=cfg.phi_cloud_mode) \
+            if cfg.safety_filter == 'canonical' else None
+        self._phi_clock = 0.0
+        self.phi_D = torch.full((N,), math.inf, dtype=F64, device=dev)
+        self.phi_guard = torch.full((N,), math.nan, dtype=F64, device=dev)
+        self.phi_causes = torch.zeros(N, dtype=torch.long, device=dev)
+        self.phi_escaping = torch.zeros(N, dtype=torch.bool, device=dev)
+        # 평가 전용 dwell: 성공 조건 연속 스텝 수 (cfg.success_dwell_steps > 1 일 때만 쓴다)
+        self._dwell = torch.zeros(N, dtype=torch.long, device=dev)
+        self.step_diag = None
 
     # ------------------------------------------------------------------ 장면
     def _setup_scene(self):
@@ -198,10 +219,21 @@ class AmrNavEnv(DirectRLEnv):
         vt = self._v0 + f * (self._v1 - self._v0)
         wt = self._w0 + f * (self._w1 - self._w0)
         v_ref, w_ref = self.profiler.step(vt, wt, PHYS_DT)
-        # φ: 스캔 끝점(세계 좌표, 촬영 뒤 이동 보정)을 현재 자세로
-        pts_r = CT.to_robot_frame(self.pose, self.scan_pts_w)
-        d_main = approach_distance(pts_r, self.scan_valid, v_ref, w_ref)
-        out = CT.safety_filter(v_ref, w_ref, d_main, self.min_ttc, self.prox_stop)
+        if self.phi is None:
+            # lite φ: 스캔 끝점(세계 좌표, 촬영 뒤 이동 보정)을 현재 자세로
+            pts_r = CT.to_robot_frame(self.pose, self.scan_pts_w)
+            d_main = approach_distance(pts_r, self.scan_valid, v_ref, w_ref)
+            out = CT.safety_filter(v_ref, w_ref, d_main, self.min_ttc, self.prox_stop)
+            self.phi_D = d_main
+        else:
+            # 정본 φ: 측정(플랜트 속도) → 명령(프로파일러 출력) → evaluate, 50 Hz 시계
+            out = self.phi.step(v_ref, w_ref, self.plant_v, self.plant_w, self._phi_clock)
+            self._phi_clock += PHYS_DT
+            self.prox_stop = out['prox']
+            self.phi_D = out['min_distance']
+            self.phi_guard = out['contact_distance']
+            self.phi_causes = out['causes']
+            self.phi_escaping = out['escaping']
         self._pairs[:, k - 1] = torch.stack([v_ref, w_ref, out['v'], out['w']], dim=1)
         self.zone = out['zone']
         self.speed_limit = out['speed_limit']
@@ -252,6 +284,13 @@ class AmrNavEnv(DirectRLEnv):
     def _get_dones(self):
         out = self.step_outcome()
         self.last_out = out
+        # 리셋 전 진단 사본 (평가가 끝난 에피소드의 끝 자세·거리를 읽는다)
+        self.step_diag = {'pose': self.pose.clone(), 'd_goal': out.d_goal_post.clone(),
+                          'v_meas': self.v_meas.clone(), 'w_meas': self.w_meas.clone(),
+                          'zone': self.zone.clone(), 'prox': self.prox_stop.clone(),
+                          'D': self.phi_D.clone(), 'guard': self.phi_guard.clone(),
+                          'causes': self.phi_causes.clone(), 'escaping': self.phi_escaping.clone(),
+                          'collision': out.terminated & ~out.success}
         self._reward = (out.reward - (out.cost * self.lagrange).sum(dim=1)).to(torch.float32)
         self.in_dev, self.dev_peak, self.dev_t = out.in_dev, out.dev_peak, out.dev_t
         self.prev_actions = torch.cat([self._a_exec.unsqueeze(1), self.prev_actions[:, :-1]], 1)
@@ -268,9 +307,12 @@ class AmrNavEnv(DirectRLEnv):
         stalled = (t - self.stall_t) > C.STALL_TIME
         over = t > self.time_limit + 1e-9
         terminated = out.terminated
+        # 평가 전용 dwell (k > 1): 성공 조건(0.10 m ∧ |v| ≤ 0.05)을 k 스텝 연속 유지해야 성공 종단. 보상은 그대로.
+        success, terminated, self._dwell = dwell_success(out.success, terminated, self._dwell,
+                                                         self.cfg.success_dwell_steps)
         time_out = (over | stalled) & ~terminated
         done = terminated | time_out
-        res = torch.stack([out.success, out.terminated & ~out.success, over & ~terminated,
+        res = torch.stack([success, terminated & ~success, over & ~terminated,
                            stalled & ~over & ~terminated], dim=1)
         self._record(done, res)
         self.ep_log.finish(done, res, {
@@ -356,6 +398,10 @@ class AmrNavEnv(DirectRLEnv):
         self.in_dev[env_ids] = False
         self.zone[env_ids] = C.ZONE_CLEAR
         self.speed_limit[env_ids] = math.inf
+        self.prox_stop[env_ids] = False
+        self._dwell[env_ids] = 0
+        if self.phi is not None:
+            self.phi.reset(env_ids)
         vc = self.vcap_lo + (self.vcap_hi - self.vcap_lo) * torch.rand(n, device=dev, dtype=F64)
         nominal = torch.rand(n, device=dev) < self.vcap_p_nominal
         self.v_cap[env_ids] = torch.where(nominal, torch.full_like(vc, self.cfg.v_cap), vc)
@@ -445,6 +491,9 @@ class AmrNavEnv(DirectRLEnv):
         rr = torch.where(valid, r, torch.zeros_like(r))
         self.scan_pts_w = torch.stack([o[:, 0:1] + rr * torch.cos(ang),
                                        o[:, 1:2] + rr * torch.sin(ang)], dim=-1)
+        if self.phi is not None:
+            # 정본 φ: base_link 빔으로 (촬영 시각 = 이 결정의 시작, 50 Hz 서브스텝이 지연 보정)
+            self.phi.set_scan(r, self._phi_clock)
 
     def build_obs(self):
         """현재 버퍼의 계약 관측 [N, 291] (전이 전 거리 캐시 d_prog 도 갱신)."""

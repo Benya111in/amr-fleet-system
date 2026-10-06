@@ -12,6 +12,15 @@ rl/sim2d ppo.evaluate 와 같은 추정량을 쓴다:
     적고, 0 이 아니면 rc 1.
   - 결과: <out>/eval.json (요약), <out>/episodes.npz (에피소드별), <out>/obs_batch.npz (ONNX 왕복 시험용).
 판정 대상·seed·경로 범위는 학습 전에 정한다 (runs/<id>/protocol.json).
+
+safety φ (--phi): lite = 1·2차 물결 근사 (r7 정책이 이것으로 학습), canonical = 정본 SafetyGate 이식 (A3).
+층위 성공 지표 (A3 노트 2026-10-06_1901 에서 결과 전에 정함):
+  엄격      = env 성공 종단 (0.10 m ∧ |v| ≤ 0.05 m/s)
+  Nav2 호환 = 첫 에피소드 동안 목표 직선거리 ≤ 0.25 m 인 결정 스텝이 충돌 스텝이 아닌 채로 한 번이라도 (속도 무관)
+  최종 거리 = 에피소드가 끝난 스텝의 목표 직선거리 분포 (중앙·p90·최대, 실패만 따로)
+  dwell-k   = --dwell_k k > 1 인 별도 실행: 성공 조건을 k 결정 스텝 연속 유지해야 성공 종단
+진단 (episodes.npz 의 diag_*): 에피소드 끝의 마지막 --diag_steps 결정 스텝 동안 서브스텝별 φ 입력·출력
+(v_ref, w_ref, v_out, w_out), φ 의 D·접촉 가드 거리·존·래치·원인, 목표 거리, 측정 속도.
 """
 
 import argparse
@@ -32,6 +41,12 @@ ap.add_argument('--path_len', default='3:15', help="경로 길이 범위 'LO:HI'
 ap.add_argument('--train_pool', action='store_true', help='학습 풀(seed 0)에서 (기본 held-out seed 1)')
 ap.add_argument('--tag', default='heldout')
 ap.add_argument('--out', default=None)
+ap.add_argument('--phi', default='lite', choices=('lite', 'canonical'), help='safety φ')
+ap.add_argument('--phi_cloud', default='empty', choices=('empty', 'none'),
+                help='정본 φ 의 깊이 점군 모델 (env_math.CanonicalPhi)')
+ap.add_argument('--dwell_k', type=int, default=1, help='>1 이면 성공 조건 k 스텝 연속 유지 (평가 전용)')
+ap.add_argument('--diag_steps', type=int, default=20, help='진단 링 버퍼 길이 (결정 스텝)')
+ap.add_argument('--nav2_radius', type=float, default=0.25)
 AppLauncher.add_app_launcher_args(ap)
 args = ap.parse_args()
 args.headless = True
@@ -41,6 +56,7 @@ sys.path.insert(0, '/workspace/amr/rl/isaac')
 import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
+from amr_isaac import eval_metrics as EV  # noqa: E402
 from amr_isaac import policy_export as PE  # noqa: E402
 from amr_isaac.env import AmrNavEnv  # noqa: E402
 from amr_isaac.env_cfg import AmrNavEvalEnvCfg  # noqa: E402
@@ -78,6 +94,10 @@ def summarize(ep, n_envs, unfinished):
     out['near_goal_0p5'] = float((ep['gmin'] <= 0.5).mean())
     for i, k in enumerate(C.COST_NAMES):
         out[f'cost_{k}_per_ep'] = float(ep['cost'][:, i].mean())
+    # 층위 성공 지표와 목표 직전 정지 진단 (정의: amr_isaac/eval_metrics.py, A3 노트)
+    out['layered'] = EV.layered(ep)
+    dg = EV.stop_diagnosis(ep)
+    out['stop_diagnosis'] = {'n': dg['n'], 'counts': dg['counts']}
     return out
 
 
@@ -88,6 +108,9 @@ def main():
     ck = torch.load(args.policy, map_location='cpu')
     pol = PE.PolicyB.from_rsl_state_dict(ck['state_dict'], ck.get('activation', 'elu'))
     cfg = AmrNavEvalEnvCfg()
+    cfg.safety_filter = args.phi
+    cfg.phi_cloud_mode = args.phi_cloud
+    cfg.success_dwell_steps = args.dwell_k
     if args.train_pool:
         cfg.path_pool_seed = 0
     cfg.scene.num_envs = args.num_envs
@@ -106,6 +129,21 @@ def main():
     keys = list(log.fin)
     rec = {k: torch.zeros_like(v) for k, v in log.fin.items()}
     keep_obs, keep_out = [], []
+    dev = env.device
+    K = args.diag_steps
+    # 층위 지표·진단 버퍼 (첫 에피소드)
+    nav2 = torch.zeros(N, dtype=torch.bool, device=dev)
+    d_end = torch.zeros(N, dtype=torch.float64, device=dev)
+    pose_end = torch.zeros(N, 3, dtype=torch.float64, device=dev)
+    ring = {'pairs': torch.zeros(K, N, 5, 4, dtype=torch.float64, device=dev)}
+    for nm in ('d_goal', 'v_meas', 'w_meas', 'D', 'guard'):
+        ring[nm] = torch.zeros(K, N, dtype=torch.float64, device=dev)
+    for nm in ('zone', 'causes'):
+        ring[nm] = torch.zeros(K, N, dtype=torch.long, device=dev)
+    for nm in ('prox', 'escaping'):
+        ring[nm] = torch.zeros(K, N, dtype=torch.bool, device=dev)
+    diag = {nm: torch.zeros((N, K) + tuple(v.shape[2:]), dtype=v.dtype, device=dev)
+            for nm, v in ring.items()}
     t0 = time.time()
     steps = 0
     with torch.inference_mode():
@@ -117,12 +155,26 @@ def main():
                 keep_out.append(np.concatenate([action[:64].cpu().numpy(), mu[:64].cpu().numpy(),
                                                 log_std[:64].cpu().numpy()], 1))
             obs, _r, _t, _tr, _ = env.step(mu)
+            sd = env.step_diag
+            slot = steps % K
+            ring['pairs'][slot] = env._pairs
+            for nm in ('d_goal', 'v_meas', 'w_meas', 'D', 'guard', 'zone', 'causes', 'prox',
+                       'escaping'):
+                ring[nm][slot] = sd[nm]
+            nav2 = EV.nav2_update(nav2, got, sd['d_goal'], sd['collision'], args.nav2_radius)
             steps += 1
             new = (log.fin_count > 0) & ~got
             if bool(new.any()):
                 for k in keys:
                     m = new.view(-1, *([1] * (rec[k].dim() - 1)))
                     rec[k] = torch.where(m, log.fin[k], rec[k])
+                d_end = torch.where(new, sd['d_goal'], d_end)
+                pose_end = torch.where(new.unsqueeze(1), sd['pose'], pose_end)
+                order = [(slot + 1 + j) % K for j in range(K)]       # 오래된 것 → 마지막 스텝
+                for nm, v in ring.items():
+                    m = new.view(-1, *([1] * (v.dim() - 1)))
+                    seq = v[order].transpose(0, 1)
+                    diag[nm] = torch.where(m, seq, diag[nm])
                 got |= new
                 if bool(got.all()):
                     break
@@ -131,6 +183,11 @@ def main():
     unfinished = int((~got).sum())
     gm = got.cpu().numpy()
     ep = {k: v.cpu().numpy()[gm] for k, v in rec.items()}
+    ep['nav2_reach'] = nav2.cpu().numpy()[gm]
+    ep['d_end'] = d_end.cpu().numpy()[gm]
+    ep['pose_end'] = pose_end.cpu().numpy()[gm]
+    for nm, v in diag.items():
+        ep[f'diag_{nm}'] = v.cpu().numpy()[gm]
     ep['path_id_orig'] = env.pool_kept[ep['path_id']]
     if not np.array_equal(ep['path_id_orig'], first_path[gm]):
         raise RuntimeError('첫 에피소드 경로 번호가 리셋 때와 다르다 (사본이 첫 에피소드가 아님)')
@@ -138,6 +195,9 @@ def main():
     res.update({
         'policy': args.policy, 'tag': args.tag, 'eval_seed': args.seed,
         'pool': 'train(seed0)' if args.train_pool else 'heldout(seed1)',
+        'safety_filter': args.phi, 'phi_cloud_mode': args.phi_cloud if args.phi == 'canonical'
+        else None, 'dwell_k': args.dwell_k, 'nav2_radius': args.nav2_radius,
+        'diag_steps': K,
         'path_len_range': args.path_len, 'pool_paths': env.pool_size, 'dr': False,
         'deterministic': 'tanh(mu)', 'reward_version': cfg.reward_version,
         'contract_version': C.CONTRACT_VERSION, 'steps': steps, 'step_limit': limit,
