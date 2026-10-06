@@ -80,8 +80,8 @@ def test_first_episode_per_env_is_not_biased_to_short_episodes():
     # 먼저 끝난 8 개를 세면 실패만 8 개(성공 0)가 된다.
     env = _TimedEnv([2] * 4 + [30] * 4, [False] * 4 + [True] * 4)
     s = evaluate(_Zero(), env, 8)
+    assert s['success'] == pytest.approx(0.5)          # 예전 추정량은 0.0
     assert s['episodes'] == 8 and s['unfinished'] == 0
-    assert s['success'] == pytest.approx(0.5)
     assert s['length'] == pytest.approx(16.0)
     assert s['estimator'] == 'first_episode_per_env'
     assert s['success_se'] == pytest.approx((0.25 / 8) ** 0.5)
