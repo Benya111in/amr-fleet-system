@@ -124,6 +124,6 @@ def test_running_norm_variance_floor():
     for _ in range(50):
         nm.update(torch.zeros(256, 3))
     assert float(nm.var.max()) < 1e-8
-    z = nm(torch.ones(1, 3))
-    assert float(z.abs().max()) <= 10.0 + 1e-6
-    assert float(z.abs().max()) == pytest.approx(1.0 / math.sqrt(0.01 + 1e-8), rel=1e-4)
+    z = nm(torch.full((1, 3), 0.5))
+    # 하한이 있으면 0.5/0.1 = 5, 없으면 ±10 에 붙는다
+    assert float(z.abs().max()) == pytest.approx(0.5 / math.sqrt(0.01 + 1e-8), rel=1e-4)
