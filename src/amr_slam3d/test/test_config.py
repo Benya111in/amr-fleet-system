@@ -96,6 +96,19 @@ def test_rows_play_recorded_clock_and_never_oracle_topics():
         assert r.input_topic in r.play_topics
 
 
+def test_oracle_list_covers_known_ground_truth_topics():
+    """정답 토픽 목록 자체를 고정 목록으로 단언 — 목록에서 빠진 토픽은 위 시험이 못 본다 (리뷰 M9)."""
+    known = {'/amr_01/ground_truth/odom', '/amr_01/imu/data_raw', '/amr_01/imu/data'}
+    assert known <= set(rows.ORACLE_TOPICS)
+    for r in rows.ROWS.values():
+        # 정답 자세·원시 정답 방위는 madgwick 변형 행을 포함해 어떤 행도 틀지 않는다
+        assert '/amr_01/ground_truth/odom' not in r.play_topics, r.name
+        assert '/amr_01/imu/data_raw' not in r.play_topics, r.name
+    # imu/data 를 트는 행은 madgwick 변형 행 하나뿐이다 (rtabmap.md §1.1 의 예외)
+    assert [n for n, r in rows.ROWS.items() if '/amr_01/imu/data' in r.play_topics] == \
+        ['rtabmap3d_imulive']
+
+
 def test_liosam_rows_do_not_play_dynamic_tf():
     """LIO-SAM 은 odometryFrame → base_footprint 를 낸다 — EKF /tf 를 같이 틀면 부모가 둘."""
     for name in ('liosam_loop', 'liosam_noloop'):
