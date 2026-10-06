@@ -58,7 +58,8 @@ float32 CPU, `amr-ai/rl:0.3`), (b2) **학습 때 쓴 rsl_rl 3.1.2 `ActorCritic` 
 
 ## 결과
 
-**판정: P1–P6 모두 통과, 실패 0** [측정, 2026-10-06 19:35–19:43, loadavg 4.1–5.8 / 32 코어, GPU 여유 32 GB,
+**판정: P1–P6 모두 통과, 실패 0** [측정, 2026-10-06 19:27:50–19:28:20 (정정: 원래 "19:35–19:43" 으로 잘못 적음 — 그 문장을 담은
+커밋 `863d4ff` 19:33:34 보다 늦은 시각이었다. `A2_parity/started.txt`·`ended.txt` 로 고쳤다), loadavg 4.1–5.8 / 32 코어, GPU 여유 32 GB,
 원자료 `/home/CAPYI_AI/runs/bonus1/b1-plugin/A2_parity/` (`report.json`, `data/`, `cpp/`, `rsl/`),
 명령 `bash src/amr_rl_controller/tools/parity/run_parity.sh <out> s0=…,s1=…,s2=…`, 코드 `162f8ea` + 이 항목과 함께 커밋한 도구].
 
@@ -108,3 +109,13 @@ float32 CPU, `amr-ai/rl:0.3`), (b2) **학습 때 쓴 rsl_rl 3.1.2 `ActorCritic` 
 - 도구(`parity_dump`, `tools/parity/*`)를 커밋했다 — 새 정책(B1 정본 φ 10 시드 등)이 나오면 같은 명령으로 다시 돈다.
 - C++ 회귀 시험으로 박을 수 있는 것: golden 17 의 학습 정책 행동 (`onnx_check_policy_final.json` 의 `golden_actions`) —
   모델 파일을 커밋하지 않아 CI 에서는 돌 수 없다. 대신 gzbench(A5)가 Gazebo 실행 전에 이 도구를 돌리도록 넘긴다.
+
+## 리뷰 반영 (2026-10-06 21:29 KST 이후 작성, 이 절을 담은 커밋 시각이 상한)
+
+- 리뷰가 커밋된 도구로 다시 돌린 결과(`/home/CAPYI_AI/runs/bonus1/b1-plugin/review/out_parity/`)를 내가 원본과 다시 대조했다.
+  - `report.json`: 시간 필드(`cpp_run_ms` 36 개)만 다르고, 나머지 값은 모두 같다.
+  - C++ 이진 출력 50 개(f32 48 · f64 2): 바이트 단위로 같다.
+  - 리뷰는 "차이 0 · 49 파일" 이라고 적었다. 정확히는 위와 같다.
+- 행동·관측에 2e-5 를 섞으면 `s1:random_ref:P1`·`s1:random_ref:P3_cpp_process`·`s2:golden:P4` 가 실패로 잡혔다
+  (`review/out_parity_perturb/report.json`). 일치 검사가 공허하지 않다는 확인이다.
+- 이 항목에서 고친 것은 실행 시각 하나다. 원래 "19:35–19:43" 으로 적었고, 실제는 19:27:50–19:28:20 이다.
