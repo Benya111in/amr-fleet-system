@@ -79,7 +79,7 @@ class CoreConfig:
     release_gate: str = GATE_NONE
     body_radius_m: float = 0.36                   # 풋프린트 외접 반경
     release_margin_m: float = 0.1
-    accept_unfenced: bool = True                  # epoch 0 명령(옛 구성)을 펜스 없이 받는다 (p0.md §4)
+    accept_unfenced: bool = True                  # 펜스가 생기기 전에만 epoch 0 명령(옛 구성)을 받는다
     sim_exec: Optional[SimExecConfig] = None      # 가짜 실행기 (None = 실제 실행기가 따로 있다)
 
     def __post_init__(self):
@@ -229,9 +229,14 @@ class FleetAgentCore:
         self.server_active = True
         self.server_leader = ''
         self.peers: Dict[str, Beacon] = {}
+        self._peer_seen: Dict[str, float] = {}         # 동료 비컨을 받은 내 시각 (일시 집합의 신선도)
         self.board: Dict[str, BoardTask] = {}
-        self.taken: Set[str] = set()                   # 어딘가에서 시작 · 잠긴 작업 (단조 증가 — gossip)
+        # 확정된 작업만 (단조 증가 — gossip): 비컨 held 의 task:* · picked_up 인 current_task_id · 내 픽업 시작 ·
+        # 재기동 때 남긴 확정. 잠정(이동 중 · 중앙 수락 직후)은 넣지 않는다 — 신선한 비컨에서 매번 다시 계산한다
+        # (peer_pursuing). 잠정을 단조로 넣으면 그 작업이 거부 · 실패로 풀려도 다른 로봇이 영영 못 받는다 (리뷰 P1 · P1b).
+        self.taken: Set[str] = set()
         self.done: Set[str] = set()
+        self._terminal: Dict[str, int] = {}            # task_status 의 작업별 종료 보고 수
         # 진행
         self.cbaa: Optional[CbaaAgent] = None
         self._round: Optional[int] = None
@@ -361,10 +366,12 @@ class FleetAgentCore:
 
     def _fence_ok(self, epoch: int, leader_id: str, what: str) -> bool:
         if epoch == 0:
-            if self.cfg.accept_unfenced:
+            # 펜스(epoch ≥ 1)가 생긴 뒤의 epoch 0 은 순서를 매길 수 없다 — 옛 구성 호환은 펜스 전까지만
+            if self.cfg.accept_unfenced and self.fence.max is None:
                 return True
             self.low_epoch_rejected += 1
-            self._note('fence_reject', what=what, epoch=epoch, leader=leader_id, why='unfenced')
+            self._note('fence_reject', what=what, epoch=epoch, leader=leader_id, why='unfenced',
+                       max=list(self.fence.max) if self.fence.max else None)
             return False
         if self.fence.accept(epoch, leader_id):
             return True
@@ -381,14 +388,28 @@ class FleetAgentCore:
         if not self.suspicion.observe(b.robot_id, now, b.server_dead, b.incarnation, b.seq):
             return                                    # 옛 비컨
         self.peers[b.robot_id] = b
+        self._peer_seen[b.robot_id] = self.now
         self.wfg.update(WaitInfo(b.robot_id, b.incarnation, b.seq, tuple(b.wait_edges),
                                  b.priority, None if b.request_stamp is None
                                  else Stamp.coerce(b.request_stamp), b.remaining_m), now)
         for res in b.held:
             if res.startswith(TASK_PREFIX):
                 self.taken.add(res[len(TASK_PREFIX):])
-        if b.current_task_id:
+        if b.current_task_id and b.picked_up:            # 픽업은 확정(HELD) 뒤에만 — 확정과 같다
             self.taken.add(b.current_task_id)
+
+    def peer_pursuing(self) -> Set[str]:
+        """
+        신선한 동료 비컨이 잠정으로 쫓는 작업 (current_task_id, 아직 픽업 전) — 일시 집합.
+
+        신선 = 받은 뒤 beacon_ttl_s 이내 (그 로봇의 가장 새 비컨). 거부 · 실패로 그 로봇이 놓으면 다음 비컨에서 빠진다.
+        """
+        out: Set[str] = set()
+        for r, b in self.peers.items():
+            age = self.now - self._peer_seen.get(r, -math.inf)
+            if b.current_task_id and not b.picked_up and 0.0 <= age <= self.cfg.beacon_ttl_s:
+                out.add(b.current_task_id)
+        return out
 
     def on_neg(self, msg: StateMessage, now: float) -> None:
         """다른 로봇의 협상 상태 (DEGRADED 에서만 병합)."""
@@ -404,8 +425,12 @@ class FleetAgentCore:
         실행기의 작업 상태 (task_status). 중앙 할당 작업이 끝나거나 실패했는데 잠금이 아직 확정 전이면 놓는다.
 
         확정(HELD)된 잠금은 끝나도 놓지 않는다 (픽업을 시작한 작업). status: amr_msgs/Task.STATUS_*.
+        종료 보고는 작업별로 센다 — 프록시 응답보다 먼저 온 종료를 on_central_result 가 가린다 (central_token).
         """
-        if task_id != self.central_task or status not in (STATUS_COMPLETED, STATUS_FAILED):
+        if status not in (STATUS_COMPLETED, STATUS_FAILED):
+            return
+        self._terminal[task_id] = self._terminal.get(task_id, 0) + 1
+        if task_id != self.central_task:
             return
         if not self.lock.is_held(task_id):
             self.lock.release(task_id, self.me, 0.0)
@@ -475,10 +500,13 @@ class FleetAgentCore:
     def check_assignment(self, task_id: str, epoch: int, leader_id: str, now: float
                          ) -> Tuple[bool, str]:
         """
-        중앙 assign_task 펜싱 (실행기 앞 프록시가 부른다). 거부면 실행기까지 가지 않는다.
+        중앙 assign_task 펜싱 (실행기 앞 프록시가 부른다). 거부면 실행기까지 가지 않는다. 검사만 한다.
 
         순서: 에포크 펜스(낮은 (epoch, leader_id) 거부) → 모드(NORMAL 만) → 작업 잠금이 이미 남에게 확정.
-        받으면 그 작업의 잠정 잠금을 시작한다 (픽업 직전 COMMIT_TASK 로 확정).
+        잠정 잠금은 실행기가 받은 뒤에 시작한다 (on_central_result) — 먼저 잡으면 실행기가 거부(예: busy)했을 때
+        진행 중인 다른 작업의 잠정 시도를 이미 포기시킨 뒤라 되돌릴 수 없다.
+        남이 잠정으로 쫓는 작업(peer_pursuing)은 거부 사유가 아니다: 관리자는 거부를 받으면 곧바로 다음 로봇에
+        주므로, 옛 비컨이 남은 동안 모든 로봇이 연달아 거부하게 된다. 둘이 쫓아도 확정은 잠금이 하나로 막는다.
         """
         self.now = float(now)
         if not self._fence_ok(int(epoch), str(leader_id), what='assign_task'):
@@ -488,10 +516,47 @@ class FleetAgentCore:
         if self.lock.is_denied(task_id) or (task_id in self.taken and task_id != self.central_task
                                             and not self.lock.is_held(task_id)):
             return False, 'task_taken'
+        return True, 'ok'
+
+    def central_token(self, task_id: str) -> int:
+        """프록시가 실행기에 넘길 때 받아 두는 값 — 그 작업의 실행기 종료 보고 수."""
+        return self._terminal.get(task_id, 0)
+
+    def on_central_result(self, task_id: str, outcome: str, token: int, reason: str = '',
+                          now: Optional[float] = None) -> str:
+        """
+        프록시가 넘긴 중앙 작업에 대한 실행기 결과. 돌려주는 값은 한 일 (사건 이름).
+
+        - accepted : 잠정 잠금(hold) 시작 + central_task. 다른 중앙 작업이 남아 있으면(종료 보고를 놓침) 그것을 놓고 바꾼다.
+        - rejected · unavailable : 실행기가 받지 않았다 — 아무것도 잡지 않는다 (같은 작업이 이미 중앙 작업이면 그대로 둔다:
+          실행기는 그 작업을 하는 중이라 'busy' 로 거부한 것이다).
+        - timeout  : 결과를 모른다 (관리자도 robot_state 로 확인할 때까지 재할당을 미룬다) — 받았다고 보고 hold.
+          단 다른 중앙 작업이 진행 중이면 덮지 않는다.
+        token 뒤에 그 작업의 종료 보고가 이미 왔으면(응답보다 task_status 가 먼저) 잡지 않는다.
+        """
+        if now is not None:
+            self.now = float(now)
+        if outcome in ('rejected', 'unavailable'):
+            self._note('central_rejected', task_id=task_id, outcome=outcome, reason=reason)
+            return 'central_rejected'
+        if outcome not in ('accepted', 'timeout'):
+            raise ValueError(f'모르는 결과 {outcome!r}')
+        if self._terminal.get(task_id, 0) != int(token):
+            self._note('central_ended_before_ack', task_id=task_id, outcome=outcome)
+            return 'central_ended_before_ack'
+        prev = self.central_task
+        if prev and prev != task_id:
+            if outcome == 'timeout':
+                self._note('central_timeout_ignored', task_id=task_id, busy=prev)
+                return 'central_timeout_ignored'
+            if not self.lock.is_held(prev):
+                self.lock.release(prev, self.me, 0.0)
+            self._note('central_replaced', task_id=task_id, previous=prev)
         self.lock.hold(task_id)
         self.central_task = task_id
-        self._note('central_accept', task_id=task_id, epoch=int(epoch), leader=leader_id)
-        return True, 'accepted'
+        ev = 'central_accept' if outcome == 'accepted' else 'central_timeout_hold'
+        self._note(ev, task_id=task_id, reason=reason)
+        return ev
 
     # ------------------------------------------------------------------ 주기
     def tick(self, now: float) -> None:
@@ -526,7 +591,7 @@ class FleetAgentCore:
 
     # ------------------------------------------------------------------ 협상
     def _candidates(self) -> List[str]:
-        busy = set(self.taken) | set(self.done)
+        busy = set(self.taken) | set(self.done) | self.peer_pursuing()
         if self.executor is not None and self.executor.task_id:
             busy.discard(self.executor.task_id)
         ts = [t for t in self.board.values() if t.task_id not in busy
@@ -572,7 +637,8 @@ class FleetAgentCore:
         self._out.neg = self.cbaa.make_message(float(r))
 
     def _start_task(self, task_id: str) -> None:
-        self.taken.add(task_id)
+        # 잠정 낙찰이라 taken(확정)에 넣지 않는다 — 실행 중에는 executor/cbaa.executing 이, 실패하면 CBAA 의 blocked ·
+        # 잠금 denied 가 다시 입찰을 막는다. 넣으면 실패한 이 작업을 나중에 중앙이 다시 줘도 'task_taken' 으로 거부한다.
         cost = self._costs().get(task_id, 0.0)
         self._note('task_granted', task_id=task_id, travel_s=cost)
         if self.executor is not None and not self.executor.busy:

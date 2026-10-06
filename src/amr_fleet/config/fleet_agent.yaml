@@ -24,7 +24,7 @@
     release_gate: "zone_map"    # 몸체(외접 원판)가 구역 다각형 밖일 때만 RELEASE
     zones_file: ""              # 런치가 traffic_zones.yaml 로 채운다
     body_radius_m: 0.36
-    accept_unfenced: true       # epoch 0 명령 (옛 구성) 은 펜스 없이
+    accept_unfenced: true       # epoch 0 명령 (옛 구성) 은 펜스가 생기기 전에만 받는다
     sim_execution: false
     simulate_latency: false
     comm_latency_ms: [0.0, 100.0]

@@ -368,7 +368,9 @@ def test_central_task_lock_request_is_dropped_when_executor_finishes():
     c.on_heartbeat(1, '/fleet/fleet_manager_node', 1, 0, t)
     c.modes.base = NORMAL                                  # 시험: 곧바로 NORMAL 로 (히스테리시스 생략)
     ok, _ = c.check_assignment('c1', 1, '/fleet/fleet_manager_node', t)
-    assert ok and c.lock.pursuing() == 'c1'
+    assert ok and c.lock.pursuing() is None                # 검사만 — 실행기가 받기 전에는 잡지 않는다
+    assert c.on_central_result('c1', 'accepted', c.central_token('c1'), now=t) == 'central_accept'
+    assert c.lock.pursuing() == 'c1' and c.central_task == 'c1'
     c.on_task_status('c1', 3)                              # FAILED
     assert c.lock.pursuing() is None and c.central_task == ''
 
@@ -385,3 +387,158 @@ def test_repeated_acquire_keeps_the_same_attempt_and_age():
     req0, since0 = c.zone.attempt.req, c.zone.logical.since
     assert f.command('amr_03', OP_ACQUIRE, ['zone:x_ab_3']) == (True, 'in progress')
     assert (c.zone.attempt.req, c.zone.logical.since) == (req0, since0)
+
+
+# ---------------------------------------------------------------------- 리뷰 반영: 중앙 프록시 작업 상태 누수
+LEADER = '/fleet/fleet_manager_node'
+
+
+def _normal_fleet():
+    """리뷰 탐침과 같은 설정 (VoteConfig · CoreConfig 기본값: tentative 15 s, task_hold_s 60 s)."""
+    f = LoopbackFleet([CoreConfig(robot_id=r, members=ROBOTS) for r in ROBOTS], poses=POSES)
+    f.run(3.0)
+    assert set(f.modes().values()) == {NORMAL}
+    return f
+
+
+def _commit_until_held(f, r, task, seconds=10.0):
+    """BT CommitTaskLock 처럼 확정을 계속 원하며 기다린다. HELD 까지 걸린 sim 초 (못 하면 None)."""
+    c, t0 = f.cores[r], f.t
+    while f.t - t0 < seconds:
+        c.lock.commit(task)
+        f._route(r, c)
+        f.step(0.1)
+        if c.lock.is_held(task):
+            return f.t - t0
+    return None
+
+
+def test_executor_rejection_lets_another_robot_take_the_task():
+    """
+    리뷰 탐침 P1: amr_02 의 실행기가 거부한 작업을 관리자가 amr_03 에 다시 준다.
+
+    고치기 전: 프록시가 실행기 응답 전에 잠정 잠금 · central_task 를 잡고 거부 뒤에도 놓지 않아, amr_03 은
+    'task_taken' 으로 거부했고 강제 commit 도 150 s 동안 HELD 가 되지 않았다 (amr_02 가 잠정 표를 다시 잡음).
+    """
+    f = _normal_fleet()
+    a, b = f.cores['amr_02'], f.cores['amr_03']
+    assert a.check_assignment('T', 1, LEADER, f.t) == (True, 'ok')
+    tok = a.central_token('T')
+    f.run(1.0)                                              # 실행기 응답을 기다리는 동안
+    assert a.on_central_result('T', 'rejected', tok, 'busy:x', now=f.t) == 'central_rejected'
+    f._route('amr_02', a)
+    f.run(2.0)
+    assert a.lock.pursuing() is None and a.central_task == '' and a.lock.n_requests == 0
+    assert [r for r in ROBOTS if 'T' in f.cores[r].taken] == []
+    assert b.check_assignment('T', 1, LEADER, f.t) == (True, 'ok')
+    assert b.on_central_result('T', 'accepted', b.central_token('T'), now=f.t) == 'central_accept'
+    f._route('amr_03', b)
+    f.run(2.0)                                              # 픽업 장소로 이동
+    waited = _commit_until_held(f, 'amr_03', 'T')
+    assert waited is not None, a.task.stats
+    assert f.holders('task:T') == ['amr_03']
+
+
+def test_failed_before_pickup_lets_another_robot_take_the_task():
+    """
+    리뷰 탐침 P1b: amr_02 가 받은 작업이 픽업 전에 FAILED — 관리자가 amr_03 에 다시 준다.
+
+    고치기 전: amr_02 비컨의 current_task_id 가 4/5 로봇의 단조 집합 taken 에 남아 amr_03 은 'task_taken'.
+    """
+    f = _normal_fleet()
+    a, b = f.cores['amr_02'], f.cores['amr_03']
+    assert a.check_assignment('T', 1, LEADER, f.t)[0]
+    assert a.on_central_result('T', 'accepted', a.central_token('T'), now=f.t) == 'central_accept'
+    f._route('amr_02', a)
+    f.run(2.0)
+    # 비컨이 돌았다: 동료들은 amr_02 가 T 를 잠정으로 쫓는 줄 안다 (CBAA 후보에서는 뺀다) — 확정은 아니다
+    assert all('T' in f.cores[r].peer_pursuing() for r in ROBOTS if r != 'amr_02')
+    assert [r for r in ROBOTS if 'T' in f.cores[r].taken] == []
+    a.on_task_status('T', 3)                                # 실행기: 픽업 전에 실패
+    f._route('amr_02', a)
+    f.run(2.0)
+    assert a.lock.pursuing() is None and a.central_task == ''
+    assert [r for r in ROBOTS if 'T' in f.cores[r].peer_pursuing()] == []
+    assert b.check_assignment('T', 1, LEADER, f.t) == (True, 'ok')
+    assert b.on_central_result('T', 'accepted', b.central_token('T'), now=f.t) == 'central_accept'
+    f._route('amr_03', b)
+    f.run(2.0)
+    assert _commit_until_held(f, 'amr_03', 'T') is not None
+    assert f.holders('task:T') == ['amr_03']
+
+
+def _normal_lonely_core():
+    c, t = _lonely_core()
+    c.on_heartbeat(1, LEADER, 1, 0, t)
+    c.modes.base = NORMAL                                  # 시험: 곧바로 NORMAL 로 (히스테리시스 생략)
+    return c, t
+
+
+def test_central_result_rules():
+    """실행기 결과별 규칙: busy 거부 · 시간 초과 · 응답보다 먼저 온 종료 · 종료 보고를 놓친 교체."""
+    c, t = _normal_lonely_core()
+    assert c.on_central_result('A', 'accepted', c.central_token('A'), now=t) == 'central_accept'
+    # 1. 같은 작업을 다시 보내 실행기가 'busy:A' 로 거부 — 하던 작업은 그대로
+    assert c.on_central_result('A', 'rejected', c.central_token('A'), 'busy:A') == \
+        'central_rejected'
+    assert c.central_task == 'A' and c.lock.pursuing() == 'A'
+    # 2. A 진행 중 다른 작업 B 가 시간 초과 — A 를 덮지 않는다
+    assert c.on_central_result('B', 'timeout', c.central_token('B')) == 'central_timeout_ignored'
+    assert c.central_task == 'A' and c.lock.pursuing() == 'A'
+    # 3. A 가 끝난 뒤 B 시간 초과 — 결과를 모르므로 받았다고 본다 (hold)
+    c.on_task_status('A', 2)
+    assert c.central_task == '' and c.lock.pursuing() is None and 'A' in c.done
+    assert c.on_central_result('B', 'timeout', c.central_token('B')) == 'central_timeout_hold'
+    assert c.central_task == 'B' and c.lock.pursuing() == 'B'
+    # 4. 응답보다 그 작업의 종료 보고가 먼저 — 잡지 않는다
+    tok = c.central_token('C')
+    c.on_task_status('C', 3)
+    assert c.on_central_result('C', 'accepted', tok) == 'central_ended_before_ack'
+    assert c.central_task == 'B' and c.lock.pursuing() == 'B'
+    # 5. B 의 종료 보고를 놓친 채 실행기가 D 를 받았다 — B 의 잠정 시도를 놓고 D 로
+    assert c.on_central_result('D', 'accepted', c.central_token('D')) == 'central_accept'
+    assert c.central_task == 'D' and c.lock.pursuing() == 'D'
+    with pytest.raises(ValueError):
+        c.on_central_result('E', 'maybe', 0)
+
+
+def test_peer_pursuit_is_transient_but_confirmed_tasks_are_permanent():
+    """잠정(비컨 current_task_id)은 신선한 비컨에서만, 확정(held task:* · picked_up)은 단조."""
+    from amr_fleet.agent.core import Beacon
+    c, t = _lonely_core()
+    for i in (1, 2, 3):
+        c.on_board(BoardTask(f'p{i}', pickup_x=float(i)))
+    t += 0.1
+    c.on_beacon(Beacon('amr_02', 1, 5000, t, current_task_id='p1'), t)
+    assert c.peer_pursuing() == {'p1'} and 'p1' not in c.taken
+    assert 'p1' not in c._candidates() and 'p2' in c._candidates()
+    t += 0.5                                               # 놓으면 다음 비컨에서 빠진다
+    c.on_beacon(Beacon('amr_02', 1, 5001, t), t)
+    assert 'p1' not in c.peer_pursuing() and 'p1' in c._candidates()
+    c.on_beacon(Beacon('amr_03', 1, 5002, t, current_task_id='p2'), t)
+    assert 'p2' not in c._candidates()
+    t += 2.5                                               # 쫓던 로봇이 조용 (비컨 TTL 2 s 넘김)
+    c.tick(t)
+    c.drain()
+    assert 'p2' not in c.peer_pursuing() and 'p2' in c._candidates()
+    c.on_beacon(Beacon('amr_04', 1, 5003, t, current_task_id='p1', picked_up=True), t)
+    c.on_beacon(Beacon('amr_05', 1, 5004, t, held=('task:p3',)), t)
+    t += 5.0                                               # 확정은 비컨이 끊겨도 남는다
+    c.tick(t)
+    c.drain()
+    assert {'p1', 'p3'} <= c.taken
+    assert 'p1' not in c._candidates() and 'p3' not in c._candidates()
+
+
+def test_unfenced_epoch0_is_accepted_only_before_any_fence():
+    """accept_unfenced: 펜스가 생기기 전에만 epoch 0 (옛 구성). 펜스 뒤의 epoch 0 은 순서를 매길 수 없다."""
+    c, t = _lonely_core()
+    c.modes.base = NORMAL
+    assert c.fence.max is None
+    assert c.check_assignment('u0', 0, '', t) == (True, 'ok')
+    n0 = c.low_epoch_rejected
+    assert c.on_heartbeat(1, LEADER, 1, 0, t)
+    ok, why = c.check_assignment('u1', 0, '', t)
+    assert not ok and why.startswith('stale_epoch')
+    assert c.low_epoch_rejected == n0 + 1
+    assert c.check_assignment('u2', 1, LEADER, t) == (True, 'ok')

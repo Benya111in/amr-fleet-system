@@ -17,6 +17,7 @@ fleet_agent 노드 — 로봇마다 하나 (보너스 4 P3). 순수 코어(agent
 - Srv fleet_agent/zone_command (ZoneCommand) — BT 노드가 부른다
 - Srv assign_task (AssignTask, proxy_assign_task=true 일 때) — 에포크 펜스 프록시. 받으면 executor_service
       (기본 executor/assign_task) 로 넘기고, 낮은 (epoch, leader_id) · NORMAL 아닌 모드면 실행기까지 가지 않는다.
+      작업 잠정 잠금은 실행기가 받은 뒤에(시간 초과면 받았다고 보고) 시작한다 — 거부 · 실행기 없음이면 잡지 않는다.
       실행기의 서비스 이름을 executor/assign_task 로 바꾸는 리매핑은 amr_behavior 런치 소유자 몫 (p3.md §7).
 
 통신 모의: 받는 쪽 EmulatedInbox (링크 송신자 → 나). 자기 앞 투표는 DDS 를 거치지 않고 곧바로 처리한다.
@@ -275,7 +276,7 @@ class FleetAgentNode(Node):
             text = json.dumps(ev, ensure_ascii=False, sort_keys=True, default=str)
             self._pub_events.publish(String(data=text))
             if ev.get('event') in ('mode', 'fence_reject', 'pickup_start', 'failed',
-                                   'deadlock', 'central_accept', 'boot'):
+                                   'deadlock', 'central_accept', 'central_rejected', 'boot'):
                 self.get_logger().info(f'{self.me}: {text}')
             if self._event_log:
                 try:
@@ -412,7 +413,12 @@ class FleetAgentNode(Node):
         return resp
 
     async def _on_assign(self, req: AssignTask.Request, resp: AssignTask.Response):
-        """에포크 펜스 프록시 — 거부한 명령은 실행기까지 가지 않는다."""
+        """
+        에포크 펜스 프록시 — 거부한 명령은 실행기까지 가지 않는다.
+
+        잠정 작업 잠금은 실행기가 받은 뒤에 시작한다 (core.on_central_result). 실행기가 거부하거나 없으면 아무것도
+        잡지 않고, 시간 초과는 결과를 모르므로 받았다고 본다 (관리자도 robot_state 로 확인할 때까지 재할당을 미룬다).
+        """
         resp.robot_id = self.me
         t = req.task
         if self.core is None:
@@ -425,7 +431,9 @@ class FleetAgentNode(Node):
         if not ok:
             resp.success, resp.message = False, why
             return resp
+        token = self.core.central_token(t.task_id)
         if not self._exec_client.service_is_ready():
+            self._central_result(t.task_id, 'unavailable', token, 'executor unavailable')
             resp.success, resp.message = False, 'executor unavailable'
             return resp
         fut = self._exec_client.call_async(req)
@@ -438,9 +446,18 @@ class FleetAgentNode(Node):
             timer.cancel()
             self.destroy_timer(timer)
         if result is None:
+            self._central_result(t.task_id, 'timeout', token, 'executor timeout')
             resp.success, resp.message = False, 'executor timeout'
             return resp
+        self._central_result(t.task_id, 'accepted' if result.success else 'rejected', token,
+                             str(result.message))
         return result
+
+    def _central_result(self, task_id: str, outcome: str, token: int, reason: str) -> None:
+        if self.core is None:
+            return
+        self.core.on_central_result(task_id, outcome, token, reason, now=self._now())
+        self._flush()
 
 
 def main(args=None):
