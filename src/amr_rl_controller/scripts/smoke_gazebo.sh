@@ -41,6 +41,15 @@ for i in $(seq 1 60); do
   [ $ok -eq 4 ] && break
 done
 ros2 topic list > $OUT/topics.txt 2>&1
+# 실제로 실린 판정 파라미터 (A2: 목표 yaw 오차가 0.16–0.25 rad 인데 성공으로 끝나 확인한다)
+for prm in general_goal_checker.xy_goal_tolerance general_goal_checker.yaw_goal_tolerance \
+    general_goal_checker.stateful current_goal_checker goal_checker_plugins controller_frequency \
+    DWA.plugin DWA.rl.model_path DWA.rl.mode DWA.rl.max_inference_ms; do
+  echo "controller_server $prm: $(timeout 15 ros2 param get /amr_01/controller_server $prm 2>&1)" >> $OUT/params.txt
+done
+for prm in default_nav_to_pose_bt_xml goal_reached_tol; do
+  echo "bt_navigator $prm: $(timeout 15 ros2 param get /amr_01/bt_navigator $prm 2>&1)" >> $OUT/params.txt
+done
 timeout 30 ros2 topic echo --once /amr_01/scan_filtered --field header > $OUT/scan_once.txt 2>&1
 follow() {
   ros2 run amr_rl_controller rl_smoke.py --mode follow --controller-id DWA --length 5 --timeout 120 \
@@ -53,7 +62,8 @@ if [ -n "$GOALS" ]; then
   for g in "${GL[@]}"; do
     k=$((k+1))
     echo "goal $k $g start $(date -Iseconds) load $(cut -d' ' -f1-3 /proc/loadavg)" >> $OUT/goals.txt
-    ros2 run amr_rl_controller rl_smoke.py --mode navigate --goal $g --timeout ${NAV_TIMEOUT:-180} \
+    # --goal=… : 음수 좌표("-6.0,…")를 argparse 가 옵션으로 읽지 않게 (A2 1 회차 실행에서 목표 2 개를 잃었다)
+    ros2 run amr_rl_controller rl_smoke.py --mode navigate --goal=$g --timeout ${NAV_TIMEOUT:-180} \
       --out $OUT/goal_$k --ros-args -r __ns:=/amr_01 -p use_sim_time:=true > $OUT/goal_$k.log 2>&1
     echo "goal $k end $(date -Iseconds)" >> $OUT/goals.txt
   done

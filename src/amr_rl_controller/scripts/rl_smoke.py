@@ -65,7 +65,7 @@ class Smoke(Node):
         self.odom = None
         self.gt = None
         self.r_obs = obstacle_radius
-        self.create_subscription(Twist, 'cmd_vel_nav', self.cmds.append, 50)
+        self.create_subscription(Twist, 'cmd_vel_nav', self._cmd, 50)
         self.create_subscription(Float64MultiArray, 'rl_controller/stats', self._stats, 50)
         self.create_subscription(Float64, 'sim/footprint_clearance',
                                  lambda m: self.clear.append(m.data), 50)
@@ -73,10 +73,22 @@ class Smoke(Node):
         self.create_subscription(Odometry, 'ground_truth/odom', self._gt, 10)
         self.create_subscription(TrackedObstacleArray, 'perception/tracked_obstacles',
                                  self._tracks, 10)
+        self.plan = None
+        self.n_plans = 0
+        self.create_subscription(Path, 'plan', self._plan, 10)
+        self.cmd_t = []
+
+    def _plan(self, m):
+        self.plan = m
+        self.n_plans += 1
 
     def _stats(self, m):
         self.stats.append(list(m.data))
         self.stats_t.append(time.monotonic())
+
+    def _cmd(self, m):
+        self.cmds.append(m)
+        self.cmd_t.append(time.monotonic())
 
     def _odom(self, m):
         self.odom = m
@@ -220,7 +232,17 @@ def main():
             spin_until(node, lambda: False, 0.5)   # 마지막 TF·지면 진실
             pm = node.pose_map(base=args.base_frame)
             pg = node.pose_gt()
+            if node.plan is not None and node.plan.poses:
+                e = node.plan.poses[-1].pose
+                q = e.orientation
+                summary['plan_end'] = [e.position.x, e.position.y, math.atan2(
+                    2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))]
+                summary['plan_frame'] = node.plan.header.frame_id
+                summary['plan_points'] = len(node.plan.poses)
+                summary['n_plans'] = node.n_plans
             for key, pose in (('map', pm), ('gt', pg)):
+                if args.mode != 'navigate':
+                    break   # follow 의 목표는 odom 프레임 — 'end' 와 'target' 으로 본다
                 if pose is None:
                     continue
                 summary[f'end_{key}'] = list(pose)
@@ -269,6 +291,16 @@ def main():
         'max_dw_dwa': max((x[1] for x in dwa), default=None),
         'n_handover': len(hand), 'max_dv_handover': max((x[0] for x in hand), default=None),
         'max_dw_handover': max((x[1] for x in hand), default=None)}
+    if args.mode == 'follow' and 'end' in summary:
+        summary['final_dist_odom'] = math.hypot(summary['end'][0] - summary['target'][0],
+                                                summary['end'][1] - summary['target'][1])
+    # 원자료 시계열 (나중에 다시 분석할 수 있게): stats 행·명령, 수신 단조 시각 [s]
+    t0s = node.stats_t[0] if node.stats_t else 0.0
+    with open(os.path.join(args.out, 'series.json'), 'w', encoding='utf-8') as f:
+        json.dump({'stats_fields': 'rl_controller.cpp kStatsFields 순서',
+                   'stats_t': [t - t0s for t in node.stats_t], 'stats': node.stats,
+                   'cmd_t': [t - t0s for t in node.cmd_t],
+                   'cmd': [[c.linear.x, c.angular.z] for c in node.cmds]}, f)
     with open(os.path.join(args.out, 'summary.json'), 'w', encoding='utf-8') as f:
         json.dump(summary, f, ensure_ascii=False, indent=1)
     print(json.dumps(summary, ensure_ascii=False))
