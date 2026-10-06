@@ -177,3 +177,7 @@ P1–P5 ONNX 검사) + A2-5 정렬 변이 3 종 3 잡힘. 계약 v1.2 반영(판
 - 리뷰는 가드를 되돌린 변이 9 종도 돌렸고, 모두 잡혔다 (`/home/CAPYI_AI/runs/bonus1/b1-plugin/review/out_mut/`).
 - 이 항목에서 고친 것은 "추가 사전 등록" 절의 시각 하나다. 원래 "19:55" 로 적었고, 실제는 커밋 `67012e4` 19:33:48 이다.
   사전 등록이 결과보다 먼저였다는 점은 커밋 시각으로 확인된다.
+- 리뷰 반영 커밋 `12d91c7` 뒤에 git archive 새 작업공간에서 다시 빌드·시험했다 (바뀐 것은 문서뿐이다).
+  - 결과: colcon -Werror 경고 0, amr_navigation·amr_rl_controller 723 시험 0 실패 · 97 건너뜀.
+  - [측정, `A2_b1plugin_review_fix_clean`, `/home/CAPYI_AI/runs/bonus1/b1-plugin/A2_review_fix/final/`, 2026-10-06 21:40:37–21:42:47,
+    loadavg 3.4–3.9]
