@@ -62,7 +62,7 @@ const auto * const g_env = ::testing::AddGlobalTestEnvironment(new RosEnv);
 
 std::string model(const std::string & n) {return std::string(FIXTURE_DIR) + "/" + n;}
 
-std::shared_ptr<nav2_costmap_2d::Costmap2DROS> makeCostmap(const std::string & name)
+std::shared_ptr<nav2_costmap_2d::Costmap2DROS> makeCostmap(const std::string & name, int width = 10)
 {
   rclcpp::NodeOptions opts;
   opts.arguments({"--ros-args", "-r", "__node:=" + name});
@@ -74,7 +74,7 @@ std::shared_ptr<nav2_costmap_2d::Costmap2DROS> makeCostmap(const std::string & n
         "footprint", "[[0.30, 0.20], [0.30, -0.20], [-0.30, -0.20], [-0.30, 0.20]]"),
       rclcpp::Parameter("plugins", std::vector<std::string>{"inflation_layer"}),
       rclcpp::Parameter("inflation_layer.plugin", "nav2_costmap_2d::InflationLayer"),
-      rclcpp::Parameter("width", 10),
+      rclcpp::Parameter("width", width),
       rclcpp::Parameter("height", 6),
       rclcpp::Parameter("resolution", 0.05),
     });
@@ -119,11 +119,12 @@ struct Rig
   std::vector<std_msgs::msg::Float64MultiArray> stats;
   rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr stats_sub;
 
-  explicit Rig(const std::string & id, const std::vector<rclcpp::Parameter> & params)
+  explicit Rig(
+    const std::string & id, const std::vector<rclcpp::Parameter> & params, int costmap_width = 10)
   {
     node = std::make_shared<rclcpp_lifecycle::LifecycleNode>(
       "rl_test_" + id, rclcpp::NodeOptions().parameter_overrides(params));
-    costmap = makeCostmap("rl_costmap_" + id);
+    costmap = makeCostmap("rl_costmap_" + id, costmap_width);
     tf = std::make_shared<tf2_ros::Buffer>(node->get_clock());
     pub_node = std::make_shared<rclcpp::Node>("rl_scan_pub_" + id);
     scan_pub = pub_node->create_publisher<sensor_msgs::msg::LaserScan>("/scan_filtered", 10);
@@ -672,4 +673,44 @@ TEST(RLControllerPlugin, OmegaOnlyMismatchIsSyncedWithoutClamp)
   EXPECT_EQ(ctrl.counters().dwa_window_syncs, syncs0 + 1U);
   EXPECT_EQ(ctrl.counters().dwa_limited, limited0);
   EXPECT_LE(max_dw, kDwTick + 1e-9);
+}
+
+// 긴 정책 구간 뒤 DWA 폴백 (A2 에서 찾음): 내부 DWA 의 경로 창(PlanWindow)은 DWA 가 돈 틱에만
+// 앞으로 간다 — 직전 색인에서 앞쪽 200 점(10 m)만 찾으므로 (새 경로면 앞 400 점), 정책이 그보다
+// 멀리 몬 뒤 DWA 를 부르면 로봇 뒤쪽 점을 최근접으로 잡는다. 30 m 고정 경로(FollowPath, BT 재계획
+// 없음)에서 정책이 20 m 를 몬 뒤 낡은 스캔 → DWA: 경로를 따라 계속 가야 한다 (돌아서거나 멈추면
+// 안 된다).
+TEST(RLControllerPlugin, DwaAfterLongPolicyStretchTracksPathAhead)
+{
+  REQUIRE_MODELS();
+  Rig rig("lp", params("heuristic_c.onnx", "C"), 40);
+  RLController ctrl;
+  ctrl.configure(rig.node, "FollowPath", rig.tf, rig.costmap);
+  ctrl.activate();
+  ctrl.setPlan(straightPlan(1.0, 3.0, 30.0));
+  Loop loop(ctrl);
+  for (int k = 0; k < 2; ++k) {
+    ASSERT_EQ(loop.step().source, Source::kDwa) << k;   // 스캔 없음 → DWA (경로 창 색인 ≈ 0)
+  }
+  bool far = false;
+  for (int k = 0; k < 3000 && !far; ++k) {
+    rig.publishScan();
+    const auto r = loop.step();
+    ASSERT_NE(r.source, Source::kDwa) << k << " " << r.error;
+    far = loop.x >= 21.0 && !r.new_decision;
+  }
+  ASSERT_TRUE(far) << loop.x;
+  const double v0 = loop.vel.linear.x;
+  ASSERT_GT(v0, 0.3);
+  double min_v = v0;
+  double max_abs_w = 0.0;
+  for (int j = 0; j < 20; ++j) {
+    rig.publishScan(std::numeric_limits<double>::infinity(), 1.0);
+    const auto r = loop.step();
+    ASSERT_EQ(r.source, Source::kDwa) << j;
+    min_v = std::min(min_v, loop.vel.linear.x);
+    max_abs_w = std::max(max_abs_w, std::abs(loop.vel.angular.z));
+  }
+  EXPECT_GE(min_v, v0 - 0.05) << "DWA 가 경로 앞쪽을 보지 못하고 감속했다";
+  EXPECT_LT(max_abs_w, 0.05) << "DWA 가 뒤쪽 경로로 돌아서려 했다";
 }

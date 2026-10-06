@@ -10,7 +10,8 @@
 //      동적 장애물은 넣지 않는다: 트랙 나이를 벽시계로 재므로 실행마다 달라진다.
 //  (2) sync(방금 낸 명령) = DWA 가 스스로 낸 것: 두 DWA 의 이후 출력이 비트 단위로 같다
 //      (갓 activate 한 DWA 에 sync 해도 같다 — has_last_ 를 켜야 한다).
-//  (3) sync(v, w) 뒤 창 중심이 (v, w) 다 — ω 만 어긋난 경우 포함 (1차 물결 변이 R3 생존 보완).
+//  (3) sync(v, w) 뒤 창 중심이 (v, w) 다 — ω 만 어긋난 경우, 갓 activate 한 DWA 포함
+//      (1차 물결 변이 R3 생존 보완).
 //  (4) 비유한 값 → 창 중심 = 측정 속도 (현재 코어는 NaN 비교가 거짓이라 가드 없이도 같다 —
 //      방어용 가드, 등가 변이로 보고). 측정과의 차가 window_reset 밖이면 DWA 규칙대로 측정값.
 // 빌드: amr_navigation/CMakeLists.txt 는 gtest 를 이름 목록으로 등록해 이 파일이 저절로 들어가지
@@ -466,6 +467,13 @@ TEST(DwaSync, SyncSetsWindowCenterIncludingOmega)
   // v 만: 중심 (0.45, 0), 측정 (0.2, 0)
   dwa->syncLastCommand(0.45, 0.0);
   expectInWindow(dwa->computeVelocityCommands(p, twist(0.2, 0.0), nullptr), 0.45, 0.0, "v 만");
+  // 갓 activate 한 DWA (has_last_ 거짓 — RL 플러그인의 첫 DWA 틱, DWA 예외 뒤): sync 가
+  // has_last_ 를 켜야 창 중심이 측정 (0.35, 0) 이 아니라 (0.5, 0.3) 이다
+  auto fresh = makeDwa(s, cm);
+  fresh->setPlan(straightPlan(1.0, 3.0, 8.0));
+  fresh->syncLastCommand(0.5, 0.3);
+  expectInWindow(
+    fresh->computeVelocityCommands(p, twist(0.35, 0.0), nullptr), 0.5, 0.3, "갓 activate");
 }
 
 // (4) 비유한 값과 window_reset 밖.
