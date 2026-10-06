@@ -57,6 +57,9 @@ from amr_isaac import sac_skrl as SK  # noqa: E402
 from amr_isaac.env import AmrNavEnv, DIAG_NAMES, OUTCOMES  # noqa: E402
 from amr_isaac.env_cfg import AmrNavEnvCfg  # noqa: E402
 from amr_rl_contract import constants as C  # noqa: E402
+from amr_rl_contract.observation import OBS_DIM  # noqa: E402
+
+CUDA = torch.cuda.is_available()      # 마른 실행 시험(tests/test_train_sac_dry.py)은 CPU 로 돈다
 
 
 def main():
@@ -78,7 +81,7 @@ def main():
     env = AmrNavEnv(cfg)
     dev = env.device
     N = env.num_envs
-    obs_space = gymnasium.spaces.Box(-np.inf, np.inf, (C.OBS_DIM,))
+    obs_space = gymnasium.spaces.Box(-np.inf, np.inf, (OBS_DIM,))
     act_space = gymnasium.spaces.Box(-np.inf, np.inf, (2,))
     hp = {k: v for k, v in {'learning_rate': args.lr, 'batch_size': args.batch_size,
                             'gradient_steps': args.gradient_steps,
@@ -119,7 +122,8 @@ def main():
         upd_s += time.time() - tu
         obs = nobs
         if (t + 1) % args.chunk_steps == 0 or t == T - 1:
-            torch.cuda.synchronize()
+            if CUDA:
+                torch.cuda.synchronize()
             dt = time.time() - tc
             st = env.pop_stats()
             ep = max(st['episodes'], 1)
@@ -143,7 +147,8 @@ def main():
                 'log_std_mean': float(o['log_std'].mean()),
                 'q_mean_at_mu': float(q1.mean()),
                 'memory_filled': int(len(memory)),
-                'torch_max_alloc_MiB': round(torch.cuda.max_memory_allocated() / 2**20, 1),
+                'torch_max_alloc_MiB': (round(torch.cuda.max_memory_allocated() / 2**20, 1)
+                                        if CUDA else None),
             }
             curve.write(json.dumps(rec) + '\n')
             curve.flush()
