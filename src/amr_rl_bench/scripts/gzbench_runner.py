@@ -240,7 +240,12 @@ class Bench(Node):
         """pred() 가 참이 될 때까지 (sim 시각 상한). 반환 bool."""
         t0, w0 = self.now(), time.monotonic()
         cap = wall_cap if wall_cap is not None else sim_timeout / 0.1 + 10.0
-        while self.now() - t0 < sim_timeout and time.monotonic() - w0 < cap:
+        while time.monotonic() - w0 < cap:
+            now = self.now()
+            if t0 <= 0.0 < now:
+                t0 = now      # /clock 을 아직 못 받은 채 시작했다 — 첫 sim 시각부터 잰다 (스모크 RL 세션 로그 오해)
+            if now - t0 >= sim_timeout:
+                break
             if pred():
                 return True
             time.sleep(poll)

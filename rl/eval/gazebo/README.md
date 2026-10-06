@@ -9,7 +9,9 @@
 | `scenarios_v1.json` | 시나리오 집합 v1 — 주 200 + 좁은 목표 스트레스 200, 실행 순서, 스모크 부분집합 (아래 §1) |
 | `make_scenarios.py` | 위 파일을 만든 생성기 (시드 고정 — 다시 돌리면 같은 파일) |
 | `build_planner.sh` | 생성기가 쓰는 팀 A* 파이썬 모듈 빌드 (산출물은 저장소 밖에) |
-| `analyze_*.py` | 전이 점검·스모크 분석 (원자료 → 표) |
+| `recompute.py` | 세션 원자료(`episodes/*.json.gz`)에서 지표를 지금의 정의로 다시 계산 → `gzbench_recomputed.csv`·`episodes_v1_recomputed.csv` |
+| `analyze_smoke.py` | 세션 요약: 판정 H1–H4 (A5-4), 집합별 층위 성공·시간·CTE·개입, 전이 점검 3·4·6, 소요 |
+| `analyze_scan.py` · `analyze_step.py` · `transfer_limits.py` | 전이 점검 2 (LaserScan 규약·광선 잔차) · 5 (플랜트 T_m·T_d, 관측 사슬) · 1 (한계 대조표) |
 
 ## 1. 시나리오 집합 v1 (`gz_static_v1`)
 
@@ -47,14 +49,14 @@
 
 | 지표 | 정의 |
 | --- | --- |
-| `outcome_contract` | 계약 §8 종단 사건 중 시간순 첫째: collision(지면 진실 풋프린트–정적 상자 부호 거리 < 0, 또는 collision_monitor 접촉) → success(strict_gt) → stall(SimpleProgressChecker 0.3 m·20 s) → timeout. 준비 실패·감시견은 error |
+| `outcome_contract` | 계약 §8 종단 사건 중 시간순 첫째: collision(지면 진실 풋프린트–정적 상자 부호 거리 < 0, 또는 collision_monitor 접촉) → success(strict_gt) → stall(SimpleProgressChecker 0.3 m·20 s) → timeout. 접촉·성공은 Nav2 종료 뒤 정착 구간까지 본다 (goal checker 는 속도를 안 봐 DWA 가 움직이며 성공을 낸다). 사건 없이 시스템이 먼저 끝나면 stall + `contract_note = ended_without_success`. 준비 실패·감시견은 error |
 | `strict_gt` / `strict_est` | 목표 xy ≤ 0.10 m 이고 \|v\| ≤ 0.05 m/s 인 순간 (지면 진실 / 위치추정 자세) |
 | `nav2compat_gt` / `_est` | 목표 xy ≤ 0.25 m 에 접촉 전 닿았다 (Nav2 기본 goal checker, 속도·yaw 무관) |
 | `system_success` | Nav2 navigate_to_pose SUCCEEDED (배포 goal checker: 추정 xy 0.10, yaw 0.05) |
 | `final_*` | 끝나고 정착 뒤 최종 거리·yaw 오차·속도 (지면 진실·추정) |
 | `nav_time_s` · `path_length_m` | 목표 수락 → Nav2 종료(또는 취소) sim 시간, 지면 진실 주행 거리 |
 | `cte_first_*` · `cte_active_*` · `max_dev_m` · `return_max_s` | 움직이는 표본(\|v\| > 0.05)의 첫 경로·활성 경로까지 거리, 이탈 구간 0.30/0.15 m |
-| `interventions` · `intervention_time_s` | cmd_vel_smoothed(입력) 대 cmd_vel(출력) 차 > 0.01 의 연속 구간 수·시간 (PROTOCOL §5) |
+| `interventions` · `intervention_time_s` | cmd_vel_smoothed(입력) 대 cmd_vel(출력) 차 > 0.01 의 연속 구간 수·시간 (PROTOCOL §5). 출력은 시각 창 −60…+5 ms 의 입력 중 하나라도 같으면 바뀌지 않은 것으로 본다 (safety 는 직전 입력을 약 20 ms 늦게 내고, 기록 노드의 수신 순서가 뒤바뀐다) |
 | `zone_*_s` | safety/zone WARNING·CRITICAL·STOP 지속 시간 |
 | `contacts_static` · `contacts_dynamic` · `min_clear_*` | 정적 기하 접촉 사건, collision_monitor 접촉 증가, 최소 부호 거리 |
 | `near_goal_stop_s` | 목표 0.10–0.50 m 에서 정지(\|v\| ≤ 0.02, \|ω\| ≤ 0.05)한 시간 (A2 직전 정지) |
@@ -67,3 +69,11 @@
 `episodes_v1.csv` 는 같은 행을 `rl/eval` 의 episode/v1 열로 옮긴 것이다 (outcome = outcome_contract, contacts =
 계약 종단 사건까지의 접촉, scenario_set = `gz_static_v1_main` / `gz_static_v1_stress`). `rl/eval/scripts/evaluate.py` 의
 입력이 된다.
+
+## 3. 단계 C 에 넘기는 것 (A5-4 스모크에서)
+
+- 에피소드 벽시계 (공유 부하 하): DWA 주 34.7 s · 스트레스 72.1 s, RL 38.0 · 38.3 s, 준비 5–9 s, 세션 고정비 약 3 min.
+  팔당 200 (주 100 + 스트레스 100) ≈ DWA 3.0 h, RL 2.1 h. 50 에피소드 묶음(`--start/--count`)으로 끊어 돈다.
+- 지표를 바꾸면 Gazebo 를 다시 돌리지 말고 `recompute.py` 로 다시 계산한다 (원자료가 다 있다). 원래 CSV 는 지우지 않는다.
+- 세 제어기 모두로 짧은 흔들기를 먼저 한다 — A5 에서는 RL 로만 흔들어 DWA 의 "움직이며 성공" 꼴의 지표 결함을 스모크에서야 찾았다.
+- 노트: A5-2 (하네스·지표 정의), A5-3 (전이 점검 표), A5-4 (스모크·소요).
