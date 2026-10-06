@@ -119,6 +119,13 @@ if(HAVE_ORT)
     set_target_properties(latency_bench PROPERTIES
       BUILD_RPATH "${ORT_LIB_DIR}" INSTALL_RPATH "${ORT_LIB_DIR}")
     install(TARGETS latency_bench DESTINATION lib/${PROJECT_NAME})
+    # 학습 정책 출력 일치 (보너스 1 A2): 플러그인과 같은 C++ 관측·OnnxPolicy 로 행동을 덤프
+    add_executable(parity_dump tools/parity_dump.cpp)
+    target_link_libraries(parity_dump amr_rl_core amr_rl_policy nlohmann_json::nlohmann_json)
+    target_include_directories(parity_dump PRIVATE test)
+    set_target_properties(parity_dump PROPERTIES
+      BUILD_RPATH "${ORT_LIB_DIR}" INSTALL_RPATH "${ORT_LIB_DIR}")
+    install(TARGETS parity_dump DESTINATION lib/${PROJECT_NAME})
   endif()
 endif()
 

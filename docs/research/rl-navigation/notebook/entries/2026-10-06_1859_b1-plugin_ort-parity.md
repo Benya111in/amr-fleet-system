@@ -2,7 +2,7 @@
 
 - 시각: 2026-10-06 18:59 KST · 에이전트: b1-plugin · 단계: A2
 - 코드: `a7da8a2` (브랜치 `feature/b1-plugin`) — 도구는 이 항목과 함께 커밋한다
-- 관련 실행 id: (끝나면 채운다 — runs/b1-plugin.jsonl)
+- 관련 실행 id: `A2_b1plugin_ort_parity_v12` (runs/b1-plugin.jsonl)
 
 ## 질문
 
@@ -58,12 +58,53 @@ float32 CPU, `amr-ai/rl:0.3`), (b2) **학습 때 쓴 rsl_rl 3.1.2 `ActorCritic` 
 
 ## 결과
 
-(실행 뒤 채운다)
+**판정: P1–P6 모두 통과, 실패 0** [측정, 2026-10-06 19:35–19:43, loadavg 4.1–5.8 / 32 코어, GPU 여유 32 GB,
+원자료 `/home/CAPYI_AI/runs/bonus1/b1-plugin/A2_parity/` (`report.json`, `data/`, `cpp/`, `rsl/`),
+명령 `bash src/amr_rl_controller/tools/parity/run_parity.sh <out> s0=…,s1=…,s2=…`, 코드 `162f8ea` + 이 항목과 함께 커밋한 도구].
+
+정책당 관측 수: golden 17 + 무작위 계약 상태 4096 + 표준정규 4096 + Isaac 기록 1536 (s0·s1) / 1024 (s2) = 9745 / 9745 / 9233.
+
+| 판정 | 내용 | s0 | s1 | s2 |
+|---|---|---|---|---|
+| P1 | C++ `OnnxPolicy` 대 Python ORT, 같은 관측 (4 묶음) 최대 \|Δaction\| | **0** (비트 동일 100 %) | **0** (100 %) | **0** (100 %) |
+| P2 | torch `PolicyB` (CPU) 대 ORT — action / μ 최대 | 1.13e-6 / 7.6e-6 | 9.5e-7 / 5.2e-6 | 1.23e-6 / 8.6e-6 |
+| P2 | **학습 때의 rsl_rl `ActorCritic` + ContractNormalization** (CPU) 대 ORT — action / μ | 1.13e-6 / 7.6e-6 | 9.5e-7 / 5.2e-6 | 1.23e-6 / 8.6e-6 |
+| 보고 | rsl_rl CUDA 대 ORT — action | 1.04e-6 | 1.06e-6 | 1.05e-6 |
+| 보고 | Isaac 평가 때 기록한 CUDA 출력 (final 정책 1024 행) 대 ORT — action / μ | 3.8e-7 / 6.0e-7 | 4.5e-7 / 7.2e-7 | 3.9e-7 / 9.5e-7 |
+| P3 | C++ 반복 (정순·역순·섞음) · 별개 프로세스 · intra_op 4 · Python ORT 반복 | 비트 동일 | 비트 동일 | 비트 동일 |
+| P4 | C++ 관측 대 numpy 기준 관측 (golden 17 + 무작위 4096 상태) 최대 \|Δ\| | **0** (1,191,936 값 비트 동일) | 0 | 0 |
+| 끝-끝 | 상태 → C++ 관측 → C++ ORT 대 상태 → numpy 관측 → Python ORT | 0 (비트 동일) | 0 | 0 |
+| P5 | 그래프의 첫 Gemm 앞 연산 | Sub·Div·Clip (정규화 1 개) | 같음 | 같음 |
+| P5 | "두 번 정규화" 경로와 ORT 의 최대 차 (가를 힘) | 1.10–1.98 | 1.33–1.91 | 1.04–1.84 |
+| P6 | integrate_b: C++ · numpy · Isaac torch (10⁵ 입력, u 범위 밖·v_cap 0/0.3/1/2.5/무작위) 최대 차 | 0 | — | — |
+| 보고 | tanh float32 (ONNX) 대 float64 (Isaac env) 최대 차 | 2.3e-7 | 1.8e-7 | 2.2e-7 |
+
+- 무작위 상태의 다양성 [계산, `data/random_obs_ref.npy`]: LiDAR 섹터 < 1 인 비율 65 %, 여유 0 (풋프린트 안) 2.7 %, ego
+  클립(±3) 0.8 %, 상태의 89 % 가 트랙 ≥ 1 개 (평균 3.9, 8 개 가득 13 %), 유한 TTC 6 %, 이탈 중 30 %, STOP 존 25 %,
+  경로 점 2–601 개.
+- 같은 관측에 대한 배치 1 과 배치 N 의 ORT 출력도 같았다 (0).
+- ORT 의 tanh 출력이 **1.0000001** (s2 표준정규 묶음) 처럼 1 을 float32 한 ulp 넘을 수 있다 — 플러그인의
+  `integrateB` 는 u 를 [−1, 1] 로 먼저 자르므로 영향 없다 (Isaac env 는 float64 tanh 라 넘지 않는다).
+- 표준정규 묶음은 정책 출력의 2–4 % 가 포화(\|a\| > 0.999)했다 — 계약 범위 밖 관측이므로 망 자체의 일치만 본다.
 
 ## 해석
 
-(실행 뒤 채운다)
+- **C++ 플러그인 경로 = Python ORT 경로 = 학습 때 정책 정의 (FP32 반올림 수준)**. C++ 과 Python ORT 는 같은
+  1.23.2 · 같은 그래프 최적화라 비트까지 같았고, torch(PolicyB·rsl_rl) 와는 연산 순서 차이로 μ 최대 8.6e-6
+  (판정 1e-5 안, 가장 큰 차는 계약 범위 밖 표준정규 관측에서). 계약 범위 안(golden·무작위 상태·Isaac 기록)의
+  action 차는 ≤ 9.5e-7.
+- **관측 정규화는 한 번**: 그래프에 정규화가 하나이고, 플러그인 관측이 numpy 기준 관측과 비트 단위로 같으며,
+  두 번 정규화하면 행동이 최대 1–2 만큼 달라져 (tanh 범위 [−1, 1] 에서) 이 검사가 이중 정규화를 확실히 가른다.
+- **행동 후처리 = Isaac env**: integrate_b 세 구현이 10⁵ 입력에서 비트까지 같다. 남는 차이는 tanh 정밀도
+  (float32 대 float64, ≤ 2.4e-7) 뿐이고 명령으로는 ≤ 2.4e-8 m/s (×Δt 0.1).
+- **결정성**: intra_op 1 은 물론 4 에서도, 순서를 바꿔도, 프로세스를 바꿔도 비트 동일 — 이 CPU(Ryzen 9 9950X)·이
+  모델(MLP)에서. 다른 CPU(명령어 집합이 다른 MLAS 커널)에서는 다시 확인해야 한다 (미측정).
+- **이 결과가 말하지 않는 것**: Gazebo 의 실제 관측 분포에서 정책이 잘 행동한다는 것 (전이는 A2-4·A5·C 몫).
+  학습되지 않은 비교군 C·GRU 경로의 일치는 이번에 재지 않았다 (학습된 C·GRU 정책이 없다 — 1차 물결 r3 이 고정물로
+  1e-5 를 확인했다).
 
 ## 다음
 
-(실행 뒤 채운다)
+- 도구(`parity_dump`, `tools/parity/*`)를 커밋했다 — 새 정책(B1 정본 φ 10 시드 등)이 나오면 같은 명령으로 다시 돈다.
+- C++ 회귀 시험으로 박을 수 있는 것: golden 17 의 학습 정책 행동 (`onnx_check_policy_final.json` 의 `golden_actions`) —
+  모델 파일을 커밋하지 않아 CI 에서는 돌 수 없다. 대신 gzbench(A5)가 Gazebo 실행 전에 이 도구를 돌리도록 넘긴다.

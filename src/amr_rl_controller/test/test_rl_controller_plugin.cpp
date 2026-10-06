@@ -624,8 +624,10 @@ TEST(RLControllerPlugin, DwaCommandIsClampedWhenMeasuredLagExceedsWindowReset)
 
 // ω 만 어긋난 전환 (A2 — 1차 물결 변이 R3 "동기 판정에서 ω 비교 생략" 이 살아남았다): 경로 방향과
 // 0.6 rad 틀어진 자세에서 DWA 2 틱 뒤 정책이 돌면서 정렬 → DWA 의 기억 ω 와 실제 ω 가
-// 0.2–0.45 rad/s 어긋난 순간 (window_reset_w 0.5 안) 낡은 스캔 → DWA. ω 를 맞추지 않으면 DWA 가
-// 낡은 ω 중심 창에서 골라 계약 창 밖 → 자름이 생긴다.
+// 0.3–0.45 rad/s 어긋난 순간 (window_reset_w 0.5 안) 낡은 스캔 → DWA. ω 를 맞추지 않으면 DWA 가
+// 낡은 ω 중심 창(± α·Δt_c = 0.1)에서 골라 실제 ω 와 0.2 넘게 떨어져 → 계약 창 밖 → 자름이 생긴다.
+// (A2 변이 검사 1 회차: 문턱을 0.2 로 두었더니 ω 가 정확히 0.1 차로 창 경계에 닿아 "v 만 sync"
+// 변이가 살아남았다 → 0.3 으로 올렸다.)
 TEST(RLControllerPlugin, OmegaOnlyMismatchIsSyncedWithoutClamp)
 {
   REQUIRE_MODELS();
@@ -657,9 +659,9 @@ TEST(RLControllerPlugin, OmegaOnlyMismatchIsSyncedWithoutClamp)
     const auto r = step();
     ASSERT_NE(r.source, Source::kDwa) << k << " " << r.error;
     const double dw = std::abs(vel.angular.z - w_dwa);
-    ready = !r.new_decision && dw >= 0.2 && dw <= 0.45;
+    ready = !r.new_decision && dw >= 0.3 && dw <= 0.45;
   }
-  ASSERT_TRUE(ready) << "정책 구간에서 ω 차 0.2–0.45 를 만들지 못했다";
+  ASSERT_TRUE(ready) << "정책 구간에서 ω 차 0.3–0.45 를 만들지 못했다";
   const auto syncs0 = ctrl.counters().dwa_window_syncs;
   const auto limited0 = ctrl.counters().dwa_limited;
   double max_dw = 0.0;
