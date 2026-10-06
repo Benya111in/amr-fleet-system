@@ -205,6 +205,23 @@ def factorial(idx) -> List[dict]:
     return out
 
 
+def qcurves(rows: List[dict], bin_mult: int = 2) -> Dict:
+    """(손실, 고장, 비교군) → 구간(60 s × bin_mult)별 평균 완료 수 — Q(t) 겹쳐 보기용 (기술 통계)."""
+    out: Dict = {}
+    for loss in (0.05, 0.2):
+        for fault in plan.MAIN_FAULTS:
+            for arm in ('A1_nearest_central', 'A6_cbaa_vote', 'A9_hybrid_vote'):
+                rs = [r for r in rows if r['arm'] == arm and r['loss'] == loss
+                      and r['fault'] == fault]
+                if not rs:
+                    continue
+                nb = len(rs[0]['q_bins']) // bin_mult
+                out[(loss, fault, arm)] = [
+                    st.mean(sum(r['q_bins'][k * bin_mult:(k + 1) * bin_mult]) for r in rs)
+                    for k in range(nb)]
+    return out
+
+
 def cell_means(rows: List[dict]) -> Dict:
     out: Dict = {}
     for r in rows:
@@ -276,7 +293,15 @@ def main_markdown(rows: List[dict], aa: Optional[dict]) -> (str, dict):
         L.append(_row(f"{f['loss']:g}", f['fault'], f['metric'], fmt(mm['CC']), fmt(mm['CV']),
                       fmt(mm['DC']), fmt(mm['DV']), _ci(f['alloc']), _ci(f['traffic']),
                       _ci(f['interaction'])))
+    L += ['', '## Q(t): 120 s 구간별 평균 완료 수 (무장애 · 고장 + 폴백 끔 · 고장 + 폴백 켬)', '']
+    qs = qcurves(rows)
+    if qs:
+        nb = len(next(iter(qs.values())))
+        L += _head('손실', '고장', '비교군', *[f'{120 * k}–{120 * (k + 1)}' for k in range(nb)])
+        for (loss, fault, arm), q in sorted(qs.items()):
+            L.append(_row(f'{loss:g}', fault, SHORT[arm], *[fmt(x) for x in q]))
     data = {'safety': saf, 'primary': pri, 'factorial': fac,
+            'qcurves': {'|'.join(map(str, k)): v for k, v in qs.items()},
             'explore': [{k: v for k, v in c.items()} for c in exp],
             'cell_means': {'|'.join(map(str, k)): v for k, v in cm.items()}}
     return '\n'.join(L) + '\n', data
