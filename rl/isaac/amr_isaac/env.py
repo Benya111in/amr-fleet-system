@@ -25,74 +25,12 @@ from . import contract_torch as CT
 from .assets import load_geometry, load_pool
 from .contract_torch import C, F64
 from .env_cfg import AmrNavEnvCfg, BODY_Z, WAREHOUSE_PRIM
+from .env_math import approach_distance, move_and_collide
 
 PHYS_DT = C.PROFILER_DT
 N_SUB = int(round(C.DT / PHYS_DT))       # 5
 MAX_DELAY = 4                            # 플랜트 순수 지연 최대 0.08 s = 4 서브스텝
 OUTCOMES = ('success', 'collision', 'time_limit', 'stall')
-
-
-def footprint_hits(pose, obb, half_l=C.HALF_L, half_w=C.HALF_W):
-    """
-    풋프린트 사각형 [N] 이 정적 사각형 [M] 중 하나와 겹치는가 (분리축 정리, 경계 포함).
-
-    pose [N, 3] (x, y, θ), obb [M, 5] (cx, cy, hx, hy, yaw).
-    warehouse_geom.footprint_hits_obb 의 torch 판.
-    """
-    th = pose[:, 2:3]
-    a0 = torch.stack([torch.cos(th), torch.sin(th)], -1)              # [N, 1, 2]
-    a1 = torch.stack([-torch.sin(th), torch.cos(th)], -1)
-    yaw = obb[:, 4].unsqueeze(0)
-    b0 = torch.stack([torch.cos(yaw), torch.sin(yaw)], -1)            # [1, M, 2]
-    b1 = torch.stack([-torch.sin(yaw), torch.cos(yaw)], -1)
-    d = torch.stack([obb[:, 0].unsqueeze(0) - pose[:, 0:1],
-                     obb[:, 1].unsqueeze(0) - pose[:, 1:2]], -1)      # [N, M, 2]
-    hx = obb[:, 2].unsqueeze(0)
-    hy = obb[:, 3].unsqueeze(0)
-    sep = torch.zeros(d.shape[:2], dtype=torch.bool, device=d.device)
-    for ax in (a0.expand_as(d), a1.expand_as(d), b0.expand_as(d), b1.expand_as(d)):
-        ra = half_l * (ax * a0).sum(-1).abs() + half_w * (ax * a1).sum(-1).abs()
-        rb = hx * (ax * b0).sum(-1).abs() + hy * (ax * b1).sum(-1).abs()
-        sep |= (ax * d).sum(-1).abs() > ra + rb
-    return (~sep).any(dim=1)
-
-
-def integrate_pose(pose, v, w, dt):
-    """정확 원호 적분 (dwa integrateArc 와 같은 식, θ 는 감는다)."""
-    x, y, th = pose[:, 0], pose[:, 1], pose[:, 2]
-    small = w.abs() < 1e-9
-    w_safe = torch.where(small, torch.ones_like(w), w)
-    th1 = th + w * dt
-    xs = x + v * dt * torch.cos(th)
-    ys = y + v * dt * torch.sin(th)
-    xa = x + (v / w_safe) * (torch.sin(th1) - torch.sin(th))
-    ya = y - (v / w_safe) * (torch.cos(th1) - torch.cos(th))
-    return torch.stack([torch.where(small, xs, xa), torch.where(small, ys, ya),
-                        CT.wrap_angle(th1)], dim=1)
-
-
-def approach_distance(pts_r, valid, v, w):
-    """
-    safety_lite 에 넣는 접근 거리 D [N] — safety_gate 스윕 풋프린트(SweptFootprint)의 근사.
-
-    로봇 좌표 스캔 끝점 pts_r [N, K, 2]. 풋프린트 안 점 = 0. 직진(|v| ≥ 1e-3): 진행 방향 앞, 차폭
-    띠(|y| ≤ 0.20) 안 점까지의 세로 거리. 제자리 회전(|v| < 1e-3, |ω| ≥ 1e-3): 외접원 밖 반지름 거리.
-    정지: +inf. 원호(v·ω ≠ 0)도 직진 띠로 근사한다 — 정본(원호 접촉각·꼬리 직선·가설 여러 개·강건 통계)과
-    다르다 (README 「계약과의 차이」).
-    """
-    px, py = pts_r[..., 0], pts_r[..., 1]
-    inf = torch.full_like(px, math.inf)
-    inside = valid & (px.abs() <= C.HALF_L) & (py.abs() <= C.HALF_W)
-    band = valid & (py.abs() <= C.HALF_W)
-    fwd = (v >= 0).unsqueeze(1)
-    ahead = torch.where(fwd, px - C.HALF_L, -px - C.HALF_L)
-    d_lin = torch.where(band & (ahead > 0), ahead, inf).min(dim=1).values
-    rad = torch.hypot(px, py) - C.ROBOT_RADIUS
-    d_rot = torch.where(valid, rad.clamp(min=0.0), inf).min(dim=1).values
-    moving = v.abs() >= 1e-3
-    rotating = (~moving) & (w.abs() >= 1e-3)
-    d = torch.where(moving, d_lin, torch.where(rotating, d_rot, torch.full_like(d_lin, math.inf)))
-    return torch.where(inside.any(dim=1), torch.zeros_like(d), d)
 
 
 class AmrNavEnv(DirectRLEnv):
@@ -268,12 +206,10 @@ class AmrNavEnv(DirectRLEnv):
         moving = ~self._collided
         self.plant_v = torch.where(moving, self.plant_v + dv, torch.zeros_like(dv))
         self.plant_w = torch.where(moving, self.plant_w + dw, torch.zeros_like(dw))
-        new_pose = integrate_pose(self.pose, self.plant_v, self.plant_w, PHYS_DT)
-        self.pose = torch.where(moving.unsqueeze(1), new_pose, self.pose)
-        hit = footprint_hits(self.pose, self.obb) & moving
-        self._collided |= hit
-        self.plant_v = torch.where(self._collided, torch.zeros_like(dv), self.plant_v)
-        self.plant_w = torch.where(self._collided, torch.zeros_like(dw), self.plant_w)
+        # 이동·접촉 판정 (순수 함수, tests/test_env_math.py) — _collided 는 같은 텐서를 제자리 갱신
+        self.pose, self.plant_v, self.plant_w, collided = move_and_collide(
+            self.pose, self.plant_v, self.plant_w, self._collided, self.obb, PHYS_DT)
+        self._collided.copy_(collided)
         self.v_meas = self.plant_v.clone()
         self.w_meas = self.plant_w.clone()
         self.a_v_meas = self.profiler.lin.a.clone()

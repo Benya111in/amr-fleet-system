@@ -1,7 +1,9 @@
 """
 창고 정적 충돌체 변환기 — warehouse.sdf (읽기 전용) → 상자 목록 → 삼각형 메시·2D 사각형·점유 격자.
 
-Isaac Sim 에 의존하지 않는다 (표준 라이브러리 + numpy). USD 로 옮기는 일은 usd_scene.py 가 한다.
+Isaac Sim 에 의존하지 않는다 (표준 라이브러리 + numpy). USD 로 옮기는 일은 env.py `_setup_scene` 이
+삼각형 메시로 한다 (UsdGeom.Mesh — RayCaster 가 광선을 쏘는 대상이고 물리 충돌체는 아니다. 로봇 접촉은
+env_math.footprint_hits 가 2D 사각형으로 판정한다).
 
 규칙
   - 대상: 월드 최상위 <model> 과 <include>(model://X → src/amr_simulation/models/X/model.sdf) 의
@@ -200,7 +202,8 @@ def footprint_hits_obb(pose, obb, half_l, half_w):
     """
     풋프린트 사각형(세계 자세 pose (x, y, θ)) 이 사각형들 중 하나와 겹치는가 (분리축 정리, 경계 포함).
 
-    numpy 기준판 — env 는 같은 식의 torch 판을 쓴다 (시험에서 대조).
+    numpy 기준판. env 는 같은 식의 torch 판 env_math.footprint_hits 를 쓰고, tests/test_env_math.py 가
+    창고 경계 근처 자세 12 000 개에서 둘의 판정이 정확히 같은지 대조한다.
     """
     x, y, th = pose
     a_axes = np.array([[math.cos(th), math.sin(th)], [-math.sin(th), math.cos(th)]])
