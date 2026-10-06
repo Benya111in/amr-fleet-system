@@ -5,6 +5,7 @@
   - 관측 지연: 스캔은 지연만큼 과거 자세에서 레이캐스트
   - 충돌한 env 는 서브스텝에서 더 움직이지 않는다 (접촉 = 즉시 정지·종료)
   - truncation 부트스트랩: 보상에 γ·V(final_obs)·σ_ret 를 더한다
+  - safety STOP 확정: 새 스캔(첫 서브스텝) 2 번 연속 D ≤ 0.30 이어야 proximity STOP, D > 0.50 이면 해제
 """
 
 import math
@@ -13,8 +14,10 @@ import pytest
 import torch
 
 from amr_sim2d import contract_torch as T
+from amr_sim2d import geometry2d as G
 from amr_sim2d import kernels as K
 from amr_sim2d import raycast as RC
+from amr_sim2d._contract import C
 from amr_sim2d.env import EnvConfig, Sim2DEnv
 from amr_sim2d.ppo import PPOConfig, Trainer
 
@@ -127,3 +130,52 @@ def test_running_norm_variance_floor():
     z = nm(torch.full((1, 3), 0.5))
     # 하한이 있으면 0.5/0.1 = 5, 없으면 ±10 에 붙는다
     assert float(z.abs().max()) == pytest.approx(0.5 / math.sqrt(0.01 + 1e-8), rel=1e-4)
+
+
+def _tick_inputs(px):
+    """전방 점 하나 (로봇 좌표 x = px, y = 0) 와 0.3 m/s 직진 명령·측정."""
+    f64 = torch.float64
+    S = {'v': torch.tensor([0.3], dtype=f64), 'w': torch.tensor([0.0], dtype=f64),
+         'intent': torch.zeros(1, 2, dtype=f64), 'have_intent': torch.tensor([False]),
+         'stop_count': torch.tensor([0]), 'prox': torch.tensor([False])}
+    X = {'scan_px': torch.tensor([[px, 5.0, 0.0, 0.0]]),
+         'scan_py': torch.tensor([[0.0, 3.0, 0.0, 0.0]]),
+         'scan_ok': torch.tensor([[True, True, False, False]]),
+         'min_ttc': torch.tensor([math.inf], dtype=f64)}
+    return S, X, torch.tensor([0.3], dtype=f64), torch.tensor([0.0], dtype=f64)
+
+
+def _tick(S, X, v, w, first):
+    out, upd = K.safety_tick(S, X, v, w, torch.tensor(first))
+    S = dict(S, **upd)
+    return S, out
+
+
+def test_safety_stop_needs_two_consecutive_scans():
+    """D ≤ E_STOP 가 새 스캔 2 번 연속이어야 STOP. 같은 스캔의 서브스텝은 세지 않고, 끊기면 다시 센다."""
+    S, X_near, v, w = _tick_inputs(0.40)          # 앞면(0.30)에서 0.10 m
+    _, X_far, _, _ = _tick_inputs(0.70)           # 0.40 m: STOP 거리(0.30) 밖, 해제 거리(0.50) 안
+    _, X_clear, _, _ = _tick_inputs(2.00)         # 1.70 m: 해제 거리 밖
+    d = [float(G.swept_approach(X['scan_px'], X['scan_py'], X['scan_ok'], v.float(), w.float()))
+         for X in (X_near, X_far, X_clear)]
+    assert d[0] <= 0.30 < d[1] <= 0.50 < d[2], d
+    # 기준: 확정 STOP 이 없을 때 X_far 에서는 φ 가 정지시키지 않는다 (아래 "유지" 확인의 대조)
+    _, out_far = _tick(dict(S), X_far, v, w, True)
+    assert float(out_far['v']) > 0.0
+    S, out = _tick(S, X_near, v, w, True)          # 스캔 1: STOP 구역이지만 미확정 → CRITICAL
+    assert int(S['stop_count']) == 1 and not bool(S['prox'])
+    assert int(out['zone']) == C.ZONE_CRITICAL
+    S, out = _tick(S, X_near, v, w, False)         # 같은 스캔의 다음 서브스텝 — 세지 않는다
+    assert int(S['stop_count']) == 1 and not bool(S['prox'])
+    S, out = _tick(S, X_far, v, w, True)           # 스캔 2: 멀어짐 → 카운터 0
+    assert int(S['stop_count']) == 0 and not bool(S['prox'])
+    S, out = _tick(S, X_near, v, w, True)          # 스캔 3: 다시 1
+    assert int(S['stop_count']) == 1 and not bool(S['prox'])
+    assert int(out['zone']) == C.ZONE_CRITICAL
+    S, out = _tick(S, X_near, v, w, True)          # 스캔 4: 연속 2 → STOP
+    assert int(S['stop_count']) == 2 and bool(S['prox'])
+    assert float(out['v']) == 0.0 and float(out['w']) == 0.0 and int(out['zone']) == C.ZONE_STOP
+    S, out = _tick(S, X_far, v, w, True)           # D ≤ 0.50 → 유지 (대조와 달리 정지)
+    assert bool(S['prox']) and float(out['v']) == 0.0 and int(out['zone']) == C.ZONE_STOP
+    S, out = _tick(S, X_clear, v, w, True)         # D > 0.50 → 해제
+    assert not bool(S['prox']) and float(out['v']) > 0.0
