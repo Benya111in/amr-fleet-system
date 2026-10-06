@@ -24,7 +24,7 @@ NB = os.path.join(REPO, 'docs', 'research', 'rl-navigation', 'notebook')
 ENTRIES = os.path.join(NB, 'entries')
 RUNS = os.path.join(NB, 'runs.jsonl')
 
-# 실행 목록의 필수 필드. 값이 없으면 "unknown" 이 아니라 등록을 거부한다 — 나중에 출처를 잃지 않으려고.
+# 실행 목록의 필수 필드. 값이 없으면 등록을 거부한다 — 나중에 출처를 잃지 않으려고.
 REQUIRED = {
     'run_id': '전역 유일 id (예: B1_ppo_v12_s3)',
     'stage': '단계 (예: A3, B1)',
@@ -45,7 +45,8 @@ REQUIRED = {
 
 
 def _git(*args):
-    return subprocess.run(['git', '-C', REPO, *args], capture_output=True, text=True).stdout.strip()
+    out = subprocess.run(['git', '-C', REPO, *args], capture_output=True, text=True)
+    return out.stdout.strip()
 
 
 def cmd_new_entry(a):
@@ -134,12 +135,15 @@ def cmd_check(a):
     for r in runs:
         err = _validate(r)
         if err:
-            print(f"{r.get('run_id')}: {err}"); bad += 1
+            print(f"{r.get('run_id')}: {err}")
+            bad += 1
         if r.get('run_id') in seen:
-            print(f"{r.get('run_id')}: 중복"); bad += 1
+            print(f"{r.get('run_id')}: 중복")
+            bad += 1
         seen.add(r.get('run_id'))
         if a.paths and not os.path.isdir(r.get('raw_dir', '')):
-            print(f"{r.get('run_id')}: raw_dir 없음 {r.get('raw_dir')}"); bad += 1
+            print(f"{r.get('run_id')}: raw_dir 없음 {r.get('raw_dir')}")
+            bad += 1
     print(f'{len(runs)} 건, 문제 {bad}')
     sys.exit(1 if bad else 0)
 
@@ -149,7 +153,8 @@ def cmd_index(a):
     runs = _load_runs()
     lines = ['# 보너스 1 실험 노트 색인', '',
              '> `python3 rl/tools/notebook.py index` 가 만든다 — 손으로 고치지 않는다.', '',
-             '## 노트 항목 (시간순)', '', '| 시각 | 에이전트 | 제목 | 파일 |', '|---|---|---|---|']
+             '## 노트 항목 (시간순)', '',
+             '| 시각 | 에이전트 | 제목 | 파일 |', '|---|---|---|---|']
     for fn in files:
         if not fn.endswith('.md'):
             continue
@@ -160,26 +165,39 @@ def cmd_index(a):
         agent = parts[2] if len(parts) > 2 else ''
         lines.append(f'| {when} | {agent} | {title} | [entries/{fn}](entries/{fn}) |')
     lines += ['', f'## 실행 목록 요약 ({len(runs)} 건, 원본 `runs.jsonl`)', '',
-              '| run_id | 단계 | 종류 | 시뮬 | 커밋 | 시드 | 핵심 결과 | 표기 |', '|---|---|---|---|---|---|---|---|']
+              '| run_id | 단계 | 종류 | 시뮬 | 커밋 | 시드 | 핵심 결과 | 표기 |',
+              '|---|---|---|---|---|---|---|---|']
     for r in runs:
         res = ', '.join(f'{k}={v}' for k, v in list(r.get('result', {}).items())[:4])
-        lines.append(f"| {r['run_id']} | {r['stage']} | {r['kind']} | {r['sim']} | {r['commit']} | "
-                     f"{r['seed']} | {res} | {r['label']} |")
+        lines.append(f"| {r['run_id']} | {r['stage']} | {r['kind']} | {r['sim']} | "
+                     f"{r['commit']} | {r['seed']} | {res} | {r['label']} |")
     with open(os.path.join(NB, 'index.md'), 'w', encoding='utf-8') as f:
         f.write('\n'.join(lines) + '\n')
     print(os.path.join(NB, 'index.md'))
 
 
 def main():
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
     sp = p.add_subparsers(dest='cmd', required=True)
-    e = sp.add_parser('new-entry'); e.add_argument('--agent', required=True); e.add_argument('--stage', required=True)
-    e.add_argument('--slug', required=True); e.add_argument('--title', required=True); e.set_defaults(f=cmd_new_entry)
-    r = sp.add_parser('register'); g = r.add_mutually_exclusive_group(required=True)
-    g.add_argument('--json'); g.add_argument('--file'); r.set_defaults(f=cmd_register)
-    i = sp.add_parser('index'); i.set_defaults(f=cmd_index)
-    c = sp.add_parser('check'); c.add_argument('--paths', action='store_true'); c.set_defaults(f=cmd_check)
-    a = p.parse_args(); a.f(a)
+    e = sp.add_parser('new-entry')
+    e.add_argument('--agent', required=True)
+    e.add_argument('--stage', required=True)
+    e.add_argument('--slug', required=True)
+    e.add_argument('--title', required=True)
+    e.set_defaults(f=cmd_new_entry)
+    r = sp.add_parser('register')
+    g = r.add_mutually_exclusive_group(required=True)
+    g.add_argument('--json')
+    g.add_argument('--file')
+    r.set_defaults(f=cmd_register)
+    i = sp.add_parser('index')
+    i.set_defaults(f=cmd_index)
+    c = sp.add_parser('check')
+    c.add_argument('--paths', action='store_true')
+    c.set_defaults(f=cmd_check)
+    a = p.parse_args()
+    a.f(a)
 
 
 if __name__ == '__main__':
