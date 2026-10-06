@@ -13,6 +13,7 @@
 | `amr_isaac/paths.py`, `assets.py` | 전역 코스트맵 팽창 + A* 간선 비용으로 비용 최단 경로 풀 (캐시 `/home/CAPYI_AI/runs/r1-isaac/assets`, 커밋 안 함) | 아니오 |
 | `amr_isaac/env_cfg.py`, `env.py`, `tasks.py` | `DirectRLEnv` — `AMR-Isaac-Nav-B-v0` (학습), `AMR-Isaac-Nav-B-Eval-v0` (held-out 경로·명목 동역학) | 예 |
 | `amr_isaac/agents/rsl_rl_ppo_cfg.py` | rsl_rl PPO 설정 (γ 0.995, λ 0.97, rollout 64) | 예 |
+| `amr_isaac/expert.py` | BC 예열용 특권 정보 전문가 (경로 순수 추종) | 아니오 |
 | `amr_isaac/policy_export.py` | rsl_rl state dict → 계약형 `PolicyB` → ONNX (`onnx_io.md`) | 아니오 |
 | `scripts/` | `build_assets` · `smoke_env` · `check_golden_in_sim` · `train_ppo` · `eval_policy` · `export_onnx` · `plot_curves` · `gpu_monitor.sh` | 일부 |
 | `tests/` | golden 31 대조, 기준 구현과 무작위 차분, 창고 변환기·경로 풀 | 아니오 |
@@ -30,8 +31,10 @@ docker run --rm -v $WT:/ws -v $R:$R -w /ws amr-ai/rl:0.3 python3 rl/isaac/script
 rl/isaac/run_isaac.sh smoke  rl/isaac/scripts/smoke_env.py --num_envs 256
 rl/isaac/run_isaac.sh golden rl/isaac/scripts/check_golden_in_sim.py
 # 4) 학습 → 평가 → ONNX
-rl/isaac/run_isaac.sh train rl/isaac/scripts/train_ppo.py --num_envs 1024 --iterations 400 --run <run> \
-    --curriculum 4:30:250 --vcap_curriculum 0.15:0.4:40:250:0.5
+# 지금 쓰는 조합: 전문가 시연 BC 예열 → 정규화 통계 고정 → critic 예열 20 반복 → PPO(고정 lr 1e-4) + 라그랑주
+rl/isaac/run_isaac.sh train rl/isaac/scripts/train_ppo.py --num_envs 2048 --iterations 300 --run <run> \
+    --bc_steps 200 --critic_warmup 20 --init_std 0.25 --lr 1e-4 --schedule fixed --entropy 0 \
+    --lagrange 0,0.05,0.05,0.05,0.005/0.5,0.01,0.01,0.01,0.001/5.0
 rl/isaac/run_isaac.sh eval rl/isaac/scripts/eval_policy.py --policy $R/train/<run>/policy_final.pt
 docker run --rm -v $WT:/ws -v $R:$R -w /ws amr-ai/rl:0.3 python3 rl/isaac/scripts/export_onnx.py --run $R/train/<run>
 ```
@@ -66,7 +69,14 @@ raw 행동 → `u = tanh(raw)` → `integrate_b` (ray 클램프) → 결정 주�
 8. **관측 정규화** — rsl_rl `EmpiricalNormalization` 의 통계 갱신을 쓰고 적용 식만 계약식으로 바꿨다
    (`train_ppo.ContractNormalization`). 분산 하한 1e-2 를 두었고 ONNX 에도 같은 σ² 를 넣는다.
 9. **학습 전용 커리큘럼** — 경로 길이 상한(구조 파라미터, 20 % 는 전체 풀 균일, contract §10)과 **v_cap**
-   (관측된다; 평가·비교는 v_cap = 1.0). v_cap 커리큘럼은 계약에 없는 [설계 선택]이다 — 이유는 REPORT §5.
+   (관측된다; 평가·비교는 v_cap = 1.0). 둘 다 계약에 없는 [설계 선택]이고, 처음부터의 PPO 에서는 성공을 만들지
+   못했다 (REPORT §4). 지금 조합은 쓰지 않는다.
+10. **PPO-Lagrangian (보상 벌점형)** — 계약 보상만으로는 추종 벌점이 이탈 구간(e > 0.30 m) 밖에서만 걸려 경로에서
+   멀리 벗어나는 쪽이 유리하다. 계약 §7 의 비용 5 채널을 PPO 보상에서 λ·c 로 빼고 λ 를 쌍대 상승으로 갱신한다
+   (단일 critic). 개입 예산 d₁ 은 계약이 미정이라 5.0/에피소드로 둔 [설계 선택]이다. 기록하는 반환은 계약 보상이다.
+11. **BC 예열** — 특권 정보 전문가(`amr_isaac/expert.py`, 1.0 m 앞 경로점 순수 추종 + 목표 거리 비례 감속)
+   시연으로 actor 를 tanh 공간 MSE 로 맞춘 뒤 PPO 로 미세조정한다. **BC 뒤 정규화 통계를 고정한다** — 고정하지
+   않으면 actor 를 얼린 채로도 롤아웃 통계 이동만으로 성공률이 94.6 % → 5.3 % 로 무너졌다.
 
 ## Isaac 함정 (이 호스트, Isaac Sim 5.1 / Isaac Lab 2.3.2 / RTX 5090 / Rocky 8.10)
 
