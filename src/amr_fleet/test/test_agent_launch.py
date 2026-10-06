@@ -8,7 +8,11 @@ launch 시험: 에이전트 5 개 + 가짜 /clock 을 띄우고(시뮬레이터 
 ② 모드: NORMAL → HOLD_NEW → DEGRADED → (관찰자 복귀 서버) RESYNC → NORMAL 을 5 대 모두 지남
 ③ 낮은 (epoch, leader_id) 의 assign_task 는 프록시가 거부하고 가짜 실행기까지 가지 않음, 낮은 epoch 하트비트는
   생존 신호가 아님 (옛 권위자가 살아 있어도 진짜 서버가 죽으면 DEGRADED)
-④ DEGRADED 에서 /fleet/task_board 작업을 CBAA + 작업 ID 잠금으로 나눠 가짜 실행: 같은 task_id 픽업 시작 2 회 이상 0
+④b (리뷰 반영, NORMAL) 중앙 프록시 경로의 작업 ID 잠금: 실행기가 거부한 작업을 다른 로봇에 다시 주면 수락 → HELD,
+  같은 task_id 를 두 로봇 프록시에 주고 둘 다 COMMIT_TASK → 허가 구간 겹침 0, HELD 한 대, 확정 거부 ≥ 1
+④a DEGRADED 에서 /fleet/task_board 작업을 CBAA + 작업 ID 잠금으로 나눠 가짜 실행: 같은 task_id 픽업 시작 2 회 이상 0.
+  이 단계는 경합을 만들지 않는다 (시드 1–4 에서 경합 0 — 리뷰) — 잠금 효과의 증거는 ④b 와 분할 시험
+  (test_agent_launch_partition.py, ④c) 이다. 경합 수는 요약에 함께 적는다.
 
 통신 모의: 로봇↔로봇 링크 손실 AMR_AGENT_LAUNCH_LOSS(기본 0.2) · 지연 U(0, 100) ms, 서버→로봇은 지연만.
 환경 변수: AMR_AGENT_LAUNCH_SEED(1), AMR_AGENT_LAUNCH_RAW(원자료 디렉터리, 기본 임시), AMR_AGENT_LAUNCH_TASKS(10).
@@ -94,6 +98,7 @@ class _Observer:
         self.events = []
         self.beacons = []
         self.exec_calls = collections.Counter()
+        self.reject_exec = set()                   # 이 로봇들의 가짜 실행기는 거부한다 (④b)
         self.cmd = {}
         self.assign = {}
         for r in ROBOTS:
@@ -126,8 +131,30 @@ class _Observer:
 
     def _fake_exec(self, r, req, resp):
         self.exec_calls[r] += 1
+        if r in self.reject_exec:
+            resp.success, resp.robot_id, resp.message = False, r, 'fake reject busy:other'
+            return resp
         resp.success, resp.robot_id, resp.message = True, r, 'fake executor'
         return resp
+
+    def assign_task(self, r, task_id, epoch, leader):
+        """프록시 assign_task 1 회 — 결과와 실행기 도달 수."""
+        req = AssignTask.Request()
+        req.task.task_id = task_id
+        req.task.epoch, req.task.leader_id = int(epoch), leader
+        before = self.exec_calls[r]
+        resp = self.call(self.assign[r], req)
+        return {'success': None if resp is None else resp.success,
+                'message': None if resp is None else resp.message,
+                'reached_executor': self.exec_calls[r] - before}
+
+    def holds(self, r, res) -> bool:
+        st = self.state.get(r)
+        return st is not None and res in st.held
+
+    def denied(self, r, res) -> bool:
+        st = self.state.get(r)
+        return st is not None and res in st.denied
 
     # ------------------------------------------------------------------ 진행
     def spin_for(self, seconds: float, until=None, step=None) -> bool:
@@ -336,23 +363,21 @@ class TestAgentFleet(unittest.TestCase):
         # --- ③ 낮은 epoch 거부: 프록시 + 옛 권위자 하트비트
         leader = '/fleet/fleet_manager_node'
         res = {}
+        # 서로 다른 거부 사례 셋: 낮은 epoch, 같은 epoch 의 작은 leader_id, 펜스가 생긴 뒤의 epoch 0 (옛 구성)
+        # (리뷰 전의 'first_epoch'(3) 은 lower_epoch(epoch_b − 1 = 3) 과 같은 입력이었다)
         for name, ep, ld in (('current', epoch_b, leader), ('lower_epoch', epoch_b - 1, leader),
                              ('same_epoch_lower_leader', epoch_b, '/fleet/a_old_leader'),
-                             ('first_epoch', 3, leader)):
-            req = AssignTask.Request()
-            req.task.task_id = f'fence_{name}'
-            req.task.epoch, req.task.leader_id = int(ep), ld
-            before = obs.exec_calls['amr_02']
-            resp = obs.call(obs.assign['amr_02'], req)
-            res[name] = {'success': None if resp is None else resp.success,
-                         'message': None if resp is None else resp.message,
-                         'reached_executor': obs.exec_calls['amr_02'] - before}
+                             ('unfenced_epoch0', 0, '')):
+            res[name] = obs.assign_task('amr_02', f'fence_{name}', ep, ld)
         summary['③_proxy'] = res
         self.assertTrue(res['current']['success'] and res['current']['reached_executor'] == 1,
                         res)
-        for k in ('lower_epoch', 'same_epoch_lower_leader', 'first_epoch'):
+        for k in ('lower_epoch', 'same_epoch_lower_leader', 'unfenced_epoch0'):
             self.assertFalse(res[k]['success'], res)
             self.assertEqual(res[k]['reached_executor'], 0, res)
+
+        # --- ④b 중앙 프록시 경로의 작업 ID 잠금 (NORMAL, 서버 B 살아 있음)
+        self._central_task_lock(obs, summary, epoch_b, leader)
         obs.server('stale', '--epoch', '2', '--no-manager', '--leader-id', leader)
         obs.spin_for(3.0)
         rej0 = {r: obs.state[r].low_epoch_rejected for r in ROBOTS}
@@ -366,7 +391,7 @@ class TestAgentFleet(unittest.TestCase):
         self.assertTrue(all(rej1[r] > rej0[r] for r in ROBOTS), (rej0, rej1))
         obs.kill('stale')
 
-        # --- ④ DEGRADED 협상 + 작업 ID 잠금: 픽업 시작 중복 0
+        # --- ④a DEGRADED 협상 + 작업 ID 잠금: 픽업 시작 중복 0 (경합은 만들지 않는다 — 경합 수를 함께 적는다)
         t_post = time.time()
         for i in range(N_TASKS):
             t = Task()
@@ -395,10 +420,89 @@ class TestAgentFleet(unittest.TestCase):
                 starts[e['task_id']].append(e['robot'])
         dups = {t: rs for t, rs in starts.items() if len(rs) > 1}
         failed = [e for e in evs if e['event'] == 'failed']
+        granted = [(e['robot'], e['task_id']) for e in evs if e['event'] == 'task_granted']
+        commits = {(e['robot'], e['task_id']) for e in evs if e['event'] == 'commit_request'}
+        picked = {(e['robot'], e['task_id']) for e in evs if e['event'] == 'pickup_start'}
         summary['④'] = {'pickup_starts': sum(len(v) for v in starts.values()),
                         'tasks_started': len(starts), 'done': len(done),
                         'all_done': finished, 'duplicates': dups,
                         'failed': [(e['robot'], e['task_id'], e.get('reason')) for e in failed],
-                        'starts': dict(starts)}
+                        'starts': dict(starts),
+                        # 경합 수 (리뷰: 이 단계는 경합 0 이었다 — 잠금 효과의 증거로 세지 않는다)
+                        'contention': {'task_granted': len(granted),
+                                       'granted_tasks_distinct': len({t for _, t in granted}),
+                                       'commit_without_pickup': sorted(commits - picked),
+                                       'failed': len(failed),
+                                       'denied_final': {r: list(obs.state[r].denied)
+                                                        for r in ROBOTS if r in obs.state}}}
         self.assertEqual(dups, {})
         self.assertGreaterEqual(len(starts), N_TASKS // 2, summary['④'])
+
+    def _central_task_lock(self, obs, summary, epoch, leader):
+        """
+        ④b: 중앙 프록시 경로의 작업 ID 잠금을 ROS 로 (가짜 실행기는 응답만 — 확정은 ZoneCommand COMMIT_TASK).
+
+        1) amr_04 의 실행기가 거부한 작업 T1 을 amr_02 에 다시 준다 → 수락 → COMMIT_TASK → HELD (리뷰 차단 1 의 회귀:
+           고치기 전에는 amr_04 비컨의 current_task_id 가 단조 taken 에 남아 'task_taken' 으로 거부했다).
+        2) 같은 작업 T2 를 amr_03 · amr_05 프록시에 주고 둘 다 COMMIT_TASK 를 되풀이 → 허가 구간 겹침 0, HELD 한 대,
+           확정 거부(denied 또는 끝까지 HELD 아님) ≥ 1.
+        """
+        t1, t2 = f'b4p3.rej.{SEED:02d}', f'b4p3.race.{SEED:02d}'
+        r1, r2 = f'task:{t1}', f'task:{t2}'
+        out = {}
+        obs.reject_exec = {'amr_04'}
+        out['T1_amr_04'] = obs.assign_task('amr_04', t1, epoch, leader)
+        obs.reject_exec = set()
+        obs.spin_for(1.5)                      # 비컨이 돈다 (고치기 전이면 amr_04 비컨에 T1 이 실린다)
+        out['T1_amr_02'] = obs.assign_task('amr_02', t1, epoch, leader)
+        last = {}
+
+        def committer(robots, task_id):
+            def step():
+                now = time.monotonic()
+                for r in robots:
+                    if now - last.get(r, 0.0) >= 0.5 and not obs.holds(r, f'task:{task_id}'):
+                        last[r] = now
+                        obs.cmd[r].call_async(ZoneCommand.Request(
+                            op=ZoneCommand.Request.OP_COMMIT_TASK, resources=[task_id]))
+            return step
+
+        t0 = time.monotonic()
+        ok1 = obs.spin_for(15.0, until=lambda: obs.holds('amr_02', r1),
+                           step=committer(['amr_02'], t1))
+        out['T1_amr_02_held_wall_s'] = round(time.monotonic() - t0, 2) if ok1 else None
+        racers = ['amr_03', 'amr_05']
+        out['T2'] = {r: obs.assign_task(r, t2, epoch, leader) for r in racers}
+        last.clear()
+        t0 = time.monotonic()
+
+        def settled():
+            held = [r for r in racers if obs.holds(r, r2)]
+            return len(held) == 1 and all(obs.denied(r, r2) for r in racers if r not in held)
+
+        ok2 = obs.spin_for(20.0, until=settled, step=committer(racers, t2))
+        obs.spin_for(3.0, step=committer(racers, t2))   # 정한 뒤에도 진 쪽이 계속 확정을 원한다
+        out['T2_settled_wall_s'] = round(time.monotonic() - t0, 2) if ok2 else None
+        evs = obs.file_events()
+        iv2 = _intervals(evs, r2)
+        bad2, _ = _overlaps(iv2)
+        holders2 = sorted({r for _, _, r in iv2})
+        refused = [r for r in racers if r not in holders2]
+        out.update({'T2_intervals': iv2, 'T2_overlaps': bad2, 'T2_holders': holders2,
+                    'T2_refused': refused,
+                    'T2_denied_final': {r: obs.denied(r, r2) for r in racers},
+                    'T1_holders': sorted({r for _, _, r in _intervals(evs, r1)}),
+                    'T1_amr_04_central_accept': sum(
+                        1 for e in evs if e['robot'] == 'amr_04' and e['event'] == 'central_accept'
+                        and e.get('task_id') == t1)})
+        summary['④b'] = out
+        self.assertFalse(out['T1_amr_04']['success'], out)
+        self.assertEqual(out['T1_amr_04']['reached_executor'], 1, out)
+        self.assertEqual(out['T1_amr_04_central_accept'], 0, out)
+        self.assertTrue(out['T1_amr_02']['success'], out)
+        self.assertTrue(ok1, out)
+        self.assertEqual(out['T1_holders'], ['amr_02'], out)
+        self.assertTrue(all(v['success'] for v in out['T2'].values()), out)
+        self.assertEqual(bad2, [], out)
+        self.assertEqual(len(holders2), 1, out)
+        self.assertGreaterEqual(len(refused), 1, out)

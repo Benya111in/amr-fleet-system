@@ -542,3 +542,11 @@ def test_unfenced_epoch0_is_accepted_only_before_any_fence():
     assert not ok and why.startswith('stale_epoch')
     assert c.low_epoch_rejected == n0 + 1
     assert c.check_assignment('u2', 1, LEADER, t) == (True, 'ok')
+
+
+def test_own_negotiated_grant_is_not_confirmed():
+    """내 잠정 낙찰(CBAA)은 확정이 아니다 — 실패해 놓은 작업을 NORMAL 에서 중앙이 다시 주면 받는다."""
+    c, t = _normal_lonely_core()
+    c._start_task('n1')                                    # CBAA 낙찰 (가짜 실행기 없음 — 사건만)
+    assert 'n1' not in c.taken
+    assert c.check_assignment('n1', 1, LEADER, t) == (True, 'ok')
