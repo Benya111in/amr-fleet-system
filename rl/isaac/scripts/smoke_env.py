@@ -26,7 +26,8 @@ ap.add_argument('--num_envs', type=int, default=256)
 ap.add_argument('--steps', type=int, default=300)
 ap.add_argument('--heur_steps', type=int, default=1500)
 ap.add_argument('--lidar_source', default='sensor')
-ap.add_argument('--out', default='/home/CAPYI_AI/runs/r1-isaac/smoke/smoke.json')
+ap.add_argument('--out', default=os.path.join(os.environ.get(
+    'AMR_ISAAC_RUNS', '/home/CAPYI_AI/runs/r7-isaac12'), 'smoke', 'smoke.json'))
 AppLauncher.add_app_launcher_args(ap)
 args = ap.parse_args()
 args.headless = True

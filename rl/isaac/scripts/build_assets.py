@@ -2,7 +2,7 @@
 """
 창고 기하·경로 풀 캐시를 만든다 (Isaac 불필요, numpy·scipy).
 
-    python3 rl/isaac/scripts/build_assets.py [--out /home/CAPYI_AI/runs/r1-isaac/assets]
+    python3 rl/isaac/scripts/build_assets.py [--out $AMR_ISAAC_RUNS/assets]
         [--goals 256] [--starts 16] [--seed 0] [--workers 4]
 
 산출 (커밋하지 않는다): <out>/warehouse_<sha>.npz (메시 정점·삼각형, 2D 사각형, 점유 격자),
@@ -35,7 +35,8 @@ def _job(args):
 def main():
     """캐시를 만든다 (있으면 건너뛴다)."""
     ap = argparse.ArgumentParser()
-    ap.add_argument('--out', default='/home/CAPYI_AI/runs/r1-isaac/assets')
+    ap.add_argument('--out', default=os.path.join(os.environ.get(
+        'AMR_ISAAC_RUNS', '/home/CAPYI_AI/runs/r7-isaac12'), 'assets'))
     ap.add_argument('--goals', type=int, default=256)
     ap.add_argument('--starts', type=int, default=16)
     ap.add_argument('--seed', type=int, default=0)

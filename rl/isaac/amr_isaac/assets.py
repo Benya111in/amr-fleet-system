@@ -1,5 +1,7 @@
 """
-창고 기하·경로 풀 캐시 (생성물은 커밋하지 않는다 — 기본 위치 /home/CAPYI_AI/runs/r1-isaac/assets).
+창고 기하·경로 풀 캐시 (생성물은 커밋하지 않는다 — 기본 위치 $AMR_ISAAC_RUNS/assets).
+
+AMR_ISAAC_RUNS 기본값은 /home/CAPYI_AI/runs/r7-isaac12 (1차 물결 캐시는 /home/CAPYI_AI/runs/r1-isaac/assets).
 
 캐시 키 = warehouse.sdf·모델 SDF·변환기·경로 모듈 소스의 sha256 앞 10 자리. 소스가 바뀌면 새로 만든다.
 """
@@ -14,7 +16,8 @@ import numpy as np
 from . import paths as PA
 from . import warehouse_geom as W
 
-DEFAULT_DIR = '/home/CAPYI_AI/runs/r1-isaac/assets'
+RUNS = os.environ.get('AMR_ISAAC_RUNS', '/home/CAPYI_AI/runs/r7-isaac12')
+DEFAULT_DIR = os.path.join(RUNS, 'assets')
 
 
 def geometry_sha():

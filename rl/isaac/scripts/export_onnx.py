@@ -2,7 +2,7 @@
 """
 학습 정책 → ONNX (onnx_io.md 비교군 B) 내보내기와 onnxruntime 왕복 일치 시험. amr-ai/rl:0.3 에서 돈다.
 
-    R=/home/CAPYI_AI/runs/r1-isaac
+    R=/home/CAPYI_AI/runs/r7-isaac12
     docker run --rm -v <wt>:/ws -v $R:$R -w /ws amr-ai/rl:0.3 \
         python3 rl/isaac/scripts/export_onnx.py --run $R/train/<run>
 

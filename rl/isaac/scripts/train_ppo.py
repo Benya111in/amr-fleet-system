@@ -4,7 +4,7 @@ rsl_rl PPO 학습 (비교군 B) — 학습 곡선 JSONL·체크포인트·요약
     rl/isaac/run_isaac.sh train rl/isaac/scripts/train_ppo.py --num_envs 1024 --iterations 300 \
         --run ppo_b_s0 --seed 0
 
-산출: /home/CAPYI_AI/runs/r1-isaac/train/<run>/ — curve.jsonl (chunk 마다: 반복, env-step, 처리량,
+산출: $AMR_ISAAC_RUNS/train/<run>/ — curve.jsonl (chunk 마다: 반복, env-step, 처리량,
 에피소드 결과율, 평균 반환, 비용 합, GPU 메모리), model_*.pt (rsl_rl), summary.json, HEAD.txt 는
 실행 전에 run_isaac.sh 를 부른 쪽이 쓴다.
 """
@@ -41,7 +41,8 @@ ap.add_argument('--schedule', default=None, help="'fixed' 또는 'adaptive'")
 ap.add_argument('--clip', type=float, default=None)
 ap.add_argument('--curriculum', default='',
                 help="경로 길이 상한 커리큘럼 'L0:L1:N' — 반복 N 까지 L0→L1 m 선형, 빈 값 = 끔")
-ap.add_argument('--root', default='/home/CAPYI_AI/runs/r1-isaac/train')
+ap.add_argument('--root', default=os.path.join(os.environ.get(
+    'AMR_ISAAC_RUNS', '/home/CAPYI_AI/runs/r7-isaac12'), 'train'))
 AppLauncher.add_app_launcher_args(ap)
 args = ap.parse_args()
 args.headless = True
