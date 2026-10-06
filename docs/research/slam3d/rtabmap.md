@@ -27,10 +27,28 @@ LIO-SAM 방위), 191–200행(오라클), 255–272행(4–5단계). 센서 계�
 
 | 오라클 | 막는 곳 |
 |---|---|
-| Gazebo IMU 방위 = 정답 ([측정] sensor.md §6) | 모든 SLAM 행 IMU 는 `imu/data_madgwick` (`use_mag false`, `publish_tf false`). `rtabmap.launch.py check_imu_topic` 이 `imu/data_raw`·`imu/data` 를 거절, `rows.ORACLE_TOPICS` 는 어떤 행도 재생하지 않는다 (`test_rows_never_play_oracle_topics_or_clock`) |
-| 정답 자세 `ground_truth/odom` | 주행 제어(route_driver)와 평가에만. 재생하지 않는다 |
+| Gazebo IMU 방위 = 정답 ([측정] sensor.md §6) | 모든 SLAM 노드의 IMU 입력은 `imu/data_madgwick` (`use_mag false`, `publish_tf false`). `rtabmap.launch.py check_imu_topic` 이 `imu/data_raw`·`imu/data` 를 거절한다. 재생: 기본 다섯 행은 `rows.ORACLE_TOPICS` 를 틀지 않는다. **예외 — 변형 행 `rtabmap3d_imulive` 는 정답 방위가 든 `/amr_01/imu/data` 를 튼다** (아래) |
+| 정답 자세 `ground_truth/odom` | 주행 제어(route_driver)와 평가에만. 어떤 행도 재생하지 않는다 |
 | 월드 고정 | 정답이 아니라 **스폰 자세**(18, −16, 1.5708 — 현행 2D 스택의 AMCL 초기 자세와 같은 정보)로 `map → slam_map` 을 준다 |
 | 시뮬 휠 (1–2 자릿수 정확) | 이 물결에서는 손대지 않았다 — 휠 사전값을 쓰는 행(RTAB-Map·slam_toolbox)이 유리할 수 있다 (열화 휠은 다음 물결) |
+
+**`rtabmap3d_imulive` 의 예외.** 이 행은 재생 중 madgwick 을 다시 돌리려고 `/amr_01/imu/data` 를 튼다
+(`play_topics`, 실제 기록 `rows/rtabmap3d_imulive/env.txt` "play_topics: … /amr_01/imu/data"). 이 토픽의 방위 필드는
+Gazebo 정답이고 `ORACLE_TOPICS` 에 들어 있다. 그래서 "어떤 행도 정답 토픽을 틀지 않는다" 는 **참이 아니다.**
+정답 방위가 SLAM 으로 새지 않는다고 보는 근거는 둘이다.
+- SLAM 노드는 madgwick 출력만 구독한다 — `check_imu_topic` 이 강제하고, 실행 로그도 그렇다 [측정: `rows/rtabmap3d_imulive/row.log`
+  "Subscribing to IMU topic /amr_01/imu/data_madgwick"]. imu/data 를 받는 노드는 pre_launch 의 madgwick 하나다.
+- madgwick 은 입력 방위 필드를 읽지 않는다 [측정, 리뷰 반영 때 추가]: 각속도·가속도가 같고 방위 필드만 다른(항등 ↔ 무작위
+  단위 사원수) 입력 600 개를 새 노드에 두 번 넣었더니 출력 방위가 비트 단위로 같았다 (최대 차 0). 대조로 자이로 z 에
+  0.3 rad/s 를 더하면 0.44 차이 난다. imu_filter_madgwick 2.1.5 (amr-ai/slam:0.1), 우리 `madgwick.yaml`.
+  `logs/agents/s3-rtabmap/review_fix/madg_orient_probe.py`, 셋 다 600/600 받은 두 실행 `madg_orient_probe_{3,4}.log`.
+  입력을 잃은 실행은 비교에서 뺐다: 발행 간격 2 ms 판에서 a 가 599 개만 받자 차가 2.2e-4 였다 (`madg_orient_probe_2.log`).
+  잃은 입력만큼 필터 상태가 달라지기 때문이다. a·b 가 600/600 이던 실행(`madg_orient_probe.log`, c 599)도 차 0 이었다.
+
+시험: `test_config.py::test_rows_play_recorded_clock_and_never_oracle_topics` 는 `pre_launch` 에 madgwick 이 있는 행에만
+`imu/data` 재생을 **허용**한다 (예외를 시험이 명시). `test_oracle_list_covers_known_ground_truth_topics` 가 정답 토픽 목록 자체와
+"`ground_truth/odom`·`imu/data_raw` 는 어떤 행도 틀지 않는다" 를 고정 목록으로 단언한다. `test_rtabmap_launch_rejects_oracle_imu`
+가 SLAM 노드 쪽 거절을 시험한다.
 
 ### 1.2 TF 트리 (재생 때)
 
@@ -92,6 +110,10 @@ madgwick 쪽에서 잃었다 (route_driver 가 뜬 시각과 겹친다; 원인 �
 
 재생: `replay_row.sh <행> bag rows/<행> 0.5` (배속 0.5, 기록된 /clock), 컨테이너마다 `ROS_LOCALHOST_ONLY=1`,
 `--shm-size=2g` + Fast DDS SHM 16 MB 프로파일. 재생 중 loadavg 21–110 (다른 에이전트 작업). 산출 `rows/<행>/`.
+실행 HEAD 는 행마다 다르다 (`rows/HEAD_<행>.txt`·`diff_<행>.txt`): rtabmap3d·slam_toolbox·liosam_loop = `6170e85`,
+rtabmap2d·liosam_noloop = `df91c97`, rtabmap3d_imulive = `df91c97` + 미커밋 diff 3 파일 (`diff --stat` 줄 수가 `cb4aac5` 의 같은 3 파일과 같다 — 내용 대조는 못 했다. `cb4aac5` 는 여기에 `bag_tools.py` 독스트링 3 줄을 더 담는다).
+행 런치는 깨끗하게 끝나지 않았다: `rows/host_*.log` 6 개 모두 "Killed … ros2 launch" (SIGINT 처리 줄 없음 → 20 s 뒤 SIGKILL 로
+보인다). 그래서 RTAB-Map DB 에 최적화 자세가 저장되지 않았다 (`db_info.txt` "Optimized graph: 0 poses").
 
 ### 4.1 기동·통과 기준
 
@@ -100,13 +122,40 @@ madgwick 쪽에서 잃었다 (route_driver 가 뜬 시각과 겹친다; 원인 �
 | rtabmap3d | 성공 | 0 | 1 787 (누락 1: sim 9.5 s — IMU 공백, 로그 "didn't receive IMU newer … dropped") | 유효 (부모 하나, 뿌리 map) | 예 (ATE 정렬 없음 0.77 cm) | `map_world.yaml` 0.05 m | `cloud_world.ply` 101 만 점 |
 | rtabmap2d | 성공 | 0 | 1 787 (누락 1: 같은 9.5 s) | 유효 | 예 (2.16 cm) | `map_world.yaml` | 해당 없음 (2D 입력) |
 | slam_toolbox | 성공 | 해당 없음 | 처리 수 출력 없음 (`Message Filter dropping` 0) | 유효 | 예 (1.74 cm) | `map_world.yaml` | 해당 없음 |
-| liosam_loop | 성공 | 해당 없음 ("Point cloud timestamp not available" 1 — 계약대로) | imageProjection 1 785 (누락 3: 9.6 s IMU 공백, 182.4·182.5 s bag 끝 — IMU 가 스캔 뒤로 없음). mapOptimization 893 (0.15 s 간격 설계) | 유효 | 예 (5.27 cm) | **없음** (LIO-SAM 은 격자를 내지 않는다 — 미완) | `cloud_world.ply` (특징점 GlobalMap 63 만 점) |
+| liosam_loop | 성공 | 해당 없음 ("Point cloud timestamp not available" 1 — 계약대로) | imageProjection 1 785 (누락 3: 9.6 s madgwick 공백 1 장 + 182.4·182.5 s = bag 의 마지막 두 장 — 2 장 캐시 구조, 아래). 끝 2 장을 뺀 판정: 1 785 / 1 786, 누락 1. mapOptimization 893 (0.15 s 간격 설계) | 유효 | 예 (5.27 cm) | **없음** (LIO-SAM 은 격자를 내지 않는다 — 미완) | `cloud_world.ply` (특징점 GlobalMap 63 만 점) |
 | liosam_noloop | 성공 | 같음 | 같음 (1 785 / 893) | 유효 | 예 (5.32 cm) | 없음 | `cloud_world.ply` 63 만 점 |
-| rtabmap3d_imulive (변형) | 성공 | 0 | 1 786 (누락 2: 9.6 s, 154.5 s — IMU 버림 0) | 유효 | 예 | 있음 | 있음 |
+| rtabmap3d_imulive (변형) | 성공 | 0 | 1 786 (누락 2: 9.6 s, 154.5 s — IMU 버림 0) | 유효 | 예 (0.77 cm [계산, 리뷰 반영 때 numpy 재계산 — `eval/results.csv` 에는 없음]) | 있음 | 있음 |
 
-판정: **"처리 스캔 누락 0" 은 미달**이다 — RTAB-Map 1/1 788, LIO-SAM 3/1 788. 원인은 기록 bag 의 madgwick 공백
-(9.5–9.6 s)과 bag 끝 처리(LIO-SAM)로 특정했다. madgwick 을 재생 중 다시 돌린 변형(rtabmap3d_imulive)은 IMU 버림이
-0 이 됐지만 9.6 s(같은 시각 EKF TF 공백과 겹침)·154.5 s(원인 미확인) 두 장을 놓쳤다.
+판정: **"처리 스캔 누락 0" 은 미달**이다 — RTAB-Map 1/1 788, LIO-SAM 3/1 788 (아래 계수 규칙으로 1/1 786).
+**slam_toolbox 는 처리 수를 재지 못해(미측정) 이 판정에서 빠졌다** — 동기 모드의 최소 이동 필터 때문에 처리 수가 1 788 과
+같을 수도 없으므로 "누락 0" 을 같은 방식으로 판정할 수 없다.
+
+누락 원인 (행마다 근거를 따로 적는다):
+- **sim 9.5–9.6 s 1 장 (RTAB-Map·LIO-SAM)** — 기록 bag 의 madgwick 출력 공백(9.48 s 부터 0.14 s, §3). RTAB-Map 로그
+  "didn't receive IMU newer … (9.500000)" 1 줄, LIO-SAM 로그 "Waiting for IMU data" 1 줄 (`log_scan.json`) [측정].
+  bag 의 madgwick 스탬프는 9.48 s 다음이 9.62 s 다 [측정: `logs/agents/s3-rtabmap/review_fix/stamps_near.log`, rosbag2_py].
+  LIO-SAM 은 9.5 s 장을 처리하며 IMU 큐에서 9.49 s 미만을 잘라 내므로(349–350행) 다음 9.6 s 장 때 큐 맨 앞이 9.62 s 가 되어
+  `deskewInfo` 의 `imuQueue.front() > timeScanCur` 조건(328–330행)에 걸린다 [코드: imageProjection.cpp].
+- **sim 182.4·182.5 s 2 장 (LIO-SAM 만)** — bag 의 **마지막 두 장**이다. 원인은 IMU 가 아니라 LIO-SAM imageProjection 의
+  2 장 캐시다 [코드: LIO-SAM 08af3f3 `src/imageProjection.cpp` 228–230행 `cachePointCloud`]:
+  ```cpp
+  cloudQueue.push_back(*laserCloudMsg);
+  if (cloudQueue.size() <= 2)
+      return false;
+  ```
+  새 점군이 올 때마다 큐 맨 앞 것을 처리하므로 **어느 bag 이든 마지막 두 장은 뒤에 오는 점군이 없어 처리되지 않는다.**
+  IMU 는 원인이 아니다: bag 의 `imu/data_madgwick` 마지막 스탬프 182.6 s 가 점군 마지막 182.5 s 보다 늦고
+  (`bag_meta.json` header last, `stamps_near.log` "cloud last 4: [182.2, 182.3, 182.4, 182.5]"), 두 장에 대한
+  "Waiting for IMU data" 줄도 없다 (전체 1 줄 = 9.6 s 장). 그래서 IMU 를 더 길게 기록해도 이 두 장은 그대로 빠진다.
+  **고침**: 이 문서의 앞 판은 이 두 장을 "IMU 가 스캔 뒤로 없음" 이라 적고 원인을 "특정했다" 고 썼다 — 틀렸다 (리뷰 B1).
+- **rtabmap3d_imulive 의 9.6 s·154.5 s** — madgwick 을 재생 중 다시 돌린 변형은 IMU 버림이 0 이 됐지만 두 장을 놓쳤다.
+  9.6 s 는 같은 시각 EKF TF 공백(§3)과 겹치고, 154.5 s 는 **원인 미확인**이다.
+
+**LIO-SAM 계수 규칙.** 지금 계수(입력 1 788 장 전부를 분모로)로는 LIO-SAM 이 "누락 0" 을 **구조적으로 달성할 수 없다.**
+그래서 LIO-SAM 행은 **bag 의 마지막 2 장을 분모에서 뺀다** (1 788 → 1 786). 이 규칙으로 LIO-SAM 누락은 1/1 786 (9.6 s) 이고
+여전히 **미달**이다. 다른 선택지(재생 끝에 점군 2 장을 더 흘려 캐시를 비우기)는 §7 에 넘긴다. 이 규칙은 아직 문서 규칙일 뿐
+코드(`bag_tools match`)에는 들어가지 않았다 — `match_*.json` 의 `missing 3` 은 옛 계수 그대로다.
+
 나머지 셋(deskew 실패 없음, TF 트리 유효, 원점 = 월드)은 모든 행에서 통과.
 
 처리 수를 세는 법 — 측정 경로마다 수가 달랐다 (부하 하): rtabmap3d v2 재생에서 icp_odometry 로그 1 785 줄,
@@ -118,14 +167,24 @@ SHM 프로파일을 준 v3 에서는 로그 1 787 = 기록기 1 787 로 맞았�
 | 행 | 정렬 없음 RMSE / max | SE(2) 정렬 RMSE | 정지 / 직선 / 회전 RMSE (max) cm | RPE 1 m / 10 m |
 |---|---|---|---|---|
 | rtabmap3d (온라인 TF) | **0.77 / 1.72 cm** | 0.57 cm | 0.68 (1.39) / 0.79 (1.72) / 0.83 (1.56) | 0.40 % / 0.085 % |
-| rtabmap3d (최종 그래프 138 노드) | 0.99 / 1.54 cm | 0.51 cm | | 0.31 % / 0.078 % |
+| rtabmap3d (export 재최적화 그래프 138 자세) | 0.99 / 1.54 cm | 0.51 cm | | 0.31 % / 0.078 % |
 | rtabmap2d (온라인) | 2.16 / 5.70 cm | 2.04 cm | 1.53 (3.70) / 2.31 (4.97) / 2.41 (5.70) | 1.53 % / 0.32 % |
-| rtabmap2d (최종 그래프) | 2.55 / 5.32 cm | 1.93 cm | | 1.26 % / 0.29 % |
+| rtabmap2d (export 재최적화 그래프) | 2.55 / 5.32 cm | 1.93 cm | | 1.26 % / 0.29 % |
 | slam_toolbox (온라인) | 1.74 / 3.64 cm | 0.97 cm | 1.28 (2.74) / 1.86 (3.64) / 1.88 (2.76) | 1.17 % / 0.24 % |
 | liosam_loop (온라인) | 5.27 / 9.23 cm | 2.76 cm | 3.73 (8.01) / 5.66 (9.23) / 5.76 (8.97) | 1.46 % / 0.31 % |
 | liosam_noloop (온라인) | 5.32 / 9.21 cm | 2.83 cm | 4.05 (8.22) / 5.64 (9.21) / 5.81 (9.07) | 1.43 % / 0.32 % |
 
 읽는 법과 한계:
+- **LIO-SAM 은 수직으로 떠돈다 (불리한 사실, 리뷰 반영 때 추가).** 위 표의 ATE 는 **xy 만**이다. 평평한 바닥(GT z = 0)에서
+  `traj_online` 의 base_footprint z 가 최대 0.260 m (loop) / 0.264 m (noloop), 둘 다 t = 81.5 s 까지 오른다. xyz ATE 는
+  RMSE 12.79 / 12.66 cm, max 26.93 / 27.48 cm 다. 점 지도도 z 최소 −0.374 / −0.383 m, 바닥 아래(z < −0.05 m) 점이
+  3.9 % / 4.2 % 다 (RTAB-Map 3D 는 z 최소 −0.038 m, 0 %). §4.3 의 LIO-SAM 3D F-score 가 낮은 원인 후보다 [계산: numpy,
+  gt.tum 선형 보간·`cloud_world.ply` 직접 읽기]. RTAB-Map 행은 `Reg/Force3DoF` 라 z 가 0 으로 묶인다.
+- **"온라인 TF" 는 엄밀한 온라인이 아니다.** `slam_probe.py` 는 입력 스탬프의 `map → base_footprint` 를 그 스탬프보다
+  `--lookup-delay` 1 s(sim) 늦게 조회한다. 그 1 s 사이에 나온 map 보정 TF 가 보간에 섞인다.
+- **"export 재최적화 그래프" 는 rtabmap 이 남긴 그래프가 아니다.** DB 에 최적화 자세가 없어(위 SIGKILL) `rtabmap-export` 가
+  전체 전역 최적화를 다시 돌린 결과다 (`export_poses.log` "no saved optimized poses … full global optimization", poses=138,
+  links=307; DB 의 전역 그래프는 139 자세·310 링크).
 - **차원 효과로 읽지 마라.** bag 1개·재생 1회라 재생 간 산포를 모른다 (보고서는 구성당 표본 ≥ 10). RTAB-Map 3D·2D 와
   slam_toolbox 는 **시뮬 휠-EKF 사전값**(오라클 수준, 보고서 5장)을 받는다 — LIO-SAM 은 휠을 쓰지 않는다. 그래서 LIO-SAM 이
   나쁜 것이 3D LIO 의 한계인지, 휠 사전값 차이인지 이 표로는 가를 수 없다.
@@ -157,7 +216,7 @@ LIO-SAM 지도는 특징점(모서리·면)만 모은 GlobalMap 이라 전체 �
 ## 5. 재현
 
 산출물 경로 규약 (행마다 `rows/<행>/`): `probe.json`(입력·처리 수·TF 트리·고정 TF), `traj_online.tum`(입력 스탬프마다
-map → base_footprint), `traj_final.tum`(RTAB-Map 최종 그래프, 월드), `map_world.{pgm,yaml}`(월드 정렬 격자),
+map → base_footprint), `traj_final.tum`(RTAB-Map DB 를 `rtabmap-export` 가 재최적화한 그래프, 월드), `map_world.{pgm,yaml}`(월드 정렬 격자),
 `cloud_world.ply`(월드 점 지도), `match_*.json`(처리 대응), `log_scan.json`(로그 판정), `out_bag/`(처리 출력·TF), `row.log`.
 
 호스트에서 (공유 서버 규칙: Gazebo 는 gz_slot, 컨테이너마다 `ROS_LOCALHOST_ONLY=1` 로 DDS 격리):
@@ -165,7 +224,7 @@ map → base_footprint), `traj_final.tum`(RTAB-Map 최종 그래프, 월드), `m
 ```bash
 WT=/home/CAPYI_AI/wt/s3-rtabmap
 docker run --rm --name amr-ai-s3-rtabmap-build -v $WT:/ros2_ws -w /ros2_ws amr-ai/slam:0.1 \
-  bash -lc 'MAKEFLAGS=-j4 colcon build --symlink-install --parallel-workers 4'
+  bash -lc 'MAKEFLAGS=-j4 colcon build --symlink-install --parallel-workers 4 --packages-up-to amr_slam3d'
 # 4단계: 파일럿 bag (출력 디렉터리에 bag/, bag_meta.json, gt.tum, route.jsonl, launch.log …)
 /home/CAPYI_AI/env/gz_slot.sh s3-rtabmap docker run --rm --name amr-ai-s3-rtabmap-gz --gpus all --shm-size=8g \
   -e ROS_DOMAIN_ID=208 -e IGN_PARTITION=amr_ai_s3 -e ROS_LOCALHOST_ONLY=1 \
@@ -186,10 +245,10 @@ python3 -m amr_evaluation.slam3d.cli traj --gt <OUT>/gt.tum --est rows/<행>/tra
 |---|---|---|---|
 | 재생 시간원 | 기록된 /clock 은 빼고 `--clock 200` | **기록된 /clock 을 튼다**, `--clock` 안 씀 | Humble 기록기는 수신 벽시계를 메시지 시각으로 남겨 `--clock` 이 1.79e9 s 를 낸다 [측정: 첫 재생 row.log "earliest data is at time 1791240775"] |
 | 2D 입력 | scan | `scan_filtered` | slam_toolbox 행(현행 2D 스택)과 같은 입력 — 2D 행끼리 입력을 같게 |
-| IMU | RTAB-Map `imu_topic` 비움(기본), 쓸 때 madgwick | 3D·2D 모두 madgwick 사용 (`wait_imu_to_init`) | 과제 지시 "icp_odometry + madgwick". `Reg/Force3DoF` 라 영향은 중력 정렬뿐 (DB Gravity 링크 137) |
+| IMU | RTAB-Map `imu_topic` 비움(기본), 쓸 때 madgwick | 3D·2D 모두 madgwick 사용 (`wait_imu_to_init`) | 과제 지시 "icp_odometry + madgwick". `Reg/Force3DoF` 라 영향은 중력 정렬뿐 (DB Gravity 링크 139 — 앞 판의 137 은 오기) |
 | LIO-SAM `extrinsicTrans` | "lidar3d_link–imu_link 차이" (부호 모호) | IMU − LiDAR = (−0.27, 0, −0.62) | imuPreintegration.cpp 221–222·324행 [코드] |
 | LIO-SAM 복셀 | 표에 없음 | 상류 주석의 실내 값 (0.2 / 0.1 / 0.2) | 상류 params.yaml 주석 "indoor" |
-| 3D 점 지도 (RTAB-Map) | `rtabmap-export` | 최종 그래프 자세에 bag 점군을 붙임 (`bag_tools assemble`, 복셀 0.05) | `rtabmap-export --cloud --scan` 이 0 점 [측정 v1 export_cloud.log] — 원인 미확인 |
+| 3D 점 지도 (RTAB-Map) | `rtabmap-export` | `rtabmap-export` 가 재최적화한 그래프 자세(§4.2)에 bag 점군을 붙임 (`bag_tools assemble`, 복셀 0.05) | `rtabmap-export --cloud --scan` 이 0 점 [측정 v1 export_cloud.log] — 원인 미확인 |
 | 운용 대역 격자 (0.05–2.0 m) | 비교·운용 두 대역 | **비교 대역만** | 이 월드에서 두 대역의 차이는 표지판 2 356 셀(0.25 %)뿐 (s2 evaluation.md §0-4) — 미완으로 둔다 |
 | slam_toolbox | 동기 | 동기 + `scan_queue_size 10`, YAML 은 읽기만 | |
 
@@ -197,6 +256,14 @@ python3 -m amr_evaluation.slam3d.cli traj --gt <OUT>/gt.tum --est rows/<행>/tra
 
 - 표본: 씨드·경로가 다른 bag 3–5 개 × 재생 3–5 회 (보고서 ≥ 10/구성). 지금은 n = 1 — 행 간 차이를 주장할 수 없다.
 - 기록: madgwick 을 기록 전에 충분히 띄우고 공백 검사를 기록 직후 자동 판정 (`bag_meta.json` gaps > 0 이면 재기록).
+- **LIO-SAM 처리 수 계수 규칙을 코드로** (리뷰 B1): imageProjection 의 2 장 캐시(`imageProjection.cpp` 228–230행) 때문에 bag 의
+  마지막 2 장은 어떤 기록에서도 처리되지 않는다. 둘 중 하나를 정해 `bag_tools match`·판정에 넣는다.
+  (a) LIO-SAM 행은 분모에서 끝 2 장을 뺀다 (이 문서의 현재 규칙, 문서에만 있음).
+  (b) 재생 끝에 점군 2 장(마지막 장 복제, 스탬프 +0.1·+0.2 s)을 더 흘려 캐시를 비운다 — 이때 IMU 는 마지막으로 처리할 장의
+  `timeScanEnd` 뒤까지만 있으면 된다 (지금 bag 은 182.6 s 까지 있어 충분). **IMU 를 더 길게 기록하는 것은 효과가 없다.**
+  9.6 s 장(madgwick 공백)은 어느 규칙으로도 누락으로 남는다.
+- 재생 정리: `replay_row.sh` 가 행 런치를 SIGINT 로 못 끈다 (비대화형 bash 의 백그라운드 작업은 SIGINT 를 무시한 채 시작한다는
+  리뷰 진단, 미검증). SIGTERM 을 쓰거나 SIGINT 처분을 복구해 RTAB-Map 이 최적화 자세를 DB 에 저장하게 한다.
 - LIO-SAM: 2D 격자(octomap_server projected_map 또는 대역 투영), 루프 폐쇄 발생 여부(loop_closure_constraints 기록),
   ATE 가 RTAB-Map 보다 큰 원인(휠 사전값 없음 / madgwick 초기 기울기 / extrinsicTrans) 분리.
 - 요인 B(guess 없음), 열화 휠(요인 D), 오라클 행(정답 IMU 방위) — `rtabmap.launch.py use_guess:=false` 는 준비돼 있다.
