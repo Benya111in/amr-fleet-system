@@ -150,7 +150,7 @@ s3 표와의 차이 [계산, `/home/CAPYI_AI/runs/b24/b2-offline/sym_old/`]:
 | H2 (R4) madgwick gain 0.01 | 방위 RMSE (§1.2) / z 최대 28.66 vs 29.34 cm | pitch 0.29 배·roll 0.36 배 / z **0.98 배** | 방위 절반 이하 / z 규칙 H1 과 같음 | 방위는 **통과**, z 는 **원인 1 지배** |
 | H3 (R3) 정답 방위 (오라클) | z 최대 26.64 vs 29.34 cm | **0.91 배** (범위가 겹치지 않고 차 2.71 > 문턱 1.64 → 규칙상 "다르다") | ≥ 0.8 → 원인 1 | **원인 1 지배** — 방위를 완벽히 줘도 z 는 9 % 만 준다 |
 | H4 (R6) 평면 clamp | z 최대 0.25 cm, 바닥 아래 0.00 %, xy 1.71 vs 5.69 cm | z < 1 cm, < 0.5 %, xy 가 기준보다 나빠지지 않음 | 셋 다 | **통과** (xy 는 0.30 배로 오히려 좋아졌다 — 규칙상 "다르다") |
-| H5 (R11) RTAB-Map IMU 제거 | 누락 / xy RMSE `rtabmap3d_noimu` 0.7710 vs `rtabmap3d_imu` 0.7697 cm | 누락 1/1 788 (9.6 s) / 차 0.0014 cm | 누락 0 / 차 ≤ 문턱 | **미달 (둘 다)** — 누락은 휠 guess 탓(§7). xy 차 0.0014 cm(0.2 %)는 재생 sd 0.0002 cm 의 문턱(0.0004)을 넘어 규칙상 "다르다" — 실용상 무의미한 차를 규칙이 걸렀다 (§5) |
+| H5 (R11) RTAB-Map IMU 제거 | 누락 / xy RMSE `rtabmap3d_noimu` 0.7709 vs `rtabmap3d_imu` 0.7697 cm | 누락 1/1 788 (9.6 s) / 차 0.0013 cm | 누락 0 / 차 ≤ 문턱 | **미달 (둘 다)** — 누락은 휠 guess 탓(§7). xy 차 0.0013 cm(0.2 %)는 재생 sd 0.0002 cm 의 문턱(0.0004)을 넘어 규칙상 "다르다" — 실용상 무의미한 차를 규칙이 걸렀다 (§5) |
 | H6 재현 잡음 | xy RMSE 재생 범위 | RTAB-Map 3D 0.0001–0.0004, 2D 0.047·0.065, slam_toolbox **0.39**; LIO-SAM 0.11–0.44, `liosam_loop@orig` **0.86** cm | RTAB-Map·slam_toolbox < 0.2, LIO-SAM < 0.5 | **미달 2 행** (slam_toolbox, liosam_loop@orig) — 둘 다 한 재생의 사건 탓 (§5) |
 
 규칙 외 비교 (같은 규칙으로, 탐색적):
@@ -181,6 +181,16 @@ slam_toolbox 0.39 cm, LIO-SAM 6DoF 변형 0.11–0.44 cm(기록 IMU 루프 on 0.
 
 LIO-SAM 은 bag 의 마지막 2 장(구조적 캐시, `rows.LIOSAM_TAIL`)을 판정 분모에서 빼고 따로 센다 (`tail_missing`, 모든 LIO-SAM 재생에서 2).
 RTAB-Map 처리 수 = icp_odometry 로그 "Odom: ratio=" 줄 (첫 줄은 항상 ratio 0 — 기준 없는 첫 장이라 정상).
+
+**분모는 bag 장 수다** (리뷰 B1 반영, `b9e965e`). 처음 도구(`replaystat.summarize`)는 RTAB-Map 누락을 Python 측정 노드가 받은 장 수에서
+로그 줄 수를 빼서 셌다. 측정 노드는 부하에 장을 놓치므로(이번 실행 5 재생), 측정 노드와 RTAB-Map 이 같은 장을 놓치면 누락이 0 으로 잘못
+나올 수 있었다(fail-open). 고친 도구는 분모를 기록기 대응(match)이 입력 bag 에서 센 수로 두고, RTAB-Map 은 로그 기준(`bag − 줄`)과
+기록기 대응 판정 누락 중 **큰 값**을 주 열로 쓴다. 둘이 다르면 `missing_disagree` 로 표시하고, match 가 없으면 누락은 미측정이다.
+측정 노드 수는 `input_probe`, bag 과의 차는 `probe_short` 열에 따로 둔다. 이 표의 수치는 고친 도구로 43 재생을 다시 세어도 그대로다
+[계산 `summary_review/compare.txt`, 실행 id `B2off-calc-rv-drops`]: 주 열 누락 43/43 같음, RTAB-Map 16 재생 모두 측정 노드 = bag 1 788,
+로그 기준 = 기록기 대응 = 1 (불일치 0). 측정 노드가 장을 놓친 재생은 5 개 — `liosam_rpy0` r0 3 장, `g001`·`oracle`·`planar` r1 각 2 장,
+`liosam_loop@orig` r0 2 장 — 모두 LIO-SAM 이라 판정(bag 대응)에는 영향이 없다. `liosam_rpy0` r0 은 측정 노드가 1 785 장만 받았는데
+LIO-SAM 은 판정 대상 1 786 장을 모두 처리했다 — 측정 노드 수가 분모가 될 수 없다는 직접 증거다.
 
 | 행 | 재생 | 처리 / 입력 | 판정 누락 (스탬프 s) | 원인 |
 |---|---|---|---|---|
@@ -228,6 +238,13 @@ guess 없음 → 9.6 s 처리 (`tmp/waittest*.sh`). 그래서 원인은 그 장�
   바닥 아래 문턱, RTAB-Map 누락 계수, 회전각 부호 — **14/14 잡힘** (`mut/mutation.json`). 사본의 원래 시험 1 건 실패는
   `amr_description` 을 복사하지 않은 탓이고 변이 대상 시험이 아니다. 첫 실행은 PYTHONPATH 를 덮어써 무효였다
   (`mut/_bad_mutation_pythonpath.json`).
+- **리뷰 반영** (`b9e965e`·`6d70d3e`): 리뷰어 변이 6 개 중 2 개를 이 시험이 놓쳤다 — R2 (`differs()` 의 범위 겹침 조건 제거, 차단 B2)와
+  R6 (z 최대 열을 z RMSE 로 바꿈, 비차단). "# 겹침" 사례가 실제로는 문턱 조건으로 False 가 되어 겹침 조건을 시험하지 못했고, 3D 열 시험의
+  z 가 창 안에서 상수라 최대 = RMSE 였다. 위의 "14/14 잡힘" 은 그 14 개에 대해서만 참이었다. 범위는 겹치지만 평균 차(3.97)가 문턱(3.58)보다
+  큰 사례·인자 순서 대칭·창 안에서 변하는 z 를 더하고, B1(누락 분모) 시험 4 개를 더하고 기존 3 개를 bag 분모로 고쳤다. 변이 다시 돌림
+  (`rv/mut/mutate_rv.py`, 사본 `6d70d3e`, `cpu_slot`): 새 변이 8 (분모를 측정 노드로, 주 열을 로그만·대응만·작은 값으로, 불일치 표시 끔,
+  match 없을 때 측정 노드로 대신, 누락 0 고정, 겹침 한 방향만) + 이전 13 + 리뷰어 6 = **27/27 잡힘** (`rv/mut/mutation.json`).
+  시험: `amr_slam3d` 74 개, `amr_evaluation` slam3d 89 개 + 건너뜀 8 (evo) 통과, flake8(99)·ament_pep257 0 (`rv/lint_test.log`).
 - 시험이 다루지 않는 것: `madg_lockstep.py` 의 노드 구동·bag 쓰기(실행으로만 확인 — 출력 수·결정성), `replay_row.sh`·`replay_batch.sh`
   (셸 — `bash -n` 과 실제 43 재생으로만 확인).
 

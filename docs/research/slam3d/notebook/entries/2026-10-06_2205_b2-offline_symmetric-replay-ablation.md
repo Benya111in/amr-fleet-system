@@ -110,7 +110,7 @@ madgwick·점군·imu/data 가 바이트와 bag 시각까지 같다 (`derive/det
   모든 재생에서 9.6 s 한 장(1/1 788)이 빠진다. 원 bag(기록 IMU) 행은 9.5 s 한 장 (6 회 모두). 원인: 휠-EKF TF guess 조회 실패 —
   기록 때 sim 9.48–9.64 s 에 `/clock`·EKF TF·madgwick 이 함께 멈췄다. 첫 15 s 재생 시험에서 guess 끔 → 9.6 처리, `wait_for_transform`
   0.2·1.0 s → 둘 다 누락 [측정 `tmp/waittest*.log`, `tmp/tfgap.log`, `tmp/order.log`].
-- H5 미달 (누락·xy 둘 다): xy RMSE `rtabmap3d_noimu` 0.7710 vs `rtabmap3d_imu` 0.7697 cm, 차 0.0014 cm 가 재생 sd(0.0002) 문턱을 넘어
+- H5 미달 (누락·xy 둘 다): xy RMSE `rtabmap3d_noimu` 0.7709 vs `rtabmap3d_imu` 0.7697 cm, 차 0.0013 cm 가 재생 sd(0.0002) 문턱을 넘어
   규칙상 "다르다" — 실용상 무의미. **사전 등록 규칙에 실용 동등 한계가 없었던 결함**.
 - H6 미달 2 행: slam_toolbox xy 재생 범위 0.39 cm (> 0.2), `liosam_loop@orig` 0.86 cm (> 0.5). 둘 다 한 재생의 사건(메시지 버림 1 회,
   기동 경합)에서 나왔다.
@@ -148,7 +148,7 @@ H5 미달 · H6 미달 2 행.
 **madgwick 재계산** (`B2off-madg-derive`): 출력 35 766 = 입력, 두 번 만든 파생 bag 바이트 동일. 기록된 출력과 공백 앞 7 × 10⁻⁵°,
 공백 직후 1.47° → 기록 때 madgwick 이 입력을 놓쳤다 (s3 의 "원인 미확인" 해소, 추론 포함).
 
-**시험·변이**: amr_slam3d 70 + amr_evaluation slam3d 47(대칭 8 포함) 통과, flake8·pep257 0. 변이 14 개 모두 잡힘 (`mut/mutation.json`).
+**시험·변이**: amr_slam3d 70 + amr_evaluation slam3d 47(대칭 8 포함) 통과, flake8·pep257 0. 변이 14 개 모두 잡힘 (`mut/mutation.json`) — 단 리뷰어 변이 R2·R6 은 놓쳤다 (아래 "리뷰 반영").
 `colcon test --packages-select amr_slam3d amr_evaluation` (HEAD `338dcb6`): 445 시험, 실패 0, 건너뜀 8 — 건너뛴 8 개는 evo 교차 확인이고
 `/opt/evo/bin/python3` 로 따로 돌려 8 통과 (`tmp/colcon_test.log`, `tmp/evo_crosscheck.log`, 실행 id `B2off-test-colcon`).
 
@@ -158,7 +158,7 @@ H5 미달 · H6 미달 2 행.
   표류에서 나온다, (2) LIO-SAM 6DoF 의 z 26–32 cm·roll/pitch 0.9–1.2° 가 같은 표의 별도 열로 드러난다.
 - LIO-SAM z 표류는 IMU 방위 품질 문제가 아니다 (정답 방위로도 9 % 만 준다). 평면 clamp 는 z 를 없애고 xy 를 3.3 배 줄였다 —
   평면 로봇에서 LIO-SAM 을 쓴다면 평면 행이 기본이어야 한다. 이 결론은 이 bag 하나에서다.
-- RTAB-Map 의 IMU 는 Force3DoF + 휠 guess 에서 정확도에 영향이 없다 (0.0014 cm). IMU 를 빼도 손해가 없고 IMU 대기 버림 위험이
+- RTAB-Map 의 IMU 는 Force3DoF + 휠 guess 에서 정확도에 영향이 없다 (0.0013 cm). IMU 를 빼도 손해가 없고 IMU 대기 버림 위험이
   사라진다 — 그러나 이 bag 에서는 같은 기록 정체가 휠 guess 쪽으로 한 장을 다시 빼앗는다.
 - 재현 잡음은 대부분 사건(기동 경합·메시지 버림)이다. 같은 입력을 받은 재생은 거의 같은 답을 낸다. 재생 잡음 문턱(2 sd)은 그 부하에서만
   유효하다.
@@ -204,4 +204,40 @@ replay.md §8 의 녹화 계획 (Gazebo 필요, 보너스 1 측정과 겹치지 
 
 ### 리뷰 반영 결과
 
-(실행 뒤 채운다)
+커밋: 사전 등록 `37ccd3d` → B1 고침 `b9e965e` → B2·R6 시험 `6d70d3e` → 이 결과·문서. 원자료 `/home/CAPYI_AI/runs/b24/b2-offline/rv/`,
+`summary_review/`. 실행 id `B2off-test-rv-lint`, `B2off-test-rv-mut`, `B2off-calc-rv-drops`.
+
+**불리한 것 먼저**
+- 처음 보고한 "변이 14/14 잡힘" 은 그 14 개에 대해서만 참이었다. 사전 등록 판정 규칙의 한 조건(범위 겹침)과 z 최대 열은 시험이
+  가르지 못했다 (리뷰어 R2·R6 놓침). 처음 변이 목록에 그 가드가 없었던 것이 원인이다 — 판정 규칙의 **각 조건마다** 그 조건만이 결과를
+  가르는 사례가 있는지 확인하지 않았다.
+- B1 은 fail-open 이었다. 지금 숫자에 영향이 없었던 것은 RTAB-Map 재생에서 측정 노드가 우연히 장을 놓치지 않았기 때문이다.
+  같은 bag 의 LIO-SAM 재생 5 개에서 측정 노드는 실제로 2–3 장을 놓쳤다.
+- 시험·린트 첫 두 실행은 환경 탓에 실패했다: ROS setup 이 `set -u` 에서 멈춤, 컨테이너 PATH 에 `flake8` 없음(→ `python3 -m flake8`).
+  세 번째 실행에서 pep257 D403 1 건(새 독스트링이 "bag" 으로 시작)을 고쳤다.
+
+**판정 (사전 등록 규칙대로)**
+- 변이 [측정 `rv/mut/mutation.json`, 사본 `6d70d3e`, `cpu_slot`]: **27/27 잡힘 — 통과**. 새 8: B1a 분모를 측정 노드로(시험
+  `probe_short_does_not_hide_drops` 실패), B1b 로그만, B1c 대응만, B1d 작은 값, B1e 불일치 표시 끔, B1f match 없을 때 측정 노드로 대신,
+  B1g 누락 0 고정(이전 M13), B2b 겹침 한 방향만. 이전 13 (M1–M12·M14) 모두 잡힘. 리뷰어 6 (R1–R6) 모두 잡힘 — R2 는
+  `test_differs_preregistered_rule`, R6 은 `test_dim3_columns_z_and_roll_in_window` 가 잡았다. 사본에서 변이 대상 시험 파일 5 개
+  (symmetric 8·config 17·imustat 5·replaystat 10·stats_tf 11)의 원래 시험은 모두 통과. 사본 전체 시험 묶음은 돌리지 않았다.
+- 다시 만든 누락 표 [계산 `summary_review/compare.txt`]: **주 열 `missing` 43/43 이전과 같음 — 통과**. 예측대로 RTAB-Map 16 재생 모두
+  `missing_disagree` False (측정 노드 = bag 1 788, 로그 기준 = 대응 = 1). `probe_short` > 0 은 예측한 5 재생과 정확히 같다:
+  `liosam_rpy0` r0 3, `liosam_g001`·`liosam_oracle`·`liosam_planar` r1 각 2, `liosam_loop@orig` r0 2. manifest 2 개는 이전과 바이트까지 같다
+  (대칭 표 수치는 바뀌지 않는다).
+- 시험 [측정 `rv/lint_test.log`]: `amr_slam3d` 74 통과, `amr_evaluation` slam3d 89 통과 + 8 건너뜀(evo 없음 — 이전 실행에서 `/opt/evo` 로
+  8 통과, 이번 변경은 evo 교차 확인과 무관), flake8(99) 0, ament_pep257 0. colcon 전체 시험은 다시 돌리지 않았다 (변경이 순수 Python
+  모듈·시험뿐 — 미측정).
+
+**비차단 반영**: H5 수치를 sym_final.json 에서 다시 읽어 고쳤다 — `rtabmap3d_noimu` 평균 0.77095 → **0.7709** cm (0.7710 은 반올림 오류),
+차 0.00128 → **0.0013** cm (0.0014 는 오류). 문턱 0.00042 보다 크므로 판정("다르다", 실용상 무의미)은 그대로다. `replay.md` §4 표와 이 항목을 고쳤다.
+
+**해석**
+- 측정 노드(Python 구독자)는 판정 분모가 될 수 없다. `liosam_rpy0` r0 은 측정 노드가 1 785 장을 받았는데 LIO-SAM 은 판정 대상 1 786 장을
+  모두 처리했다 — 이 재생에서는 측정 노드가 처리기보다 더 많이 놓쳤다. 분모는 언제나 bag 에서 센다.
+- 두 독립 계수(로그 줄·기록기 대응)가 있으면 큰 값을 쓰고 불일치를 드러낸다. 한쪽만 쓰면 그쪽의 결함이 그대로 판정이 된다.
+
+**다음 (S1·S3·S6 재기록 비교에 적용)**
+- 사전 등록 판정 규칙을 만들 때 **조건마다** "이 조건만 결과를 바꾸는" 시험 사례를 먼저 쓰고, 각 조건을 하나씩 끄는 변이를 목록에 넣는다.
+- 측정 노드 수 < bag 수 재생은 `probe_short` 로 표에 남겨 부하 진단에 쓴다 (기동 경합·구독 지연의 지표).
