@@ -631,6 +631,37 @@ def test_adapter_inputs_and_mock_server(rig):
         warn_only.destroy_node()
 
 
+def test_adapter_robot_state_rides_robot_to_fleet_link(rig, tmp_path):
+    """
+    어댑터의 robot_state 는 링크 (로봇 → fleet) 의 모의를 탄다 — 한 방향 단절로 방향을 가른다.
+
+    상향(amr_up → fleet)만 끊긴 어댑터는 상태를 하나도 내보내지 않고, 하향(fleet → amr_dn)만 끊긴
+    어댑터는 그대로 지연 큐에 넣는다. 링크 이름이 뒤집히면 두 결과가 서로 바뀐다.
+    """
+    def adapter(rid, src, dst):
+        path = tmp_path / f'{rid}.yaml'
+        path.write_text(f'outages:\n  - {{start_s: 0.0, end_s: 1.0e12, src: {src}, dst: {dst}}}\n',
+                        encoding='utf-8')
+        return FleetAdapterNode(namespace='/' + rid, parameter_overrides=_params({
+            'simulate_latency': True, 'comm_latency_ms': [10.0, 10.0], 'drop_rate': 0.0,
+            'comm_model_file': str(path), 'log_dir': rig['log_dir']}))
+
+    up = adapter('amr_up', 'amr_up', 'fleet')
+    down = adapter('amr_dn', 'fleet', 'amr_dn')
+    try:
+        for _ in range(3):
+            up._on_publish_timer()
+            down._on_publish_timer()
+        assert len(up._state_queue) == 0 and len(down._state_queue) == 3
+        assert [(e.src, e.dst, e.outcome) for e in up._comm.history] == \
+            [('amr_up', 'fleet', 'outage')] * 3
+        assert [(e.src, e.dst, e.outcome) for e in down._comm.history] == \
+            [('amr_dn', 'fleet', 'delivered')] * 3
+    finally:
+        up.destroy_node()
+        down.destroy_node()
+
+
 def test_iso_deadline_uses_node_clock_under_sim_time(rig, tmp_path):
     sim = FleetManagerNode(namespace='/fleet_sim', parameter_overrides=_params({
         'use_sim_time': True, 'discover_robots': True, 'log_dir': str(tmp_path),
