@@ -149,6 +149,8 @@ H5 미달 · H6 미달 2 행.
 공백 직후 1.47° → 기록 때 madgwick 이 입력을 놓쳤다 (s3 의 "원인 미확인" 해소, 추론 포함).
 
 **시험·변이**: amr_slam3d 70 + amr_evaluation slam3d 47(대칭 8 포함) 통과, flake8·pep257 0. 변이 14 개 모두 잡힘 (`mut/mutation.json`).
+`colcon test --packages-select amr_slam3d amr_evaluation` (HEAD `338dcb6`): 445 시험, 실패 0, 건너뜀 8 — 건너뛴 8 개는 evo 교차 확인이고
+`/opt/evo/bin/python3` 로 따로 돌려 8 통과 (`tmp/colcon_test.log`, `tmp/evo_crosscheck.log`, 실행 id `B2off-test-colcon`).
 
 ## 해석
 

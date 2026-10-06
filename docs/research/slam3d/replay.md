@@ -222,6 +222,7 @@ guess 없음 → 9.6 s 처리 (`tmp/waittest*.sh`). 그래서 원인은 그 장�
 
 - 시험: `src/amr_slam3d/test` 70 개(새 `test_imustat`·`test_replaystat`, `test_config`·`test_stats_tf` 보강), `src/amr_evaluation/test`
   `test_slam3d_symmetric` 8 개 + 기존 `test_slam3d_metrics` 39 개 통과. flake8(99)·ament_pep257 0 건. 이미지 amr-ai/slam:0.1.
+  `colcon test` (두 패키지, ament 린트 포함): 445 시험, 실패 0, 건너뜀 8 (evo 교차 확인 — `/opt/evo` 파이썬으로 따로 8 통과).
 - 변이 14 개 (`/home/CAPYI_AI/runs/b24/b2-offline/mut/mutate.py`, 커밋 사본에서 가드를 하나씩 되돌림, `cpu_slot`): 오라클 IMU 거절 2,
   bag 토픽 사전 검사, 끝 2 장 판정 2, LIO-SAM 행 tail_exempt, `imu_topic:=none`, 평가 창(주 열·3D 열), 공통 창 교집합, 차이 판정 문턱,
   바닥 아래 문턱, RTAB-Map 누락 계수, 회전각 부호 — **14/14 잡힘** (`mut/mutation.json`). 사본의 원래 시험 1 건 실패는
