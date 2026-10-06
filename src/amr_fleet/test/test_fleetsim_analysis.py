@@ -75,3 +75,33 @@ def test_compare_pairs_by_seed():
     assert c['n'] == 3 and c['mean_diff'] == pytest.approx(2.0)
     assert metric(rows[0], 'vote_zone.abandons') == 1.0
     assert metric(rows[0], 'nope') is None
+
+
+def _rows(arm, fault, loss, vals, metric_name, rep=0):
+    return [{'arm': arm, 'loss': loss, 'fault': fault, 'seed': s, 'rep': rep,
+             metric_name: v} for s, v in enumerate(vals, 1)]
+
+
+def test_primary_decision_rules(monkeypatch):
+    """사전 등록 판정 규칙: 우월은 Holm p·CI·k+ 모두, 동등은 CI 가 ±margin 안."""
+    from amr_fleet.fleetsim import plan, report
+    monkeypatch.setattr(plan, 'PRIMARY', [
+        {'id': 'S', 'a': 'A', 'b': 'B', 'loss': 0.2, 'fault': 'F1', 'metric': 'completed',
+         'kind': 'superiority', 'pred': ''},
+        {'id': 'E', 'a': 'A', 'b': 'C', 'loss': 0.0, 'fault': 'F0', 'metric': 'latency_rmean',
+         'kind': 'equivalence', 'pred': ''},
+        {'id': 'U', 'a': 'A', 'b': 'D', 'loss': 0.0, 'fault': 'F0', 'metric': 'latency_rmean',
+         'kind': 'equivalence', 'pred': ''},
+    ])
+    n = 30
+    rows = (_rows('A', 'F1', 0.2, [5] * n, 'completed')
+            + _rows('B', 'F1', 0.2, [20 + (i % 3) for i in range(n)], 'completed')
+            + _rows('A', 'F0', 0.0, [150 + (i % 5) for i in range(n)], 'latency_rmean')
+            + _rows('C', 'F0', 0.0, [150 + (i % 5) + (1 if i % 2 else -1) for i in range(n)],
+                    'latency_rmean')
+            + _rows('D', 'F0', 0.0, [150 + (i % 5) + (40 if i % 2 else -40) for i in range(n)],
+                    'latency_rmean'))
+    res = {c['id']: c for c in report.primary(index(rows))}
+    assert res['S']['decision'] == '우월'
+    assert res['E']['decision'].startswith('동등')
+    assert res['U']['decision'] == '판정 불가'

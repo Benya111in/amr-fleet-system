@@ -43,7 +43,9 @@ def paired(a: Sequence[float], b: Sequence[float]) -> dict:
         raise ValueError('쌍의 길이가 다르다')
     d = [y - x for x, y in zip(a, b)]
     n = len(d)
-    out = {'n': n, 'mean_a': _mean(a), 'mean_b': _mean(b)}
+    out = {'n': n, 'mean_a': _mean(a), 'mean_b': _mean(b), 'mean_diff': None, 'sd_diff': None,
+           'ci95': (None, None), 'dz': None, 'k_pos': 0, 'k_neg': 0, 'k_zero': 0,
+           'wilcoxon_p': 1.0}
     if n == 0:
         return out
     m = _mean(d)
