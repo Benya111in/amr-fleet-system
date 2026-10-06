@@ -9,6 +9,9 @@ Fleet Manager + 로봇별 어댑터 런치 (docker-compose `fleet` 서비스가 
     # 교통 관리자 끄기 / 탐지만 (기준선 측정)
     ros2 launch amr_fleet fleet_manager.launch.py traffic_manager:=false
     ros2 launch amr_fleet fleet_manager.launch.py traffic_mode:=observe
+    # 중앙과 어댑터를 다른 프로세스·컨테이너로 (중앙을 멈춰도 어댑터는 산다 — 컨테이너 단위 장애 실험)
+    ros2 launch amr_fleet fleet_manager.launch.py launch_adapters:=false      # 중앙 두 노드만
+    ros2 launch amr_fleet fleet_adapters.launch.py robot_ids:=amr_01,amr_02  # 어댑터만
 
 - fleet_manager_node · traffic_manager_node 는 /fleet, fleet_adapter_node 는 /<robot_id> 네임스페이스.
 - traffic_manager:=true(기본)면 traffic_manager_node 를 config/traffic.yaml(traffic_params_file)로
@@ -16,6 +19,9 @@ Fleet Manager + 로봇별 어댑터 런치 (docker-compose `fleet` 서비스가 
 - 기본값은 config/fleet.yaml (params_file) 한 곳에 둔다. 아래 인자는 비어 있지 않을 때만 덮어쓴다.
 - comm_latency_ms, simulate_latency, seed, comm_model_file 은 manager(assign_task 호출)와
   adapter(robot_state) 양쪽에 준다 (통신 모의 CommEmulator — 링크마다 결정적 난수, p0.md §1).
+- launch_manager · traffic_manager · launch_adapters (기본 모두 true) 로 띄울 묶음을 고른다. 기본값으로는
+  예전과 같이 한 런치(한 컨테이너)에 셋이 다 뜬다. fleet_adapters.launch.py 는 이 파일을
+  launch_manager:=false traffic_manager:=false 기본값으로 다시 쓴다 (인자 해석이 한 곳에 있다).
 - use_sim_time 기본 true: 전 노드가 /clock 을 쓴다 (multi_robot.md §6, dashboard·evaluation 런치와 같다).
   /clock 없이 단독으로 띄우면 노드 시계가 0 에 멈추므로 use_sim_time:=false 를 준다.
 - serve_assign_task: 비우면 auto_complete_after_s > 0 (모의 시험)일 때만 true, 그 외에는 fleet.yaml(false).
@@ -34,6 +40,8 @@ _MANAGER_ARGS = ('allocation_strategy', 'comm_latency_ms', 'simulate_latency', '
                  'comm_model_file', 'log_dir')
 _ADAPTER_ARGS = ('comm_latency_ms', 'simulate_latency', 'seed', 'comm_model_file',
                  'auto_complete_after_s', 'serve_assign_task', 'log_dir')
+# generate_launch_description(defaults) 로 기본값을 바꿀 수 있는 인자
+_ARG_NAMES = frozenset({'launch_manager', 'launch_adapters', 'traffic_manager'})
 
 
 def _typed(name, text):
@@ -51,7 +59,8 @@ def _typed(name, text):
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             raise ValueError(f'seed 는 0 이상의 정수: {text!r}')
         return value
-    if name in ('simulate_latency', 'serve_assign_task', 'traffic_manager'):
+    if name in ('simulate_latency', 'serve_assign_task', 'traffic_manager', 'launch_adapters',
+                'launch_manager'):
         if not isinstance(value, bool):
             raise ValueError(f'{name} 는 true/false: {text!r}')
     return value
@@ -73,12 +82,13 @@ def _launch_setup(context):
     use_sim_time = _typed('use_sim_time', LaunchConfiguration('use_sim_time').perform(context))
     common = {'use_sim_time': bool(use_sim_time)}
 
-    manager = Node(
-        package='amr_fleet', executable='fleet_manager_node', name='fleet_manager_node',
-        namespace='fleet', output='screen',
-        parameters=[params_file, dict(common, robot_ids=','.join(robot_ids),
-                                      **_overrides(context, _MANAGER_ARGS))])
-    actions = [manager]
+    actions = []
+    if _typed('launch_manager', LaunchConfiguration('launch_manager').perform(context)):
+        actions.append(Node(
+            package='amr_fleet', executable='fleet_manager_node', name='fleet_manager_node',
+            namespace='fleet', output='screen',
+            parameters=[params_file, dict(common, robot_ids=','.join(robot_ids),
+                                          **_overrides(context, _MANAGER_ARGS))]))
     if _typed('traffic_manager', LaunchConfiguration('traffic_manager').perform(context)):
         traffic_overrides = dict(common, robot_ids=','.join(robot_ids))
         mode = LaunchConfiguration('traffic_mode').perform(context).strip()
@@ -103,7 +113,16 @@ def _launch_setup(context):
     return actions
 
 
-def generate_launch_description() -> LaunchDescription:
+def generate_launch_description(defaults=None) -> LaunchDescription:
+    """
+    런치 설명. defaults 로 인자 기본값을 바꿀 수 있다 (fleet_adapters.launch.py 가 쓴다).
+
+    ros2 launch 는 인자 없이 부른다 (기본값 그대로).
+    """
+    defaults = dict(defaults or {})
+    unknown = set(defaults) - _ARG_NAMES
+    if unknown:
+        raise ValueError(f'모르는 런치 인자 기본값: {sorted(unknown)}')
     default_params = PathJoinSubstitution([FindPackageShare('amr_fleet'), 'config', 'fleet.yaml'])
     traffic_params = PathJoinSubstitution([FindPackageShare('amr_fleet'), 'config',
                                            'traffic.yaml'])
@@ -124,13 +143,20 @@ def generate_launch_description() -> LaunchDescription:
                               description='> 0 이면 어댑터가 N s 뒤 완료를 흉내 (실행기 없는 테스트)'),
         DeclareLaunchArgument('serve_assign_task', default_value='',
                               description="어댑터 모의 assign_task 서버 ('' = 모의 완료 시에만 true)"),
-        DeclareLaunchArgument('launch_adapters', default_value='true'),
+        DeclareLaunchArgument('launch_manager',
+                              default_value=defaults.get('launch_manager', 'true'),
+                              description='fleet_manager_node 실행 (/fleet)'),
+        DeclareLaunchArgument('launch_adapters',
+                              default_value=defaults.get('launch_adapters', 'true'),
+                              description='로봇별 fleet_adapter_node 실행 (false = 중앙 노드만 — 어댑터는 '
+                                          'fleet_adapters.launch.py 로 다른 프로세스·컨테이너에)'),
         DeclareLaunchArgument('use_sim_time', default_value='true',
                               description='/clock 사용 (시뮬레이터 없이 단독 실행이면 false)'),
         DeclareLaunchArgument('log_dir', default_value='',
                               description="로그 디렉토리 ('' = fleet.yaml, 그것도 비면 $ROS_WS/logs)"),
         DeclareLaunchArgument('params_file', default_value=default_params),
-        DeclareLaunchArgument('traffic_manager', default_value='true',
+        DeclareLaunchArgument('traffic_manager',
+                              default_value=defaults.get('traffic_manager', 'true'),
                               description='traffic_manager_node 실행 (교통 관리 · 교착 탐지/해소)'),
         DeclareLaunchArgument('traffic_mode', default_value='',
                               description="active | observe ('' = traffic.yaml)"),
