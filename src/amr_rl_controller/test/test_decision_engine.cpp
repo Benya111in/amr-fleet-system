@@ -562,22 +562,48 @@ TEST(DecisionEngineSimTime, RandomTickJitterKeepsMeanPeriod)
   }
 }
 
-// 램프는 sim 초당 a: 일정 가속 a_v 0.5 를 RTF 0.7 (dt 0.035) 틱으로 1 s 돌리면 명령이 0.5·1.0 근처
-// (틱 수 램프면 0.5·(1.0/0.035)·0.05 = 0.71). 틱 간격이 일정하면 한 틱의 명령 변화는 a·dt 를 넘지
-// 않는다
-// (결정 경계 포함 — 짧게 끝난 주기의 끝 명령으로 건너뛰지 않는다).
+// 램프는 sim 초당 a: 일정 가속 a_v 0.25 를 RTF 0.7 (dt 0.035) 틱으로 돌리면 명령이 0.25·t 를 따른다
+// (틱 수 램프면 0.25·(t/0.035)·0.05 = 1.43 배). 틱 간격 추정(지수 이동 평균)이 수렴한 뒤(30 틱) 한
+// 틱의 명령 변화는
+// a·dt 를 넘지 않는다 (결정 경계 포함 — 짧게 끝난 주기의 끝 명령으로 건너뛰지 않는다).
 TEST(DecisionEngineSimTime, ZohRampSlopeIsPerSimSecond)
 {
+  const double a = 0.25;
   for (const double dt : {0.025, 0.035, 0.05, 0.08}) {
-    const auto log = runTicks(uniformTicks(dt, 1.2));
-    for (std::size_t i = 1; i < log.v.size(); ++i) {
-      if (i >= 2) {   // 첫 틱은 간격을 모르고 공칭 0.05 로 추정한다
-        EXPECT_LE(log.v[i] - log.v[i - 1], 0.5 * dt + 1e-9) << dt << " " << i;
-        EXPECT_GE(log.v[i] - log.v[i - 1], -1e-9) << dt << " " << i;
-      }
-      // 이 틱이 낸 값 = 다음 틱까지 붙잡을 값 ≈ a·(t + dt), 결정 격자 오차(≤ 한 틱) 만큼만 어긋난다
-      EXPECT_NEAR(log.v[i], 0.5 * (log.t_tick[i] + dt), 0.5 * dt + 1e-9) << dt << " " << i;
+    const auto log = runTicks(uniformTicks(dt, 3.0), static_cast<float>(a));
+    ASSERT_GT(log.v.size(), 36U);
+    for (std::size_t i = 30; i < log.v.size(); ++i) {
+      EXPECT_LE(log.v[i] - log.v[i - 1], a * dt + 1e-4) << dt << " " << i;   // 추정 수렴 잔차
+      EXPECT_GE(log.v[i] - log.v[i - 1], -1e-9) << dt << " " << i;
+      // 이 틱이 낸 값 = 다음 틱까지 붙잡을 값 ≈ a·(t + dt)
+      EXPECT_NEAR(log.v[i], a * (log.t_tick[i] + dt), a * dt + 1e-4) << dt << " " << i;
     }
+  }
+}
+
+// 벽시계 루프가 밀렸다 따라잡으면 sim 간격 1 ms 틱이 끼어든다 (Gazebo 실측, A5-1 1 회차). 그
+// 틱에서 램프가 뒤로 물러나면
+// 안 된다: 한 결정 주기 안에서는 명령이 단조, 결정 경계에서의 되돌림은 지수 평균의 한 걸음(a·α·dt)
+// 이하.
+TEST(DecisionEngineSimTime, OutlierShortTickDoesNotReverseRamp)
+{
+  const double a = 0.25;
+  std::vector<double> t{0.0};
+  for (int k = 1; t.back() < 3.0; ++k) {
+    t.push_back(t.back() + (k % 13 == 0 ? 0.001 : (k % 13 == 1 ? 0.014 : 0.025)));
+  }
+  FakePolicy p(Arm::kB);
+  p.u0 = static_cast<float>(a);
+  DecisionEngine eng(EngineConfig{}, &p);
+  double v_prev = 0.0;
+  for (std::size_t i = 0; i < t.size(); ++i) {
+    auto in = openInput(t[i]);
+    const auto r = eng.tick(in);
+    if (i > 0) {
+      const double floor = r.new_decision ? v_prev - a * 0.2 * 0.025 - 1e-9 : v_prev - 1e-12;
+      EXPECT_GE(r.v, floor) << i << " t " << t[i] << (r.new_decision ? " (결정)" : "");
+    }
+    v_prev = r.v;
   }
 }
 

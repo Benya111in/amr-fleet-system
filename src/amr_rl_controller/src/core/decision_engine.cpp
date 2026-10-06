@@ -29,6 +29,11 @@ double clamp(double x, double lo, double hi)
 
 /// [s] dt_est 하한 — /clock 해상도(Gazebo 물리 1 ms) 아래로는 추정하지 않는다
 constexpr double kMinTickDt = 1e-3;
+/// dt_est 지수 이동 평균 계수 (A5-1b): 벽시계 루프가 밀렸다 따라잡는 1–5 ms 틱 하나가 추정을
+/// 흔들지 않게.
+/// 직전 간격을 그대로 쓰면 그 틱에서 램프가 뒤로 물러나 명령이 톱니가 됐다 (Gazebo 실측, A5-1 노트
+/// 1 회차).
+constexpr double kTickDtEmaAlpha = 0.2;
 
 // 제자리 정렬의 정지각 [rad] (A2-5): 지연 t_c 동안 지금 각가속도 a0(회전 방향 성분, 음수면 0 으로
 // 보수적)를 유지 → 저크 j 로 각가속도를 0 까지 → 저크 제한 정지 (SpeedProfile::stoppingDistance).
@@ -63,7 +68,7 @@ double alignStopSpeed(double e, double a0, double t_c)
 }  // namespace
 
 DecisionEngine::DecisionEngine(const EngineConfig & cfg, PolicyInterface * policy)
-: cfg_(cfg), policy_(policy)
+: cfg_(cfg), policy_(policy), dt_est_(cfg.control_period)
 {
   ticks_per_decision_ = std::max(
     1, static_cast<int>(std::lround(cfg_.decision_period / std::max(1e-6, cfg_.control_period))));
@@ -72,6 +77,7 @@ DecisionEngine::DecisionEngine(const EngineConfig & cfg, PolicyInterface * polic
 void DecisionEngine::reset()
 {
   synced_ = false;
+  dt_est_ = cfg_.control_period;
   kind_ = Kind::kNone;
   in_handover_ = false;
   last_period_ = 0.0;
@@ -294,13 +300,13 @@ TickResult DecisionEngine::tick(TickInput & in)
       prev_ = {};
     }
     kind_ = Kind::kNone;
-    dt_est_ = cfg_.control_period;
     synced_ = true;
   } else {
     tick_dt = in.now - last_tick_;
     if (tick_dt > 0.0) {
       // sim 시계가 멈춘 틱(간격 0)은 추정을 바꾸지 않는다
-      dt_est_ = clamp(tick_dt, kMinTickDt, dp);
+      dt_est_ += kTickDtEmaAlpha * (clamp(tick_dt, kMinTickDt, dp) - dt_est_);
+      dt_est_ = clamp(dt_est_, kMinTickDt, dp);
     }
   }
   last_tick_ = in.now;
@@ -323,6 +329,7 @@ TickResult DecisionEngine::tick(TickInput & in)
     }
     next_boundary_ = nb;
     period_start_ = in.now;
+    t_emit_ = 0.0;
     period_info_ = res;
   } else {
     res = period_info_;
@@ -339,8 +346,11 @@ TickResult DecisionEngine::tick(TickInput & in)
     res.need_dwa = true;
     return res;
   }
-  // ZOH 램프: 이 틱이 다음 틱까지 붙잡을 값 = 결정 뒤 sim 경과 + 다음 틱까지의 추정
-  const Command c = rampAt(in.now - period_start_ + dt_est_);
+  // ZOH 램프: 이 틱이 다음 틱까지 붙잡을 값 = 결정 뒤 sim 경과 + 다음 틱까지의 추정. 한 결정 주기
+  // 안에서는
+  // 램프 시각을 되돌리지 않는다 (추정이 줄어든 틱에 명령이 뒤로 물러나지 않게 — A5-1b)
+  t_emit_ = std::max(t_emit_, in.now - period_start_ + dt_est_);
+  const Command c = rampAt(t_emit_);
   res.v = c.v;
   res.w = c.w;
   v_out_ = res.v;
