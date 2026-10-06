@@ -219,7 +219,7 @@ else
 fi
 ceiling=$(domain_port_ceiling "${ROS_DOMAIN_ID}")
 if [ "${ceiling}" -lt 200 ]; then
-    echo "    참고: 도메인 ${ROS_DOMAIN_ID} 는 참가자 ${ceiling} 개를 넘으면 수신 포트가 임시 포트 범위·65535 에 닿는다" \
+    echo "    참고: 도메인 ${ROS_DOMAIN_ID} 에서는 참가자가 ${ceiling} 개를 넘으면 수신 포트가 임시 포트 범위·65535 에 닿는다" \
          "(5대 시나리오 12 는 ≈ 150~170 개)"
 fi
 CALLER_PARTITION="${IGN_PARTITION:-}"
