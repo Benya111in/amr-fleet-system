@@ -153,3 +153,47 @@ def test_cost_critic_learns():
             alg.compute_returns(obs)
         losses.append(alg.update()['cost_value_function'])
     assert sum(losses[-3:]) < 0.5 * sum(losses[:3]), losses
+
+
+def test_cost_timeout_bootstrap_and_storage():
+    """잘림(time_outs) 스텝의 비용은 c + γ·V_c(s_t), 아니면 c 그대로 — 비용 버퍼에 그대로 들어간다."""
+    env = ToyEnv(5)
+    env.t[:] = 5                          # 롤아웃 8 스텝 안에 시간 초과(10)가 오게
+    alg = build('lag', budget=0.5, env=env, fixed=0.0)
+    obs = env.obs()
+    seen_timeout = False
+    with torch.inference_mode():
+        for t in range(T):
+            a = alg.act(obs)
+            v_c = alg._cv.clone()
+            obs, r, d, ex = env.step(a)
+            alg.process_env_step(obs, r, d, ex)
+            to = ex['time_outs'].reshape(-1, 1).float()
+            want = env.cost.reshape(-1, 1) + alg.gamma * v_c * to
+            assert torch.allclose(alg.c_rewards[t], want, atol=1e-6)
+            assert torch.equal(alg.c_values[t], v_c)
+            seen_timeout |= bool(ex['time_outs'].any())
+    assert seen_timeout
+
+
+def test_advantages_use_current_multiplier():
+    """저장소의 이익 = combine_advantages(보상 GAE, 비용 GAE, 지금 승수) (승수 2 로 고정)."""
+    from amr_isaac.pid_lagrange import combine_advantages, gae
+    env = ToyEnv(6)
+    alg = build('lag', budget=0.5, env=env, fixed=2.0)
+    obs = env.obs()
+    with torch.inference_mode():
+        for _ in range(T):
+            a = alg.act(obs)
+            obs, r, d, ex = env.step(a)
+            alg.process_env_step(obs, r, d, ex)
+        alg.compute_returns(obs)
+        st = alg.storage
+        _, adv_r = gae(st.rewards, st.values, st.dones, alg.policy.evaluate(obs), alg.gamma,
+                       alg.lam)
+        _, adv_c = gae(alg.c_rewards, alg.c_values, st.dones, alg.cost_value(obs), alg.gamma,
+                       alg.lam)
+        want = combine_advantages(adv_r, adv_c, 2.0)
+    assert alg.multiplier == 2.0
+    assert torch.allclose(st.advantages, want, atol=1e-6)
+    assert not torch.allclose(want, combine_advantages(adv_r, adv_c, 0.0), atol=1e-3)

@@ -91,6 +91,9 @@ def test_actor_samples_raw_and_reports_squashed_log_prob():
     assert torch.allclose(out['log_prob'], SK.squash_log_prob(dist, raw), atol=1e-6)
     _, out3 = pol.act({'observations': x, 'taken_actions': raw})
     assert torch.allclose(out3['log_prob'], out['log_prob'], atol=1e-6)
+    other = torch.zeros_like(raw) + 0.3                   # 표본과 다른 행동의 밀도
+    _, out4 = pol.act({'observations': x, 'taken_actions': other})
+    assert torch.allclose(out4['log_prob'], SK.squash_log_prob(dist, other), atol=1e-6)
     r, _ = pol.random_act({'observations': x})
     assert torch.all(torch.tanh(r).abs() < 1.0)
     # Q 는 tanh(raw) 를 받는다: raw 를 크게 바꿔도 tanh 가 포화되면 Q 가 같다
