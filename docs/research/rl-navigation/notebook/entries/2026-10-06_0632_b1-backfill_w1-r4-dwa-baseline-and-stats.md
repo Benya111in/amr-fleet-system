@@ -69,6 +69,8 @@
 
 ## 원자료
 - 사본: `/home/CAPYI_AI/runs/bonus1/b1-backfill/archive/dwa_baseline_logs/{S0a…regG,E07}/` (`SOURCE.txt`, `SHA256SUMS`)
+  — 리뷰 반영: `SHA256SUMS` 가 자기 자신 줄을 담아 `sha256sum -c` 가 1 건 실패했다. 그 줄을 지웠다 (687 파일, 사본·원본 모두 실패 0 [측정]).
+  실행 목록의 `W0_dwa_s07_*` 시각은 처음에 result.json 의 UTC 그대로였다 — KST 로 바꿨다 (regG 17:07:06–17:09:07, E07 12:16:34–12:18:36).
 - 생성 문서: `rl/eval/baseline/dwa_baseline.md`, `dwa_gz_s08_episodes.csv`, 로그 `/home/CAPYI_AI/logs/agents/r4-eval/`
 - 보고: `/home/CAPYI_AI/logs/agents/r4-eval/WAVE1_RESULT.md`
 

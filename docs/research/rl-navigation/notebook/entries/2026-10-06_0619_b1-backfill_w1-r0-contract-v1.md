@@ -72,6 +72,9 @@ Isaac(r1)·2D(r2)·C++ 플러그인(r3)·평가(r4)가 **같은 관측·행동·
     2 분 앞(06:38:12)의 `HEAD.txt` 698585d, 로그 끝 줄 "커밋 b6ca451 에 들어간 tools/ 로 실행한 결과 (실행 시점엔 미커밋, 내용 동일)",
     b6ca451 커밋 시각 06:40:23 (로그 mtime 06:40:23 과 같은 초 — 끝 줄은 커밋 직후에 덧붙인 것으로 보인다).
 - WAVE 의 "범위를 넓힌 첫 실행은 dwa 6 건 불일치" 는 로그가 없다. `crosscheck_cpp_review.log` 에는 비교기를 고친 뒤의 0 건만 있다 → [문서주장].
+- WAVE 시험 목록의 "Python side deliberately broken → 90/279/357/935 mismatches (check is not vacuous)" 도 로그가 없다
+  (`logs/agents/r0-contract/` 전체에서 이 숫자는 WAVE1_RESULT.md 에만 있다) → [문서주장]. 대조 도구의 공허성 검사 근거는 WAVE 진술뿐이다.
+  (위 두 항목은 리뷰 반영 중에 더 찾았다.)
 
 ## 실행 목록에 등록한 run (`runs/b1-backfill.jsonl`, entry = 이 파일)
 

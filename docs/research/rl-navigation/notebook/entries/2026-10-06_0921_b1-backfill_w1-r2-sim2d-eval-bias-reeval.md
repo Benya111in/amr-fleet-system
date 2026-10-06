@@ -18,7 +18,7 @@
 ## 설정
 - 리뷰 진단: 같은 체크포인트를 (a) 옛 추정량과 (b) env 마다 리셋 직후 첫 에피소드만 세는 추정량으로 비교, 장애물 mixed 와 none.
 - 수정(a8afe77): evaluate() 가 env 마다 첫 에피소드 하나만 센다, 라운드마다 env.gen 재시드(공통 난수), max_steps 는 t_limit 에서,
-  요약에 unfinished·success_se·estimator. 재평가 도구 `tools/reeval_runs.py`(5b42ca8)로 9 run·체크포인트 47 개 + 휴리스틱을
+  요약에 unfinished·success_se·estimator. 재평가 도구 `tools/reeval_runs.py`(5b42ca8)로 9 run 의 고유 체크포인트 42 개 (B_bc3 는 seed 2 개라 체크포인트 × seed 52 회) + 휴리스틱 3 행을
   n 2048, 평가 seed 1000 (B_bc3 는 2000 도), unfinished 0 으로 다시 잼. 재학습 없음.
 
 ## 결과
@@ -59,6 +59,8 @@
 
 ## WAVE 보고와 원자료의 차이
 - WAVE fix 의 재평가 수치는 원자료와 같다. 리뷰 증거 파일의 mtime 은 모두 09:21:16 (복사 시각)이라 리뷰 실행 시각은 기록되지 않았다.
+- WAVE fix "9 개 run 의 체크포인트 47 개" — `reeval.jsonl` 9 개를 세면 고유 체크포인트 42, 체크포인트 × seed 52, 휴리스틱 포함 55 행이다.
+  47 은 어느 셈법과도 맞지 않는다 (리뷰 반영으로 더함 — 처음엔 이 숫자를 그대로 옮겼다).
 
 ## 실행 목록에 등록한 run (`runs/b1-backfill.jsonl`, entry = 이 파일)
 
