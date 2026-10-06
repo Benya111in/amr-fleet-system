@@ -1,5 +1,6 @@
 // amr_perception SafetyGate::sweptRegion(...).approach() 를 파이썬에서 부르는 대조용 바인딩.
-// rl/sim2d/amr_sim2d/geometry2d.py swept_approach 가 C++ 원본과 같은 값을 내는지 시험한다 (tests/test_collision.py).
+// rl/sim2d/amr_sim2d/geometry2d.py swept_approach 가 C++ 원본과 같은 값을 내는지
+// 시험한다 (tests/test_collision.py).
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
 

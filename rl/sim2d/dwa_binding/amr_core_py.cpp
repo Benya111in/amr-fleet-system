@@ -1,4 +1,5 @@
-// amr_navigation ROS 비의존 코어(src/amr_navigation/src/core/*.cpp)를 파이썬에서 부르는 pybind11 모듈.
+// amr_navigation ROS 비의존 코어(src/amr_navigation/src/core/*.cpp)를
+// 파이썬에서 부르는 pybind11 모듈.
 //
 // 원본 소스는 읽기 전용으로 그대로 컴파일한다 (build.sh). 여기에는 변환 코드만 있다.
 //   - inflate:  grid.cpp inflate() — 전역 코스트맵 정적 팽창과 같은 함수
@@ -88,7 +89,8 @@ std::tuple<std::string, py::array_t<double>, double, std::size_t> planPy(
   if (!(r.reached_goal == e)) {
     grid.mapToWorld(r.reached_goal.x, r.reached_goal.y, end.x, end.y);
   }
-  core::SmootherConfig sc;   // nav2_params.yaml AStar.smoother 값과 기본값이 같다 (test_binding 이 확인)
+  // 기본값 = nav2_params.yaml:37-49 AStar.smoother 값 (손으로 대조, 자동 시험 없음)
+  core::SmootherConfig sc;
   sc.enable_shortcut = smoother;
   sc.enable_smoothing = smoother;
   sc.allow_unknown = allow_unknown;

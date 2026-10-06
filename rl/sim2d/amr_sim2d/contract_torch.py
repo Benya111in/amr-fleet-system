@@ -3,7 +3,7 @@
 
 각 함수는 numpy 기준 구현(amr_rl_contract/*.py)의 같은 이름 함수를 env 축 N 으로 벡터화한 것이다.
 분기는 torch.where 로 옮겼고, 기준 구현의 순차 루프 의미(동률 처리 등)를 그대로 지킨다.
-시험: rl/sim2d/tests/test_golden_torch.py (golden 31 사례), test_env_crosscheck.py (env 상태 무작위 대조).
+시험: rl/sim2d/tests/test_golden_torch.py (golden 31 사례), test_env.py (env 상태 무작위 대조).
 
 정밀도 규칙 (contract.md §12): 경로 투영·d_arc·shaping 은 float64, 나머지는 입력 dtype.
 """
