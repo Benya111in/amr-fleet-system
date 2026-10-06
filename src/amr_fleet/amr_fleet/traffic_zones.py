@@ -13,7 +13,8 @@
 
 진입 토큰 — 모든 구역의 용량은 1대 (corridor 는 같은 방향 추종만 여러 대 허용 가능)
 - 로봇이 구역 진입점 approach_distance_m (1차선 통로는 corridor_approach_m — 나오는 로봇이 입구에서
-  비켜 갈 자리를 남긴다) 앞에 오면 토큰을 요청한다. 구역 출구와 다음 구역 입구가
+  비켜 갈 자리를 남긴다, yaml 항목의 approach_m 이 있으면 그 구역은 그 값) 앞에 오면 토큰을 요청한다.
+  거리의 근거는 decision_distance (못 받으면 서야 하는 결정점 거리). 구역 출구와 다음 구역 입구가
   chain_gap_m 이하로 붙어 있으면(교차로 → 통로 등) 묶어서 한 번에 받는다 ("교차로 안에서 서지 않기").
 - 구역 안에서 기다리지 않기: 몸체가 구역 k 에 걸친 로봇은 k 와 묶이지 않은 다음 구역을 k 를 빠져나온
   뒤에야 요청한다 (request_chain 의 occupied). 배치는 spacing_conflicts 로 확인한다 — 두 구역 사이
@@ -73,6 +74,32 @@ class Zone:
     area_m2: float = 0.0
     centroid: Tuple[float, float] = (0.0, 0.0)
     source: str = 'yaml'
+    approach_m: Optional[float] = None   # 이 구역의 토큰 요청 거리 (None = 종류별 기본값)
+
+
+def decision_distance(speed: float, cycle_s: float, comm_s: float, exec_s: float, decel: float,
+                      loc_error_m: float, margin_m: float, half_length_m: float) -> float:
+    """
+    토큰 요청(결정점) 거리 하한 [m] — 거절되면 차체 앞이 구역에 닿기 전에 설 수 있는 거리.
+
+    D = v·(T_주기 + T_통신 + T_실행) + v²/(2a) + e_loc + m + L/2
+    (보고서 「분산 플릿 관리 협상 할당과 폴백」 결정점 절의 식에 차체 앞 절반 L/2 를 더했다: 요청 거리는 차체
+    중심의 경로 거리로 잰다 — zone_visits 는 중심점이 구역에 드는 곳을 입구로 본다.) 지연은 벽시계 값을 sim 으로
+    줄이지 않고 그대로 넣는다 (RTF < 1 에서는 보수적). 근거와 수치: docs/research/fleet-distributed/p0.md §5.
+    """
+    values = (speed, cycle_s, comm_s, exec_s, loc_error_m, margin_m, half_length_m)
+    if decel <= 0.0 or not all(math.isfinite(v) and v >= 0.0 for v in values):
+        raise ValueError('decision_distance: 음수·비유한 값 또는 감속 ≤ 0')
+    return (speed * (cycle_s + comm_s + exec_s) + speed * speed / (2.0 * decel)
+            + loc_error_m + margin_m + half_length_m)
+
+
+def approach_map(zones: Iterable[Zone], approach_m: float, corridor_approach_m: float
+                 ) -> Dict[str, float]:
+    """구역 → 토큰 요청 거리: 항목의 approach_m, 없으면 1차선 통로 corridor_approach_m · 그 밖 approach_m."""
+    return {z.zone_id: (z.approach_m if z.approach_m is not None
+                        else corridor_approach_m if z.kind == CORRIDOR else approach_m)
+            for z in zones}
 
 
 def _finite_pair(p: Any) -> Tuple[float, float]:
@@ -89,7 +116,8 @@ def zones_from_config(entries: Any, corridor_same_direction: bool = False) -> Li
     traffic_zones.yaml 의 zones 목록 → Zone 목록.
 
     항목 = {id, kind: intersection|corridor, polygon: [[x, y], ...] (꼭짓점 ≥ 3, map 프레임 m),
-    same_direction: bool (선택, corridor 만 의미 — 없으면 corridor_same_direction)}.
+    same_direction: bool (선택, corridor 만 의미 — 없으면 corridor_same_direction),
+    approach_m: 양수 (선택, 이 구역의 토큰 요청 거리 — 없으면 종류별 기본값)}.
     형식 오류·중복 id·넓이 0 은 항목 번호와 함께 ValueError.
     """
     if entries is None:
@@ -102,7 +130,7 @@ def zones_from_config(entries: Any, corridor_same_direction: bool = False) -> Li
         where = f'zones[{k}]'
         if not isinstance(e, Mapping):
             raise ValueError(f'{where}: {{id, kind, polygon}} 사전이어야 한다')
-        unknown = set(e) - {'id', 'kind', 'polygon', 'same_direction'}
+        unknown = set(e) - {'id', 'kind', 'polygon', 'same_direction', 'approach_m'}
         if unknown:
             raise ValueError(f'{where}: 모르는 키 {sorted(unknown)}')
         zone_id = str(e.get('id', ''))
@@ -126,9 +154,15 @@ def zones_from_config(entries: Any, corridor_same_direction: bool = False) -> Li
         same = e.get('same_direction', corridor_same_direction)
         if not isinstance(same, bool):
             raise ValueError(f'{where}: same_direction 은 true/false')
+        approach = e.get('approach_m')
+        if approach is not None:
+            if (isinstance(approach, bool) or not isinstance(approach, (int, float))
+                    or not math.isfinite(approach) or approach <= 0.0):
+                raise ValueError(f'{where}: approach_m 은 양의 유한한 수: {approach!r}')
+            approach = float(approach)
         seen.add(zone_id)
         zones.append(Zone(zone_id, kind, pts, bool(same) and kind == CORRIDOR, area,
-                          (float(pts[:, 0].mean()), float(pts[:, 1].mean())), 'yaml'))
+                          (float(pts[:, 0].mean()), float(pts[:, 1].mean())), 'yaml', approach))
     return zones
 
 

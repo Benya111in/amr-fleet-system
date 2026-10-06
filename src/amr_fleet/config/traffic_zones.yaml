@@ -72,18 +72,26 @@ zones:
   # 있으니 포켓(비켜서기)도 대체 경로도 의미가 없어 해소 전략이 둘 다 소진됐다 — 사후 해소가 아니라
   # 애초에 한 대만 들어가게 하는 것이 맞다. 구역 크기: 도크 판(x = ∓29.99)부터 staging(∓27.78) 을 덮는
   # x 3 m, staging 중심 ±1 m (로봇 외접 반경 0.36 m + 회전 여유). 같은 쪽 두 도크 사이 간격 2 m 는
-  # approach_distance_m(1.5) + robot_radius(0.36) 보다 커서 한 구역을 기다리는 자리가 다른 구역 밖이다.
+  # 요청 거리 1.5 + robot_radius(0.36) 보다 커서 한 구역을 기다리는 자리가 다른 구역 밖이다.
+  # 도크 구역만 approach_m 1.5 로 둔다 (교차로 기본 approach_distance_m 은 2.0): 2 m 간격에서 요청 거리를
+  # 1.64 m 넘게 늘리면 spacing_conflicts 가 배치를 거절한다 (앞 도크 구역 안에서 다음 도크를 기다리게 된다).
+  # 그래서 도크 구역의 결정점 거리는 decision_distance 1.85 m 에 **미달**이다 (p0.md §5) — 도크 사이 간격을
+  # 넓히거나 두 도크를 한 사슬로 묶어야 풀린다 (배치 변경, 다음 물결).
   - id: dock_1_approach
     kind: intersection
+    approach_m: 1.5
     polygon: [[-29.8, 16.0], [-26.8, 16.0], [-26.8, 18.0], [-29.8, 18.0]]
   - id: dock_2_approach
     kind: intersection
+    approach_m: 1.5
     polygon: [[-29.8, 12.0], [-26.8, 12.0], [-26.8, 14.0], [-29.8, 14.0]]
   - id: dock_a_approach
     kind: intersection
+    approach_m: 1.5
     polygon: [[26.8, 16.0], [29.8, 16.0], [29.8, 18.0], [26.8, 18.0]]
   - id: dock_b_approach
     kind: intersection
+    approach_m: 1.5
     polygon: [[26.8, 12.0], [29.8, 12.0], [29.8, 14.0], [26.8, 14.0]]
 pockets:
   - {id: p_ab_-18_s, x: -18.0, y: 4.1, yaw: 0.0}

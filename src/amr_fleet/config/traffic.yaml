@@ -31,10 +31,14 @@
     zones:                         # 교차로 · 병목(1차선 통로) 진입 토큰 (traffic_zones)
       source: yaml                 # yaml | map (/map 에서 자동 유도) | both | none
       tokens: true                 # false = 토큰 끔 (예측 · 교착 해소만)
-      approach_distance_m: 1.5     # 구역 입구 이 거리 앞에서 토큰 요청 (못 받으면 hold). 1 m/s 에서 주기 0.5 s + 지연 0.1 s + 제동 0.5 m = 1.1 m < 1.5 m
+      approach_distance_m: 2.0     # 구역 입구 이 거리 앞에서 토큰 요청 (못 받으면 hold). 결정점 거리 (traffic_zones.decision_distance):
+                                   # v(T주기 0.5 + T통신 0.1 + T실행 0.2) + v²/2a + e_loc 0.05 + 여유 0.2 + 차체 앞 절반 0.30
+                                   # = 0.8 + 0.5 + 0.55 = 1.85 m (v 1.0 m/s · 감속 1.0 m/s² = nav2_params 상한) ≤ 2.0.
+                                   # 예전 1.5 는 차체 길이를 빼고 셈한 1.1 m 기준이었다 (p0.md §5).
+                                   # traffic_zones.yaml 항목의 approach_m 이 이긴다 (도크 구역 1.5 — 간격 2 m, 미달)
       corridor_approach_m: 2.5     # 1차선 통로(corridor)의 요청 거리: 입구에서 더 멀리 기다려 나오는 로봇이 비켜 갈 자리를 남긴다
       chain_gap_m: 1.5             # 출구-다음 입구가 이보다 가까운 구역은 묶어 한 번에 받는다 (교차로 안에서 서지 않기)
-      spacing_check: reject        # 구역 간격이 chain_gap_m 초과 · approach_distance_m + robot_radius 미만인 쌍 → reject(시작 거부) | warn(경고만)
+      spacing_check: reject        # 구역 간격이 chain_gap_m 초과 · 요청 거리(구역별) + robot_radius 미만인 쌍 → reject(시작 거부) | warn(경고만)
       max_bypass: 2                # 먼저 기다린 로봇을 나중 요청이 이만큼 추월하면 그 구역을 기아 로봇에 예약
       corridor_same_direction: true  # 1차선 통로에 같은 방향 추종 진입 허용 (yaml 항목별 same_direction 우선)
       narrow_width_m: 1.5          # map 유도: 이 폭보다 좁은 통과 가능 영역 = 1차선 통로

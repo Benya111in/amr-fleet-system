@@ -13,9 +13,9 @@ import pytest
 
 from amr_fleet.traffic_geometry import GridSpec, points_in_polygon
 from amr_fleet.traffic_zones import (
-    CORRIDOR, INTERSECTION, TokenRequest, ZoneMap, ZoneTokenManager, ZoneVisit, clearance_map,
-    derive_zones_from_grid, grid_spacing_conflicts, load_layout, request_chain,
-    spacing_conflicts, zone_visits, zones_from_config,
+    CORRIDOR, INTERSECTION, TokenRequest, ZoneMap, ZoneTokenManager, ZoneVisit, approach_map,
+    clearance_map, decision_distance, derive_zones_from_grid, grid_spacing_conflicts, load_layout,
+    request_chain, spacing_conflicts, zone_visits, zones_from_config,
 )
 import yaml
 
@@ -198,9 +198,14 @@ def test_shipped_layout_has_no_waiting_spot_inside_zones():
     params = yaml.safe_load(PARAMS.read_text())['/fleet/traffic_manager_node']['ros__parameters']
     z = params['zones']
     zones, _ = load_layout(str(CONFIG), True)
-    approach = {zz.zone_id: z['corridor_approach_m'] if zz.kind == CORRIDOR
-                else z['approach_distance_m'] for zz in zones}
+    approach = approach_map(zones, z['approach_distance_m'], z['corridor_approach_m'])
     assert spacing_conflicts(zones, approach, z['chain_gap_m'], params['robot_radius']) == []
+    # 구역별 approach_m 없이 기본값만 쓰면 2 m 간격 도크 쌍이 거절된다 (그래서 도크만 1.5 — p0.md §5)
+    plain = {zz.zone_id: z['corridor_approach_m'] if zz.kind == CORRIDOR
+             else z['approach_distance_m'] for zz in zones}
+    assert {(a, b) for a, b, _ in spacing_conflicts(
+        zones, plain, z['chain_gap_m'], params['robot_radius'])} == {
+        ('dock_1_approach', 'dock_2_approach'), ('dock_a_approach', 'dock_b_approach')}
     # 리뷰 finding 1 의 원래 배치(교차로 = 틈 폭 4 m, approach 2.5)는 통로를 따라 2 m 간격이라 거절된다
 
     def widened(zz):
@@ -407,3 +412,51 @@ def test_warehouse_layout_matches_world():
     auto_map = ZoneMap([], auto, labels, cspec)
     hit = auto_map.zone_at(0.0, -10.0)
     assert hit is not None and auto_map.get(hit).kind == CORRIDOR
+
+
+# ---------------------------------------------------------------------- 결정점 거리 (보너스 4 P0)
+
+# 결정점 거리 입력 (p0.md §5): Nav2 상한 1.0 m/s · 감속 1.0 m/s² (amr_navigation nav2_params.yaml
+# max_vel_x · decel_lim_x), traffic_manager 주기 0.5 s (update_rate_hz 2), 통신 0.1 s (명세 최대 지연),
+# 실행 0.2 s (보고서 가정 — 측정 아님), e_loc 0.05 m, 여유 0.2 m, 차체 앞 절반 0.30 m (0.60 m 길이)
+DECISION_INPUTS = dict(speed=1.0, cycle_s=0.5, comm_s=0.1, exec_s=0.2, decel=1.0,
+                       loc_error_m=0.05, margin_m=0.2, half_length_m=0.30)
+
+
+def test_decision_distance_formula():
+    assert decision_distance(**DECISION_INPUTS) == pytest.approx(1.85)
+    no_body = dict(DECISION_INPUTS, half_length_m=0.0)
+    assert decision_distance(**no_body) == pytest.approx(1.55)          # 보고서 1.55 m (차체 제외)
+    fast = dict(DECISION_INPUTS, speed=2.0, half_length_m=0.0)
+    assert decision_distance(**fast) == pytest.approx(3.85)             # 명세 최고속 2.0 m/s → 3.85 m
+    old = dict(DECISION_INPUTS, exec_s=0.0, loc_error_m=0.0, margin_m=0.0, half_length_m=0.0)
+    assert decision_distance(**old) == pytest.approx(1.1)               # 예전 주석의 1.1 m 셈
+    for bad in (dict(DECISION_INPUTS, decel=0.0), dict(DECISION_INPUTS, speed=-1.0),
+                dict(DECISION_INPUTS, cycle_s=math.inf)):
+        with pytest.raises(ValueError):
+            decision_distance(**bad)
+
+
+def test_shipped_approach_meets_decision_distance_except_docks():
+    """배포 값: 결정점 거리 1.85 m 를 못 채우는 구역은 도크 넷뿐이다 (간격 2 m 배치 제약 — 미달로 적는다)."""
+    params = yaml.safe_load(PARAMS.read_text())['/fleet/traffic_manager_node']['ros__parameters']
+    z = params['zones']
+    zones, _ = load_layout(str(CONFIG), True)
+    approach = approach_map(zones, z['approach_distance_m'], z['corridor_approach_m'])
+    need = decision_distance(**DECISION_INPUTS)
+    short = sorted(zid for zid, d in approach.items() if d < need)
+    assert short == ['dock_1_approach', 'dock_2_approach', 'dock_a_approach', 'dock_b_approach']
+    assert approach['x_ab_1'] == 2.0 and approach['narrow_aisle'] == 2.5
+
+
+def test_zone_approach_override_parsing():
+    poly = [[0, 0], [1, 0], [1, 1]]
+    zs = zones_from_config([{'id': 'a', 'kind': 'intersection', 'polygon': poly,
+                             'approach_m': 1.2},
+                            {'id': 'b', 'kind': 'corridor', 'polygon': poly},
+                            {'id': 'c', 'kind': 'intersection', 'polygon': poly}])
+    assert approach_map(zs, 2.0, 2.5) == {'a': 1.2, 'b': 2.5, 'c': 2.0}
+    for bad in (0, -1.0, 'x', True, float('nan')):
+        with pytest.raises(ValueError, match='approach_m'):
+            zones_from_config([{'id': 'a', 'kind': 'intersection', 'polygon': poly,
+                                'approach_m': bad}])

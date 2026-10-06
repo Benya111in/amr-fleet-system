@@ -58,8 +58,9 @@ from amr_fleet.traffic_resolution import (
     WorldView, mask_spec_for, pockets_from_config,
 )
 from amr_fleet.traffic_zones import (
-    CORRIDOR, TokenDecision, TokenRequest, Zone, ZoneMap, ZoneTokenManager, derive_zones_from_grid,
-    grid_spacing_conflicts, load_layout, request_chain, spacing_conflicts, zone_visits,
+    TokenDecision, TokenRequest, Zone, ZoneMap, ZoneTokenManager, approach_map,
+    derive_zones_from_grid, grid_spacing_conflicts, load_layout, request_chain, spacing_conflicts,
+    zone_visits,
 )
 
 # amr_msgs/msg/RobotState.STATUS_* (kpi.py 와 같은 값)
@@ -101,7 +102,9 @@ class ZonesConfig:
 
     source: str = 'yaml'                  # yaml | map | both | none
     tokens: bool = True
-    approach_distance_m: float = 1.5       # 주기 0.5 s + 지연 0.1 s + 제동 0.5 m (1 m/s) = 1.1 m < 1.5 m
+    # 결정점 거리 decision_distance(1 m/s, 0.5+0.1+0.2 s, 1 m/s², 0.05, 0.2, 반길이 0.30) = 1.85 m
+    # ≤ 2.0 (p0.md §5). 구역 yaml 의 approach_m 이 이긴다
+    approach_distance_m: float = 2.0
     corridor_approach_m: float = 2.5      # 1차선 통로: 입구에서 더 멀리 기다린다 (나오는 로봇이 비켜 갈 자리)
     chain_gap_m: float = 1.5
     spacing_check: str = 'reject'         # 구역 간격 검사 (spacing_conflicts): reject | warn
@@ -444,10 +447,9 @@ class TrafficManager:
                 only={g.zone_id for g in grid_zones}), False)
 
     def _approach_of(self, zones: Sequence[Zone]) -> Dict[str, float]:
-        """구역 → 토큰 요청 거리 (1차선 통로는 corridor_approach_m)."""
+        """구역 → 토큰 요청 거리 (yaml approach_m > 1차선 통로 corridor_approach_m > approach_distance_m)."""
         z = self.cfg.zones
-        return {zz.zone_id: z.corridor_approach_m if zz.kind == CORRIDOR else z.approach_distance_m
-                for zz in zones}
+        return approach_map(zones, z.approach_distance_m, z.corridor_approach_m)
 
     def _check_spacing(self, conflicts: Sequence[Tuple[str, str, float]], reject: bool) -> None:
         """구역 간격 검사 결과: reject 면 ValueError, 아니면 layout_warnings 에 남긴다."""
