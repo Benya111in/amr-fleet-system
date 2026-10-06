@@ -6,6 +6,8 @@ accept(즉시 수락) · reject(거절) · slow(delay_s 뒤 수락) · silent(�
 거절 → 재할당, 응답 지연 → 보류 후 늦은 수락(중복 없음), 무응답 → robot_state 확인 후 재할당 +
 늦은 보고는 TASK_CONFLICT, 로봇 끊김 → ROBOT_LOST · 작업 FAILED · 재시도, 작업 시간 초과,
 마감 초과, 파라미터 콜백, 콜백 예외 격리, use_sim_time 에서의 ISO 마감 변환을 확인한다.
+가짜 로봇이 받은 assign_task 요청마다 권위자 표식 (epoch, leader_id, seq) 을 기록해, 관리자 epoch(7)·
+노드 이름·task_events 와 같은 seq 열에서 나온 값이 실리는지 본다 (보너스 4 P0, P3 수신 측 펜싱의 입력).
 지연 시뮬레이션은 끈다 (결정적인 순서를 보려고).
 """
 
@@ -43,6 +45,8 @@ ROBOTS = ('amr_f1', 'amr_f2', 'amr_f3')
 GHOST = 'amr_f4'          # 등록만 되어 있고 assign_task 서버가 없는 로봇 (robot_state 는 시험이 직접 낸다)
 START = {'amr_f1': (0.0, 0.0), 'amr_f2': (5.0, 0.0), 'amr_f3': (10.0, 0.0)}
 IDLE, MOVING = 0, 1
+EPOCH = 7                 # 관리자 epoch 파라미터 (기본 1 과 구별되는 값)
+LEADER = '/fleet/fleet_manager_node'
 
 
 def _params(d):
@@ -61,6 +65,7 @@ class FakeRobot:
         self.current = ''
         self.paused = False
         self.requests = []
+        self.stamps = []                    # 받은 요청의 (task_id, epoch, leader_id, seq), 모듈 전체 누적
         self.waiting = []                   # 응답을 미루는 호출의 Future (정리 때 풀어 준다)
         self.x, self.y = START[robot_id]
         # 서비스 코루틴이 기다리는 동안에도 robot_state 타이머가 돌도록 재진입 그룹을 쓴다
@@ -87,6 +92,7 @@ class FakeRobot:
     async def _on_assign(self, req, resp):
         task_id = req.task.task_id
         self.requests.append(task_id)
+        self.stamps.append((task_id, req.task.epoch, req.task.leader_id, req.task.seq))
         resp.robot_id = self.robot_id
         if self.mode == 'reject':
             resp.success, resp.message = False, 'busy'
@@ -125,6 +131,7 @@ def rig(tmp_path_factory):
         'simulate_latency': False, 'allocation_period_s': 0.1, 'status_period_s': 0.2,
         'assign_timeout_s': 0.5, 'assign_reconcile_s': 0.5, 'reject_backoff_s': 0.3,
         'robot_state_timeout_s': 2.0, 'max_task_retries': 1, 'log_dir': log_dir,
+        'epoch': EPOCH,
     }))
     client = rclpy.create_node('fault_test_client')
     got = {'events': [], 'alerts': [], 'status': []}
@@ -226,6 +233,43 @@ def test_rejection_reassigns_to_next_candidate(fleet):
     assert fleet['spin'](lambda: _running(fleet['got'], 'rej_1', 'amr_f2'))
     assert 'rej_1' in f1.requests and f2.requests.count('rej_1') == 1
     _finish(fleet, 'rej_1', 'amr_f2')
+
+
+def test_assign_task_requests_carry_authority_stamp_from_event_counter(fleet):
+    """
+    리더발 명령(assign_task 요청)마다 (epoch, leader_id, seq) 가 실리고 seq 는 task_events 와 한 열이다.
+
+    f1 이 거절해 같은 작업을 두 번 보낸다 (f1 → f2). 두 요청 모두 epoch 7 · 관리자 노드 이름 · seq ≥ 1,
+    seq 는 보낸 순서대로 커진다. 같은 열인지는 인과 순서로 본다: 접수 알림(PENDING) < f1 요청 < f2 요청 <
+    시작 알림(IN_PROGRESS) < 완료 알림. 요청 seq 가 따로 센 열이면(1 부터 다시) 이 순서와 아래의 모듈 전체
+    유일성이 깨진다.
+    """
+    got = fleet['got']
+    f1, f2, f3 = (fleet['fakes'][r] for r in ROBOTS)
+    f1.mode, f3.status = 'reject', MOVING
+    fleet['submit'](_task('stamp_1', x=0.0))
+    assert fleet['spin'](lambda: _running(got, 'stamp_1', 'amr_f2'))
+    _finish(fleet, 'stamp_1', 'amr_f2')
+
+    sent = [(s, rid) for rid in ('amr_f1', 'amr_f2')
+            for (tid, *s) in fleet['fakes'][rid].stamps if tid == 'stamp_1']
+    assert [rid for _, rid in sent] == ['amr_f1', 'amr_f2']      # 거절 뒤 다시 보냈다
+    for (epoch, leader, seq), _ in sent:
+        assert (epoch, leader) == (EPOCH, LEADER) and seq >= 1
+    req_seqs = [s[2] for s, _ in sent]
+    assert req_seqs[0] < req_seqs[1]
+
+    ev = [(e.status, e.seq) for e in got['events'] if e.task_id == 'stamp_1']
+    assert [st for st, _ in ev] == [
+        Task.STATUS_PENDING, Task.STATUS_IN_PROGRESS, Task.STATUS_COMPLETED]
+    (_, s_pending), (_, s_started), (_, s_done) = ev
+    assert s_pending < req_seqs[0] < req_seqs[1] < s_started < s_done
+    assert all(e.epoch == EPOCH and e.leader_id == LEADER for e in got['events'])
+
+    # 이 모듈에서 관리자가 낸 모든 명령·알림의 seq 는 겹치지 않는다 (한 열)
+    seqs = [e.seq for e in got['events']] + [
+        st[3] for f in fleet['fakes'].values() for st in f.stamps]
+    assert len(seqs) == len(set(seqs)) and min(seqs) >= 1
 
 
 def test_slow_acceptance_is_waited_for_not_duplicated(fleet):
