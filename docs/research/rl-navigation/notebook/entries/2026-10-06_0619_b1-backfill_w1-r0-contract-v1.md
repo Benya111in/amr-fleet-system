@@ -31,8 +31,8 @@ Isaac(r1)·2D(r2)·C++ 플러그인(r3)·평가(r4)가 **같은 관측·행동·
 ## 결과
 | 실행 | 커밋 | 결과 | 표기 |
 |---|---|---|---|
-| C++ 원본 대조 (v ∈ [0, 1.0]) | 698585d + 미커밋 tools/ | vo 2000·dwa 300·prof 600·saf 1000 건 불일치 0 | [측정] `crosscheck_cpp.log` |
-| C++ 원본 대조 (v ∈ [0, 2.0], 리뷰 반영) | b1eb0c7 | 같은 3900 건 불일치 0 (θ 를 감은 차이로 비교한 뒤 — 범위를 넓힌 첫 실행은 dwa 6 건 불일치, C++ `geometry.cpp:191` θ 감기 표현 차이) | [측정] `crosscheck_cpp_review.log` |
+| C++ 원본 대조 (v ∈ [0, 1.0]) | 698585d **(추정)** + 미커밋 tools/ — 로그의 HEAD 줄이 비어 있다 (아래 「차이」) | vo 2000·dwa 300·prof 600·saf 1000 건 불일치 0 | [측정] `crosscheck_cpp.log` (커밋은 추정) |
+| C++ 원본 대조 (v ∈ [0, 2.0], 리뷰 반영) | b1eb0c7 | 같은 3900 건 불일치 0 (θ 를 감은 차이로 비교한 뒤) [측정]. 범위를 넓힌 첫 실행의 "dwa 6 건 불일치 (C++ `geometry.cpp:191` θ 감기 표현 차이)" 는 WAVE 진술뿐이고 로그가 없다 [문서주장] | [측정] `crosscheck_cpp_review.log` (6 건은 [문서주장]) |
 | pytest v1.0.0 | ffc93af | 79 passed, golden 28 | [측정] `final_ffc93af.log` |
 | pytest v1.1.0 | b1eb0c7 | 88 passed, golden 31, colcon list 의 rl/ 항목 0 | [측정] `final_review.log` |
 | 변이 검사 (리뷰 반영 7 종) | b1eb0c7 | 대조(변이 없음) 88 passed; HEAD 변이 7 종 모두 잡힘 (3–4 failed); 그중 무회전·역회전·VO 지도속도·포화표시 4 종을 리뷰 전 ffc93af 에 넣으면 79 passed 로 놓침 | [측정] `mutation_review.log` |
@@ -62,8 +62,16 @@ Isaac(r1)·2D(r2)·C++ 플러그인(r3)·평가(r4)가 **같은 관측·행동·
 - 보고: `/home/CAPYI_AI/logs/agents/r0-contract/WAVE1_RESULT.md`
 
 ## WAVE 보고와 원자료의 차이
-- 없음 (시험 수와 대조 건수는 로그와 같다). `HEAD.txt` 와 `baseline_698585d.log` 는 worktree 경로 오류("not a git repository")를
-  담고 있어 출처로 쓸 수 없다 — 커밋은 로그 머리의 HEAD 줄과 커밋 기록으로 정했다.
+- 시험 수와 대조 건수는 로그와 같다.
+- **(리뷰 반영 정정)** 처음에 "`HEAD.txt` 와 `baseline_698585d.log` 가 git 오류 문자열을 담는다" 고 적었는데 **사실과 반대였다**.
+  - `HEAD.txt` (mtime 06:38:12) 의 내용은 `698585d5517145e8a073c71b3cebe77eb175551b` 이고,
+    `baseline_698585d.log` (06:38:28) 는 `79 passed, 4 warnings in 5.23s / flake8-ok / No problems found` 다.
+  - git 오류 두 줄 (`fatal: not a git repository: /home/CAPYI_AI/repo/.git/worktrees/r0-contract`) 과 빈 `HEAD  + 미커밋 tools/` 줄은
+    **`crosscheck_cpp.log` 머리**에 있다.
+  - 그래서 첫 C++ 대조(`W1_r0_crosscheck_cpp_698585d`)의 커밋은 로그로 확인할 수 없다. 커밋은 다음 셋으로 **추정**했다:
+    2 분 앞(06:38:12)의 `HEAD.txt` 698585d, 로그 끝 줄 "커밋 b6ca451 에 들어간 tools/ 로 실행한 결과 (실행 시점엔 미커밋, 내용 동일)",
+    b6ca451 커밋 시각 06:40:23 (로그 mtime 06:40:23 과 같은 초 — 끝 줄은 커밋 직후에 덧붙인 것으로 보인다).
+- WAVE 의 "범위를 넓힌 첫 실행은 dwa 6 건 불일치" 는 로그가 없다. `crosscheck_cpp_review.log` 에는 비교기를 고친 뒤의 0 건만 있다 → [문서주장].
 
 ## 실행 목록에 등록한 run (`runs/b1-backfill.jsonl`, entry = 이 파일)
 
