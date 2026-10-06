@@ -39,7 +39,9 @@ if(BUILD_TESTING)
   file(GLOB _pytests CONFIGURE_DEPENDS test/test_*.py)
   if(_pytests)
     # 노드 시험(test_nodes*, 가짜 로봇 시간 초과·재할당 경로)이 부하에서 수십 초 걸린다 → 기본 60 s 대신 600 s
-    ament_add_pytest_test(amr_fleet_pytest test TIMEOUT 600)
+    # 에이전트 launch 시험(test_agent_launch*.py)이 가짜 /clock 을 낸다. colcon test 가 패키지를 병렬로 돌리면
+    # 같은 ROS 도메인의 다른 패키지 시험(amr_behavior 의 sim 시계 시험)에 그 /clock 이 섞인다 → 도메인을 가른다.
+    ament_add_pytest_test(amr_fleet_pytest test TIMEOUT 600 ENV ROS_DOMAIN_ID=58)
   endif()
 endif()
 

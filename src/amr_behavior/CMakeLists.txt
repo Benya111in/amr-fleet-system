@@ -162,7 +162,9 @@ if(BUILD_TESTING)
   ament_add_gtest(test_docking_server test/test_docking_server.cpp TIMEOUT 120)
   target_link_libraries(test_docking_server amr_docking_server)
 
-  ament_add_gtest(test_task_executor_node test/test_task_executor_node.cpp TIMEOUT 120)
+  # 이 시험은 /clock 을 직접 내고 "sim 이 멈춘 동안" 을 잰다 — 다른 시험의 /clock 이 섞이지 않게 도메인을 가른다
+  ament_add_gtest(test_task_executor_node test/test_task_executor_node.cpp TIMEOUT 120
+    ENV ROS_DOMAIN_ID=57)
   target_link_libraries(test_task_executor_node amr_task_executor)
   target_compile_definitions(test_task_executor_node PRIVATE ${_src_def})
 
