@@ -134,3 +134,49 @@ def test_own_unreleased_commit_votes_do_not_count_as_denial():
 
 def test_task_resource_name():
     assert task_resource('src.000001') == 'task:src.000001'
+
+
+def test_busy_from_a_minority_of_voters_is_not_a_denial():
+    """
+    남의 확정 표가 소수 투표자에게만 남아 있을 때 (확정 단계 도중 포기한 요청의 ABANDON 이 아직 안 감) 거부로 보지 않는다.
+
+    과반 불가(n − q + 1 = 3)가 아니면 기다리면 풀릴 수 있다 — 문턱을 1 로 낮추면 이 작업을 영영 놓친다.
+    """
+    g = _Rig(6)
+    b, a = g.locks['b'], g.locks['a']
+    b.try_acquire('t1', 'b', 0.0)
+    b.commit('t1')
+    g.pump()
+    # b 의 ENTER 를 투표자 c 에게만 배달 → c 만 확정, 나머지 ENTER · 모든 ENTER_ACK 는 버린다
+    while g.c.net:
+        msg = g.c.net[0]
+        if msg.kind == 'ENTER' and msg.dst != 'c' or msg.kind == 'ENTER_ACK':
+            g.c.drop(0)
+        else:
+            g.c.deliver(0)
+    assert 'task:t1' in [z for z, v in g.c.agents['c'].votes.items() if v.committed]
+    # b 는 포기 (시도 기한) — ABANDON 은 붙잡아 둔다
+    g.c.advance('b', 6.0)
+    g.c.tick('b')
+    held_back = [m for m in g.c.net if m.src == 'b']
+    g.c.net = [m for m in g.c.net if m.src != 'b']
+    g.locks['b'].agent.logical = None              # b 는 다시 시도하지 않는다
+    for v in ('a', 'c', 'd', 'e'):                 # 다른 투표자의 b 잠정 표는 기한으로 풀린다 (c 의 확정 표는 남는다)
+        g.c.advance(v, 11.0)
+        g.c.tick(v)
+    g.c.deliver_all()
+    a.try_acquire('t1', 'a', 0.0)
+    g.pump()
+    g.c.deliver_all()
+    view = g.c.agents['a'].attempt_view()
+    assert view is not None and 1 <= len(view['busy']) < a.deny_threshold
+    a.poll()
+    assert not a.is_denied('t1')
+    g.c.send(held_back)                            # 늦게 온 ABANDON 이 c 의 확정 표를 풀면
+    a.commit('t1')
+    for _ in range(10):
+        g.settle(rounds=1)
+        if a.is_held('t1'):
+            break
+    assert a.is_held('t1')
+    assert g.c.check() == []

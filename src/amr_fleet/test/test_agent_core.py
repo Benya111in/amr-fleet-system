@@ -371,3 +371,17 @@ def test_central_task_lock_request_is_dropped_when_executor_finishes():
     assert ok and c.lock.pursuing() == 'c1'
     c.on_task_status('c1', 3)                              # FAILED
     assert c.lock.pursuing() is None and c.central_task == ''
+
+
+def test_repeated_acquire_keeps_the_same_attempt_and_age():
+    """같은 사슬 ACQUIRE 를 다시 보내도 (BT 재시도) 시도를 새로 만들지 않는다 — 나이(since)를 잃지 않게."""
+    f = LoopbackFleet(_cfgs(), poses=POSES)
+    f.run(1.0)
+    assert f.command('amr_02', OP_ACQUIRE, ['zone:x_ab_3'])[0]
+    f.run(1.0)
+    assert f.holders('zone:x_ab_3') == ['amr_02']
+    c = f.cores['amr_03']
+    assert f.command('amr_03', OP_ACQUIRE, ['zone:x_ab_3']) == (True, 'requested')
+    req0, since0 = c.zone.attempt.req, c.zone.logical.since
+    assert f.command('amr_03', OP_ACQUIRE, ['zone:x_ab_3']) == (True, 'in progress')
+    assert (c.zone.attempt.req, c.zone.logical.since) == (req0, since0)

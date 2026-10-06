@@ -104,3 +104,12 @@ def test_mode_permissions():
 def test_bad_config():
     with pytest.raises(ValueError):
         ModeConfig(resync_s=-1.0)
+
+
+def test_own_dead_without_majority_never_degrades_from_normal():
+    """NORMAL 에서 내 감시가 곧바로 DEAD 여도 (예: 자기 정지 뒤) 과반 동의 없이는 DEGRADED 로 가지 않는다."""
+    mm = ModeMachine(CFG, 0.0)
+    t = _run(mm, 0.0, 1.0, ALIVE)
+    _run(mm, t, 1.1, DEAD, maj=False)
+    assert mm.mode == HOLD_NEW
+    assert [b for _, _, b, _ in mm.transitions] == [HOLD_NEW]
