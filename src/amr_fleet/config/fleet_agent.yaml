@@ -1,0 +1,36 @@
+# 분산 플릿 에이전트 (보너스 4 P3) — fleet_agents.launch.py 가 읽는다. 근거: docs/research/fleet-distributed/p3.md
+# 시간은 모두 sim 초 (use_sim_time). 안전 파라미터는 없다 — 아래 값은 활성 · 효율만 바꾼다 (정족수는 members 의 과반 고정).
+/**/fleet_agent:
+  ros__parameters:
+    members: "amr_01,amr_02,amr_03,amr_04,amr_05"   # 정적 멤버 — 정족수 3/5
+    store_dir: ""               # '' = $ROS_WS/var/fleet_agent. 컨테이너면 볼륨 경로로 (재기동에도 표가 남아야 한다)
+    tick_hz: 10.0
+    beacon_period_s: 0.5        # 보고서 2 Hz
+    beacon_ttl_s: 2.0
+    round_s: 0.2                # CBAA 라운드 T_b (f3 제안)
+    vote.tentative_s: 15.0      # 잠정 표 기한 (보고서 10–20 s)
+    vote.retry_s: 0.5
+    vote.backoff_min_s: 0.5
+    vote.backoff_max_s: 3.0
+    task_hold_s: 60.0           # 작업 잠정 표 기한 — 픽업까지 이동 시간보다 길게
+    detector.period_s: 0.5
+    detector.suspect_s: 1.5     # 2 Hz 3 회 누락
+    detector.dead_s: 5.0
+    modes.resync_s: 30.0        # 보고서 sim 30 s 히스테리시스
+    modes.isolate_s: 2.0
+    modes.boot_grace_s: 3.0
+    modes.unknown_dead_s: 5.0
+    nominal_speed: 1.0          # 입찰 비용 = 거리 / 공칭 속도 (fleet.yaml 과 같은 값)
+    release_gate: "zone_map"    # 몸체(외접 원판)가 구역 다각형 밖일 때만 RELEASE
+    zones_file: ""              # 런치가 traffic_zones.yaml 로 채운다
+    body_radius_m: 0.36
+    accept_unfenced: true       # epoch 0 명령 (옛 구성) 은 펜스가 생기기 전에만 받는다
+    sim_execution: false
+    simulate_latency: false
+    comm_latency_ms: [0.0, 100.0]
+    drop_rate: 0.0
+    seed: 1
+    comm_model_file: ""
+    proxy_assign_task: false    # true 면 assign_task 프록시 — 실행기 서비스를 executor/assign_task 로 리매핑해야 한다
+    executor_service: "executor/assign_task"
+    proxy_timeout_s: 3.0

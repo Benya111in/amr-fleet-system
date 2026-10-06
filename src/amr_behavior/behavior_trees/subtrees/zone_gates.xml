@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  분산 플릿 존 게이트 (보너스 4 P3) — 기본 트리(task_executor.xml)는 아직 이 파일을 include 하지 않는다.
+  실행기에 존 노드 등록(registerZoneNodes) 한 줄이 들어간 뒤 MoveTo 대신 쓴다 (docs/research/fleet-distributed/p3.md §5).
+
+  ZoneMoveTo: 결정점(decision_goal)까지 → 사슬 전체 허가 대기(AcquireZoneChain, 과반 ENTER_ACK) →
+    ReactiveSequence 가 매 tick ZoneGuard 로 허가를 다시 보며 사슬 너머 goal 까지 → 해제 요청(ReleaseZones).
+    허가가 사라지면 (에이전트 상태가 오래됨 · 재기동) ZoneGuard 가 FAILURE → 주행 goal 취소 → 정지 (fail-closed).
+    인자: decision_goal, goal (PoseStamped), zones ("x_ab_1;x_ab_2"), priority, zone_timeout_ms
+
+  PickupLocked: 픽업 시작 직전에 작업 ID 잠금 확정(CommitTaskLock). 거부(다른 로봇이 확정)면 FAILURE —
+    이 로봇은 픽업하지 않는다. 인자: task_id
+-->
+<root>
+  <BehaviorTree ID="ZoneMoveTo">
+    <Sequence name="ZoneChainPass">
+      <NavigateToPose name="ToDecisionPoint" goal="{decision_goal}"/>
+      <AcquireZoneChain zones="{zones}" priority="{priority}" timeout_ms="{zone_timeout_ms}"/>
+      <ReactiveSequence name="GuardedPass">
+        <ZoneGuard zones="{zones}"/>
+        <NavigateToPose name="ThroughChain" goal="{goal}"/>
+      </ReactiveSequence>
+      <ReleaseZones zones="{zones}"/>
+    </Sequence>
+  </BehaviorTree>
+
+  <BehaviorTree ID="PickupLocked">
+    <CommitTaskLock task_id="{task_id}" timeout_ms="30000"/>
+  </BehaviorTree>
+</root>

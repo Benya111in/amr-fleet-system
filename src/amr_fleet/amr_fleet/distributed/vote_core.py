@@ -12,6 +12,11 @@
 - 요청자: 정적 과반(기본 3/5) ENTER_ACK — 같은 요청 ID · 같은 epoch — 를 모은 뒤에만 HELD (진입 허가).
 - epoch: 낮은 epoch 메시지는 어떤 상태도 바꾸지 않는다. 높은 epoch 를 보면 채택하고 잠정 표 · 진행 중 시도를
   버린다 (확정 · 보유는 유지).
+
+지연 확정 (P3, 작업 ID 잠금): request(..., hold_enter=True) 는 과반 VOTE 를 모으면 ENTER 를 보내지 않고 VOTED 에서
+멈춘다 (잠정 표를 쥔 채 이동). commit() 이 불리면 그때 ENTER 를 보낸다 — VOTED 는 VOTING 과 ENTERING 사이의 대기일
+뿐이고 ENTER · ENTER_ACK · HELD 경로는 그대로라 안전 논증(확정 표 배타)은 바뀌지 않는다. 잠정 표 기한은 hold_s 로
+늘릴 수 있다 (활성 파라미터).
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ from amr_fleet.distributed.ordering import PriorityKey, ReqId, Stamp
 from amr_fleet.distributed.store import Store, StoreCorrupt
 
 VOTING = 'VOTING'
+VOTED = 'VOTED'          # hold_enter: 과반 VOTE 를 모았지만 commit() 전이라 ENTER 를 보내지 않음
 ENTERING = 'ENTERING'
 STATE_VERSION = 1
 
@@ -84,6 +90,9 @@ class _Logical:
     since: int
     attempts: int = 0
     backoff_until: Optional[Stamp] = None
+    hold_enter: bool = False
+    hold_s: Optional[float] = None
+    commit_wanted: bool = False
 
 
 @dataclasses.dataclass
@@ -99,6 +108,9 @@ class _Attempt:
     hard_nacks: Set[str] = dataclasses.field(default_factory=set)
     enter_nacks: Set[str] = dataclasses.field(default_factory=set)
     last_send: Dict[str, Stamp] = dataclasses.field(default_factory=dict)
+    hold: bool = False                     # hold_enter: 과반 VOTE 뒤 VOTED 에서 commit() 을 기다린다
+    commit_wanted: bool = False            # commit() 이 이미 불렸다 → 과반이 되면 곧바로 ENTER
+    busy: Set[str] = dataclasses.field(default_factory=set)   # NACK(busy) 를 보낸 투표자 (확정 표가 막음)
 
 
 @dataclasses.dataclass
@@ -249,6 +261,25 @@ class ZoneAgent:
         if self.logical is not None:
             return 'BACKOFF'
         return 'HELD' if self.held else 'IDLE'
+
+    def requested(self) -> FrozenSet[str]:
+        """진행 중인 논리 요청의 자원 (없으면 빈 집합)."""
+        if self.attempt is not None:
+            return self.attempt.resources
+        if self.logical is not None:
+            return self.logical.resources
+        return frozenset()
+
+    def attempt_view(self) -> Optional[Dict[str, Any]]:
+        """진행 중 시도의 요약 (어댑터 · 진단용): 단계 · 자원 · 표 · NACK 종류별 투표자."""
+        a = self.attempt
+        if a is None:
+            return None
+        return {'req': a.req, 'phase': a.phase, 'resources': a.resources,
+                'votes': frozenset(a.votes), 'acks': frozenset(a.acks),
+                'busy': frozenset(a.busy), 'contended': frozenset(a.contended),
+                'hard_nacks': frozenset(a.hard_nacks), 'hold': a.hold,
+                'commit_wanted': a.commit_wanted}
 
     def protocol_state(self) -> Dict[str, Any]:
         """시험용 상태 스냅숏 (Lamport · 재전송 시각 제외)."""
@@ -402,12 +433,17 @@ class ZoneAgent:
         return out
 
     def request(self, resources: Iterable[str], now: Any, priority: int = 0,
-                task_deadline: Optional[Any] = None) -> List[VoteMsg]:
+                task_deadline: Optional[Any] = None, hold_enter: bool = False,
+                hold_s: Optional[float] = None) -> List[VoteMsg]:
         """
         사슬 S 진입 허가를 요청한다 (진행 중인 다른 요청은 포기).
 
         이미 보유한 자원은 빼고 요청한다. 남는 것이 없으면 아무것도 보내지 않는다.
+        hold_enter=True 면 과반 VOTE 뒤 VOTED 에서 멈추고 commit() 을 기다린다 (작업 ID 잠금: 잠정 표를 쥔 채
+        픽업 장소로 이동, 픽업 시작 때 확정). hold_s 는 그 시도의 잠정 표 기한 [sim s] (None = tentative_s).
         """
+        if hold_s is not None and not hold_s > 0:
+            raise ValueError(f'hold_s 는 양수여야 한다: {hold_s!r}')
         now = Stamp.coerce(now)
         out = self._observe_time(now)
         if self.attempt is not None:
@@ -417,7 +453,8 @@ class ZoneAgent:
         if want:
             td = None if task_deadline is None else Stamp.coerce(task_deadline)
             self.lamport += 1
-            self.logical = _Logical(want, int(priority), td, self.lamport)
+            self.logical = _Logical(want, int(priority), td, self.lamport,
+                                    hold_enter=bool(hold_enter), hold_s=hold_s)
             out += self._start_attempt(now)
         self._flush()
         return out
@@ -429,6 +466,25 @@ class ZoneAgent:
         if self.attempt is not None:
             out += self._abandon(now, backoff=False)
         self.logical = None
+        self._flush()
+        return out
+
+    def commit(self, now: Any) -> List[VoteMsg]:
+        """
+        hold_enter 요청을 확정 단계로 보낸다 (픽업 시작 직전).
+
+        VOTED 면 ENTERING 을 영속화한 뒤 표를 준 투표자에게 ENTER 를 보낸다. 아직 VOTING 이거나 백오프 중이면
+        표시만 해 두어 과반이 되는 즉시 ENTER 로 간다. 진행 중 요청이 없으면 아무것도 하지 않는다.
+        """
+        now = Stamp.coerce(now)
+        out = self._observe_time(now)
+        if self.logical is not None:
+            self.logical.commit_wanted = True
+        a = self.attempt
+        if a is not None:
+            a.commit_wanted = True
+            if a.phase == VOTED:
+                out += self._enter(a, now)
         self._flush()
         return out
 
@@ -569,7 +625,9 @@ class ZoneAgent:
         req = ReqId(self.me, self.incarnation, self.seq)
         key = PriorityKey(lg.priority, lg.task_deadline, lg.since,
                           starved=lg.attempts > self.cfg.max_bypass)
-        a = _Attempt(req, lg.resources, VOTING, now.add(self.cfg.tentative_s), key)
+        hold_s = lg.hold_s if lg.hold_s is not None else self.cfg.tentative_s
+        a = _Attempt(req, lg.resources, VOTING, now.add(hold_s), key,
+                     hold=lg.hold_enter, commit_wanted=lg.commit_wanted)
         self.attempt = a
         self.stats['attempts'] += 1
         targets = self._request_targets()
@@ -581,6 +639,8 @@ class ZoneAgent:
 
     def _retransmit_attempt(self, a: _Attempt, now: Stamp) -> List[VoteMsg]:
         out: List[VoteMsg] = []
+        if a.phase == VOTED:
+            return out                      # 과반 표를 쥐고 commit() 을 기다린다 — 더 보낼 것이 없다
         if a.phase == VOTING:
             targets = [v for v in self._request_targets()
                        if v not in a.votes and v not in a.hard_nacks]
@@ -664,30 +724,43 @@ class ZoneAgent:
         a.contended.discard(msg.src)
         a.hard_nacks.discard(msg.src)
         a.enter_nacks.discard(msg.src)        # 대기열에서 다시 표를 줬다 — ENTER 를 다시 보낸다
+        a.busy.discard(msg.src)
         if a.phase == VOTING and len(a.votes) >= self.q:
-            a.phase = ENTERING
-            self._dirty = True                      # ENTERING 영속화 뒤에 ENTER
-            out = []
-            for v in sorted(a.votes):
-                a.last_send[v] = now
-                out.append(self._msg(m.ENTER, v, a.req, a.resources))
-            return out
+            if a.hold and not a.commit_wanted:
+                a.phase = VOTED                     # 잠정 표를 쥔 채 commit() 을 기다린다 (영속 안 함)
+                self.stats['voted_hold'] += 1
+                return []
+            return self._enter(a, now)
         if a.phase == ENTERING and msg.src not in a.acks:
             a.last_send[msg.src] = now
             return [self._msg(m.ENTER, msg.src, a.req, a.resources)]
         return []
 
+    def _enter(self, a: _Attempt, now: Stamp) -> List[VoteMsg]:
+        """과반 VOTE → ENTERING 영속화 → 표를 준 투표자에게 ENTER."""
+        a.phase = ENTERING
+        self._dirty = True                          # ENTERING 영속화 뒤에 ENTER (호출자가 _flush)
+        out = []
+        for v in sorted(a.votes):
+            a.last_send[v] = now
+            out.append(self._msg(m.ENTER, v, a.req, a.resources))
+        return out
+
     def _on_nack(self, msg: VoteMsg, now: Stamp) -> List[VoteMsg]:
         a = self.attempt
         if a is None or msg.req != a.req:
             return []
-        if a.phase == VOTING:
+        if a.phase in (VOTING, VOTED):
             if msg.src in a.votes:
                 return []
             if msg.reason == m.R_CONTENDED:
                 a.contended.add(msg.src)
-            elif msg.reason != m.R_BUSY:
+            elif msg.reason == m.R_BUSY:
+                a.busy.add(msg.src)
+            else:
                 a.hard_nacks.add(msg.src)
+            if a.phase == VOTED:
+                return []                           # 이미 과반 — 나머지 투표자의 거절은 상관없다
             # 표 갈림 · 과반 불가 → 일찍 포기하고 백오프 (점유(busy)는 대기열에서 기다린다)
             if len(a.contended) > self.n - self.q or len(a.hard_nacks) > self.n - self.q:
                 return self._abandon(now)
