@@ -169,32 +169,39 @@ def min_ttc(st):
     return ttc.min(dim=1).values
 
 
-def post_step(st, P, a_prev, a_exec, collided, interv):
+def post_step(st, P, a_prev, a_exec, collided, interv, spec=T.SPEC_V110, truncate=True):
     """
     전이 끝: 투영·보상·비용·이탈 갱신·정체·시간 상한·관측.
 
-    st: 전이 뒤 BState (dev 는 전이 전 값), P: dict(d_arc, base_xy, base_t, t, t_limit).
+    st: 전이 뒤 BState (dev 는 전이 전 값), P: dict(d_arc, d_goal, base_xy, base_t, t, t_limit).
+    spec: 보상 설계 (파이썬 상수). truncate=False 면 정체·시간 상한 플래그만 내고 truncation 은 하지 않는다
+    (분석 도구의 연속 롤아웃 — 학습에는 쓰지 않는다).
     반환 dict: obs, reward, cost, terminated, truncated, success, stalled, timeout, dev(in, peak, t),
-    d_arc, base_xy, base_t, proj.
+    d_arc, d_goal, base_xy, base_t, proj.
     """
     proj = T.project_onto_path(st.path_pts, st.path_n, st.path_cum, st.pose[:, :2])
     d_post = (st.path_len - proj[0]).clamp_min(0.0)
     gdist = torch.linalg.norm(st.pose[:, :2] - T.goal_xy(st.path_pts, st.path_n), dim=-1)
-    r = T.reward_step(P['d_arc'], d_post, proj[1], gdist, st.v_meas, a_prev, a_exec, collided,
-                      (st.dev_in, st.dev_peak, st.dev_t), interv)
     moved = torch.linalg.norm(st.pose[:, :2] - P['base_xy'], dim=-1) >= C.STALL_RADIUS
     base_xy = torch.where(moved[:, None], st.pose[:, :2], P['base_xy'])
     base_t = torch.where(moved, P['t'], P['base_t'])
+    stall_cand = (P['t'] - base_t) > C.STALL_TIME
+    r = T.reward_step(P['d_arc'], d_post, proj[1], gdist, st.v_meas, a_prev, a_exec, collided,
+                      (st.dev_in, st.dev_peak, st.dev_t), interv, spec=spec,
+                      goal_dist_pre=P['d_goal'], stalled=stall_cand)
     term = r['terminated']
-    stalled = ((P['t'] - base_t) > C.STALL_TIME) & ~term
+    stalled = stall_cand & ~(collided | r['success'])
     timeout = (P['t'] > P['t_limit']) & ~term
+    trunc = (stalled & ~r['stall_term']) | timeout
+    if not truncate:
+        trunc = torch.zeros_like(trunc)
     st2 = T.BState(**{**st.__dict__, 'dev_in': r['dev'][0], 'dev_peak': r['dev'][1],
                       'dev_t': r['dev'][2]})
     obs = T.build_observation(st2, proj)
     return {'obs': obs, 'reward': r['reward'], 'cost': r['cost'], 'terminated': term,
-            'truncated': stalled | timeout, 'success': r['success'], 'stalled': stalled,
-            'timeout': timeout, 'dev': r['dev'], 'd_arc': d_post, 'base_xy': base_xy,
-            'base_t': base_t, 'proj': proj, 'terms': r['terms']}
+            'truncated': trunc, 'success': r['success'], 'stalled': stalled,
+            'timeout': timeout, 'dev': r['dev'], 'd_arc': d_post, 'd_goal': gdist,
+            'base_xy': base_xy, 'base_t': base_t, 'proj': proj, 'terms': r['terms']}
 
 
 def track_obs(ob, psig, vsig, pdrop, noise_xy, noise_v, u_drop):

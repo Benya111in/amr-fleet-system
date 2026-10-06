@@ -14,6 +14,7 @@ import math
 import torch
 
 from ._contract import C
+from amr_rl_contract.reward import RewardSpec, SPEC_V110  # noqa: E402,F401  (_contract 가 경로를 넣는다)
 
 INF = math.inf
 _BEAM_ANG = None
@@ -560,9 +561,18 @@ def compute_mask(st, proj=None, max_cand=9, roll_dtype=torch.float32, static=Fal
 
 
 # ------------------------------------------------------------------ 보상·비용·종료
-def potential_arc(d_arc, terminal):
-    """Φ = −κ·d_arc, 종단 0."""
-    return torch.where(terminal, torch.zeros_like(d_arc), -C.KAPPA * d_arc)
+def potential_arc(d_arc, terminal, kappa=C.KAPPA):
+    """Φ = −κ·d, 종단 0 (d = progress_distance)."""
+    return torch.where(terminal, torch.zeros_like(d_arc), -kappa * d_arc)
+
+
+def progress_distance(d_arc, goal_dist, spec=SPEC_V110):
+    """reward.progress_distance 배치판: 'arc' = d_arc, 'eff' = max(d_arc, 목표 직선거리)."""
+    if spec.phi_dist == 'eff':
+        return torch.maximum(d_arc, goal_dist.to(d_arc.dtype))
+    if spec.phi_dist != 'arc':
+        raise ValueError(spec.phi_dist)
+    return d_arc
 
 
 def dev_update(dev_in, peak, t, e, dt=C.DT):
@@ -581,41 +591,60 @@ def dev_update(dev_in, peak, t, e, dt=C.DT):
 
 
 def reward_step(d_arc_pre, d_arc_post, e_post, goal_dist_post, v_meas_post, a_prev, a_exec,
-                collision, dev_pre, interv):
+                collision, dev_pre, interv, spec=SPEC_V110, goal_dist_pre=None, stalled=None):
     """
     reward.step 배치판.
 
     d_arc_pre/post: 경로 투영 남은 호길이 (float64), e_post: 경로 최근접 거리, goal_dist_post: 목표 직선거리,
     a_prev = pre.prev_actions[:,0], a_exec: 이번 실행 가속도, dev_pre = (in, peak, t), interv: 개입 비용 [N].
-    반환 dict: reward, terms(dict), cost [N,5], dev(tuple), terminated, success.
+    spec: 보상 설계 (기본 v1.1.0, 파이썬 상수 — 컴파일 그래프에 박힌다). goal_dist_pre: spec.phi_dist == 'eff'
+    일 때 필요. stalled: 이 전이 뒤 정체 판정 [N] bool — spec.stall_terminal 일 때만 쓴다.
+    반환 dict: reward, terms(dict), cost [N,5], dev(tuple), terminated, success, stall_term.
     """
     success = (~collision & (goal_dist_post <= C.GOAL_XY_TOL) &
                (v_meas_post.abs() <= C.GOAL_STOP_SPEED))
-    terminated = collision | success
+    if spec.stall_terminal:
+        stall_term = stalled & ~collision & ~success
+    else:
+        stall_term = torch.zeros_like(success)
+    terminated = collision | success | stall_term
     dev = dev_update(*dev_pre, e_post)
-    phi_pre = -C.KAPPA * d_arc_pre
-    phi_post = potential_arc(d_arc_post, terminated)
+    if spec.phi_dist == 'eff':
+        d_pre = progress_distance(d_arc_pre, goal_dist_pre, spec)
+    else:
+        d_pre = d_arc_pre
+    d_post = progress_distance(d_arc_post, goal_dist_post, spec)
+    phi_pre = -spec.kappa * d_pre
+    phi_post = potential_arc(d_post, terminated, spec.kappa)
     dav = (a_exec[:, 0] - a_prev[:, 0]) / C.A_MAX
     daw = (a_exec[:, 1] - a_prev[:, 1]) / C.ALPHA_MAX
     fd = d_arc_pre.dtype
+    zero = torch.zeros_like(d_arc_pre)
     terms = {
-        'time': torch.full_like(d_arc_pre, -C.TIME_COST),
+        'time': torch.full_like(d_arc_pre, -spec.time_cost),
         'shape': C.GAMMA * phi_post - phi_pre,
         'smooth': (-C.SMOOTH_WEIGHT * (dav * dav + daw * daw)).to(fd),
         'track': torch.where(dev[0], torch.zeros_like(e_post),
                              -C.TRACK_WEIGHT * (e_post / C.CTE_REF).clamp_max(C.TRACK_CLIP) ** 2),
-        'goal': torch.where(success, torch.full_like(d_arc_pre, C.GOAL_REWARD),
-                            torch.zeros_like(d_arc_pre)),
-        'collision': torch.where(collision, torch.full_like(d_arc_pre, -C.COLLISION_PENALTY),
-                                 torch.zeros_like(d_arc_pre)),
+        'goal': torch.where(success, torch.full_like(d_arc_pre, spec.goal_reward), zero),
+        'collision': torch.where(collision, torch.full_like(d_arc_pre, -spec.collision_penalty),
+                                 zero),
     }
+    if spec.progress_kappa:
+        terms['progress'] = -spec.progress_kappa * (1.0 - C.GAMMA) * d_post
+    if spec.dev_hinge:
+        terms['dev'] = torch.where(e_post > C.DEV_LIMIT, torch.full_like(zero, -spec.dev_hinge),
+                                   zero)
+    if spec.stall_terminal:
+        terms['stall'] = torch.where(stall_term, torch.full_like(zero, -spec.stall_penalty), zero)
     cost = torch.stack([
         collision.to(fd), interv.to(fd), (e_post > C.DEV_LIMIT).to(fd),
         (dev[0] & (dev[2] > C.RETURN_LIMIT)).to(fd),
         (~dev[0] & (e_post > C.CTE_TRACK_LIMIT)).to(fd)], dim=1)
     reward = sum(terms.values())
     return {'reward': reward, 'terms': terms, 'cost': cost, 'dev': dev,
-            'terminated': terminated, 'success': success, 'phi_pre': phi_pre, 'phi_post': phi_post}
+            'terminated': terminated, 'success': success, 'stall_term': stall_term,
+            'phi_pre': phi_pre, 'phi_post': phi_post}
 
 
 def intervention_cost(v_in, w_in, v_out, w_out, count=None):

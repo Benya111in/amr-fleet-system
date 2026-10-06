@@ -29,6 +29,17 @@ from .paths import load_or_build
 INF = math.inf
 SUB = int(round(C.DT / C.PROFILER_DT))       # 5 서브스텝
 SUB_DT = C.PROFILER_DT
+SPIN_W, SPIN_V = 1.0, 0.1                    # 진단: |ω| > 1.0 rad/s 이고 |v| < 0.1 m/s = 제자리 회전
+
+
+def _resolve_spec(reward):
+    """EnvConfig.reward → RewardSpec (None = v1.1.0, 문자열 = reward_variants 이름)."""
+    if reward is None:
+        return T.SPEC_V110
+    if isinstance(reward, str):
+        from amr_rl_contract import reward_variants
+        return reward_variants.get(reward)
+    return reward
 
 
 @dataclass
@@ -53,6 +64,8 @@ class EnvConfig:
     use_triton: bool = None
     compute_mask: bool = None                   # None = arm == 'C'
     compile: bool = True                        # torch.compile 고정 N 경로
+    reward: object = None                       # RewardSpec 또는 후보 이름 (None = 계약 v1.1.0)
+    truncate: bool = True                       # False = 정체·시간 상한을 플래그만 (분석용 연속 롤아웃)
     dr_ranges: dict = field(default_factory=lambda: {
         'plant_tm': (0.048, 0.112), 'plant_td': (0.02, 0.08), 'accel_scale': (0.84, 1.0),
         'obs_delay': (0.0, 0.15), 'action_delay': (0.0, 0.06),
@@ -73,6 +86,7 @@ class Sim2DEnv:
     def __init__(self, cfg: EnvConfig, log=print):
         """지도·경로 풀·상태 텐서를 만든다."""
         self.cfg = cfg
+        self.spec = _resolve_spec(cfg.reward)
         self.N = N = cfg.num_envs
         self.dev = dev = torch.device(cfg.device)
         self.fd = torch.float64
@@ -98,7 +112,8 @@ class Sim2DEnv:
             pool['paths'], dev)
         self.P = self.pool_pts.shape[1]
         log(f'[env] 지도 {self.gm.name} {self.gm.W}x{self.gm.H}, 경로 풀 {len(L)} (사용 {len(keep)}, '
-            f'P={self.P}), N={N}, arm={cfg.arm}, triton={self.use_triton}, cache={pool["cache"]}')
+            f'P={self.P}), N={N}, arm={cfg.arm}, triton={self.use_triton}, cache={pool["cache"]}, '
+            f'reward={self.spec.name}')
         self.obst = OB.Obstacles(N, cfg.obstacle_slots, dev)
         self._alloc()
         self._compile()
@@ -147,6 +162,10 @@ class Sim2DEnv:
         self.base_t = z()
         self.t_limit = z()
         self.d_arc = z()
+        self.d_goal = z()
+        # 에피소드 진단 (학습 신호 아님): 시작 거리, 이동 거리, 제자리 회전 스텝, 최대 경로 이탈, 목표 최소 거리
+        self.ep_d0, self.ep_travel, self.ep_maxe, self.ep_gmin = z(), z(), z(), z()
+        self.ep_spin = z(dt=torch.long)
         self.lidar_sigma, self.beam_drop = z(), z()
         self.trk_drop, self.trk_psig, self.trk_vsig = z(), z(), z()
         self.ep_ret, self.ep_len = z(), z(dt=torch.long)
@@ -257,6 +276,13 @@ class Sim2DEnv:
         proj = T.project_onto_path(self.path_pts[idx], self.path_n[idx], self.path_cum[idx],
                                    self.pose[idx, :2])
         self.d_arc[idx] = (self.path_len[idx] - proj[0]).clamp_min(0.0)
+        self.d_goal[idx] = torch.linalg.norm(
+            self.pose[idx, :2] - T.goal_xy(self.path_pts[idx], self.path_n[idx]), dim=-1)
+        self.ep_d0[idx] = torch.maximum(self.d_arc[idx], self.d_goal[idx])
+        self.ep_gmin[idx] = self.d_goal[idx]
+        self.ep_travel[idx] = 0.0
+        self.ep_maxe[idx] = 0.0
+        self.ep_spin[idx] = 0
 
     def _place_obstacles(self, idx):
         cfg = self.cfg
@@ -336,7 +362,11 @@ class Sim2DEnv:
         comp = self.cfg.compile
         wrap = (lambda f: torch.compile(f, dynamic=False)) if comp else (lambda f: f)
         # _sense_rest 전체를 묶으면 inductor 가 느린 커널(4096 env 114 ms)을 만든다 → 장애물 레이캐스트만 묶는다
-        self._k = {'substep': wrap(K.substep), 'post': wrap(K.post_step),
+        spec, trunc_on = self.spec, bool(self.cfg.truncate)
+
+        def _post(st, P, a_prev, a_exec, collided, interv):
+            return K.post_step(st, P, a_prev, a_exec, collided, interv, spec, trunc_on)
+        self._k = {'substep': wrap(K.substep), 'post': wrap(_post),
                    'obst': wrap(K.obstacle_state), 'sense': _sense_rest,
                    'min_ttc': wrap(K.min_ttc), 'ray_obst': wrap(RC.raycast_obstacles),
                    'observe': wrap(_observe_all), 'mask': wrap(_mask_static)}
@@ -389,11 +419,16 @@ class Sim2DEnv:
         self.v_cmd, self.w_cmd = v1, w1
         self.prev_actions = torch.cat([a_exec[:, None, :], self.prev_actions[:, :-1]], dim=1)
         self._sense()
-        Pd = {'d_arc': self.d_arc, 'base_xy': self.base_xy, 'base_t': self.base_t, 't': self.t,
-              't_limit': self.t_limit}
+        Pd = {'d_arc': self.d_arc, 'd_goal': self.d_goal, 'base_xy': self.base_xy,
+              'base_t': self.base_t, 't': self.t, 't_limit': self.t_limit}
         r = self._k['post'](self.bstate(), Pd, a_prev, a_exec, collided, interv)
         self.dev_in, self.dev_peak, self.dev_t = r['dev']
-        self.d_arc, self.base_xy, self.base_t = r['d_arc'], r['base_xy'], r['base_t']
+        self.d_arc, self.d_goal = r['d_arc'], r['d_goal']
+        self.base_xy, self.base_t = r['base_xy'], r['base_t']
+        self.ep_travel += self.v.abs() * C.DT
+        self.ep_spin += ((self.w.abs() > SPIN_W) & (self.v.abs() < SPIN_V)).long()
+        self.ep_maxe = torch.maximum(self.ep_maxe, r['proj'][1])
+        self.ep_gmin = torch.minimum(self.ep_gmin, self.d_goal)
         obs, rew, term, trunc = r['obs'], r['reward'], r['terminated'], r['truncated']
         if self.want_mask:
             self.mask = self._k['mask'](self.bstate(), r['proj'])
@@ -405,7 +440,10 @@ class Sim2DEnv:
         info = {'cost': r['cost'].float(), 'success': r['success'], 'collision': collided,
                 'collision_moving': coll_moving, 'stalled': r['stalled'],
                 'timeout': r['timeout'], 'interv': interv, 'fallback': fb_used,
-                'terms': r['terms']}
+                'terms': r['terms'], 'a_prev': a_prev, 'a_exec': a_exec,
+                # 전이 뒤 값 (리셋 전 사본) — 분석 도구가 다른 RewardSpec 으로 보상을 다시 계산할 때 쓴다
+                'post': {'d_arc': r['d_arc'].clone(), 'd_goal': r['d_goal'].clone(),
+                         'e': r['proj'][1].clone(), 'v': self.v.clone()}}
         di = torch.nonzero(done)[:, 0]
         if di.numel():
             info['done_idx'] = di
@@ -418,7 +456,10 @@ class Sim2DEnv:
                 'collision_moving': coll_moving[di], 'stalled': r['stalled'][di],
                 'timeout': r['timeout'][di], 'cost': self.ep_cost[di].clone(),
                 'path_len': self.path_len[di].clone(), 'time': self.t[di].clone(),
-                'fallback': self.ep_fallback[di].clone()}
+                'fallback': self.ep_fallback[di].clone(), 'd_start': self.ep_d0[di].clone(),
+                'd_final': torch.maximum(self.d_arc[di], self.d_goal[di]),
+                'travel': self.ep_travel[di].clone(), 'spin_steps': self.ep_spin[di].clone(),
+                'max_e': self.ep_maxe[di].clone(), 'goal_min': self.ep_gmin[di].clone()}
             self._reset_idx(di)
             # 리셋된 env 의 관측: 부분집합 eager 대신 고정 N 컴파일 함수로 전체를 다시 계산해 고른다
             # (커널 발행 수가 부분집합 크기와 무관해진다)

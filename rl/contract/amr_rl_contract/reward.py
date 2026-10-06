@@ -6,6 +6,9 @@
 비용 c = [collision, intervention, deviation_1m, return_5s, cte_track]  (비할인 에피소드 합으로 제약)
 이탈 상태기계(reward machine) = tests/integration/amr_itest/metrics.py:240-263
 deviation_episodes 와 같은 규칙.
+
+보상 설계 매개변수는 RewardSpec 이다. 기본값(SPEC_V110)이 계약 v1.1.0 이고 golden 은 이것으로 만든다.
+2차 물결 후보(r5-reward, docs/research/rl-navigation/reward_v12.md)는 reward_variants.CANDIDATES 에 있다.
 """
 
 from dataclasses import dataclass
@@ -16,16 +19,60 @@ from . import geometry as G
 from .state import DevState
 
 
+@dataclass(frozen=True)
+class RewardSpec:
+    """
+    보상·종료 설계 매개변수 — 기본값 = 계약 v1.1.0 (§6, §8).
+
+    phi_dist: 'arc' = d_arc (v1.1.0), 'eff' = max(d_arc, 목표 직선거리) — §5.2 (3) 의 d_goal 과 같은 정의.
+      d_arc 는 경로 끝 너머에서 0 으로 평평하므로 'eff' 는 끝점 너머의 이탈도 거리로 센다.
+    progress_kappa: κ_b. 기저 거리 비용 −κ_b·(1−γ)·d(s') 를 매 스텝 더한다. PBRS 가 아니다 (최적 정책을 바꾼다).
+      κ_b = κ 이면 PBRS 항과 합쳐 진행량 κ(d − d') 와 같다 (§6.1 의 분해).
+    dev_hinge: −q_d·1[e > DEV_LIMIT] — 이탈 구간 여부와 무관하게 1 m 초과 이탈에 건다.
+    stall_terminal: 정체(N:86-87)를 truncation 대신 실패 종단으로 (Φ' = 0, −stall_penalty).
+    """
+
+    name: str = 'v1.1.0'
+    kappa: float = C.KAPPA
+    phi_dist: str = 'arc'
+    progress_kappa: float = 0.0
+    dev_hinge: float = 0.0
+    stall_terminal: bool = False
+    stall_penalty: float = 0.0
+    time_cost: float = C.TIME_COST
+    goal_reward: float = C.GOAL_REWARD
+    collision_penalty: float = C.COLLISION_PENALTY
+
+
+SPEC_V110 = RewardSpec()
+
+
 def cross_track_error(state):
     """경로 최근접점까지 거리 (부호 없음) — 이탈·CTE 판정 입력."""
     return G.project_onto_path(state.path, state.pose[:2])[1]
 
 
-def potential(state, terminal):
-    """Φ(s) = −κ·d_arc(s), 종단이면 0."""
+def goal_distance(state):
+    """목표(경로 끝점)까지 직선거리."""
+    gx, gy = state.path[-1]
+    return math.hypot(state.pose[0] - gx, state.pose[1] - gy)
+
+
+def progress_distance(state, spec=SPEC_V110):
+    """퍼텐셜·거리 비용에 쓰는 거리: 'arc' = d_arc, 'eff' = max(d_arc, 목표 직선거리)."""
+    d = G.remaining_arc(state.path, state.pose[:2])
+    if spec.phi_dist == 'eff':
+        d = max(d, goal_distance(state))
+    elif spec.phi_dist != 'arc':
+        raise ValueError(spec.phi_dist)
+    return d
+
+
+def potential(state, terminal, spec=SPEC_V110):
+    """Φ(s) = −κ·d(s), 종단이면 0 (d = progress_distance)."""
     if terminal:
         return 0.0
-    return -C.KAPPA * G.remaining_arc(state.path, state.pose[:2])
+    return -spec.kappa * progress_distance(state, spec)
 
 
 def dev_update(dev, e, dt=C.DT):
@@ -86,31 +133,40 @@ class StepResult:
     phi_post: float
 
 
-def step(pre, post, action_exec, collision, safety_pairs=()):
+def step(pre, post, action_exec, collision, safety_pairs=(), spec=SPEC_V110, stalled=False):
     """
     전이 (pre, a, post) 의 보상·비용.
 
     action_exec: 이번 주기의 명령 가속도 (a_v, a_w) — 클램프·폴백 뒤 실제 값.
     직전 행동 = pre.prev_actions[0]. post.dev 는 무시하고 pre.dev 에서 갱신한다.
     collision: 환경의 지면 진실 접촉 (풋프린트 vs 장애물 기하).
+    spec: 보상 설계 (기본 v1.1.0). stalled: 이 전이 뒤 정체 판정(ProgressChecker) — spec.stall_terminal 일
+    때만 보상·종단에 쓰인다 (성공·충돌과 같은 스텝이면 그쪽이 이긴다).
     """
     success = is_success(post, collision)
-    terminated = bool(collision or success)
+    stall_term = bool(spec.stall_terminal and stalled and not (collision or success))
+    terminated = bool(collision or success or stall_term)
     e = cross_track_error(post)
     dev = dev_update(pre.dev, e)
-    phi_pre = potential(pre, False)
-    phi_post = potential(post, terminated)
+    phi_pre = potential(pre, False, spec)
+    phi_post = potential(post, terminated, spec)
     a_prev = pre.prev_actions[0] if pre.prev_actions else (0.0, 0.0)
     dav = (action_exec[0] - a_prev[0]) / C.A_MAX
     daw = (action_exec[1] - a_prev[1]) / C.ALPHA_MAX
     terms = {
-        'time': -C.TIME_COST,
+        'time': -spec.time_cost,
         'shape': C.GAMMA * phi_post - phi_pre,
         'smooth': -C.SMOOTH_WEIGHT * (dav * dav + daw * daw),
         'track': 0.0 if dev.in_dev else -C.TRACK_WEIGHT * min(e / C.CTE_REF, C.TRACK_CLIP) ** 2,
-        'goal': C.GOAL_REWARD if success else 0.0,
-        'collision': -C.COLLISION_PENALTY if collision else 0.0,
+        'goal': spec.goal_reward if success else 0.0,
+        'collision': -spec.collision_penalty if collision else 0.0,
     }
+    if spec.progress_kappa:
+        terms['progress'] = -spec.progress_kappa * (1.0 - C.GAMMA) * progress_distance(post, spec)
+    if spec.dev_hinge:
+        terms['dev'] = -spec.dev_hinge if e > C.DEV_LIMIT else 0.0
+    if spec.stall_terminal:
+        terms['stall'] = -spec.stall_penalty if stall_term else 0.0
     cost = (
         1.0 if collision else 0.0,
         intervention_cost(list(safety_pairs)),
