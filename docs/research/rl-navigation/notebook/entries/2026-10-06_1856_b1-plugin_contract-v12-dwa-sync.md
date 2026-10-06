@@ -133,6 +133,12 @@ r3 실측 (activate 우회 + 자름, ffd359b): follow 6 m 자름 33 회 / DWA 67
   - 학습 정책 v12_s1 이 운동학 시뮬레이터에서 follow 6 m · navigate (3, −6) 를 모두 정책 결정만으로 성공했다 (플러그인 안
     추론 p50 0.14 ms / p99 0.31–0.35 ms).
 
+### 1차 물결 r3 변이 검사 재실행 (코어·엔진·ONNX)
+
+r3 의 하네스(`/home/CAPYI_AI/runs/r3-controller/mutation/mutate.py`, 경로만 바꾼 사본)를 현재 코드(`83b29a3`)에 다시 돌렸다
+[측정, `A2_b1plugin_r3mutation_rerun`, cpu_slot, loadavg 5.6 → 5.2]: **r3 의 28 종 28 잡힘** (M1–M15 관측·마스크·적분, E1–E8 엔진,
+P1–P5 ONNX 검사) + A2-5 정렬 변이 3 종 3 잡힘. 계약 v1.2 반영(판 문자열·golden 시험 확장)이 기존 시험의 검출력을 잃지 않았다.
+
 ### 긴 정책 구간 뒤 폴백의 경로 창 (A2 중 새로 의심한 위험) — 문제 아님
 
 내부 DWA 의 `PlanWindow` 색인은 DWA 가 돈 틱에만 앞으로 가서 (직전 색인에서 앞쪽 200 점 = 10 m 만 찾음), 정책이 10 m 넘게
