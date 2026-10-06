@@ -15,7 +15,10 @@ import sys
 
 from amr_slam3d import replaystat
 
-COLS = ('input', 'processed', 'missing', 'missing_stamps', 'null_odom', 'imu_wait_drops',
+# input = bag 장 수 (분모), input_probe = 측정 노드 수신 수, probe_short = 둘의 차 (측정 노드가 놓친 장).
+# missing = 주 열 (RTAB-Map 은 missing_log·match_missing 중 큰 값, 다르면 missing_disagree).
+COLS = ('input', 'input_probe', 'probe_short', 'processed', 'missing', 'missing_log',
+        'match_missing', 'missing_disagree', 'missing_stamps', 'null_odom', 'imu_wait_drops',
         'tail_exempt', 'tail_missing', 'fatal', 'tf_valid', 'traj_n', 'launch_exit',
         'db_optimized_poses', 'load_play_start', 'load_play_end')
 

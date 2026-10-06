@@ -6,8 +6,11 @@ match_*.json (입력 ↔ 처리 출력 스탬프 대응, LIO-SAM 끝 2 장 판�
 db_info.txt (RTAB-Map DB 의 최적화 그래프 자세 수).
 
 처리 수 근거 (rtabmap.md §4.1 과 같은 규칙):
+- 분모(`input`)는 **bag 장 수** — match 가 입력 bag 에서 센 수. Python 측정 노드(probe)는 부하에 장을 놓칠 수 있어
+  분모로 쓰지 않는다 (`input_probe`·`probe_short` 로 따로 남긴다). match 가 없으면 분모가 없어 누락은 None (미측정).
 - RTAB-Map: 1 차 = icp_odometry 로그 "Odom: ratio=" 줄 수 (그중 ratio=0 은 정합 실패 null odom 으로 따로 센다),
-  2 차 = C++ 기록기의 icp_odom 스탬프 대응 (match). 누락 = 입력 − 1 차 처리 줄 수.
+  2 차 = C++ 기록기의 icp_odom 스탬프 대응 (match). `missing_log` = bag − 1 차 처리 줄 수,
+  `match_missing` = 2 차 판정 누락, 주 열 `missing` = 둘 중 큰 값 (둘이 다르면 `missing_disagree`).
 - LIO-SAM: imageProjection 출력(deskew/cloud_deskewed) 스탬프 대응. 끝 2 장(구조적 캐시)은 판정 분모에서 빼고 따로.
 - slam_toolbox: 처리 수 근거 없음 → None (미측정).
 """
@@ -66,7 +69,8 @@ def summarize(out_dir: str, row: str) -> Dict[str, object]:
     probe = _json(os.path.join(out_dir, 'probe.json')) or {}
     scan = _json(os.path.join(out_dir, 'log_scan.json')) or {}
     s: Dict[str, object] = {'row': row, 'family': fam, 'dir': out_dir,
-                            'input': (probe.get('input') or {}).get('count'),
+                            'input': None, 'input_probe': (probe.get('input') or {}).get('count'),
+                            'probe_short': None, 'missing_log': None, 'missing_disagree': None,
                             'traj_n': (probe.get('traj_online') or {}).get('n'),
                             'tf_valid': (probe.get('tf') or {}).get('valid'),
                             'fatal': sum((scan.get('fatal') or {}).values()) if scan else None,
@@ -80,17 +84,24 @@ def summarize(out_dir: str, row: str) -> Dict[str, object]:
         with open(env_path, encoding='utf-8') as f:
             s.update(parse_env(f.read()))
     m = _json(os.path.join(out_dir, MATCH_FILE[fam])) if fam in MATCH_FILE else None
+    if m and m.get('input') is not None:
+        s['input'] = int(m['input'])
+        if s['input_probe'] is not None:
+            s['probe_short'] = s['input'] - int(s['input_probe'])
     if fam == 'rtabmap':
         lines = scan.get('processed_log_lines')
         notes = scan.get('note') or {}
         s['null_odom'] = notes.get('Odom: ratio=0.000000')
         s['imu_wait_drops'] = notes.get("didn't receive IMU newer")
-        if lines is not None and s['input'] is not None:
+        if lines is not None:
             s['processed'] = int(lines)
-            s['missing'] = int(s['input']) - int(lines)
         if m:
-            s['match_missing'] = m.get('judged_missing', m.get('missing'))
+            s['match_missing'] = int(m.get('judged_missing', m.get('missing')))
             s['missing_stamps'] = m.get('judged_missing_stamps', m.get('first_missing'))
+        if lines is not None and s['input'] is not None:
+            s['missing_log'] = s['input'] - int(lines)
+            s['missing'] = max(s['missing_log'], s['match_missing'])
+            s['missing_disagree'] = s['missing_log'] != s['match_missing']
         db = os.path.join(out_dir, 'db_info.txt')
         if os.path.isfile(db):
             with open(db, encoding='utf-8', errors='replace') as f:
