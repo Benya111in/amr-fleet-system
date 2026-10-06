@@ -19,6 +19,12 @@ P3 에서 넣은 가드(모드 · 에포크 펜스 · 작업 잠금 어댑터 ·
 - 판정: 시험이 실패(rc ≠ 0) = KILLED, 통과 = SURVIVED, 치환 대상이 1 곳이 아니면 BAD_MUTANT (도구 결함으로 따로 센다).
 - 변이 목록 · 설명은 도구 파일의 MUTANTS 표 (23 종).
 
+### 추가 사전 기록 (2026-10-06 23:20, 1 · 2 회차 결과를 본 뒤 · ROS 수준 변이 실행 전)
+- 순수 변이는 실제로 24 종이었다 (위 "23 종" 은 셈 실수). 1 회차 전에 활성 수정 두 건의 변이 MC6 · MC7 을 더해 26 종.
+- ROS 수준 변이 5 종을 더한다: C1 ZoneGuard 상태 신선도 무시, C2 holdsAll 이 "하나라도" 로, C3 CommitTaskLock 이 denied 를
+  무시, C4 AcquireZoneChain halt 가 CANCEL 을 안 보냄 (gtest `test_zone_bt_nodes`), N1 노드 프록시가 펜스 · 모드 검사를
+  건너뜀 (launch 시험 1 회). 예측: 모두 KILLED. 도구 `/home/CAPYI_AI/runs/b24/b4-p3/mut_ros/run.sh`.
+
 ## 결과
 (표: 시드별 값, 실패 시드 수. [측정]/[계산]/미측정 표기. 원자료 경로)
 
