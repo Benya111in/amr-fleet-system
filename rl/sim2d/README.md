@@ -152,6 +152,18 @@ docker run --rm --gpus all --name amr-ai-r2-sim2d-test -v <worktree>:/ws -w /ws/
 [`docs/research/rl-navigation/reward_v12.md`](../../docs/research/rl-navigation/reward_v12.md), 원자료
 `/home/CAPYI_AI/runs/r5-reward/g2/`. 위 1차 물결 표는 v1.1.0 보상으로 학습한 것이다.
 
+## 동적 장애물 (2차 물결 2b r6-dyn) [측정]
+
+v1.2.0 보상, mixed 0–4 + 20 % Gazebo, 30M env-steps, 평가 n = 2 048 (시작점 거르기 3 s·1.0 m), 마지막 반복:
+① 커리큘럼 + learnability 0.000·0.000, ② 비교군 C 0.001·0.057, ③ 라그랑주 + C 10 0.279 / 0.521 / 0.000 / 0.041 /
+0.018 (5 시드, 50 % 넘은 시드 1/5), ④ 특권 전문가 BC + DAgger + KL-to-BC 0.562–0.575 (5/5) — 단 ④ 는 장애물을 보지
+않는 0.8 m/s 추종기(0.545)와 결말이 92.5 % 같다. 회피를 배운 후보는 없다. 근거·원인 분석·다음 시도는
+[`docs/research/rl-navigation/dyn_obstacles.md`](../../docs/research/rl-navigation/dyn_obstacles.md).
+새 인자 (모두 기본 꺼짐): `EnvConfig.start_clear_window/radius` (`obstacles.clear_start`), `EnvConfig.level_probs`,
+`train_ppo.py --learnability --start-clear-window --final-eval-orig --lag-kd/-max/-ema/-channels --lag-budget-collision
+--bc-expert privileged --dagger --kl-bc`, 보상 후보 `prog50_c<C>` (`dyn_candidates.py`), 진단 `tools/dyn_g0.py`·`dyn_eval.py`,
+특권 전문가 `amr_sim2d/expert.py`, 시험 `tests/test_dyn_obstacles.py`.
+
 ## 계약·보고서와 다르게 한 것
 
 | 항목 | 여기서 한 것 | 이유 |
