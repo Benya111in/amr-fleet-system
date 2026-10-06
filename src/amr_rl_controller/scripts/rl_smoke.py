@@ -13,6 +13,10 @@ navigate: navigate_to_pose 액션 (BT 기본 제어기 — replace_dwa:=true 로
       sim/footprint_clearance (운동학 시뮬레이터: 정적 지도까지, 1 m 안에 없으면 1.0),
       동적 장애물 여유 = ground_truth/odom 풋프린트 ↔ perception/tracked_obstacles 원(--obstacle-radius)
       최소 거리. 결과는 <out>/summary.json.
+끝 자세 (A2): 'end' = odometry/filtered (odom 프레임), 'end_map' = TF map → --base-frame (위치추정),
+      'end_gt' = ground_truth/odom (Gazebo 지면 진실, world = map 원점) — navigate 의 목표(map)까지 거리를
+      'final_dist_map'·'final_dist_gt' 로, 목표 yaw 오차를 'final_yaw_err_map' 으로. 'elapsed_sim_s' 는 노드
+      시계(use_sim_time 이면 /clock) 경과, 'rtf' = elapsed_sim_s / elapsed_s.
 """
 import argparse
 import json
@@ -29,6 +33,7 @@ import rclpy
 from rclpy.action import ActionClient
 from rclpy.node import Node
 from std_msgs.msg import Float64, Float64MultiArray
+from tf2_ros import Buffer, TransformListener
 
 SOURCES = ('policy', 'fallback_cell', 'dwa', 'align')
 REASONS = ('none', 'state', 'policy_error', 'timeout', 'nonfinite')
@@ -50,6 +55,8 @@ class Smoke(Node):
 
     def __init__(self, obstacle_radius):
         super().__init__('rl_smoke')
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
         self.cmds = []
         self.stats = []
         self.stats_t = []
@@ -92,6 +99,25 @@ class Smoke(Node):
             best = min(best, math.hypot(ex, ey) - self.r_obs)
         self.dyn_clear.append(best)
 
+    def pose_map(self, frame='map', base='base_footprint'):
+        """TF map → base 자세 (x, y, yaw) 또는 None."""
+        try:
+            t = self.tf_buffer.lookup_transform(frame, base, rclpy.time.Time())
+        except Exception:  # noqa: BLE001 — TF 가 아직 없으면 None
+            return None
+        q = t.transform.rotation
+        yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+        return t.transform.translation.x, t.transform.translation.y, yaw
+
+    def pose_gt(self):
+        """지면 진실 자세 (x, y, yaw) 또는 None."""
+        if self.gt is None:
+            return None
+        p = self.gt.pose.pose
+        q = p.orientation
+        yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+        return p.position.x, p.position.y, yaw
+
     def pose_now(self):
         """현재 자세 (odom 프레임 x, y, yaw, frame)."""
         p = self.odom.pose.pose
@@ -129,6 +155,7 @@ def main():
     ap.add_argument('--frame', default='map', help='navigate 목표 프레임')
     ap.add_argument('--timeout', type=float, default=90.0)
     ap.add_argument('--obstacle-radius', type=float, default=0.30)
+    ap.add_argument('--base-frame', default='base_footprint')
     ap.add_argument('--out', required=True)
     args, ros_args = ap.parse_known_args()
     rclpy.init(args=ros_args)
@@ -140,6 +167,7 @@ def main():
     else:
         x, y, yaw, frame = node.pose_now()
         summary['start'] = [x, y, yaw, frame]
+        goal_yaw = None
         stamp = node.get_clock().now().to_msg()
         if args.mode == 'follow':
             client = ActionClient(node, FollowPath, 'follow_path')
@@ -159,6 +187,7 @@ def main():
         else:
             client = ActionClient(node, NavigateToPose, 'navigate_to_pose')
             gx, gy, gyaw = (float(v) for v in args.goal.split(','))
+            goal_yaw = gyaw
             goal = NavigateToPose.Goal()
             goal.pose = _pose(args.frame, gx, gy, gyaw, stamp)
             target = (gx, gy)
@@ -167,6 +196,7 @@ def main():
             summary['error'] = '액션 서버 없음'
         else:
             t0 = time.monotonic()
+            ts0 = node.get_clock().now()
             fut = client.send_goal_async(goal)
             spin_until(node, fut.done, 30.0)
             handle = fut.result() if fut.done() else None
@@ -180,10 +210,25 @@ def main():
                     handle.cancel_goal_async()
                     spin_until(node, lambda: False, 2.0)
             summary['elapsed_s'] = time.monotonic() - t0
+            summary['elapsed_sim_s'] = (node.get_clock().now() - ts0).nanoseconds * 1e-9
+            if summary['elapsed_s'] > 0:
+                summary['rtf'] = summary['elapsed_sim_s'] / summary['elapsed_s']
             if node.odom is not None:
                 x1, y1, _, _ = node.pose_now()
                 summary['end'] = [x1, y1]
                 summary['moved_m'] = math.hypot(x1 - x, y1 - y)
+            spin_until(node, lambda: False, 0.5)   # 마지막 TF·지면 진실
+            pm = node.pose_map(base=args.base_frame)
+            pg = node.pose_gt()
+            for key, pose in (('map', pm), ('gt', pg)):
+                if pose is None:
+                    continue
+                summary[f'end_{key}'] = list(pose)
+                summary[f'final_dist_{key}'] = math.hypot(pose[0] - target[0],
+                                                          pose[1] - target[1])
+                if goal_yaw is not None:
+                    summary[f'final_yaw_err_{key}'] = abs(
+                        math.remainder(pose[2] - goal_yaw, 2.0 * math.pi))
     v = [c.linear.x for c in node.cmds]
     summary['n_cmd'] = len(node.cmds)
     summary['n_cmd_moving'] = sum(1 for a in v if abs(a) > 1e-3)
