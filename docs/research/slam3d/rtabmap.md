@@ -27,15 +27,25 @@ LIO-SAM 방위), 191–200행(오라클), 255–272행(4–5단계). 센서 계�
 
 | 오라클 | 막는 곳 |
 |---|---|
-| Gazebo IMU 방위 = 정답 ([측정] sensor.md §6) | 모든 SLAM 노드의 IMU 입력은 `imu/data_madgwick` (`use_mag false`, `publish_tf false`). `rtabmap.launch.py check_imu_topic` 이 `imu/data_raw`·`imu/data` 를 거절한다. 재생: 기본 다섯 행은 `rows.ORACLE_TOPICS` 를 틀지 않는다. **예외 — 변형 행 `rtabmap3d_imulive` 는 정답 방위가 든 `/amr_01/imu/data` 를 튼다** (아래) |
+| Gazebo IMU 방위 = 정답 ([측정] sensor.md §6) — **`imu/data_raw` 에만 있다** | 모든 SLAM 노드의 IMU 입력은 `imu/data_madgwick` (`use_mag false`, `publish_tf false`). `rtabmap.launch.py check_imu_topic` 이 `imu/data_raw`·`imu/data` 를 거절한다. 재생: 기본 다섯 행은 `rows.ORACLE_TOPICS` 를 틀지 않는다. 변형 행 `rtabmap3d_imulive` 는 `/amr_01/imu/data` 를 madgwick 입력으로 튼다 — 이 토픽의 방위는 **정답이 아니라 항등**이다 (아래 고침) |
 | 정답 자세 `ground_truth/odom` | 주행 제어(route_driver)와 평가에만. 어떤 행도 재생하지 않는다 |
 | 월드 고정 | 정답이 아니라 **스폰 자세**(18, −16, 1.5708 — 현행 2D 스택의 AMCL 초기 자세와 같은 정보)로 `map → slam_map` 을 준다 |
 | 시뮬 휠 (1–2 자릿수 정확) | 이 물결에서는 손대지 않았다 — 휠 사전값을 쓰는 행(RTAB-Map·slam_toolbox)이 유리할 수 있다 (열화 휠은 다음 물결) |
 
-**`rtabmap3d_imulive` 의 예외.** 이 행은 재생 중 madgwick 을 다시 돌리려고 `/amr_01/imu/data` 를 튼다
-(`play_topics`, 실제 기록 `rows/rtabmap3d_imulive/env.txt` "play_topics: … /amr_01/imu/data"). 이 토픽의 방위 필드는
-Gazebo 정답이고 `ORACLE_TOPICS` 에 들어 있다. 그래서 "어떤 행도 정답 토픽을 틀지 않는다" 는 **참이 아니다.**
-정답 방위가 SLAM 으로 새지 않는다고 보는 근거는 둘이다.
+**고침 (b2-offline, 2026-10-06) — `imu/data` 의 방위는 정답이 아니다.** 이 문서의 앞 판은 "이 토픽의 방위 필드는 Gazebo
+정답" 이라고 썼다 — **틀렸다.** `imu/data` 는 프로젝트 `imu_filter_node` 출력이고 방위를 항등 쿼터니언으로 채운다
+(`src/amr_localization/src/imu_filter_node.cpp` 147–149행 `orientation.w = 1`, `orientation_covariance[0] = −1` = "방위 없음")
+[코드]. 파일럿 bag 의 `imu/data` 35 766 개 모두 항등과의 각이 0.0° 이고 yaw 가 55 m·네 번 회전 내내 0 이다 [측정:
+`/home/CAPYI_AI/runs/b24/b2-offline/derive/analysis.json` `imu_data_orientation_vs_identity_max_deg`, `tmp/yawcheck.py`].
+정답 방위는 Gazebo 원시 `imu/data_raw` 에만 있다 (sensor.md §6 의 측정 대상도 그것이다). 그래서 `rtabmap3d_imulive` 가
+`imu/data` 를 틀어도 정답 방위는 새지 않는다 — 아래 두 근거는 그대로 맞지만 필요하지 않았다. 다만 이 월드는 GT roll·pitch 가
+정확히 0 이라 항등 방위의 roll·pitch 는 정답과 같다 — `imu/data` 를 SLAM 에 직접 넣으면 평면 사전이 되므로 계속 막는다.
+정답 방위가 필요한 상한 행은 `imu/data` 에 같은 스탬프 `imu/data_raw` 의 방위만 옮긴 파생 토픽 `imu/data_gtorient` 를 쓴다
+([`replay.md`](replay.md) §1).
+
+앞 판의 설명 (전제가 틀렸다 — 기록으로 남긴다): 이 행은 재생 중 madgwick 을 다시 돌리려고 `/amr_01/imu/data` 를 튼다
+(`play_topics`, 실제 기록 `rows/rtabmap3d_imulive/env.txt` "play_topics: … /amr_01/imu/data"). 정답 방위가 SLAM 으로 새지
+않는다고 보는 근거는 둘이다.
 - SLAM 노드는 madgwick 출력만 구독한다 — `check_imu_topic` 이 강제하고, 실행 로그도 그렇다 [측정: `rows/rtabmap3d_imulive/row.log`
   "Subscribing to IMU topic /amr_01/imu/data_madgwick"]. imu/data 를 받는 노드는 pre_launch 의 madgwick 하나다.
 - madgwick 은 입력 방위 필드를 읽지 않는다 [측정, 리뷰 반영 때 추가]: 각속도·가속도가 같고 방위 필드만 다른(항등 ↔ 무작위
@@ -105,8 +115,15 @@ LIO-SAM 행은 bag 의 `/tf`(EKF `odom → base_footprint`)를 **틀지 않는�
 불리한 점: madgwick 출력에 sim 9.48 s 에 0.14 s 공백(28 개)이 있다 — 입력 `imu/data` 는 공백이 없으므로 기록 중
 madgwick 쪽에서 잃었다 (route_driver 가 뜬 시각과 겹친다; 원인 미확인). 같은 시각 EKF 출력도 0.065·0.1 s 공백이 있다.
 이 공백 때문에 IMU 를 쓰는 행이 그 스캔 하나를 버린다 (§4).
+**갱신 (b2-offline)**: 원인을 좁혔다 — 공백 직후 기록 출력과 잠금 단계 재계산 출력의 차가 7 × 10⁻⁵° 에서 1.47° 로 뛴다 → 기록 때
+madgwick 이 **입력을 놓쳤다** (기록기만 놓친 것이 아니다). 같은 sim 9.48–9.64 s 에 `/clock` 기록과 EKF TF 도 멈췄다
+([`replay.md`](replay.md) §1.2·§7). 파생 bag 의 재계산 madgwick 에는 공백이 없다.
 
 ## 4. 매핑 행 재생 결과 (5단계) — **n = 1 (bag 1개 × 재생 1회), 공유 부하 하 예비값** [측정]
+
+> **갱신 (b2-offline, 2026-10-06)**: 같은 bag 을 행마다 3–4 회 다시 재생하고, 모든 행을 같은 SE(2) 지표·공통 시간창으로 잰 표와
+> LIO-SAM 평면·절제·오라클 행, IMU 없는 RTAB-Map 행, 처리 스캔 누락 표는 [`replay.md`](replay.md) 에 있다. 아래 n = 1 표의 xy 값은
+> 새 도구로 표기 자릿수까지 재현됐고(replay.md §2), 원 bag 재생 3 회의 평균도 0.77 / 2.19 / 5.62 / 5.29 cm 로 이 표와 0.4 cm 안이다.
 
 재생: `replay_row.sh <행> bag rows/<행> 0.5` (배속 0.5, 기록된 /clock), 컨테이너마다 `ROS_LOCALHOST_ONLY=1`,
 `--shm-size=2g` + Fast DDS SHM 16 MB 프로파일. 재생 중 loadavg 21–110 (다른 에이전트 작업). 산출 `rows/<행>/`.
@@ -150,6 +167,8 @@ rtabmap2d·liosam_noloop = `df91c97`, rtabmap3d_imulive = `df91c97` + 미커밋 
   **고침**: 이 문서의 앞 판은 이 두 장을 "IMU 가 스캔 뒤로 없음" 이라 적고 원인을 "특정했다" 고 썼다 — 틀렸다 (리뷰 B1).
 - **rtabmap3d_imulive 의 9.6 s·154.5 s** — madgwick 을 재생 중 다시 돌린 변형은 IMU 버림이 0 이 됐지만 두 장을 놓쳤다.
   9.6 s 는 같은 시각 EKF TF 공백(§3)과 겹치고, 154.5 s 는 **원인 미확인**이다.
+  → 9.6 s 는 휠-EKF TF guess 조회 실패로 확인했다: 첫 15 s 재생에서 guess 를 끄면 처리되고, `wait_for_transform` 1.0 s 로는 안 풀린다
+  ([`replay.md`](replay.md) §7). IMU 를 빼거나 공백 없는 IMU 를 준 RTAB-Map 행 10 재생 모두 이 장 하나를 놓쳤다.
 
 **LIO-SAM 계수 규칙.** 지금 계수(입력 1 788 장 전부를 분모로)로는 LIO-SAM 이 "누락 0" 을 **구조적으로 달성할 수 없다.**
 그래서 LIO-SAM 행은 **bag 의 마지막 2 장을 분모에서 뺀다** (1 788 → 1 786). 이 규칙으로 LIO-SAM 누락은 1/1 786 (9.6 s) 이고
@@ -254,15 +273,15 @@ python3 -m amr_evaluation.slam3d.cli traj --gt <OUT>/gt.tum --est rows/<행>/tra
 
 ## 7. 다음 물결에 넘길 것
 
-- 표본: 씨드·경로가 다른 bag 3–5 개 × 재생 3–5 회 (보고서 ≥ 10/구성). 지금은 n = 1 — 행 간 차이를 주장할 수 없다.
+- 표본: 씨드·경로가 다른 bag 3–5 개 × 재생 3–5 회 (보고서 ≥ 10/구성). 지금은 n = 1 — 행 간 차이를 주장할 수 없다. **b2-offline**: 같은 bag 재생 3–4 회는 했다 (replay.md §5) — bag 은 여전히 1 개.
 - 기록: madgwick 을 기록 전에 충분히 띄우고 공백 검사를 기록 직후 자동 판정 (`bag_meta.json` gaps > 0 이면 재기록).
-- **LIO-SAM 처리 수 계수 규칙을 코드로** (리뷰 B1): imageProjection 의 2 장 캐시(`imageProjection.cpp` 228–230행) 때문에 bag 의
+- **(b2-offline 에서 (a) 로 코드화 — `rows.LIOSAM_TAIL`, `bagstat.matched(tail_exempt=)`)** **LIO-SAM 처리 수 계수 규칙을 코드로** (리뷰 B1): imageProjection 의 2 장 캐시(`imageProjection.cpp` 228–230행) 때문에 bag 의
   마지막 2 장은 어떤 기록에서도 처리되지 않는다. 둘 중 하나를 정해 `bag_tools match`·판정에 넣는다.
   (a) LIO-SAM 행은 분모에서 끝 2 장을 뺀다 (이 문서의 현재 규칙, 문서에만 있음).
   (b) 재생 끝에 점군 2 장(마지막 장 복제, 스탬프 +0.1·+0.2 s)을 더 흘려 캐시를 비운다 — 이때 IMU 는 마지막으로 처리할 장의
   `timeScanEnd` 뒤까지만 있으면 된다 (지금 bag 은 182.6 s 까지 있어 충분). **IMU 를 더 길게 기록하는 것은 효과가 없다.**
   9.6 s 장(madgwick 공백)은 어느 규칙으로도 누락으로 남는다.
-- 재생 정리: `replay_row.sh` 가 행 런치를 SIGINT 로 못 끈다 (비대화형 bash 의 백그라운드 작업은 SIGINT 를 무시한 채 시작한다는
+- **(b2-offline 에서 고침, `2126897` — 진단은 replay.md §7)** 재생 정리: `replay_row.sh` 가 행 런치를 SIGINT 로 못 끈다 (비대화형 bash 의 백그라운드 작업은 SIGINT 를 무시한 채 시작한다는
   리뷰 진단, 미검증). SIGTERM 을 쓰거나 SIGINT 처분을 복구해 RTAB-Map 이 최적화 자세를 DB 에 저장하게 한다.
 - LIO-SAM: 2D 격자(octomap_server projected_map 또는 대역 투영), 루프 폐쇄 발생 여부(loop_closure_constraints 기록),
   ATE 가 RTAB-Map 보다 큰 원인(휠 사전값 없음 / madgwick 초기 기울기 / extrinsicTrans) 분리.

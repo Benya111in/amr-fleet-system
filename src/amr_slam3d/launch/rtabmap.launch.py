@@ -15,7 +15,9 @@ TF 트리: map ─(anchor_tf, 스폰 자세)→ slam_map → <robot>/icp_odom �
     robot          네임스페이스·프레임 접두어 (기본 amr_01)
     cloud_topic    3D 입력 (기본 /<robot>/lidar3d/points — 전처리 출력, sensor.md)
     scan_topic     2D 입력 (기본 /<robot>/scan_filtered — slam_toolbox 행과 같은 2D 입력)
-    imu_topic      madgwick 재추정 IMU (기본 /<robot>/imu/data_madgwick). '' = IMU 안 씀.
+    imu_topic      madgwick 재추정 IMU (기본 /<robot>/imu/data_madgwick). '' 또는 none = IMU 안 씀
+                   (wait_imu_to_init false — Force3DoF·휠 guess 라 IMU 이득은 없고 IMU 공백 때 스캔을 버린다:
+                   리서치 R11, rtabmap.md §4.1).
                    **정답 방위가 든 imu/data_raw·imu/data 는 넣지 않는다** (test_config.py 가 막는다)
     use_guess      true(기본) = 휠-EKF guess (요인 B 있음), false = guess 없음
     map_frame      rtabmap map_frame_id (기본 slam_map). 월드 고정은 anchor_tf 가 map → slam_map 으로 한다
@@ -41,6 +43,16 @@ def check_imu_topic(topic: str) -> None:
     if topic and topic.rstrip('/').endswith(ORACLE_IMU_SUFFIXES):
         raise RuntimeError(f'imu_topic:={topic} 는 Gazebo 정답 방위를 담는다 — madgwick 출력'
                            '(imu/data_madgwick)만 쓴다 (docs/research/slam3d/sensor.md §6)')
+
+
+def resolve_imu(value: str, robot: str) -> str:
+    """imu_topic 인자 → 실제 토픽 ('default' = madgwick 기록 토픽, '' · none = IMU 안 씀)."""
+    v = value.strip()
+    if v == 'default':
+        return f'/{robot}/imu/data_madgwick'
+    if v.lower() in ('', 'none'):
+        return ''
+    return v
 
 
 def node_setup(dim: str, robot: str, cloud_topic: str, scan_topic: str, imu_topic: str,
@@ -75,9 +87,7 @@ def _setup(context):
     robot = arg('robot').strip('/')
     cloud = arg('cloud_topic') or f'/{robot}/lidar3d/points'
     scan = arg('scan_topic') or f'/{robot}/scan_filtered'
-    imu = arg('imu_topic')
-    if imu == 'default':
-        imu = f'/{robot}/imu/data_madgwick'
+    imu = resolve_imu(arg('imu_topic'), robot)
     db = arg('database_path') or f'/tmp/rtabmap_{dim}.db'
     params = arg('params_file') or os.path.join(
         get_package_share_directory('amr_slam3d'), 'config', 'rtabmap.yaml')
@@ -104,7 +114,8 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('cloud_topic', default_value=''),
         DeclareLaunchArgument('scan_topic', default_value=''),
         DeclareLaunchArgument('imu_topic', default_value='default',
-                              description="'default' = /<robot>/imu/data_madgwick, '' = 없음"),
+                              description="'default' = /<robot>/imu/data_madgwick, "
+                                          "'' | none = 없음"),
         DeclareLaunchArgument('use_guess', default_value='true'),
         DeclareLaunchArgument('map_frame', default_value='slam_map'),
         DeclareLaunchArgument('database_path', default_value=''),

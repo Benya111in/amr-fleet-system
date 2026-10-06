@@ -8,7 +8,7 @@ bag·토픽 메시지 스탬프 통계 (rclpy 비의존) — 파일럿 bag 메�
 from __future__ import annotations
 
 import struct
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -23,6 +23,14 @@ def cdr_header_stamp(raw: bytes) -> float:
         raise ValueError('CDR 리틀엔디언 Header 메시지가 아니다')
     sec, nsec = struct.unpack_from('<iI', raw, 4)
     return sec + nsec * 1e-9
+
+
+def cdr_header_key(raw: bytes) -> Tuple[int, int]:
+    """직렬화된 Header 메시지의 (sec, nanosec) 정수 — 같은 스탬프를 실수 오차 없이 맞출 때 쓴다."""
+    if len(raw) < 12 or raw[0] != 0 or raw[1] != 1:
+        raise ValueError('CDR 리틀엔디언 Header 메시지가 아니다')
+    sec, nsec = struct.unpack_from('<iI', raw, 4)
+    return int(sec), int(nsec)
 
 
 def interval_stats(stamps: Sequence[float],
@@ -61,13 +69,19 @@ def interval_stats(stamps: Sequence[float],
 
 
 def matched(input_stamps: Sequence[float], output_stamps: Sequence[float],
-            tol: float = 1e-6) -> Dict[str, float]:
+            tol: float = 1e-6, tail_exempt: int = 0) -> Dict[str, object]:
     """
     입력 스탬프 중 출력에 같은 스탬프(±tol)가 있는 것의 수 — "처리 스캔 누락 0" 판정.
 
     RTAB-Map icp_odometry 는 처리한 스캔마다 같은 header.stamp 의 odom 을 낸다. missing = 입력 − 대응.
+    tail_exempt = k 면 입력 스탬프 중 **가장 늦은 k 장**은 구조적으로 처리될 수 없는 장(LIO-SAM 2 장 캐시)이라
+    판정 분모·누락에서 빼고 `tail_missing` 에 따로 센다. 원래 계수(input·missing)도 그대로 남긴다.
     """
+    if tail_exempt < 0:
+        raise ValueError('tail_exempt < 0')
     out_sorted = np.sort(np.asarray(output_stamps, dtype=float))
+    order = sorted(float(s) for s in input_stamps)
+    tail = set(order[len(order) - tail_exempt:]) if tail_exempt else set()
     hit = 0
     missing: List[float] = []
     for s in input_stamps:
@@ -76,6 +90,11 @@ def matched(input_stamps: Sequence[float], output_stamps: Sequence[float],
             hit += 1
         else:
             missing.append(float(s))
+    judged = [s for s in missing if s not in tail]
     return {'input': float(len(input_stamps)), 'output': float(len(output_stamps)),
             'matched': float(hit), 'missing': float(len(missing)),
-            'first_missing': missing[:5]}
+            'first_missing': missing[:5], 'missing_all': missing,
+            'tail_exempt': float(min(tail_exempt, len(order))),
+            'tail_missing': float(len(missing) - len(judged)),
+            'judged_input': float(len(order) - len(tail)),
+            'judged_missing': float(len(judged)), 'judged_missing_stamps': judged}

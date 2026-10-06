@@ -11,7 +11,10 @@ map→odom 항등 TF 를 띄우지 않는다 (URDF 는 bag 의 /tf_static, 월�
 (s0-images VERSIONS.md §6 — 주면 두 노드 이름이 같아진다).
 
 인자: loop (true | false — loopClosureEnableFlag 덮어쓰기), params_file (기본 ../config/liosam.yaml),
-      log_level
+      log_level, 그리고 평면·절제 변형 행(리서치 R2·R4·R6)용 덮어쓰기 — 빈 값이면 설정 파일 그대로:
+      imu_topic (imuTopic), rpy_weight (imuRPYWeight), z_tol (z_tollerance),
+      rot_tol (rotation_tollerance),
+      oracle (true 일 때만 정답 방위 IMU 토픽을 받는다 — 상한 참고 행. 아니면 거절한다)
 """
 
 import os
@@ -30,16 +33,47 @@ def default_params() -> str:
                                          'config', 'liosam.yaml'))
 
 
+#: oracle:=true 없이는 거절하는 IMU 토픽 접미사. data_raw·data_gtorient = 정답 방위
+#: (sensor.md §6, madg_lockstep.py),
+#: imu/data = 방위가 항등이라 roll·pitch 0 이 평평한 월드의 정답과 같다 (imu_filter_node.cpp 147–149행)
+ORACLE_IMU_SUFFIXES = ('imu/data_raw', 'imu/data', 'imu/data_gtorient')
+
+
+def overrides(loop: str, imu_topic: str = '', rpy_weight: str = '', z_tol: str = '',
+              rot_tol: str = '', oracle: str = 'false') -> dict:
+    """런치 인자 → 설정 파일 위에 덮어쓸 파라미터 (런치와 시험이 같이 쓴다)."""
+    loop, oracle = loop.strip().lower(), oracle.strip().lower()
+    if loop not in ('true', 'false'):
+        raise RuntimeError(f'loop:={loop} (true | false)')
+    if oracle not in ('true', 'false'):
+        raise RuntimeError(f'oracle:={oracle} (true | false)')
+    out = {'loopClosureEnableFlag': loop == 'true'}
+    imu = imu_topic.strip()
+    is_oracle = bool(imu) and imu.rstrip('/').endswith(ORACLE_IMU_SUFFIXES)
+    if is_oracle and oracle != 'true':
+        raise RuntimeError(f'imu_topic:={imu} 는 Gazebo 정답 방위를 담는다 — 상한 참고 행만 oracle:=true 로 쓴다')
+    if oracle == 'true' and not is_oracle:
+        raise RuntimeError(f'oracle:=true 인데 imu_topic:={imu or "(설정 파일)"} 는 정답 방위 토픽이 아니다')
+    if imu:
+        out['imuTopic'] = imu
+    for key, val in (('imuRPYWeight', rpy_weight), ('z_tollerance', z_tol),
+                     ('rotation_tollerance', rot_tol)):
+        if val.strip():
+            v = float(val)
+            if v < 0.0:
+                raise RuntimeError(f'{key}={v} < 0')
+            out[key] = v
+    return out
+
+
 def _setup(context):
     def arg(name):
         return LaunchConfiguration(name).perform(context)
 
-    loop = arg('loop').strip().lower()
-    if loop not in ('true', 'false'):
-        raise RuntimeError(f'loop:={loop} (true | false)')
+    override = overrides(arg('loop'), arg('imu_topic'), arg('rpy_weight'), arg('z_tol'),
+                         arg('rot_tol'), arg('oracle'))
     params = arg('params_file') or default_params()
-    override = {'loopClosureEnableFlag': loop == 'true'}
-    out = [LogInfo(msg=f'[amr_slam3d] LIO-SAM loop={loop} params={params}')]
+    out = [LogInfo(msg=f'[amr_slam3d] LIO-SAM params={params} overrides={override}')]
     out += [Node(package='lio_sam', executable=exe, output='screen',
                  parameters=[params, override],
                  arguments=['--ros-args', '--log-level', arg('log_level')])
@@ -52,5 +86,10 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('loop', default_value='true'),
         DeclareLaunchArgument('params_file', default_value=''),
         DeclareLaunchArgument('log_level', default_value='info'),
+        DeclareLaunchArgument('imu_topic', default_value=''),
+        DeclareLaunchArgument('rpy_weight', default_value=''),
+        DeclareLaunchArgument('z_tol', default_value=''),
+        DeclareLaunchArgument('rot_tol', default_value=''),
+        DeclareLaunchArgument('oracle', default_value='false'),
         OpaqueFunction(function=_setup),
     ])

@@ -5,7 +5,8 @@ bag·지도 파일 도구 — 파일럿 bag 메타데이터, 정답 궤적(TUM),
     bag_tools.py stats <bag> --out meta.json        토픽별 메시지 수·header 주기·간격 (sim 시각)
     bag_tools.py tum <bag> --topic /amr_01/ground_truth/odom --out gt.tum
     bag_tools.py cloud <in.ply|in.pcd> <out.ply> --tf x,y,z,qx,qy,qz,qw
-    bag_tools.py match --in-bag <bag> --in-topic T --out-bag <out_bag> --out-topic T2 --out m.json
+    bag_tools.py match --in-bag <bag> --in-topic T --out-bag <out> --out-topic T2 --out m.json \
+        [--tail-exempt 2]
     bag_tools.py poses <poses.txt> <out.tum> --tf x,y,z,qx,qy,qz,qw     (SLAM map 프레임 → 월드)
     bag_tools.py assemble <bag> --topic /amr_01/lidar3d/points --poses p.tum --base F --out c.ply
 
@@ -145,7 +146,7 @@ def cmd_match(ns) -> int:
     out = _stamps(ns.out_bag, ns.out_topic)
     if inp is None:
         raise SystemExit(f'{ns.in_topic} 가 {ns.in_bag} 에 없다')
-    res = bagstat.matched(inp, out or [])
+    res = bagstat.matched(inp, out or [], tail_exempt=ns.tail_exempt)
     res.update({'in_bag': ns.in_bag, 'in_topic': ns.in_topic, 'out_bag': ns.out_bag,
                 'out_topic': ns.out_topic, 'out_present': out is not None,
                 'out_stats': bagstat.interval_stats(out or [])})
@@ -156,7 +157,8 @@ def cmd_match(ns) -> int:
         res['missing_hist_10s'] = {f'{edges[i]:g}': int(h) for i, h in enumerate(hist) if h}
     with open(ns.out, 'w', encoding='utf-8') as f:
         json.dump(res, f, ensure_ascii=False, indent=1)
-    print(json.dumps({k: res[k] for k in ('input', 'output', 'matched', 'missing')}))
+    print(json.dumps({k: res[k] for k in ('input', 'output', 'matched', 'missing', 'tail_exempt',
+                                          'judged_missing')}))
     return 0
 
 
@@ -257,6 +259,8 @@ def main(argv=None) -> int:
     s.add_argument('--out-bag', required=True)
     s.add_argument('--out-topic', required=True)
     s.add_argument('--out', required=True)
+    s.add_argument('--tail-exempt', type=int, default=0,
+                   help='입력의 마지막 n 장을 판정 분모에서 뺀다 (LIO-SAM 2 장 캐시, rows.LIOSAM_TAIL)')
     s = sub.add_parser('poses')
     s.add_argument('src')
     s.add_argument('dst')

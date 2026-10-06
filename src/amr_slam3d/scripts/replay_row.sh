@@ -53,8 +53,20 @@ print('ANCHORS=(' + ' '.join(shlex.quote(f'{p}|{c}|{v}') for p, c, v in r.anchor
 print(f"INPUT={shlex.quote(r.input_topic)}")
 print(f"PROC_TOPICS={shlex.quote(' '.join(t for t, _, _ in r.processed))}")
 print('PRE_LAUNCH=(' + ' '.join(shlex.quote(p) for p in r.pre_launch) + ')')
+print(f"TAIL_EXEMPT={int(r.tail_exempt)}")
+print(f"ROW_BAG={shlex.quote(r.bag)} ORACLE={int(r.oracle)}")
 EOF
 )"
+
+# 행이 틀 토픽이 bag 에 다 있는지 재생 전에 본다 (파생 bag 토픽을 원 bag 으로 돌리는 실수 차단)
+python3 - "$ROW" "$BAG/metadata.yaml" <<'EOF' || exit 3
+import sys
+from amr_slam3d import rows
+r = rows.row(sys.argv[1])
+miss = rows.missing_play_topics(r, rows.bag_topics(open(sys.argv[2], encoding='utf-8').read()))
+if miss:
+    sys.exit(f'bag 에 없는 재생 토픽 {miss} — 행 {r.name} 은 bag 종류 {r.bag!r} 가 필요하다')
+EOF
 
 {
   echo "date: $(date -Iseconds) row=$ROW bag=$BAG rate=$RATE settle=$SETTLE"
@@ -63,18 +75,37 @@ EOF
   echo "launch: $LAUNCH"
   echo "play_topics: $PLAY_TOPICS"
   echo "spawn_pose: $POSE anchors: ${ANCHORS[*]} pre_launch: ${PRE_LAUNCH[*]}"
+  echo "row_bag: $ROW_BAG oracle: $ORACLE tail_exempt: $TAIL_EXEMPT image: ${IMAGE:-} replay_id: ${REPLAY_ID:-}"
   echo "loadavg: $(cat /proc/loadavg)"
 } > "$OUT/env.txt"
 
 PIDS=()
+LAUNCH_PID=""
 cleanup() {
   for p in "${PIDS[@]}"; do kill -INT "$p" 2>/dev/null || true; done
   for p in "${PIDS[@]}"; do
-    for _ in $(seq 1 20); do kill -0 "$p" 2>/dev/null || break; sleep 1; done
-    kill -KILL "$p" 2>/dev/null || true
+    # 행 런치는 RTAB-Map 이 DB 에 최적화 그래프를 쓰는 동안 기다린다 (60 s), 나머지는 20 s
+    lim=20; [ "$p" = "$LAUNCH_PID" ] && lim=60
+    n=0
+    while [ "$n" -lt "$lim" ] && kill -0 "$p" 2>/dev/null; do sleep 1; n=$((n + 1)); done
+    if kill -0 "$p" 2>/dev/null; then
+      kill -KILL "$p" 2>/dev/null || true
+      [ "$p" = "$LAUNCH_PID" ] && echo "launch_exit: SIGKILL after ${lim}s" >> "$OUT/env.txt"
+    elif [ "$p" = "$LAUNCH_PID" ]; then
+      echo "launch_exit: clean after ${n}s" >> "$OUT/env.txt"
+    fi
   done
 }
 trap cleanup EXIT
+
+# 비대화형 bash 의 `&` 작업은 SIGINT 를 무시(SIG_IGN)한 채 시작하고 그 처분이 exec 로 자식에게 이어진다 — s3 재생에서
+# 행 런치 6 개가 SIGINT 에 반응하지 않고 SIGKILL 됐다 (row.log 에 SIGINT 처리 줄 없음, host_*.log "Killed").
+# [측정 b2-offline tmp/sigtest.sh] `&` 로 띄운 ros2 launch 의 /proc/<pid>/status SigIgn 에 SIGINT 비트가 있다.
+# 처분을 기본으로 되돌린 뒤 exec 한다. **셸 함수로 감싸면 안 된다** — 함수를 `&` 로 부르면 서브셸이 생겨 $! 가 런치가
+# 아니라 그 서브셸을 가리키고 SIGINT 가 런치에 닿지 않는다 (첫 고침이 그래서 실패: launch_exit "SIGKILL after 60s").
+# 배열을 단순 명령으로 실행하면 bash 가 fork 한 자식이 곧바로 python3 → ros2 로 exec 되어 $! = 런치 PID 다
+# [측정 tmp/sigtest2.sh: SIGINT 1 s 뒤 "user interrupted with ctrl-c", 두 노드 "finished cleanly"].
+SIGDFL=(python3 -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])')
 
 for a in "${ANCHORS[@]}"; do
   IFS='|' read -r parent child via <<< "$a"
@@ -91,7 +122,7 @@ done
 i=0
 for pl in "${PRE_LAUNCH[@]}"; do
   # shellcheck disable=SC2086
-  ros2 launch $pl > "$OUT/pre_launch_$i.log" 2>&1 &
+  "${SIGDFL[@]}" ros2 launch $pl > "$OUT/pre_launch_$i.log" 2>&1 &
   PIDS+=($!)
   i=$((i + 1))
 done
@@ -99,8 +130,9 @@ done
 # LIO-SAM save_map 은 $HOME + destination 을 지우고 다시 만든다 → HOME 을 출력 디렉터리로
 export HOME="$OUT"
 # shellcheck disable=SC2086
-ros2 launch $LAUNCH database_path:="$OUT/rtabmap.db" > "$OUT/row.log" 2>&1 &
-PIDS+=($!)
+"${SIGDFL[@]}" ros2 launch $LAUNCH database_path:="$OUT/rtabmap.db" > "$OUT/row.log" 2>&1 &
+LAUNCH_PID=$!
+PIDS+=("$LAUNCH_PID")
 python3 "$SCRIPTS/slam_probe.py" --row "$ROW" --out "$OUT" > "$OUT/probe.log" 2>&1 &
 PROBE=$!
 REC=""
@@ -161,11 +193,12 @@ print(','.join(repr(float(v)) for v in a))" "$OUT/probe.json" "$1"
 for t in $PROC_TOPICS; do
   python3 "$SCRIPTS/bag_tools.py" match --in-bag "$BAG" --in-topic "$INPUT" --out-bag "$OUT/out_bag" \
     --out-topic "$t" --out "$OUT/match_$(echo "$t" | tr '/' '_' | sed 's/^_//').json" \
+    --tail-exempt "$TAIL_EXEMPT" \
     >> "$OUT/match.log" 2>&1 || true
 done
 
 case "$ROW" in
-  rtabmap3d|rtabmap2d|rtabmap3d_*)
+  rtabmap*)
     if [ -f "$OUT/rtabmap.db" ]; then
       rtabmap-export --poses --poses_format 10 --opt 2 --output_dir "$OUT" --output rtabmap \
         "$OUT/rtabmap.db" > "$OUT/export_poses.log" 2>&1 || true
