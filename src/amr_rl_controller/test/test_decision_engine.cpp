@@ -724,3 +724,25 @@ TEST(DecisionEngineSimTime, JitterDoesNotAccumulateIntegrationError)
   }
   EXPECT_NEAR(log.v.back(), 0.5 * log.t_tick.back(), 0.5 * 0.07 + 0.5 * 0.05);
 }
+
+// 틱 간격 추정은 지수 이동 평균 (α 0.2): 따라잡는 1 ms 틱 하나는 추정을 한 걸음(0.2·차)만
+// 움직인다. 결정 경계의
+// 반 틱 판정과 램프의 앞내다봄이 그 틱 하나에 흔들리지 않게 (직전 간격을 그대로 쓰면 0.001 이
+// 된다).
+TEST(DecisionEngineSimTime, TickIntervalEstimateIgnoresSingleOutlier)
+{
+  FakePolicy p(Arm::kB);
+  DecisionEngine eng(EngineConfig{}, &p);
+  double t = 0.0;
+  double est = 0.0;
+  for (int k = 0; k < 60; ++k) {
+    auto in = openInput(t);
+    est = eng.tick(in).dt_est;
+    t += 0.025;
+  }
+  EXPECT_NEAR(est, 0.025, 1e-4);
+  auto in = openInput(t - 0.025 + 0.001);
+  const auto r = eng.tick(in);
+  EXPECT_NEAR(r.tick_dt, 0.001, 1e-9);
+  EXPECT_NEAR(r.dt_est, 0.025 + 0.2 * (0.001 - 0.025), 1e-4);
+}
