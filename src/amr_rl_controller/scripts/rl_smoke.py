@@ -52,20 +52,24 @@ class Smoke(Node):
         super().__init__('rl_smoke')
         self.cmds = []
         self.stats = []
+        self.stats_t = []
         self.clear = []
         self.dyn_clear = []
         self.odom = None
         self.gt = None
         self.r_obs = obstacle_radius
         self.create_subscription(Twist, 'cmd_vel_nav', self.cmds.append, 50)
-        self.create_subscription(Float64MultiArray, 'rl_controller/stats',
-                                 lambda m: self.stats.append(list(m.data)), 50)
+        self.create_subscription(Float64MultiArray, 'rl_controller/stats', self._stats, 50)
         self.create_subscription(Float64, 'sim/footprint_clearance',
                                  lambda m: self.clear.append(m.data), 50)
         self.create_subscription(Odometry, 'odometry/filtered', self._odom, 10)
         self.create_subscription(Odometry, 'ground_truth/odom', self._gt, 10)
         self.create_subscription(TrackedObstacleArray, 'perception/tracked_obstacles',
                                  self._tracks, 10)
+
+    def _stats(self, m):
+        self.stats.append(list(m.data))
+        self.stats_t.append(time.monotonic())
 
     def _odom(self, m):
         self.odom = m
@@ -199,6 +203,27 @@ def main():
     summary['n_valid_cells'] = {'p50': pct([s[8] for s in dec if s[8] >= 0], 50),
                                 'min': pct([s[8] for s in dec if s[8] >= 0], 0)}
     summary['saturated_decisions'] = sum(1 for s in dec if s[9] > 0.5)
+    # 계약 동적 창으로 자른 DWA 틱 누적 (stats 24, 리뷰 반영 뒤 판부터)
+    last = node.stats[-1] if node.stats else []
+    summary['dwa_limited'] = last[24] if len(last) >= 25 else None
+    # 틱당 명령 변화 (stats 10 v, 11 ω). 수신 간격 0.5 s 초과(= 엔진 재동기)는 뺀다.
+    # 'handover' = 직전 틱이 DWA 가 아니고 이번 틱이 DWA (정책·정렬 → DWA 전환)
+    st = []
+    for i in range(1, len(node.stats)):
+        a, b = node.stats[i - 1], node.stats[i]
+        if len(a) < 12 or len(b) < 12 or node.stats_t[i] - node.stats_t[i - 1] > 0.5:
+            continue
+        st.append((abs(b[10] - a[10]), abs(b[11] - a[11]), int(b[4]) == 2,
+                   int(a[4]) != 2 and int(b[4]) == 2))
+    hand = [x for x in st if x[3]]
+    dwa = [x for x in st if x[2]]
+    summary['tick_step'] = {
+        'n': len(st), 'max_dv': max((x[0] for x in st), default=None),
+        'max_dw': max((x[1] for x in st), default=None),
+        'n_dwa': len(dwa), 'max_dv_dwa': max((x[0] for x in dwa), default=None),
+        'max_dw_dwa': max((x[1] for x in dwa), default=None),
+        'n_handover': len(hand), 'max_dv_handover': max((x[0] for x in hand), default=None),
+        'max_dw_handover': max((x[1] for x in hand), default=None)}
     with open(os.path.join(args.out, 'summary.json'), 'w', encoding='utf-8') as f:
         json.dump(summary, f, ensure_ascii=False, indent=1)
     print(json.dumps(summary, ensure_ascii=False))
