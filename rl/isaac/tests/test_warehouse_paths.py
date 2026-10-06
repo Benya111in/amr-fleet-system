@@ -91,3 +91,18 @@ def test_small_pool_properties(geo):
         assert cost[iy, ix].max() < 253                       # 모든 점이 통행 가능 셀
         assert dist[iy[0], ix[0]] >= PA.START_CLEARANCE - 1e-9  # 시작 여유
         assert dist[iy[-1], ix[-1]] >= PA.GOAL_CLEARANCE - 1e-9
+
+
+def test_endpoint_cells_clearance(geo):
+    """시작·목표 후보는 여유 문턱을 지킨다 — 창고 격자에는 문턱 아래 통행 가능 셀이 많아 문턱이 실제로 거른다."""
+    _b, _obb, occ, _o, _r = geo
+    cost, dist = PA.costmap(occ)
+    start, goal = PA.endpoint_cells(cost, dist)
+    d, c = dist.ravel(), cost.ravel()
+    free = c < 253
+    assert np.count_nonzero(free & (d < PA.START_CLEARANCE)) > 10000
+    assert np.count_nonzero(free & (d < PA.GOAL_CLEARANCE)) > 1000
+    assert d[start].min() >= PA.START_CLEARANCE
+    assert np.array_equal(start, np.flatnonzero(d >= PA.START_CLEARANCE))
+    assert d[goal].min() >= PA.GOAL_CLEARANCE and c[goal].max() < 253
+    assert np.array_equal(goal, np.flatnonzero((d >= PA.GOAL_CLEARANCE) & free))

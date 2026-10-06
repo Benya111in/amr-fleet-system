@@ -139,6 +139,18 @@ def resample(poly, spacing=SPACING):
     return np.stack([x, y], axis=1)
 
 
+def endpoint_cells(cost, dist):
+    """
+    경로 끝점 후보 셀 (평탄 색인) → (시작, 목표).
+
+    시작: 장애물까지 거리 ≥ START_CLEARANCE (풋프린트 여유 ≥ 0.5 m, 모든 yaw). 목표: 거리 ≥ GOAL_CLEARANCE
+    이고 통행 가능 (비용 < 253). tests/test_warehouse_paths.py 가 두 문턱을 창고 전체 격자에서 확인한다.
+    """
+    start = np.flatnonzero(dist.ravel() >= START_CLEARANCE)
+    goal = np.flatnonzero((dist.ravel() >= GOAL_CLEARANCE) & (cost.ravel() < 253))
+    return start, goal
+
+
 def build_pool(occ, origin, n_goals=256, starts_per_goal=16, seed=0, smooth=True, log=print):
     """
     경로 풀 생성 — 반환 dict: pts [M, 2] float64 (이어 붙임), offs [n+1] int64, length [n].
@@ -151,8 +163,7 @@ def build_pool(occ, origin, n_goals=256, starts_per_goal=16, seed=0, smooth=True
     cost, dist = costmap(occ)
     ny, nx = cost.shape
     g = reverse_graph(cost)
-    goal_cells = np.flatnonzero((dist.ravel() >= GOAL_CLEARANCE) & (cost.ravel() < 253))
-    start_cells = np.flatnonzero(dist.ravel() >= START_CLEARANCE)
+    start_cells, goal_cells = endpoint_cells(cost, dist)
     paths, lengths, meta = [], [], []
     goals = rng.choice(goal_cells, size=n_goals, replace=False)
     for gi, goal in enumerate(goals):
