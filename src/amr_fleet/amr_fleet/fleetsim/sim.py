@@ -148,6 +148,11 @@ class FleetSim:
         for tc, _ in comp.values():
             bins[min(nb - 1, int(tc // Q_BIN_S))] += 1
         after = sum(1 for tc, _ in comp.values() if tc >= cfg.t_fault)
+        # 제한 평균 지연: 끝나지 않은 작업은 지평선에서 자른다 (완료된 쉬운 작업만 보는 편향을 막는다)
+        rm = [min(comp[t][0] if t in comp else H, H) - c for t, c in self.created.items()]
+        rmean = sum(rm) / len(rm) if rm else None
+        stuck = sum(1 for r in self.robots if r.alive and r.wait_since is not None
+                    and H - r.wait_since > cfg.wait_max_s)
         vz = _agent_stats([r.zone_agent for r in self.robots])
         vt = _agent_stats([r.task_agent for r in self.robots])
         srv = self.server.stats if self.server is not None else {}
@@ -163,6 +168,7 @@ class FleetSim:
             'unfinished': len(self.arrivals) - len(comp),
             'latency_mean': _r(sum(lat) / len(lat)) if lat else None,
             'latency_p50': _r(_pct(lat, 0.5)), 'latency_p90': _r(_pct(lat, 0.9)),
+            'latency_rmean': _r(rmean),
             'q_bins': bins,
             'server_failed_tasks': srv.get('failed_robot_lost', 0),
             'server': dict(srv),
@@ -178,12 +184,17 @@ class FleetSim:
             'msgs_lost': int(sum(self.net.lost.values())),
             'msgs_by_kind': dict(sorted(self.net.sent.items())),
             'first_fallback_s': _r(min(switches)) if switches else None,
+            'stuck_end': stuck,
             'max_speed': _r(max(r.max_speed for r in self.robots), 6),
             'max_decel': _r(max(r.max_decel for r in self.robots), 6),
             'wall_s': _r(wall),
         }
         res.update(orc)
         res['digest'] = self._digest()
+        if cfg.record:
+            o = self.oracle
+            res['trace'] = sorted((round(t, 3), tid, r)
+                                  for tid, v in o.assigns.items() for t, r, _ in v)
         return res
 
     def _digest(self) -> str:
