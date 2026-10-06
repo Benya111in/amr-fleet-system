@@ -7,8 +7,8 @@
 
 하위 명령:
   new-entry   실험 노트 항목 파일을 틀에서 만든다 (docs/research/rl-navigation/notebook/entries/)
-  register    실행 한 건을 실행 목록(runs.jsonl)에 덧붙인다 — 필수 필드를 검사한다
-  index       entries/ 와 runs.jsonl 로 index.md 를 다시 만든다
+  register    실행 한 건을 실행 목록(runs/<agent>.jsonl)에 덧붙인다 — 필수 필드를 검사한다
+  index       entries/ 와 runs/*.jsonl 로 index.md 를 다시 만든다
   check       실행 목록의 필수 필드·경로 존재·중복 id 를 검사한다
 """
 import argparse
@@ -23,7 +23,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, '..', '..'))
 NB = os.path.join(REPO, 'docs', 'research', 'rl-navigation', 'notebook')
 ENTRIES = os.path.join(NB, 'entries')
-RUNS = os.path.join(NB, 'runs.jsonl')
+RUNS_DIR = os.path.join(NB, 'runs')  # 에이전트마다 runs/<agent>.jsonl — 동시 추가가 merge 충돌을 내지 않게
 
 # 실행 목록의 필수 필드. 값이 없으면 등록을 거부한다 — 나중에 출처를 잃지 않으려고.
 REQUIRED = {
@@ -61,7 +61,7 @@ def cmd_new_entry(a):
 
 - 시각: {now:%Y-%m-%d %H:%M} KST · 에이전트: {a.agent} · 단계: {a.stage}
 - 코드: `{_git('rev-parse', '--short', 'HEAD')}` (브랜치 `{_git('rev-parse', '--abbrev-ref', 'HEAD')}`)
-- 관련 실행 id: (runs.jsonl 의 run_id 목록)
+- 관련 실행 id: (runs/<에이전트>.jsonl 의 run_id 목록)
 
 ## 질문
 (이 실험이 답하려는 것 한 문장)
@@ -87,17 +87,20 @@ def cmd_new_entry(a):
 
 
 def _load_runs():
-    if not os.path.exists(RUNS):
-        return []
     out = []
-    with open(RUNS, encoding='utf-8') as f:
-        for i, line in enumerate(f, 1):
-            line = line.strip()
-            if line:
-                try:
-                    out.append(json.loads(line))
-                except json.JSONDecodeError as e:
-                    sys.exit(f'runs.jsonl {i}행 JSON 오류: {e}')
+    if not os.path.isdir(RUNS_DIR):
+        return out
+    for fn in sorted(os.listdir(RUNS_DIR)):
+        if not fn.endswith('.jsonl'):
+            continue
+        with open(os.path.join(RUNS_DIR, fn), encoding='utf-8') as f:
+            for i, line in enumerate(f, 1):
+                line = line.strip()
+                if line:
+                    try:
+                        out.append(json.loads(line))
+                    except json.JSONDecodeError as e:
+                        sys.exit(f'runs/{fn} {i}행 JSON 오류: {e}')
     return out
 
 
@@ -124,8 +127,9 @@ def cmd_register(a):
     if any(r['run_id'] == rec['run_id'] for r in _load_runs()):
         sys.exit(f"run_id 중복: {rec['run_id']}")
     rec.setdefault('registered', dt.datetime.now().isoformat(timespec='seconds'))
-    os.makedirs(NB, exist_ok=True)
-    with open(RUNS, 'a', encoding='utf-8') as f:
+    os.makedirs(RUNS_DIR, exist_ok=True)
+    agent = re.sub(r'[^0-9A-Za-z_-]+', '-', rec['agent'])
+    with open(os.path.join(RUNS_DIR, f'{agent}.jsonl'), 'a', encoding='utf-8') as f:
         f.write(json.dumps(rec, ensure_ascii=False) + '\n')
     print('registered', rec['run_id'])
 
@@ -165,7 +169,7 @@ def cmd_index(a):
         when = f'{parts[0]} {parts[1][:2]}:{parts[1][2:]}' if len(parts) > 2 else ''
         agent = parts[2] if len(parts) > 2 else ''
         lines.append(f'| {when} | {agent} | {title} | [entries/{fn}](entries/{fn}) |')
-    lines += ['', f'## 실행 목록 요약 ({len(runs)} 건, 원본 `runs.jsonl`)', '',
+    lines += ['', f'## 실행 목록 요약 ({len(runs)} 건, 원본 `runs/<에이전트>.jsonl`)', '',
               '| run_id | 단계 | 종류 | 시뮬 | 커밋 | 시드 | 핵심 결과 | 표기 |',
               '|---|---|---|---|---|---|---|---|']
     for r in runs:
