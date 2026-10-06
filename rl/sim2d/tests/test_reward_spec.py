@@ -30,20 +30,17 @@ def make(spec, n=48, seed=5, mode='random', **kw):
     return Sim2DEnv(cfg, log=lambda *a: None)
 
 
-# v1.2.0 = 계약 기본이라 test_env 가 본다
-@pytest.mark.parametrize('name', [n for n in RV.CANDIDATES if n != 'v1.2.0'])
-def test_spec_reward_matches_reference_on_sim_states(name):
-    """env(spec) 보상·종단 = 기준 구현 reward.step(spec) — 무작위 행동, 장애물, 모든 항."""
-    spec = RV.get(name)
-    env = make(name)
-    env.reset()
-    g = torch.Generator(device=DEV)
-    g.manual_seed(3)
+def _compare(env, spec, act, steps):
+    """
+    env.step 의 보상·항·종단을 매 스텝 기준 구현 reward.step(spec) 과 대조한다 (끝난 env 는 리셋 상태라 건너뛴다).
+
+    act(obs, k) → 행동. 돌려주는 값: (비교 수, 진행 항 ≠ 0 수, 힌지 ≠ 0 수).
+    """
+    obs = env.reset()
     n_cmp, seen_prog, seen_dev = 0, 0, 0
-    for k in range(40):
+    for k in range(steps):
         pre = states_from_bstate(env.bstate())
-        u = torch.rand(env.N, 2, device=DEV, generator=g) * 2 - 1
-        obs, rew, term, trunc, info = env.step(u)
+        obs, rew, term, trunc, info = env.step(act(obs, k))
         done = (term | trunc).cpu()
         post = states_from_bstate(env.bstate())
         for j in range(env.N):
@@ -60,9 +57,37 @@ def test_spec_reward_matches_reference_on_sim_states(name):
             seen_prog += abs(r.terms.get('progress', 0.0)) > 1e-6
             seen_dev += r.terms.get('dev', 0.0) != 0.0
             n_cmp += 1
+    return n_cmp, seen_prog, seen_dev
+
+
+# v1.2.0 = 계약 기본이라 test_env 가 본다
+@pytest.mark.parametrize('name', [n for n in RV.CANDIDATES if n != 'v1.2.0'])
+def test_spec_reward_matches_reference_on_sim_states(name):
+    """env(spec) 보상·종단 = 기준 구현 reward.step(spec) — 무작위 행동, 장애물, 모든 항 (힌지는 아래 시험)."""
+    spec = RV.get(name)
+    env = make(name)
+    g = torch.Generator(device=DEV)
+    g.manual_seed(3)
+    n_cmp, seen_prog, _ = _compare(
+        env, spec, lambda obs, k: torch.rand(env.N, 2, device=DEV, generator=g) * 2 - 1, 40)
     assert n_cmp > 1000
     if spec.progress_kappa:
         assert seen_prog > 100
+
+
+@pytest.mark.parametrize('name', ['prog50', 'v1.2.0'])
+def test_dev_hinge_matches_reference_on_drifting_robot(name):
+    """
+    1 m 초과 이탈 힌지를 env 와 기준 구현에서 실제로 대조한다.
+
+    무작위 행동 40 스텝으로는 e > 1 m 에 닿지 않는다 (힌지 ≠ 0 인 비교 0 건, 리뷰 비차단 3). 경로를 벗어나 표류하는
+    스크립트 정책(3 s 추종 → 약 86° 꺾어 0.5 m/s 직진)으로 12 s 굴린다.
+    """
+    spec = RV.get(name)
+    env = make(name, n=32, mode='none', dr=False)
+    n_cmp, _, seen_dev = _compare(env, spec, lambda obs, k: SP.POLICIES['drift'](obs, env.t), 120)
+    assert n_cmp > 2000
+    assert seen_dev > 200, seen_dev
 
 
 @pytest.mark.parametrize('name', ['prog50', 'prog50_st'])
