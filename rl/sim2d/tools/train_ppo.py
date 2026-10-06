@@ -8,6 +8,8 @@ PPO 학습 (비교군 B 또는 C) — 학습 곡선 로그, 주기 평가, 체�
 산출물 (run-dir): config.json, train.jsonl (갱신마다), eval.jsonl, model_*.pt, policy.onnx,
 onnx_check.json.
 평가는 학습 env 와 다른 시드의 별도 env 인스턴스에서 결정론적 정책(B: tanh(μ), C: argmax)으로 한다.
+추정량은 env 마다 첫 에피소드 하나 (ppo.evaluate), 평가마다 같은 시드로 다시 심어 체크포인트끼리 같은
+시작·목표·DR·장애물 배치를 쓴다. --eval-episodes ≤ --eval-envs 면 한 라운드로 끝난다.
 """
 
 import argparse
@@ -55,8 +57,8 @@ def main():
     ap.add_argument('--no-safety', action='store_true')
     ap.add_argument('--no-compile', action='store_true')
     ap.add_argument('--eval-every', type=int, default=20, help='갱신 수')
-    ap.add_argument('--eval-envs', type=int, default=512)
-    ap.add_argument('--eval-episodes', type=int, default=1000)
+    ap.add_argument('--eval-envs', type=int, default=1024)
+    ap.add_argument('--eval-episodes', type=int, default=1024)
     ap.add_argument('--run-dir', required=True)
     ap.add_argument('--git-commit', default='unknown')
     a = ap.parse_args()
@@ -87,14 +89,15 @@ def main():
     def do_eval(upd):
         t0 = time.time()
         tr.model.eval()
-        s = evaluate(tr.model, eval_env, a.eval_episodes)
+        s = evaluate(tr.model, eval_env, a.eval_episodes, seed=a.seed + 1000)
         tr.model.train()
         s.update({'update': upd, 'env_steps': tr.steps, 'eval_s': time.time() - t0})
         fev.write(json.dumps(s) + '\n')
         fev.flush()
         log(f"[eval] upd {upd} steps {tr.steps:.3g}: success {s.get('success', 0):.3f} "
             f"collision {s.get('collision', 0):.3f} stall {s.get('stalled', 0):.3f} "
-            f"timeout {s.get('timeout', 0):.3f} (n={s['episodes']})", flush=True)
+            f"timeout {s.get('timeout', 0):.3f} (n={s['episodes']}, "
+            f"unfinished {s.get('unfinished', 0)})", flush=True)
         torch.save({'model': tr.model.state_dict(), 'steps': tr.steps, 'arm': a.arm},
                    os.path.join(a.run_dir, f'model_{upd:05d}.pt'))
         return s

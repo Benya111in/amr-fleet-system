@@ -1,7 +1,8 @@
 """
 GPU 상주 PPO — 비교군 B(연속 가속도, tanh 가우시안)와 C(마스크 범주형). 계약 §5·§6·§9 와 onnx_io.md 를 따른다.
 
-  - 관측 정규화 running mean/std 는 **모델 안**: x = clip((obs − μ)/√(σ² + 1e-8), −10, 10) (onnx_io.md)
+  - 관측 정규화 running mean/std 는 **모델 안**: x = clip((obs − μ)/√(max(σ², 0.01) + 1e-8), −10, 10)
+    (onnx_io.md 식에 분산 하한을 더했다 — RunningNorm 독스트링)
   - B: z ~ N(μ, σ), u = tanh(z). 버퍼에는 원출력 z 와 log N(z) 를 둔다 — tanh 야코비안은 같은 z 에서
     비율 π_new/π_old 에서 지워진다. 결정론적 행동 = tanh(μ).
   - C: logits − 1e9·(1 − mask) (−inf 대신, onnx_io.md), 마스크를 버퍼에 저장해 갱신 때 같은 마스크로 log-prob·
@@ -438,20 +439,53 @@ def episode_summary(eps):
 
 
 @torch.no_grad()
-def evaluate(model, env, episodes, deterministic=True, max_steps=3000):
-    """정책을 env 에서 episodes 개 에피소드가 끝날 때까지 → 요약 (env 는 평가 전용 인스턴스)."""
-    obs = env.reset()
-    eps, n = [], 0
-    for _ in range(max_steps):
-        mask = env.mask if env.cfg.arm == 'C' else None
-        u, _a, _lp = model.act(obs, mask, deterministic=deterministic)
-        obs, _r, _te, _tr, info = env.step(u)
-        if 'episode' in info:
-            eps.append(info['episode'])
-            n += info['episode']['success'].numel()
-            if n >= episodes:
-                break
-    return episode_summary(eps)
+def evaluate(model, env, episodes, deterministic=True, seed=None, max_steps=None):
+    """
+    정책을 env 에서 에피소드 episodes 개로 평가 → 요약 (env 는 평가 전용 인스턴스).
+
+    추정량: env 마다 **리셋 직후 첫 에피소드 하나만** 센다 — 끝나는 순서와 무관한 iid 표본이다. 먼저 끝난
+    에피소드 k 개를 세면 일찍 끝나는 결말(초반 충돌·짧은 경로)이 과대 표집되고 정체·시간 상한처럼 늦게 끝나는
+    결말이 빠진다 (2026-10-06 리뷰: B_bc3 성공 0.408 대 0.532, 편향 방향은 결말 시간 분포에 따라 바뀐다).
+    episodes > env.N 이면 전체 리셋 라운드를 되풀이하고, 마지막 라운드는 앞쪽 env 몇 개만 센다 (env 는 교환
+    가능하다). seed 를 주면 라운드 r 앞에서 env 난수기를 seed + r 로 다시 심는다 — 같은 seed 로 평가한
+    체크포인트들은 첫 에피소드의 시작·목표·DR·장애물 배치가 같다 (공통 난수).
+    max_steps None 이면 센 env 의 시간 상한 t_limit 로 정한다 (모든 에피소드는 늦어도 시간 상한 truncation 으로
+    끝난다). 그래도 끝나지 않은 env 는 'unfinished' 로 센다 — 0 이 아니면 그 요약은 다시 편향될 수 있다.
+    """
+    eps, unfinished, counted, rnd = [], 0, 0, 0
+    while counted < episodes:
+        k = min(env.N, episodes - counted)
+        if seed is not None:
+            env.gen.manual_seed(int(seed) + rnd)
+        obs = env.reset()
+        dev = obs.device
+        want = torch.arange(env.N, device=dev) < k
+        got = torch.zeros(env.N, dtype=torch.bool, device=dev)
+        limit = max_steps
+        if limit is None:
+            limit = int(math.ceil(float(env.t_limit[want].max()) / C.DT)) + 5
+        for _ in range(limit):
+            mask = env.mask if env.cfg.arm == 'C' else None
+            u, _a, _lp = model.act(obs, mask, deterministic=deterministic)
+            obs, _r, _te, _tr, info = env.step(u)
+            if 'done_idx' in info:
+                di = info['done_idx']
+                new = want[di] & ~got[di]
+                if bool(new.any()):
+                    eps.append({key: v[new] for key, v in info['episode'].items()})
+                got[di] = True
+                if bool((got | ~want).all()):
+                    break
+        unfinished += int((want & ~got).sum())
+        counted += k
+        rnd += 1
+    s = episode_summary(eps)
+    s.update({'estimator': 'first_episode_per_env', 'unfinished': unfinished, 'rounds': rnd,
+              'eval_seed': seed})
+    if s['episodes']:
+        p = s['success']
+        s['success_se'] = math.sqrt(p * (1.0 - p) / s['episodes'])
+    return s
 
 
 def export_onnx(model, path, meta, opset=17):
@@ -498,4 +532,4 @@ class Timer:
 
 
 __all__ = ['ActorCriticB', 'ActorCriticC', 'PPOConfig', 'Trainer', 'evaluate', 'export_onnx',
-           'episode_summary', 'math']
+           'episode_summary']
