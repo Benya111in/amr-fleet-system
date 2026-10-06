@@ -145,9 +145,10 @@ docker run --rm --gpus all --name amr-ai-r2-sim2d-test -v <worktree>:/ws -w /ws/
 ## 보상 v1.2 (2차 물결 r5-reward) — 순수 PPO 학습 가능성 [측정]
 
 `--reward` 로 보상 설계를 고른다 (기본 = 계약 v1.2.0). 같은 예산(순수 PPO, BC 없음, 14.94M env-steps, 2 048 env,
-정적 지도, 평가 시드 4242·n = 2 048, 마지막 반복 정책)에서 평가 성공: v1.1.0 0.000, PBRS 만 고친 pbrs_eff
-0.000·0.000, **v1.2.0(= prog50) 0.983·0.948**, prog50_st 0.992·0.977, prog25 0.198·0.000, 비교군 C(prog50) 0.937,
-**동적 장애물(mixed 0–4, prog50) 0.000 — 제자리 회전으로 굳는다**. 표·곡선·착취 표와 이유는
+정적 지도, 평가 시드 4242·n = 2 048, 마지막 반복 정책)에서 평가 성공: **v1.2.0(= prog50) 11 시드 중 10 개
+0.948–0.990, 시드 2 는 0.000 (목표 약 2 m 앞 "직전 정지" 끌개)**, **동적 장애물(mixed 0–4, prog50) 0.000 — 제자리
+회전으로 굳는다** (1 run), v1.1.0 0.000, PBRS 만 고친 pbrs_eff 0.000·0.000, prog25 0.198·0.000, prog50_st
+0.992·0.977, 비교군 C(prog50) 0.937 (1 run). 표·곡선·착취 표와 이유는
 [`docs/research/rl-navigation/reward_v12.md`](../../docs/research/rl-navigation/reward_v12.md), 원자료
 `/home/CAPYI_AI/runs/r5-reward/g2/`. 위 1차 물결 표는 v1.1.0 보상으로 학습한 것이다.
 
