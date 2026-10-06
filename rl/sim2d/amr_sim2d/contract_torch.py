@@ -631,7 +631,7 @@ def reward_step(d_arc_pre, d_arc_post, e_post, goal_dist_post, v_meas_post, a_pr
                                  zero),
     }
     if spec.progress_kappa:
-        terms['progress'] = -spec.progress_kappa * (1.0 - C.GAMMA) * d_post
+        terms['progress'] = spec.progress_kappa * (d_pre - d_post)
     if spec.dev_hinge:
         terms['dev'] = torch.where(e_post > C.DEV_LIMIT, torch.full_like(zero, -spec.dev_hinge),
                                    zero)

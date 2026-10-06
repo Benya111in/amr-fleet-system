@@ -26,8 +26,10 @@ class RewardSpec:
 
     phi_dist: 'arc' = d_arc (v1.1.0), 'eff' = max(d_arc, 목표 직선거리) — §5.2 (3) 의 d_goal 과 같은 정의.
       d_arc 는 경로 끝 너머에서 0 으로 평평하므로 'eff' 는 끝점 너머의 이탈도 거리로 센다.
-    progress_kappa: κ_b. 기저 거리 비용 −κ_b·(1−γ)·d(s') 를 매 스텝 더한다. PBRS 가 아니다 (최적 정책을 바꾼다).
-      κ_b = κ 이면 PBRS 항과 합쳐 진행량 κ(d − d') 와 같다 (§6.1 의 분해).
+    progress_kappa: κ_b. 기저 진행 효용 κ_b·(d(s) − d(s')) 를 매 스텝(종단 스텝 포함, 실제 d(s')) 더한다.
+      PBRS 가 아니다 — §6.1 분해대로 PBRS(κ_b) − κ_b(1−γ)d' 이므로 최적 정책을 바꾼다 (끝나지 않는 궤적도
+      진행만큼 값이 오른다). 무할인 합은 κ_b·(d₀ − d_끝) 으로 유계라 배회·시간 끌기로 쌓이지 않고,
+      종단 스텝에서 PBRS 처럼 κ_b·d 를 돌려주지 않으므로 멀리서의 충돌·정체는 남은 진행 효용을 잃는다.
     dev_hinge: −q_d·1[e > DEV_LIMIT] — 이탈 구간 여부와 무관하게 1 m 초과 이탈에 건다.
     stall_terminal: 정체(N:86-87)를 truncation 대신 실패 종단으로 (Φ' = 0, −stall_penalty).
     """
@@ -162,7 +164,8 @@ def step(pre, post, action_exec, collision, safety_pairs=(), spec=SPEC_V110, sta
         'collision': -spec.collision_penalty if collision else 0.0,
     }
     if spec.progress_kappa:
-        terms['progress'] = -spec.progress_kappa * (1.0 - C.GAMMA) * progress_distance(post, spec)
+        terms['progress'] = spec.progress_kappa * (progress_distance(pre, spec) -
+                                                   progress_distance(post, spec))
     if spec.dev_hinge:
         terms['dev'] = -spec.dev_hinge if e > C.DEV_LIMIT else 0.0
     if spec.stall_terminal:
