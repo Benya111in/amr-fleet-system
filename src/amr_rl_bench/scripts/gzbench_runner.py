@@ -539,7 +539,10 @@ def main():
     ap.add_argument('--map-frame', default='map')
     ap.add_argument('--base-frame', default='base_footprint')
     ap.add_argument('--probe', default='', help='쉼표 목록: scan,step')
-    ap.add_argument('--probe-pose', default='', help='x,y,yaw (탐침 자세)')
+    ap.add_argument('--probe-scan-pose', default='0.0,0.0,0.0',
+                    help='x,y,yaw — 스캔 탐침 자세 (구조물이 둘러싼 통로, 기본 랙 B-C 통로 중앙)')
+    ap.add_argument('--probe-step-pose', default='-15.9,-9.2,0.0',
+                    help='x,y,yaw — 계단 응답 탐침 자세 (정적 상자와 10.8 m 떨어진 홀, 앞 5 m 넘게 빔)')
     args, ros_args = ap.parse_known_args()
     rclpy.init(args=ros_args)
     node = Bench(args)
@@ -563,13 +566,12 @@ def main():
     if not node.nav.wait_for_server(timeout_sec=120.0):
         say('navigate_to_pose 서버가 없다 — 끝')
         return
-    if args.probe:
-        pose = [float(v) for v in args.probe_pose.split(',')] if args.probe_pose else \
-            todo[0]['start']
-        if 'scan' in args.probe:
-            say(f'탐침 scan @ {pose}: {node.probe_scan(args.out, pose)}')
-        if 'step' in args.probe:
-            say(f'탐침 step @ {pose}: {node.probe_step(args.out, pose)}')
+    if 'scan' in args.probe:
+        pose = [float(v) for v in args.probe_scan_pose.split(',')]
+        say(f'탐침 scan @ {pose}: {node.probe_scan(args.out, pose)}')
+    if 'step' in args.probe:
+        pose = [float(v) for v in args.probe_step_pose.split(',')]
+        say(f'탐침 step @ {pose}: {node.probe_step(args.out, pose)}')
     seen = {}
     for k, sc in enumerate(todo):
         idx = args.start + k
