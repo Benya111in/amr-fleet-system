@@ -1,0 +1,19 @@
+# RLController 파라미터 기본값 (참고용 — 런치가 nav2_params.yaml 에 <controller_id>.rl 블록으로 넣는다).
+# 값의 근거: rl/contract/contract.md §3 (결정 0.1 s, 20 Hz 틱), onnx_io.md (모델 검증·폴백).
+rl:
+  model_path: ""              # ONNX 경로 (필수). 커밋하지 않는다 (.gitignore *.onnx)
+  mode: "C"                   # B = 가속도 정책, C = DWA 판정 마스크 위 후보 선택
+  intra_op_threads: 1         # ORT 스레드 (공유 서버: 1)
+  max_inference_ms: 25.0      # 이보다 오래 걸린 추론은 버리고 그 결정 주기를 DWA 로 (20 Hz 예산 50 ms 의 절반)
+  hysteresis_beta: 0.0        # C: 직전 셀 logit 가산점 (contract.md §5.2, 기본 0)
+  require_metadata: true      # onnx_io.md 필수 메타데이터가 없으면 configure 실패
+  dwa_fallback: true          # 정책을 쓸 수 없는 주기에 내부 DWA (false 면 계약 제동 규칙)
+  scan_topic: scan_filtered
+  scan_timeout: 0.3           # [s] R:143 LiDAR 고장 타임아웃과 같은 값 — 넘으면 입력 무효 → DWA
+  track_timeout: 0.5          # [s] N:348
+  profiler_timeout: 0.2       # [s] velocity_profiler/state 가 이보다 오래되면 a_meas = 0
+  profiler_rate: 50.0         # [Hz] V:6 (ω_ref 차분 주기)
+  goal_reset_distance: 0.25   # [m] 경로 끝이 이만큼 바뀌면 새 목표 (은닉·이탈 상태 0)
+  transform_tolerance: 0.2
+  yaw_goal_tolerance: 0.05    # [rad] N:99 제자리 정렬 목표
+  stats_topic: rl_controller/stats

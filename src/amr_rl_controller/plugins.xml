@@ -1,0 +1,5 @@
+<library path="amr_rl_controller">
+  <class type="amr_rl_controller::RLController" base_class_type="nav2_core::Controller">
+    <description>학습된 RL 정책(ONNX Runtime C++)을 실행하는 제어기: 모드 B(가속도 정책)·C(DWA 판정 하드 마스크 위 후보 선택), 정책을 쓸 수 없으면 DWA 폴백</description>
+  </class>
+</library>
