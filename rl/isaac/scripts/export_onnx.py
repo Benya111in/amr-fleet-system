@@ -6,8 +6,14 @@
     docker run --rm -v <wt>:/ws -v $R:$R -w /ws amr-ai/rl:0.3 \
         python3 rl/isaac/scripts/export_onnx.py --run $R/train/<run>
 
+메타데이터는 학습 기록에서 만든다 (policy_export.onnx_metadata): algo·train_steps 는 정책 종류(파일 이름이
+*_bc 이면 BC, 아니면 최종)·summary.json·bc.json 에서, 라그랑주 사실(lagrange_final·전부 0 이 된 반복·d₁·d₁ 이
+계약 §7.2 훑기 값인지)은 summary.json·curve.jsonl 에서. --algo 로 덮어쓸 수 있지만 끝 λ 가 전부 0 인데 라그랑주를
+주장하면 모델 파일을 쓰지 않고 rc 1 (algo_claim_consistent).
+
 검사 (하나라도 어긋나면 rc 1):
   - 입력 obs [batch, 291] float32, 출력 action·mu·log_std [batch, 2] float32, opset 17, 필수 메타데이터
+  - algo 문자열이 학습 기록과 모순되지 않는다 (algo_claim_consistent)
   - ORT(CPU) 출력 = torch PolicyB 출력 (1e-5): golden decision 관측 17 개, 학습 env 의 실제 관측
     (eval_policy.py 가 남긴 obs_batch.npz, 있으면), 표준정규 무작위 관측 256 개, 배치 1·N 모두
   - Isaac 안(torch 2.7, CUDA)에서 계산한 PolicyB 출력과 ORT 출력 차이 (obs_batch.npz 의 out) — 보고만
@@ -39,7 +45,8 @@ def main():
     ap.add_argument('--run', required=True)
     ap.add_argument('--policy', default='policy_final.pt')
     ap.add_argument('--obs_batch', default=None)
-    ap.add_argument('--algo', default='PPO (rsl_rl 3.1.2)')
+    ap.add_argument('--algo', default=None, help='없으면 학습 기록에서 만든다 (권장)')
+    ap.add_argument('--kind', default='auto', choices=['auto', 'bc', 'final'])
     a = ap.parse_args()
     import onnx
     import onnxruntime as ort
@@ -53,17 +60,30 @@ def main():
     sp = os.path.join(a.run, 'summary.json')
     if os.path.exists(sp):
         summ = json.load(open(sp))
-    meta = {'contract_version': C.CONTRACT_VERSION, 'arm': 'B', 'obs_dim': '291', 'dt': '0.1',
-            'normalization': 'inside', 'algo': a.algo,
-            'seed': str(summ.get('seed', '')), 'git_commit': head,
-            'train_steps': str(summ.get('env_steps', '')), 'simulator': 'isaac',
-            'normalization_var_floor': str(PE.VAR_FLOOR)}
+    rows = []
+    cp = os.path.join(a.run, 'curve.jsonl')
+    if os.path.exists(cp):
+        rows = [json.loads(line) for line in open(cp) if line.strip()]
+    bc_info = {}
+    bp = os.path.join(a.run, 'bc.json')
+    if os.path.exists(bp):
+        bc_info = json.load(open(bp))
     stem = os.path.splitext(a.policy)[0]
+    kind = a.kind if a.kind != 'auto' else ('bc' if stem.endswith('_bc') else 'final')
+    facts = PE.lagrange_facts(summ, rows)
+    meta = PE.onnx_metadata(kind, summ, facts, head, C.CONTRACT_VERSION, algo=a.algo,
+                            bc_info=bc_info)
+    claim_ok = kind == 'bc' or PE.algo_claim_ok(meta['algo'], facts)
+    if not claim_ok:
+        # 틀린 algo 를 단 모델 파일을 남기지 않는다
+        print('ONNX_CHECK ' + json.dumps({'fails': ['algo_claim_consistent'], 'algo': meta['algo'],
+                                          'lagrange_final': facts['final']}))
+        return 1
     path = os.path.join(a.run, f'{stem}.onnx')
     PE.export_onnx(pol, path, meta)
     m = onnx.load(path)
     opset = [o.version for o in m.opset_import if o.domain in ('', 'ai.onnx')]
-    res = {'onnx': path, 'opset': opset,
+    res = {'onnx': path, 'kind': kind, 'opset': opset,
            'metadata': {p.key: p.value for p in m.metadata_props}, 'checks': {}}
     fails = []
 
@@ -82,6 +102,9 @@ def main():
     chk('opset17', res['opset'] == [PE.OPSET], res['opset'])
     for k in ('contract_version', 'arm', 'obs_dim', 'dt', 'normalization'):
         chk(f'meta_{k}', k in res['metadata'])
+    chk('algo_claim_consistent', claim_ok,
+        {'algo': meta['algo'], 'lagrange_final': facts['final'],
+         'all_zero_from_iteration': facts['all_zero_from_iteration']})
 
     sets = {}
     gobs = []

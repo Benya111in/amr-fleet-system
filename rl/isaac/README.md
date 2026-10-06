@@ -2,7 +2,8 @@
 
 명세 5장 보너스 1 (`31_*.md` 323행): "Isaac Sim의 강화학습 환경을 활용하여 PPO/SAC 기반 내비게이션 정책을
 학습시킨다." 이 디렉터리는 그 Isaac 트랙이다. 관측·행동·보상·비용·종료는 `rl/contract/` 계약 v1.1.0 을 따른다.
-결과 수치와 실패 기록은 `/home/CAPYI_AI/logs/agents/r1-isaac/REPORT.md` 에 있다 (이 문서는 구조와 사용법).
+결과 수치·실패 기록의 원자료는 `/home/CAPYI_AI/runs/r1-isaac/` 에 있다 (커밋하지 않는다 — `train/<run>/` 의
+`curve.jsonl`·`summary.json`·`eval_heldout_*`). 이 문서는 구조와 사용법이다.
 
 ## 구성
 
@@ -32,12 +33,16 @@ docker run --rm -v $WT:/ws -v $R:$R -w /ws amr-ai/rl:0.3 python3 rl/isaac/script
 rl/isaac/run_isaac.sh smoke  rl/isaac/scripts/smoke_env.py --num_envs 256
 rl/isaac/run_isaac.sh golden rl/isaac/scripts/check_golden_in_sim.py
 # 4) 학습 → 평가 → ONNX
-# 지금 쓰는 조합: 전문가 시연 BC 예열 → 정규화 통계 고정 → critic 예열 20 반복 → PPO(고정 lr 1e-4) + 라그랑주
+# ppo_b_bc_fz 의 조합: 전문가 시연 BC 예열 → 정규화 통계 고정 → critic 예열 20 반복 → PPO(고정 lr 1e-4).
+# --lagrange 의 마지막 값이 개입 예산 d₁ 이다. 아래 5.0 은 계약 §7.2 의 훑기 값 {0.02, 0.05, 0.1, 0.2} 밖이라
+# λ 가 반복 60 부터 전부 0 이 됐다 — 이 조합의 PPO 는 사실상 제약이 없다 (아래 「계약과 다르게」 10).
 rl/isaac/run_isaac.sh train rl/isaac/scripts/train_ppo.py --num_envs 2048 --iterations 300 --run <run> \
     --bc_steps 200 --critic_warmup 20 --init_std 0.25 --lr 1e-4 --schedule fixed --entropy 0 \
     --lagrange 0,0.05,0.05,0.05,0.005/0.5,0.01,0.01,0.01,0.001/5.0
 rl/isaac/run_isaac.sh eval rl/isaac/scripts/eval_policy.py --policy $R/train/<run>/policy_final.pt
-docker run --rm -v $WT:/ws -v $R:$R -w /ws amr-ai/rl:0.3 python3 rl/isaac/scripts/export_onnx.py --run $R/train/<run>
+# algo·train_steps·라그랑주 사실은 summary.json·curve.jsonl·bc.json 에서 메타데이터로 옮긴다 (--algo 를 주지 않는다)
+docker run --rm -v $WT:/ws -v $R:$R -w /ws amr-ai/rl:0.3 python3 rl/isaac/scripts/export_onnx.py --run $R/train/<run> \
+    --obs_batch $R/train/<run>/eval_heldout_final/obs_batch.npz
 ```
 
 앱 종료(`app.close()`)가 CPU 100 % 로 멈춘 적이 있어 모든 Isaac 스크립트는 끝에서 `os._exit` 한다.
@@ -71,10 +76,31 @@ raw 행동 → `u = tanh(raw)` → `integrate_b` (ray 클램프) → 결정 주�
    (`train_ppo.ContractNormalization`). 분산 하한 1e-2 를 두었고 ONNX 에도 같은 σ² 를 넣는다.
 9. **학습 전용 커리큘럼** — 경로 길이 상한(구조 파라미터, 20 % 는 전체 풀 균일, contract §10)과 **v_cap**
    (관측된다; 평가·비교는 v_cap = 1.0). 둘 다 계약에 없는 [설계 선택]이고, 처음부터의 PPO 에서는 성공을 만들지
-   못했다 (REPORT §4). 지금 조합은 쓰지 않는다.
-10. **PPO-Lagrangian (보상 벌점형)** — 계약 보상만으로는 추종 벌점이 이탈 구간(e > 0.30 m) 밖에서만 걸려 경로에서
-   멀리 벗어나는 쪽이 유리하다. 계약 §7 의 비용 5 채널을 PPO 보상에서 λ·c 로 빼고 λ 를 쌍대 상승으로 갱신한다
-   (단일 critic). 개입 예산 d₁ 은 계약이 미정이라 5.0/에피소드로 둔 [설계 선택]이다. 기록하는 반환은 계약 보상이다.
+   못했다 (`train/ppo_b_s0_cur`·`ppo_b_s0_cv`·`ppo_b_s0_cv_ent`·`ppo_b_lag_a`·`ppo_b_lag_b` 의 `curve.jsonl`:
+   60–100 반복에서 성공률 최대 0.1 %). 지금 조합은 쓰지 않는다.
+10. **PPO-Lagrangian (보상 벌점형) — `ppo_b_bc_fz` 에서는 승수가 0 으로 꺼져 사실상 제약 없는 PPO 였다.**
+   계약 보상만으로는 추종 벌점이 이탈 구간(e > 0.30 m) 밖에서만 걸려 경로에서 멀리 벗어나는 쪽이 유리하다. 그래서
+   계약 §7 의 비용 5 채널을 PPO 보상에서 λ·c 로 빼고, 10 반복마다 λ ← max(0, λ + η·clip((J − d)/d, −1, 5)) 로
+   갱신하게 만들었다 (단일 critic, J = 끝난 에피소드의 비할인 비용 합 평균). 기록하는 반환은 계약 보상이다.
+   - **계약과 다르게 한 것**: 개입 예산 d₁ 을 5.0/에피소드로 두었다. 계약 §7.2 는 d₁ 이 미측정인 동안
+     {0.02, 0.05, 0.1, 0.2} 를 훑어 (개입, 주행시간, 성공률) Pareto 곡선과 마지막 λ 를 보고하라고 정해 두었다.
+     5.0 은 그 범위 밖이고 훑기도 하지 않았다. 처음 이 문서는 "계약이 미정" 이라고 적었는데 틀린 말이었다.
+   - **무슨 일이 있었나** [측정, `train/ppo_b_bc_fz/curve.jsonl`·`summary.json`]: 개입 비용(0.02–0.31/에피소드)이
+     늘 d₁ 보다 훨씬 작아 λ₁ 은 줄기만 했다. 다른 채널도 비용이 예산(충돌 0.02·이탈 5·복귀 10·CTE 50)보다 작아
+     (충돌·이탈·복귀 0, CTE 1.06–1.75) 같은 방향이었다. λ 는 반복 50 기록에 [0, 0.00033, 0, 0, 0.00012],
+     **반복 60–300 기록에 전부 0** 이고 `lagrange_final` 도 전부 0 이다. 곧 반복 61–300 은 λ = 0 으로 학습했다.
+     **최종 정책 = BC 예열 + 사실상 제약 없는 PPO.**
+   - **그 대가** [측정]: 학습 중 개입 비용이 반복 10 의 0.023/에피소드에서 반복 230–300 의 0.18–0.31/에피소드로
+     올랐다 (기록 8 개 중 7 개가 계약 임시 범위 상한 0.2 초과). held-out 평가(경로 풀 seed 1, 명목 동역학,
+     512 env, 끝난 에피소드 2 059·2 095 개)에서 BC → PPO 는 평균 에피소드 길이 28.1 s → 23.4 s (−17 %) 를 얻은 대신
+     개입 비용이 0.038 → 0.112/에피소드 (약 3 배) 가 됐다 (리뷰어 재실행 0.040 → 0.130). 성공률 98.8 % → 98.5 %,
+     충돌 0 → 0. 시간 이득은 이 개입 증가와 함께 읽어야 한다.
+   - **ONNX 메타데이터**: 처음 내보낸 `policy_final.onnx` 의 `algo` 는 "Lagrangian penalty" 라고 적었다 — 틀렸다.
+     이제 `export_onnx.py` 가 algo 를 학습 기록에서 만들고(`policy_export.describe_algo`), `lagrange_final`·
+     `lagrange_all_zero_from_iteration`·`intervention_budget_d1`·`intervention_budget_in_contract_sweep` 을
+     메타데이터에 넣는다. 끝 λ 가 전부 0 인데 algo 가 라그랑주를 주장하면 검사 `algo_claim_consistent` 가 실패한다(rc 1).
+     BC 정책은 `train_steps` = 0 (RL 단계 없음) 과 `bc_samples` 를 적는다 (처음에는 PPO 단계 수를 적었다).
+   - **다음 물결**: d₁ ∈ {0.02, 0.05, 0.1, 0.2} 훑기와 마지막 λ 보고 (계약 §7.2), 승수 갱신은 PID Lagrangian 권장.
 11. **BC 예열** — 특권 정보 전문가(`amr_isaac/expert.py`, 1.0 m 앞 경로점 순수 추종 + 목표 거리 비례 감속)
    시연으로 actor 를 tanh 공간 MSE 로 맞춘 뒤 PPO 로 미세조정한다. **BC 뒤 정규화 통계를 고정한다** — 고정하지
    않으면 actor 를 얼린 채로도 롤아웃 통계 이동만으로 성공률이 94.6 % → 5.3 % 로 무너졌다.

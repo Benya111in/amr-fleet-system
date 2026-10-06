@@ -2,6 +2,7 @@
 비교군 B 정책의 계약형 모듈과 ONNX 내보내기 (rl/contract/onnx_io.md).
 
 torch 만 쓴다 (rsl_rl·Isaac 불필요) — rsl_rl 체크포인트의 state dict 에서 같은 계산을 다시 짠다.
+메타데이터(algo·train_steps·라그랑주 사실)는 학습 기록에서 만든다 (onnx_metadata, tests/test_policy_meta.py).
   x = clip((obs − μ)/√(σ² + 1e-8), −10, 10)    (σ² = max(학습 분산, VAR_FLOOR) — 학습과 같은 값)
   mu = actor_mlp(x), action = tanh(mu), log_std = 학습 매개변수 (상태 무관, 배치로 펼침)
 """
@@ -84,3 +85,79 @@ def export_onnx(policy, path, metadata):
     onnx.checker.check_model(m)
     onnx.save(m, path)
     return path
+
+
+# ======================================================================== 메타데이터 (사실 그대로)
+CONTRACT_D1_SWEEP = (0.02, 0.05, 0.1, 0.2)   # contract §7.2: d₁ 미측정 동안 훑을 개입 예산
+RSL_RL = 'rsl_rl 3.1.2'
+
+
+def lagrange_facts(summary, curve_rows):
+    """
+    학습 summary.json·curve.jsonl 행 → 라그랑주 승수가 실제로 무엇을 했는지.
+
+    lagrange_all_zero_from_iteration = 그 기록부터 끝까지 λ 가 전부 0 인 첫 기록의 반복 번호
+    (끝 λ 가 0 이 아니면 None). 반환 dict 의 키: configured, spec, d1, d1_in_contract_sweep, final,
+    active_at_end, all_zero_from_iteration.
+    """
+    spec = summary.get('lagrange') or ''
+    final = [float(x) for x in summary.get('lagrange_final') or []]
+    d1 = float(spec.split('/')[2]) if spec else None
+    zero_from = None
+    for r in sorted(curve_rows, key=lambda r: r['iteration']):
+        if all(float(x) == 0.0 for x in r.get('lagrange') or [1.0]):
+            zero_from = r['iteration'] if zero_from is None else zero_from
+        else:
+            zero_from = None
+    return {'configured': bool(spec), 'spec': spec, 'd1': d1,
+            'd1_in_contract_sweep': d1 is not None and any(
+                abs(d1 - x) < 1e-12 for x in CONTRACT_D1_SWEEP),
+            'final': final, 'active_at_end': any(x > 0.0 for x in final),
+            'all_zero_from_iteration': zero_from}
+
+
+def describe_algo(kind, summary, facts, bc_info=None):
+    """정책 종류(bc·final)와 학습 기록에서 ONNX algo 문자열을 만든다 — 꺼진 라그랑주를 주장하지 않는다."""
+    if kind == 'bc':
+        n = (bc_info or {}).get('bc_samples', '?')
+        return f'BC (expert pure pursuit, {n} samples), no RL fine-tuning'
+    pre = 'BC warm start + ' if summary.get('bc_steps', 0) > 0 else ''
+    if not facts['configured']:
+        return pre + f'PPO ({RSL_RL})'
+    where = 'in' if facts['d1_in_contract_sweep'] else 'outside'
+    if facts['active_at_end']:
+        return pre + (f'PPO-Lagrangian ({RSL_RL}, d1={facts["d1"]:g}, {where} contract 7.2 sweep,'
+                      f' final lambda {facts["final"]})')
+    return pre + (f'PPO ({RSL_RL}); Lagrangian dual ascent configured (d1={facts["d1"]:g},'
+                  f' {where} contract 7.2 sweep) but all multipliers 0 from iteration'
+                  f' {facts["all_zero_from_iteration"]} = effectively unconstrained PPO')
+
+
+def algo_claim_ok(algo, facts):
+    """알고리즘 문자열이 라그랑주를 주장하면 끝 λ 가 0 이 아니거나 '제약 없음'을 함께 밝혀야 한다."""
+    a = algo.lower()
+    if 'lagrang' not in a:
+        return True
+    return facts['active_at_end'] or 'unconstrained' in a
+
+
+def onnx_metadata(kind, summary, facts, head, contract_version, algo=None, bc_info=None):
+    """onnx_io.md 필수·권장 키 + 학습 사실 (모두 문자열)."""
+    meta = {'contract_version': contract_version, 'arm': 'B', 'obs_dim': '291', 'dt': '0.1',
+            'normalization': 'inside',
+            'algo': algo or describe_algo(kind, summary, facts, bc_info),
+            'seed': str(summary.get('seed', '')), 'git_commit': head, 'simulator': 'isaac',
+            'normalization_var_floor': str(VAR_FLOOR)}
+    if kind == 'bc':
+        meta['train_steps'] = '0'
+        meta['bc_samples'] = str((bc_info or {}).get('bc_samples', ''))
+        return meta
+    meta['train_steps'] = str(summary.get('env_steps', ''))
+    if facts['configured']:
+        meta['lagrange_spec'] = facts['spec']
+        meta['lagrange_final'] = json.dumps(facts['final'])
+        z = facts['all_zero_from_iteration']
+        meta['lagrange_all_zero_from_iteration'] = '' if z is None else str(z)
+        meta['intervention_budget_d1'] = f'{facts["d1"]:g}'
+        meta['intervention_budget_in_contract_sweep'] = str(facts['d1_in_contract_sweep']).lower()
+    return meta
