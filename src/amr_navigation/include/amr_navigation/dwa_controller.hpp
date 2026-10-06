@@ -101,6 +101,14 @@ public:
     nav2_core::GoalChecker * goal_checker) override;
   void setSpeedLimit(const double & speed_limit, const bool & percentage) override;
 
+  /// 이 DWA 를 폴백으로 쓰는 외부 제어기(amr_rl_controller::RLController)가 그 사이 로봇에 실제로
+  /// 낸 명령 (v, w) 를 알린다 → 다음 computeVelocityCommands 의 동적 창 중심(직전 명령)이 "DWA 가
+  /// 직전에 스스로 (v, w) 를 낸 것" 과 같아진다 (core::DwaPlanner::windowCenter, 진동 비용).
+  /// 바꾸는 것은 has_last_·v_last_·w_last_ 뿐이다 — 게이트·양보 기억(gate_state_, gate_hist_,
+  /// yield_limit_last_ …)은 그대로 (activate() 는 게이트 상태까지 지운다). 비유한 값이면 직전
+  /// 명령을 잊어 창 중심을 측정 속도로 되돌린다. 부르지 않으면 기존 동작과 같다.
+  void syncLastCommand(double v, double w);
+
 private:
   void onObstacles(const amr_msgs::msg::TrackedObstacleArray::SharedPtr msg);
   void onPayload(const std_msgs::msg::Float32::SharedPtr msg);

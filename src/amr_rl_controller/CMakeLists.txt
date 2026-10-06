@@ -153,6 +153,20 @@ if(BUILD_TESTING)
   target_link_libraries(test_decision_engine amr_rl_core nlohmann_json::nlohmann_json)
   target_compile_definitions(test_decision_engine PRIVATE RL_CONTRACT_DIR="${RL_CONTRACT_DIR}")
 
+  # DWAController::syncLastCommand 시험 — 소스·기준 비트 기록은 amr_navigation/test 에 있다. 그 패키지의
+  # CMakeLists 는 gtest 를 이름 목록으로 등록하는데 b1-plugin 소유가 아니어서 여기서 빌드한다
+  # (소유자에게 등록을 요청했다 — 등록되면 이 블록을 지운다).
+  get_filename_component(AMR_NAV_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../amr_navigation" ABSOLUTE)
+  get_filename_component(REPO_CONFIG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../config" ABSOLUTE)
+  ament_add_gtest(test_dwa_sync ${AMR_NAV_SRC}/test/test_dwa_sync.cpp TIMEOUT 300)
+  target_link_libraries(test_dwa_sync amr_navigation::amr_navigation_plugins
+    amr_navigation::amr_navigation_core nlohmann_json::nlohmann_json)
+  ament_target_dependencies(test_dwa_sync ${ROS_DEPS})
+  target_compile_definitions(test_dwa_sync PRIVATE
+    NAV2_PARAMS_FILE="${AMR_NAV_SRC}/config/nav2_params.yaml"
+    ROBOT_PARAMS_FILE="${REPO_CONFIG_DIR}/robot_params.yaml"
+    DWA_SYNC_REFERENCE_FILE="${AMR_NAV_SRC}/test/test_dwa_sync_reference.json")
+
   find_package(ament_cmake_pytest REQUIRED)
   # 계약 상수 대조·nav2 파라미터 덧씌우기 (test/test_*.py 자동 수집)
   ament_add_pytest_test(amr_rl_controller_pytest test
