@@ -51,8 +51,10 @@
 
 **출처 공백** [측정, 실행 목록 집계]
 - 커밋 미상 11 건: r1 HEAD 없는 7 (`test0`, `scale_1024`, `scale_2048`, `bctest`, `smoke_256`, `smoke_2048`, `golden_in_sim_first`), r1 1차 평가 코드 3, r3 빈 HEAD 1.
-- 커밋 **추정** 1 건 (리뷰 반영으로 밝힘): `W1_r0_crosscheck_cpp_698585d` — 로그 HEAD 줄이 비어 있어 앞 `HEAD.txt` 와 커밋 시각으로 추정 (#22).
-- 미커밋 변경 있음 16 건, 미커밋 여부 미상 43 건 (HEAD 파일에 diff 기록이 없는 1차 물결 run 대부분). 2a·2b 학습은 모두 git archive 사본이라 깨끗.
+- 커밋 **추정** 3 건: `W1_r0_crosscheck_cpp_698585d`(로그 HEAD 줄이 비어 앞 `HEAD.txt` 와 커밋 시각으로 추정, #22), `W2b_r6_g2_paired_eval`(paired 실행 사본의 HEAD 미기록 — g2 ④ run 코드로 추정), `W1_r2_fix_mutation_E0_old_evaluate`(E0 자체 HEAD 미기록 — a6660f3 으로 추정).
+- 커밋을 WAVE·REVIEW **본문**에서 가져온 레코드 9 건: `W1_r1_smoke_256_review_fix`, `W1_r0_mutation_698585d`, `W1_r0_review_recheck_mutation_b1eb0c7`, `W1_r1_review_mutation_f8feb56`, `W1_r3_mutation_run1_e085271`, `W1_r3_mutation_run2_d5417a0`, `W2b_r6_review_mutation_3b5657c`, `W2b_r7_mutation_bbdbe2f`, `W2b_r7_review_mutation_ab8b16f`. 이것은 사전 등록 규칙(HEAD 파일 → config git_commit, 없으면 `unknown-<이유>`)을 **넓힌 것**이다.
+- (2026-10-06 23:05 오케스트레이터 정정 — 재확인 리뷰 지적. 처음 판은 "커밋 추정 1 건" 이었다.)
+- 미커밋 변경 있음 16 건, 미커밋 여부 미상 43 건 (HEAD 파일에 diff 기록이 없는 1차 물결 run 대부분). 2a·2b 의 판정 학습·평가는 git archive 사본 + HEAD 파일이라 깨끗하다. 단 2b 학습 스모크 5 건(`W2b_r6_smoke_train_smk1`–`4`, `W2b_r7_smoke_train`)은 후보 코드 커밋 전에 돌아 커밋 미상·미커밋(dirty) 이다.
 - 시각을 파일 mtime 으로 정한 run 이 있다 (config 필드에 "mtime" 으로 적음). 리뷰 증거 디렉터리는 복사 시각이 mtime 이라 실행 시각 미상.
 - 1차 물결 Isaac 순수 PPO 6 run 은 학습 인자가 저장되지 않았다 — curve 필드와 커밋 메시지로 복원.
 
@@ -119,7 +121,7 @@
 - 예측대로 어긋남은 반올림(#13·17), 범위(#8·18), 스텝 수(#2·3·7), 편향 추정량(#1)에서 나왔다. 예측하지 못한 것: 원자료 사이의 작은 불일치(#16),
   리서치 보고서의 불완전 인용(#19). (#15 는 이 기록의 거짓 양성이라 철회했다.)
 - 출처 공백은 1차 물결 초기에 몰려 있다 (커밋 미상 11 건 중 10 건이 r1 의 run 이고 시각은 08:00–09:06 — 리뷰 반영 정정, 처음엔 "07:45–08:33").
-  2a 부터 git archive 사본 + HEAD 파일 관행이 생겨 공백이 없다.
+  2a 이후 판정 학습·평가는 git archive 사본 + HEAD 파일 관행으로 공백이 없다. 단 2b 학습 스모크 5 건(r6 smk1–4, r7 smoke_train)은 커밋 미상이다.
 
 ## 다음
 - 요청 (이 에이전트 소유 밖, 고치지 않음):
@@ -205,7 +207,7 @@ A4 적대적 리뷰(판정 fix_needed)의 차단 문제 3 건과 비차단 지�
 - 표기: [측정] 188, 실패 3.
 - 출처:
   - 커밋 미상 24 건 (r1 11, r3 4, r4 4, r6 4, r7 1) — 처음 11 + 새 13.
-  - 커밋 추정 1 건 (#22).
+  - 커밋 추정 3 건 (#22, `W2b_r6_g2_paired_eval`, `W1_r2_fix_mutation_E0_old_evaluate`) + 커밋을 WAVE·REVIEW 본문에서 가져온 9 건 (사전 규칙을 넓힘).
   - dirty: false 99, true 25, unknown 67.
 - 바뀐 기존 레코드 38 건 (`revision` 필드).
 
