@@ -15,6 +15,7 @@ install(PROGRAMS
   scripts/bag_tools.py
   scripts/record_pilot.sh
   scripts/replay_row.sh
+  scripts/madg_lockstep.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
