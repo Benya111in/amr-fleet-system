@@ -93,13 +93,10 @@ class PrivilegedExpert:
                                     torch.full_like(first_hit, tk), first_hit)
         first_hit = first_hit.reshape(N, M)
         safe = ~torch.isfinite(first_hit)
-        # 점수: go 끝 자세의 경로 진행 − 0.5·횡오차
-        gp = go_pose.reshape(N, M, 3)
-        s_now = T.project_onto_path(env.path_pts, env.path_n, env.path_cum, env.pose[:, :2])[0]
-        pts = env.path_pts.repeat_interleave(M, 0)
-        proj = T.project_onto_path(pts, env.path_n.repeat_interleave(M), env.path_cum
-                                   .repeat_interleave(M, 0), gp[..., :2].reshape(-1, 2))
-        score = (proj[0].reshape(N, M) - s_now[:, None]) - 0.5 * proj[1].reshape(N, M)
+        # 점수: go 끝 자세의 경로 진행 − 0.5·횡오차 (현재 투영점 둘레 창의 경로 점까지 최근접 — 전 경로 투영을
+        # N·M 점에 하면 수 GB 를 쓴다)
+        s_prog, e_cand = self._local_progress(go_pose[:, :2].reshape(N, M, 2))
+        score = s_prog - 0.5 * e_cand
         score = torch.where(safe, score, torch.full_like(score, -math.inf))
         best_safe = score.argmax(1)
         any_safe = safe.any(1)
@@ -113,6 +110,30 @@ class PrivilegedExpert:
         self.stats['other_safe'] += int((~safe[:, 0] & any_safe).sum())
         self.stats['none_safe'] += int((~any_safe).sum())
         return SP._u(v_t[ix, pick].to(obs.dtype), w_t[ix, pick].to(obs.dtype), obs)
+
+    def _local_progress(self, xy, back=20, ahead=80):
+        """
+        후보 위치 xy [N,M,2] 의 경로 진행량 [N,M] 과 경로 점까지 거리 [N,M].
+
+        현재 위치의 최근접 경로 점 i₀ 둘레 [i₀ − back, i₀ + ahead] (A* 점 간격 0.05 m → −1 … +4 m) 의 경로 점 가운데
+        최근접 점의 호길이 − i₀ 의 호길이. 점 기준이라 ±0.025 m 안에서 근사다 (전문가 점수 전용).
+        """
+        env = self.env
+        P = env.path_pts.shape[1]
+        k = torch.arange(P, device=env.dev)
+        valid = k[None, :] < env.path_n[:, None]
+        d0 = torch.linalg.norm(env.path_pts - env.pose[:, None, :2], dim=-1)
+        i0 = torch.where(valid, d0, torch.full_like(d0, math.inf)).argmin(1)
+        w = torch.arange(-back, ahead + 1, device=env.dev)
+        iw = (i0[:, None] + w[None, :]).clamp(min=0)
+        iw = torch.minimum(iw, (env.path_n - 1)[:, None])
+        wp = env.path_pts.gather(1, iw[..., None].expand(-1, -1, 2))         # [N,W,2]
+        ws = env.path_cum.gather(1, iw)                                       # [N,W]
+        d = torch.linalg.norm(xy[:, :, None, :] - wp[:, None, :, :], dim=-1)  # [N,M,W]
+        dm, j = d.min(dim=2)
+        s_c = ws.gather(1, j)                                                 # [N,M]
+        s0 = env.path_cum.gather(1, i0[:, None])                              # [N,1]
+        return s_c - s0, dm
 
     def _static_hit(self, pose):
         """정적 지도: 풋프린트 중심선의 세 점(앞·가운데·뒤)에서 EDT < static_r."""
