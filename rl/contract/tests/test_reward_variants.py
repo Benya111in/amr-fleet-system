@@ -260,3 +260,18 @@ def test_stall_terminal_only_when_spec_says_so():
     goal = _st(PATH[-1], v=0.0)
     r2 = R.step(pre, goal, (0.0, 0.0), False, spec=RV.PROG50_ST, stalled=True)
     assert r2.success and r2.terms['stall'] == 0.0           # 같은 스텝이면 성공이 이긴다
+
+
+def test_dev_hinge_applies_beyond_1m_regardless_of_deviation_mode():
+    """1 m 초과 이탈 힌지: 이탈 구간 안팎과 무관, 1 m 이하에서는 0 (회피 중 CTE 끔은 유지)."""
+    from amr_rl_contract.state import DevState
+    sp = RV.PROG50
+    pre = _st(_arc(5.0))
+    pre.dev = DevState(True, 1.3, 0.5)
+    far = R.step(pre, _st((5.05, 1.2)), (0.0, 0.0), False, spec=sp)
+    assert far.dev.in_dev and far.terms['dev'] == -sp.dev_hinge and far.terms['track'] == 0.0
+    near = R.step(pre, _st((5.05, 0.9)), (0.0, 0.0), False, spec=sp)
+    assert near.dev.in_dev and near.terms['dev'] == 0.0 and near.terms['track'] == 0.0
+    out = R.step(_st(_arc(5.0)), _st((5.05, 1.05)), (0.0, 0.0), False, spec=sp)
+    assert out.terms['dev'] == -sp.dev_hinge
+    assert 'dev' not in R.step(pre, _st((5.05, 1.2)), (0.0, 0.0), False).terms   # v1.1.0
