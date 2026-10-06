@@ -77,13 +77,36 @@ def test_stall_is_terminal_only_for_stall_spec(name):
             break
     assert 199 <= k <= 201
     assert bool(info['stalled'].all())
+    d0 = info['episode']['d_start']                       # 대기라 d(s) = 시작 거리 그대로
+    assert bool((info['episode']['goal_min'] > 0.5).all())  # 리셋 때 목표 직선거리가 채워졌다
     if spec.stall_terminal:
         assert bool(term.all()) and not bool(trunc.any())
         assert torch.allclose(info['terms']['stall'], torch.full_like(rew, -10.0).double())
         assert bool(info['episode']['stalled'].all())
+        # 종단이므로 Φ(s') = 0: shaping = γ·0 − Φ(s) = κ·d(s)
+        assert torch.allclose(info['terms']['shape'], spec.kappa * d0, atol=1e-6)
     else:
         assert bool(trunc.all()) and not bool(term.any())
         assert 'stall' not in info['terms']
+        assert torch.allclose(info['terms']['shape'], (1.0 - 0.995) * spec.kappa * d0, atol=1e-6)
+
+
+def test_success_or_collision_beats_stall_in_same_step():
+    """정체와 성공·충돌이 같은 스텝이면 정체 종단이 아니다 (기준 구현 reward.step 과 같은 규칙)."""
+    from amr_sim2d import contract_torch as T
+    f = dict(dtype=torch.float64, device=DEV)
+    one = torch.ones(3, **f)
+    coll = torch.tensor([False, True, False], device=DEV)
+    r = T.reward_step(0.2 * one, torch.tensor([0.0, 0.1, 0.1], **f), 0.0 * one,
+                      torch.tensor([0.05, 0.1, 0.5], **f), 0.0 * one, torch.zeros(3, 2, **f),
+                      torch.zeros(3, 2, **f), coll,
+                      (torch.zeros(3, dtype=torch.bool, device=DEV), 0.0 * one, 0.0 * one),
+                      0.0 * one, spec=RV.PROG50_ST, goal_dist_pre=0.2 * one,
+                      stalled=torch.ones(3, dtype=torch.bool, device=DEV))
+    assert r['success'].tolist() == [True, False, False]
+    assert r['stall_term'].tolist() == [False, False, True]
+    assert r['terminated'].tolist() == [True, True, True]
+    assert r['terms']['stall'].tolist() == [0.0, 0.0, -10.0]
 
 
 @pytest.mark.slow
