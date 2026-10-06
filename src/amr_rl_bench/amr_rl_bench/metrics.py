@@ -14,6 +14,10 @@
   collision (정적 기하 부호 거리 < 0 또는 collision_monitor 접촉 증가) → success (strict_gt) → stall
   (SimpleProgressChecker 규칙: 기준점에서 0.3 m 넘게 움직이면 기준 갱신, 기준 뒤 20 s 면 정체) → timeout
   (t − t0 > 시간 상한). 실행기·시뮬레이터 고장은 error (분석에서 빼지 않고 센다).
+  접촉·성공 사건은 Nav2 가 끝난 뒤 정착 구간(기록 끝, 시간 상한 안)까지 본다 — Nav2 goal checker 는 속도를 보지 않아 DWA 가
+  움직이는 채로 "성공" 을 내고 그 뒤에 선다 (A5-4 스모크에서 찾음: 그 에피소드가 'timeout' 으로 잘못 찍혔다).
+  사건 없이 시스템이 먼저 끝났으면 (Nav2 성공·중단 뒤 계약 성공 조건 밖에 섰다) 로봇은 더 움직이지 않으므로 stall 로 적고
+  contract_note = 'ended_without_success'. 시간 상한까지 갔으면 timeout.
 """
 
 import math
@@ -243,24 +247,32 @@ def episode_metrics(ep):
     """
     gx, gy, gyaw = ep['goal']
     t0, t_end, t_limit = ep['t0'], ep['t_end'], ep['t_limit']
-    gt = np.asarray(ep.get('gt') or np.zeros((0, 6)), dtype=float).reshape(-1, 6)
-    gt = gt[(gt[:, 0] >= t0) & (gt[:, 0] <= t_end)] if gt.size else gt
-    est = np.asarray(ep.get('est') or np.zeros((0, 4)), dtype=float).reshape(-1, 4)
-    est = est[(est[:, 0] >= t0) & (est[:, 0] <= t_end)] if est.size else est
+    t_lim = t0 + t_limit
+    gt_raw = np.asarray(ep.get('gt') or np.zeros((0, 6)), dtype=float).reshape(-1, 6)
+    # 사건 판정 구간 = [t0, 기록 끝] ∩ 시간 상한 (정착 포함), 주행 지표 구간 = [t0, t_end]
+    gta = gt_raw[(gt_raw[:, 0] >= t0) & (gt_raw[:, 0] <= t_lim)] if gt_raw.size else gt_raw
+    gt = gta[gta[:, 0] <= t_end] if gta.size else gta
+    t_rec = float(gta[-1, 0]) if gta.shape[0] else t_end
+    est_raw = np.asarray(ep.get('est') or np.zeros((0, 4)), dtype=float).reshape(-1, 4)
+    esta = est_raw[(est_raw[:, 0] >= t0) & (est_raw[:, 0] <= t_lim)] if est_raw.size else est_raw
+    est = esta[esta[:, 0] <= t_end] if esta.size else esta
     m = {}
     tg = gt[:, 0]
     d_gt = np.hypot(gt[:, 1] - gx, gt[:, 2] - gy)
     speed = np.abs(gt[:, 4])
-    # --- 접촉 (정적 기하 + collision_monitor)
+    tga = gta[:, 0]
+    d_gta = np.hypot(gta[:, 1] - gx, gta[:, 2] - gy)
+    speeda = np.abs(gta[:, 4])
+    # --- 접촉 (정적 기하 + collision_monitor) — 정착 구간 포함
     cs = np.asarray(ep.get('clear_static') or np.zeros((0, 2)), dtype=float).reshape(-1, 2)
-    cs = cs[(cs[:, 0] >= t0) & (cs[:, 0] <= t_end)] if cs.size else cs
+    cs = cs[(cs[:, 0] >= t0) & (cs[:, 0] <= t_lim)] if cs.size else cs
     static_ev = contact_events(cs[:, 0], cs[:, 1]) if cs.size else []
     cmc = np.asarray(ep.get('cm_contacts') or np.zeros((0, 2)), dtype=float).reshape(-1, 2)
     dyn_ev = []
     if cmc.size:
         base = cmc[cmc[:, 0] <= t0, 1]
         n0 = base[-1] if base.size else cmc[0, 1]
-        inc = cmc[(cmc[:, 0] > t0) & (cmc[:, 0] <= t_end)]
+        inc = cmc[(cmc[:, 0] > t0) & (cmc[:, 0] <= min(t_lim, max(t_rec, t_end)))]
         prev = n0
         for ti, n in inc:
             if n > prev:
@@ -273,18 +285,19 @@ def episode_metrics(ep):
     cmm = np.asarray(ep.get('cm_min') or np.zeros((0, 2)), dtype=float).reshape(-1, 2)
     cmm = cmm[(cmm[:, 0] >= t0) & (cmm[:, 0] <= t_end)] if cmm.size else cmm
     m['min_clear_dynamic_m'] = float(cmm[:, 1].min()) if cmm.size else None
-    # --- 성공 사건
-    strict_gt = (d_gt <= STRICT_XY) & (speed <= STRICT_V)
-    t_strict_gt = float(tg[strict_gt][0]) if strict_gt.any() else None
+    # --- 성공 사건 (정착 구간 포함)
+    strict_gt = (d_gta <= STRICT_XY) & (speeda <= STRICT_V)
+    t_strict_gt = float(tga[strict_gt][0]) if strict_gt.any() else None
     t_strict_est = None
     d_est_at_gt = None
-    if est.shape[0] >= 2 and gt.shape[0]:
-        ex, ey, _ = _interp_pose(est[:, 0], est[:, 1:4], tg)
+    if esta.shape[0] >= 2 and gta.shape[0]:
+        ex, ey, _ = _interp_pose(esta[:, 0], esta[:, 1:4], tga)
         d_est_at_gt = np.hypot(ex - gx, ey - gy)
-        se = (d_est_at_gt <= STRICT_XY) & (speed <= STRICT_V)
-        t_strict_est = float(tg[se][0]) if se.any() else None
+        se = (d_est_at_gt <= STRICT_XY) & (speeda <= STRICT_V)
+        t_strict_est = float(tga[se][0]) if se.any() else None
     t_stall = first_stall(tg, gt[:, 1:3], t0) if gt.shape[0] else None
     # --- 계약 종단 사건: 시간순 첫 (접촉 → 성공 → 정체 → 시간 상한). 같은 시각이면 접촉이 이긴다
+    reason = ep.get('cancel_reason') or ''
     events = []
     if t_contact is not None:
         events.append((t_contact, 0, 'collision'))
@@ -292,24 +305,29 @@ def episode_metrics(ep):
         events.append((t_strict_gt, 1, 'success'))
     if t_stall is not None:
         events.append((t_stall, 2, 'stall'))
-    events.append((t0 + t_limit, 3, 'timeout'))
+    if t_end >= t_lim - 1e-3 or reason == 'timeout':
+        events.append((t_lim, 3, 'timeout'))
     events.sort()
-    t_c, _, outcome = events[0]
-    watchdog = ep.get('cancel_reason') == 'watchdog'
-    if outcome == 'timeout' and t_end < t0 + t_limit - 1e-6 and watchdog:
-        outcome, t_c = 'error', t_end
+    m['contract_note'] = None
+    if events:
+        t_c, _, outcome = events[0]
+    elif reason == 'watchdog':
+        t_c, outcome = t_end, 'error'
+    else:
+        t_c, outcome = t_end, 'stall'
+        m['contract_note'] = 'ended_without_success'
     m['outcome_contract'] = outcome
-    m['t_contract_s'] = float(min(t_c, t_end) - t0)
+    m['t_contract_s'] = float(t_c - t0)
     m['t_strict_gt_s'] = None if t_strict_gt is None else t_strict_gt - t0
     m['t_strict_est_s'] = None if t_strict_est is None else t_strict_est - t0
     m['t_stall_s'] = None if t_stall is None else t_stall - t0
     m['strict_gt'] = t_strict_gt is not None and outcome == 'success'
     m['strict_est'] = t_strict_est is not None and (t_contact is None or t_strict_est < t_contact)
-    pre = tg < (t_contact if t_contact is not None else math.inf)
-    m['nav2compat_gt'] = bool(np.any(d_gt[pre] <= NAV2_XY)) if d_gt.size else False
+    pre = tga < (t_contact if t_contact is not None else math.inf)
+    m['nav2compat_gt'] = bool(np.any(d_gta[pre] <= NAV2_XY)) if d_gta.size else False
     m['nav2compat_est'] = bool(np.any(d_est_at_gt[pre] <= NAV2_XY)) \
         if d_est_at_gt is not None else False
-    m['min_dist_gt_m'] = float(d_gt.min()) if d_gt.size else None
+    m['min_dist_gt_m'] = float(d_gta.min()) if d_gta.size else None
     m['contacts_contract'] = len([x for x in static_ev + dyn_ev if x <= t0 + m['t_contract_s']])
     # --- 시스템 결과
     st = ep.get('nav2_status')

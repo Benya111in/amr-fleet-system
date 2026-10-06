@@ -47,9 +47,10 @@ def rate(rows, key):
     return f'{k}/{n}'
 
 
-def session(path, expect):
-    """세션 하나 요약."""
-    rows = list(csv.DictReader(open(os.path.join(path, 'gzbench.csv'), encoding='utf-8')))
+def session(path, expect, suffix=''):
+    """세션 하나 요약 (suffix = recompute.py 가 쓴 CSV 를 읽을 때 '_recomputed')."""
+    rows = list(csv.DictReader(open(os.path.join(path, f'gzbench{suffix}.csv'),
+                                    encoding='utf-8')))
     ok = [r for r in rows if r['setup_ok'] in ('1', 'True')]
     err = [r for r in rows if r['setup_ok'] not in ('1', 'True')]
     ctrl = rows[0]['controller'] if rows else '?'
@@ -68,7 +69,7 @@ def session(path, expect):
     try:
         sys.path.insert(0, os.path.join(REPO, 'rl', 'eval'))
         from amr_rl_eval import schema
-        schema.read_csv(os.path.join(path, 'episodes_v1.csv'), strict=True)
+        schema.read_csv(os.path.join(path, f'episodes_v1{suffix}.csv'), strict=True)
         out['H2_schema'] = 'ok'
     except Exception as exc:  # noqa: BLE001 — 실패 사유를 그대로 남긴다
         out['H2_schema'] = f'fail: {exc}'[:300]
@@ -91,7 +92,8 @@ def session(path, expect):
             continue
         oc = {}
         for r in rs:
-            oc[r['outcome_contract']] = oc.get(r['outcome_contract'], 0) + 1
+            key = r['outcome_contract'] + ('*' if r.get('contract_note') else '')
+            oc[key] = oc.get(key, 0) + 1
         osys = {}
         for r in rs:
             osys[r['outcome_system']] = osys.get(r['outcome_system'], 0) + 1
@@ -181,8 +183,10 @@ def main():
     ap.add_argument('sessions', nargs='+')
     ap.add_argument('--out', default='')
     ap.add_argument('--expect', type=int, default=20)
+    ap.add_argument('--suffix', default='')
     a = ap.parse_args()
-    res = {os.path.basename(os.path.normpath(p)): session(p, a.expect) for p in a.sessions}
+    res = {os.path.basename(os.path.normpath(p)): session(p, a.expect, a.suffix)
+           for p in a.sessions}
     txt = json.dumps(res, ensure_ascii=False, indent=1)
     print(txt)
     if a.out:

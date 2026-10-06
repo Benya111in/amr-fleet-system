@@ -22,7 +22,7 @@ COLUMNS = [
     'controller', 'arm', 'policy_id', 'handover_radius', 'commit', 'rtf_target', 'started_wall',
     'setup_ok', 'setup_error', 'teleport_err_m', 'seed_tries', 'loc_err_start_m',
     'loc_err_start_yaw', 'accept_tries', 'path_ref_m', 'time_limit_s', 'goal_straight_m',
-    'outcome_contract', 'outcome_system', 'nav2_status', 'cancel_reason',
+    'outcome_contract', 'contract_note', 'outcome_system', 'nav2_status', 'cancel_reason',
     't_contract_s', 'nav_time_s', 't_strict_gt_s', 't_strict_est_s', 't_stall_s',
     'strict_gt', 'strict_est', 'nav2compat_gt', 'nav2compat_est', 'system_success',
     'final_ok_gt', 'final_ok_est', 'final_dist_gt_m', 'final_dist_est_m', 'final_yaw_err_gt',

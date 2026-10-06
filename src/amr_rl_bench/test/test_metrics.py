@@ -212,3 +212,28 @@ def test_rl_stats_fields():
     assert m['tick_dt_sim_mean'] == pytest.approx(0.05)
     assert m['infer_ms_p95'] == pytest.approx(0.2)
     assert math.isclose(m['scan_age_p50_s'], 0.05)
+
+
+def test_nav2_success_while_moving_counts_when_robot_stops_in_settle():
+    """DWA 꼴: goal checker 가 0.05 m/s 넘게 움직일 때 성공을 내고 정착 중 선다 → 정착 구간의 엄격 성공 (A5-4)."""
+    gt = drive(9.97, hold=2.0)
+    t_move_end = next(r[0] for r in gt if r[4] == 0.0)
+    ep = episode(gt, t_limit=50.0)
+    ep['t_end'] = t_move_end - 0.06        # 아직 1 m/s 로 움직일 때 Nav2 성공
+    m = M.episode_metrics(ep)
+    assert m['outcome_contract'] == 'success' and m['strict_gt']
+    assert m['t_strict_gt_s'] > m['nav_time_s']
+    assert m['contract_note'] is None
+
+
+def test_system_ended_short_of_goal_is_stall_not_timeout():
+    """Nav2 가 끝났는데(성공·중단) 0.12 m 에 섰다 → 시간 상한 전이므로 timeout 이 아니라 stall (끝난 채)."""
+    gt = drive(9.88, hold=3.0)
+    ep = episode(gt, t_limit=60.0, status=4)
+    m = M.episode_metrics(ep)
+    assert m['outcome_contract'] == 'stall'
+    assert m['contract_note'] == 'ended_without_success'
+    assert m['t_contract_s'] == pytest.approx(ep['t_end'] - ep['t0'])
+    # 감시견 취소는 error
+    ep2 = episode(gt, t_limit=60.0, status=5, reason='watchdog')
+    assert M.episode_metrics(ep2)['outcome_contract'] == 'error'
