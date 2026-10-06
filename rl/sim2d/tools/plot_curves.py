@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """
-학습 곡선 그림 — run 디렉터리들의 eval.jsonl(결정론적 평가)과 train.jsonl(학습 롤아웃) 성공·접촉률.
+학습 곡선 그림 — run 디렉터리들의 평가(결정론적 정책)와 train.jsonl(학습 롤아웃) 성공·접촉률.
 
     python3 rl/sim2d/tools/plot_curves.py --runs /runs/B_bc2 /runs/C_scratch1 --out curves.png
+
+평가는 reeval.jsonl(reeval_runs.py, env 마다 첫 에피소드)이 있으면 그것을, 없으면 eval.jsonl 을 쓴다.
+eval.jsonl 의 행에 'estimator' 가 없으면 a8afe77 전의 편향 추정량(먼저 끝난 에피소드 k 개)이라 그림에서
+'biased' 로 표시한다. 학습 롤아웃 값은 롤아웃 동안 끝난 에피소드의 비율이라 짧게 끝나는 에피소드 쪽으로
+치우친다 — 평가 지표가 아니다.
 """
 
 import argparse
@@ -29,21 +34,37 @@ def main():
     fig, axes = plt.subplots(1, 3, figsize=(16, 4.5))
     for run in a.runs:
         name = os.path.basename(run.rstrip('/'))
-        ev = sorted(load(os.path.join(run, 'eval.jsonl')), key=lambda r: r['env_steps'])
+        re_rows = load(os.path.join(run, 'reeval.jsonl'))
+        if re_rows:
+            seed0 = re_rows[0]['eval_seed']
+            ev = [r for r in re_rows if r['ckpt'] != 'heuristic' and r['eval_seed'] == seed0]
+            heur = [r for r in re_rows if r['ckpt'] == 'heuristic' and r['eval_seed'] == seed0]
+            lab = f"{name} eval (first ep./env, n={ev[0]['episodes'] if ev else 0})"
+        else:
+            ev = load(os.path.join(run, 'eval.jsonl'))
+            heur = []
+            biased = bool(ev) and 'estimator' not in ev[0]
+            lab = f"{name} eval{' (biased: first-k-finished)' if biased else ''}"
+        ev = sorted(ev, key=lambda r: r['env_steps'])
         tr = load(os.path.join(run, 'train.jsonl'))
         if ev:
             x = [r['env_steps'] / 1e6 for r in ev]
-            lab = f'{name} eval (deterministic)'
-            axes[0].plot(x, [r.get('success', 0) for r in ev], 'o-', label=lab)
+            se = [2 * r.get('success_se', 0.0) for r in ev]
+            axes[0].errorbar(x, [r.get('success', 0) for r in ev], yerr=se, fmt='o-',
+                             capsize=2, label=lab)
             axes[1].plot(x, [r.get('collision', 0) for r in ev], 'o-', label=lab)
+        for h in heur:
+            axes[0].axhline(h['success'], ls=':', lw=1, color='k',
+                            label=f"{name} heuristic (n={h['episodes']})")
         if tr:
             x = [r['env_steps'] / 1e6 for r in tr if 'success' in r]
+            lab_tr = f'{name} train rollout (finished-episode rate)'
             axes[0].plot(x, [r['success'] for r in tr if 'success' in r], alpha=0.4,
-                         label=f'{name} train rollout')
+                         label=lab_tr)
             axes[1].plot(x, [r['collision'] for r in tr if 'success' in r], alpha=0.4,
-                         label=f'{name} train rollout')
+                         label=lab_tr)
             axes[2].plot(x, [r['return'] for r in tr if 'success' in r], label=name)
-    axes[0].set_title('success rate')
+    axes[0].set_title('success rate (eval error bar = ±2 SE)')
     axes[1].set_title('collision rate')
     axes[2].set_title('train episode return (raw reward)')
     for ax in axes:
