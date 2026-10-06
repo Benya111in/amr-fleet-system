@@ -4,6 +4,11 @@ rsl_rl PPO 학습 (비교군 B) — 학습 곡선 JSONL·체크포인트·요약
     rl/isaac/run_isaac.sh train rl/isaac/scripts/train_ppo.py --num_envs 1024 --iterations 300 \
         --run ppo_b_s0 --seed 0
 
+2차 물결 r7 (계약 v1.2.0, BC 없는 순수 PPO) 예:
+    rl/isaac/run_isaac.sh v12s0 rl/isaac/scripts/train_ppo.py --num_envs 2048 --iterations 300 \
+        --run v12_s0 --seed 0 --reward 1.2.0 --path_len 3:15 --save_at_env_steps 20e6
+--lagrange 를 주지 않으면 라그랑주 승수는 0 그대로다 = 제약 없는 PPO (summary.json 의 constraint 에 적는다).
+
 산출: $AMR_ISAAC_RUNS/train/<run>/ — curve.jsonl (chunk 마다: 반복, env-step, 처리량,
 에피소드 결과율, 평균 반환, 비용 합, GPU 메모리), model_*.pt (rsl_rl), summary.json, HEAD.txt 는
 실행 전에 run_isaac.sh 를 부른 쪽이 쓴다.
@@ -41,6 +46,11 @@ ap.add_argument('--schedule', default=None, help="'fixed' 또는 'adaptive'")
 ap.add_argument('--clip', type=float, default=None)
 ap.add_argument('--curriculum', default='',
                 help="경로 길이 상한 커리큘럼 'L0:L1:N' — 반복 N 까지 L0→L1 m 선형, 빈 값 = 끔")
+ap.add_argument('--reward', default='1.2.0', help="보상 판 '1.2.0'(계약) 또는 '1.1.0'(대조)")
+ap.add_argument('--path_len', default='',
+                help="학습 경로 길이 범위 'LO:HI' [m] (풀에서 고른다, 빈 값 = 풀 전체 3–30 m)")
+ap.add_argument('--save_at_env_steps', type=float, default=0.0,
+                help='0 보다 크면 env-step 이 이 값 이상이 된 첫 chunk 끝에 policy_it<N>.pt 를 남긴다')
 ap.add_argument('--root', default=os.path.join(os.environ.get(
     'AMR_ISAAC_RUNS', '/home/CAPYI_AI/runs/r7-isaac12'), 'train'))
 AppLauncher.add_app_launcher_args(ap)
@@ -58,7 +68,7 @@ from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper  # noqa: E402
 from amr_isaac import policy_export as PE  # noqa: E402
 from amr_isaac.expert import expert_u  # noqa: E402
 from amr_isaac.agents.rsl_rl_ppo_cfg import AmrNavPPORunnerCfg  # noqa: E402
-from amr_isaac.env import AmrNavEnv, OUTCOMES  # noqa: E402
+from amr_isaac.env import AmrNavEnv, DIAG_NAMES, OUTCOMES  # noqa: E402
 from amr_isaac.env_cfg import AmrNavEnvCfg  # noqa: E402
 from amr_rl_contract import constants as C  # noqa: E402
 
@@ -145,6 +155,9 @@ def main():
     env_cfg = AmrNavEnvCfg()
     env_cfg.scene.num_envs = args.num_envs
     env_cfg.seed = args.seed
+    env_cfg.reward_version = args.reward
+    if args.path_len:
+        env_cfg.path_len_min, env_cfg.path_len_max = (float(x) for x in args.path_len.split(':'))
     if args.no_dr:
         env_cfg.dr.enable = False
     agent = AmrNavPPORunnerCfg()
@@ -194,6 +207,14 @@ def main():
         lag = {'eta': [float(x) for x in eta.split(',')],
                'budget': [C.COST_BUDGETS[0], float(d1)] + list(C.COST_BUDGETS[2:])}
         env.lagrange[:] = torch.tensor([float(x) for x in l0.split(',')], dtype=torch.float64)
+    ckpts = []
+
+    def save_policy(name):
+        sd_ = runner.alg.policy.state_dict()
+        torch.save({'state_dict': {k: v.detach().cpu() for k, v in sd_.items()},
+                    'activation': agent.policy.activation,
+                    'hidden': agent.policy.actor_hidden_dims}, os.path.join(out, name))
+
     while it < args.iterations:
         n = min(args.chunk, args.iterations - it)
         if args.bc_steps > 0 and frozen and it >= args.critic_warmup:
@@ -233,6 +254,7 @@ def main():
             'mean_len_s': st['len_steps_sum'] / ep * C.DT,
             'mean_path_len_m': st['path_len_sum'] / ep,
             **{f'cost_{k}_per_ep': st[f'cost_{k}'] / ep for k in C.COST_NAMES},
+            **{f'diag_{k}': st[f'{k}_sum'] / ep for k in DIAG_NAMES},
             'action_std': [round(float(v), 4) for v in torch.exp(pol.log_std).tolist()],
             'lr': runner.alg.learning_rate,
             'curriculum_lmax': env.curriculum_lmax,
@@ -243,6 +265,13 @@ def main():
         curve.write(json.dumps(rec) + '\n')
         curve.flush()
         print('CURVE ' + json.dumps(rec), flush=True)
+        if args.save_at_env_steps > 0 and not ckpts and \
+                it * steps_per_iter >= args.save_at_env_steps:
+            name = f'policy_it{it}.pt'
+            save_policy(name)
+            ckpts.append({'file': name, 'iteration': it, 'env_steps': it * steps_per_iter,
+                          'wall_s': rec['wall_s']})
+            print('CKPT ' + json.dumps(ckpts[-1]), flush=True)
     runner.save(os.path.join(out, f'model_{it}.pt'))
     sd = runner.alg.policy.state_dict()
     torch.save({'state_dict': {k: v.cpu() for k, v in sd.items()},
@@ -257,6 +286,11 @@ def main():
         mu_pb = pb(obs['policy'].cpu())[1]
     diff = float((mu_rsl - mu_pb).abs().max())
     summary = {'run': args.run, 'iterations': it, 'num_envs': args.num_envs,
+               'contract_version': C.CONTRACT_VERSION, 'reward_version': args.reward,
+               'reward_spec': str(env.reward_spec), 'path_len': args.path_len,
+               'pool_paths': env.pool_size,
+               'constraint': ('PPO-Lagrangian ' + args.lagrange) if args.lagrange else
+               'none (unconstrained PPO, lagrange multipliers 0)', 'checkpoints': ckpts,
                'env_steps': it * steps_per_iter, 'setup_s': round(setup_s, 1),
                'train_wall_s': round(time.time() - t_train, 1),
                'policy_vs_rsl_mu_max_abs_diff': diff, 'seed': args.seed,

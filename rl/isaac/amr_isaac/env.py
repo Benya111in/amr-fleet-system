@@ -36,6 +36,7 @@ PHYS_DT = C.PROFILER_DT
 N_SUB = int(round(C.DT / PHYS_DT))       # 5
 MAX_DELAY = 4                            # 플랜트 순수 지연 최대 0.08 s = 4 서브스텝
 OUTCOMES = ('success', 'collision', 'time_limit', 'stall')
+DIAG_NAMES = ('progress', 'near_goal_0p5', 'spin_frac', 'offpath_1m_frac')
 
 
 class AmrNavEnv(DirectRLEnv):
@@ -130,6 +131,8 @@ class AmrNavEnv(DirectRLEnv):
         self.stat_len_sum = torch.zeros((), dtype=F64, device=dev)
         self.stat_path_len_sum = torch.zeros((), dtype=F64, device=dev)
         self.ep_log = EpisodeLog(N, C.N_COSTS, dev)
+        # 끝난 에피소드 진단 합: 진행 비율 1 − d_끝/d_시작, 목표 0.5 m 안 도달, 제자리 회전 비율, 1 m 밖 비율
+        self.stat_diag = torch.zeros(len(DIAG_NAMES), dtype=F64, device=dev)
         W = cfg.stats_window
         self.win = torch.zeros(W, len(OUTCOMES), dtype=torch.float32, device=dev)
         self.win_ptr = torch.zeros((), dtype=torch.long, device=dev)
@@ -274,6 +277,13 @@ class AmrNavEnv(DirectRLEnv):
             'return': self.ep_return, 'path_len': self.path_len, 'd_start': self.path_len,
             'd_final': out.d_post, 'steps': self.episode_length_buf, 'cost': self.ep_cost,
             'path_id': self.path_id})
+        fin = self.ep_log.fin
+        steps = fin['steps'].clamp(min=1).to(F64)
+        dm = done.to(F64)
+        self.stat_diag += torch.stack([
+            1.0 - fin['d_final'] / fin['d_start'].clamp(min=1e-6),
+            (fin['gmin'] <= 0.5).to(F64), fin['spin'].to(F64) / steps,
+            fin['cost'][:, 2] / steps], dim=1).mul(dm.unsqueeze(1)).sum(0)
         return terminated, time_out
 
     def _record(self, done, res):
@@ -488,7 +498,9 @@ class AmrNavEnv(DirectRLEnv):
         out['return_sum'] = float(self.stat_return_sum)
         out['len_steps_sum'] = float(self.stat_len_sum)
         out['path_len_sum'] = float(self.stat_path_len_sum)
+        for i, name in enumerate(DIAG_NAMES):
+            out[f'{name}_sum'] = float(self.stat_diag[i])
         for t in (self.stat_counts, self.stat_cost_sum, self.stat_episodes, self.stat_return_sum,
-                  self.stat_len_sum, self.stat_path_len_sum):
+                  self.stat_len_sum, self.stat_path_len_sum, self.stat_diag):
             t.zero_()
         return out
