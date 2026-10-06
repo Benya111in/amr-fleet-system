@@ -1,0 +1,71 @@
+# 1차 물결 r2 — GPU 배치 2D 시뮬레이터 구축과 처리량
+
+> **소급 기록** (작성 2026-10-06 19:12 KST 첫 커밋, b1-backfill, 단계 A4). 원 작업: r2-sim2d, 2026-10-06 07:48–09:01 KST
+> (f67b424 07:48 … 9f3d0cd 08:50, 처리량 재측정 08:57–09:00), 리뷰 처리량 재측정(09:21 이전). 수치는 `bench/*.json` 에서 다시 읽었다.
+
+- 시각: 2026-10-06 07:50 KST (원 작업) · 에이전트: r2-sim2d (기록 b1-backfill) · 단계: W1
+- 코드: `feature/rl-sim2d` f67b424·35ce14e·bffbd33·d414034·9f3d0cd
+- 관련 실행 id: `W1_r2_bench_B_35ce14e`, `W1_r2_bench_B_9f3d0cd`, `W1_r2_bench_C_9f3d0cd`, `W1_r2_bench_B_review`
+
+## 질문
+팀 지도(warehouse.yaml) 위에서 계약 v1.1.0 과 같은 관측·보상을 내는 GPU 배치 2D 시뮬레이터를 만들어, Isaac 보다 빠르게
+많은 시드·후보를 훑을 수 있는가.
+
+## 당시 가설과 예측
+- 레이캐스트(Triton DDA)·충돌(SAT)·safety(SweptFootprint 이식)·프로파일러·플랜트를 텐서로 GPU 에 두고 torch.compile 하면
+  4096 env 에서 10 만 env-steps/s 대가 나온다.
+
+## 설정
+- `rl/sim2d/`: 계약 torch 배치 구현(관측 291, C 마스크 100, 보상·비용 5, BC 레이블), Triton DDA 레이캐스트, 원·회전 사각형 장애물 해석해,
+  풋프린트 SAT (경계 접촉 = 충돌 → 즉시 정지·종단), safety_gate SweptFootprint 접근 거리 이식(C++ 원본과 점별 일치), 프로파일러 → φ →
+  플랜트(순수 지연·1 차 지연·가속 배율), 비반응 장애물(작업자·지게차·셔틀, 무작위 + Gazebo 7 배치), DR(지도 다양성 제외), 관측 지연,
+  트랙 누락·잡음, 팀 A\* 코어 pybind11 경로 풀.
+- 벤치: `tools/bench_throughput.py`, 200 스텝, 장애물 random, compile 켬.
+
+## 결과
+[측정, `bench/*.json` — 모두 공유 부하 하 예비값]
+
+| 실행 | 커밋 | 256 env | 1024 env | 4096 env | loadavg1 |
+|---|---|---|---|---|---|
+| B 경로 추종 행동 (최적화 전) | 35ce14e (+ 미추적 tools/) | 9 561 | 30 913 | 97 501 | 97–136 |
+| B 무작위 행동 (최적화 전) | 35ce14e | 18 745 | 43 749 | 100 151 | 97–136 |
+| B 경로 추종 행동 | 9f3d0cd | 14 068 | 52 312 | 138 742 | 22–44 |
+| B 무작위 행동 | 9f3d0cd | 30 784 | 65 137 | 146 855 | 22–44 |
+| C 마스크 + 무작위 행동 | 9f3d0cd | 19 380 | 36 909 | 90 165 | 34–40 |
+| B 경로 추종 (리뷰 재측정) | 658aa73 | — | 116 300 | **280 197** | 9–16 |
+
+GPU 예약 메모리 0.20–1.96 GB (4096 env 1.96 GB) [측정].
+
+고친 결함 (WAVE 보고, 원자료로 확인한 것 표시):
+- inductor argmax 동률 결함 — 컴파일 경로에서 경로 투영 s 가 6.4 m → 0 → masked-min 으로 우회 [문서주장, 로그 없음].
+- 지도 메타 float32 정밀도 손실로 경계 접촉 판정 어긋남 [문서주장].
+- 관측 정규화 분산 폭주 (분산 3e-10) — `…_0840_…varfloor.md` 에서 [측정].
+- torch.profiler 4096 env 한 스텝 CUDA 커널 8 343 → 1 513, Triton DDA 4096×720 빔 3.3 ms — **[문서주장, 로그 미보존]** (리뷰 지적 뒤 README 도 그렇게 고쳤다).
+- 휴리스틱 경로 추종기(장애물 무시) 512 env 600 스텝: 장애물 없음 1855/1873, random 장애물 669/3194 성공·충돌 2382 — [문서주장, 출력 로그 없음].
+
+## 해석
+- 같은 4096 env 에서 리뷰 재측정(loadavg 9–16)이 280k 로 원 측정(loadavg 22–44)의 2 배였다 — **공유 부하가 처리량을 크게 흔든다**.
+  처리량 수치는 부하와 함께만 읽어야 한다.
+- 2D 는 Isaac(2048 env 에서 env 만 55k, PPO 포함 ~40k)보다 빠르다. 이 차이로 2a·2b 에서 11 시드·후보 비교를 2D 에서 먼저 했다.
+- φ 는 C++ SafetyGate 바인딩(정본에 가까움)이라 Isaac(근사 D)과 개입 비용을 비교할 수 없다.
+- 남은 성능 결함: `geometry2d.py:55 float(map_meta[0,0])` 가 컴파일 그래프를 끊고 호스트 동기화 (재평가 로그의 dynamo 경고로 확인).
+
+## 무엇을 바꾸게 했나
+- 2D 를 "많은 시드·후보 선별" 시뮬레이터로, Isaac 을 명세 요구 환경으로 쓰는 분담 (2a·2b).
+- 과제 5(DWA 코어 바인딩 → 2D 비교군 A, d₁ 측정)는 하지 못했다 → 지금도 2D 의 DWA 개입 분포는 미측정이다.
+
+## 원자료
+- `/home/CAPYI_AI/logs/agents/r2-sim2d/bench/` (`throughput_*.json`, `HEAD_*.txt`), 리뷰 `review/bench_review_B.json`
+- 보고: `/home/CAPYI_AI/logs/agents/r2-sim2d/WAVE1_RESULT.md`, `rl/sim2d/README.md`
+
+## WAVE 보고와 원자료의 차이
+- 처리량 값은 원자료와 같다. 리뷰 재측정 파일의 mtime(09:21:16)은 증거 복사 시각이라 실행 시각은 미상이다.
+
+## 실행 목록에 등록한 run (`runs/b1-backfill.jsonl`, entry = 이 파일)
+
+| run_id | 종류 | 시뮬 | 커밋 | 시드 | 표기 |
+|---|---|---|---|---|---|
+| `W1_r2_bench_B_35ce14e` | probe | 2d | 35ce14e | n/a | [측정] |
+| `W1_r2_bench_B_9f3d0cd` | probe | 2d | 9f3d0cd | n/a | [측정] |
+| `W1_r2_bench_C_9f3d0cd` | probe | 2d | 9f3d0cd | n/a | [측정] |
+| `W1_r2_bench_B_review` | probe | 2d | 658aa73 | n/a | [측정] |

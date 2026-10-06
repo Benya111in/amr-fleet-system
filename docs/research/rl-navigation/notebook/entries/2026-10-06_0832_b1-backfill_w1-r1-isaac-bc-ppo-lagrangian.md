@@ -1,0 +1,99 @@
+# 1차 물결 r1 — Isaac BC 예열 + PPO: 정규화 붕괴, 최종 정책, 꺼진 라그랑주(d₁ = 5.0)
+
+> **소급 기록** (작성 2026-10-06 19:10 KST 첫 커밋, b1-backfill, 단계 A4). 원 실험: r1-isaac, 2026-10-06 08:32–09:05 KST,
+> 리뷰 09:14–09:25, 리뷰 반영 09:29–09:50, 재확인 09:58. 수치는 `curve.jsonl`·`summary.json`·`bc.json`·`eval.json` 에서 다시 읽었다.
+
+- 시각: 2026-10-06 08:32 KST (원 실험) · 에이전트: r1-isaac (기록 b1-backfill) · 단계: W1
+- 코드 (HEAD.txt): ppo_b_bc f262d91, ppo_b_bc_ft 6e051d8, ppo_b_bc_fz 6e234ae; 리뷰 재평가 f8feb56; ONNX 재내보내기 f9aff27·1afe9dc
+- 관련 실행 id: `W1_r1_bctest`, `W1_r1_ppo_b_bc`, `W1_r1_ppo_b_bc_eval_heldout_bc`, `W1_r1_ppo_b_bc_ft`, `W1_r1_ppo_b_bc_fz`,
+  `W1_r1_ppo_b_bc_fz_eval_heldout_bc`, `W1_r1_ppo_b_bc_fz_eval_heldout_final`, `W1_r1_review_rerun_eval_final`, `W1_r1_review_rerun_eval_bc`
+  (같은 정책의 편향 없는 재평가는 2b: `W2b_r7_ref_bcppo_eval_3_15`, `W2b_r7_ref_bc_eval_3_15`, `W2b_r7_ref_bcppo_eval_3_30`)
+
+## 질문
+순수 PPO 가 실패하자(앞 항목), 특권 정보 전문가(1.0 m 앞 경로점 순수 추종 + 목표 거리 비례 감속) 시연으로 actor 를 BC 예열한 뒤
+PPO 로 미세조정하면 성공 정책을 얻는가, 그리고 PPO 가 BC 보다 나아지는가.
+
+## 당시 가설과 예측
+- BC 로 성공 근처에서 시작하면 PPO 가 시간·경로를 다듬는다.
+- 비용 5 채널 라그랑주 벌점(d₁ = 5.0/에피소드)이 개입·이탈을 억제한다. **d₁ = 5.0 은 계약 §7.2 의 임시 훑기 범위
+  {0.02, 0.05, 0.1, 0.2} 밖**이었다 — 당시 README 는 "계약이 미정이라" 고 적었으나 틀렸다 (리뷰 지적).
+
+## 설정
+- BC: 잡음 섞은 전문가 시연 409 600 샘플 (전문가 성공 495/495), tanh 공간 MSE, BC 손실 0.0650 → 0.000197 [측정, `bc.json`; 세 run 같음].
+- ppo_b_bc: BC → critic 예열 → PPO 적응 lr 3e-4, 라그랑주, 정규화 통계 갱신 계속.
+- ppo_b_bc_ft: 같은 BC, PPO lr 3e-5, actor 를 반복 40 까지 얼림, 정규화 통계 갱신 계속.
+- ppo_b_bc_fz (최종): BC → **정규화 통계 고정** → critic 예열 20 → PPO 고정 lr 1e-4, clip 0.2, 엔트로피 0, init_std 0.25,
+  `--lagrange 0,0.05,0.05,0.05,0.005/0.5,0.01,0.01,0.01,0.001/5.0`, 2048 env × 300 반복 = 39.32M, 학습 1033 s, seed 0, DR 켬.
+- 평가 (1차 물결 `eval_policy.py`): held-out 경로 풀 seed 1(3–30 m), 명목 동역학, 결정론, 512 env 를 1100–1300 스텝 돌려
+  **끝난 에피소드만 센다** (짧은 결말 쪽으로 치우침, env seed 없음).
+
+## 결과
+**정규화 붕괴** [측정, 학습 롤아웃 성공 (반복 10, 20, 30, …)]
+
+| run | 반복 10 | 20 | 30 | 40 | 마지막 |
+|---|---|---|---|---|---|
+| ppo_b_bc (정규화 갱신, actor 학습) | 0.989 | 0.946 | **0.053** | 0.034 | 0.030 (반복 70) |
+| ppo_b_bc_ft (정규화 갱신, actor 얼림 ~40) | 0.989 | 0.946 | **0.053** | 0.047 | 0.036 (반복 80) |
+| ppo_b_bc_fz (정규화 고정) | 0.987 | 0.984 | 0.984 | 0.978 | 0.978 (반복 300), 범위 0.977–0.987 |
+
+actor 를 얼린 run 에서도 같은 반복에 같은 붕괴 → 원인은 롤아웃마다 움직인 관측 정규화 통계가 BC actor 의 입력을 바꾼 것이다
+(6e234ae). 붕괴 뒤 개입 비용은 0.07 → 14–25/에피소드.
+
+**최종 run ppo_b_bc_fz** [측정, `curve.jsonl`·`summary.json`]
+- λ: 반복 10 [0, 0.040, 0.04, 0.04, 0.004] → 반복 50 [0, 0.00033, 0, 0, 0.00012] → **반복 60–300 전부 0**, `lagrange_final` 전부 0.
+  곧 반복 61–300 은 제약 없는 PPO 였다.
+- 학습 중 개입 비용/에피소드: 반복 10 0.023 → 반복 230–300 0.221·0.276·0.307·0.179·0.307·0.298·0.279·0.232 (8 개 중 7 개 > 0.2).
+- 평균 에피소드 길이 26.8 s(반복 10)·29.3 s(반복 20) → 24.8 s(반복 300), 계약 반환 34.5(반복 20) → 36.0.
+
+**held-out 평가 (편향 있는 추정량)** [측정]
+
+| 정책 | 끝난 에피소드 | 성공 | 정체 / 충돌 / 시간 상한 | 평균 길이 s | 개입/에피소드 |
+|---|---|---|---|---|---|
+| BC (ppo_b_bc 의 policy_bc) | 2042 | 0.9873 (2016) | 26 / 0 / 0 | 28.41 | 0.033 |
+| BC (ppo_b_bc_fz 의 policy_bc) | 2059 | 0.9879 (2034) | 25 / 0 / 0 | 28.11 | 0.038 |
+| BC+PPO 최종 | 2095 | 0.9852 (2064) | 30 / 0 / 1 | 23.39 | 0.112 |
+| 리뷰 재실행 BC | 2064 | 0.9874 (2038) | 26 / 0 / 0 | 28.22 | 0.040 |
+| 리뷰 재실행 BC+PPO | 2126 | 0.9868 (2098) | 28 / 0 / 0 | 23.15 | 0.130 |
+
+같은 두 정책을 2b 의 편향 없는 평가(env 마다 첫 에피소드, seed 4242, n 2048, 3–15 m)로 다시 재면 [측정, r7 `ref/`]:
+BC+PPO 0.979 (개입 0.168, 평균 13.12 s), BC 0.981 (개입 0.055, 17.64 s), 3–30 m BC+PPO 0.982.
+
+## 해석
+- **BC 대비 PPO 의 이득은 성공률이 아니라 주행 시간이다** (−17 %, 28.1 → 23.4 s). 대가는 개입 비용 약 3 배 (0.038 → 0.112, 편향 없는
+  평가로는 0.055 → 0.168). 성공률 차이는 평가 흔들림(±0.3 %p) 안이다.
+- "Lagrangian PPO" 라는 처음 메타데이터는 틀렸다 — 예산 5.0 이 제약 없는 PPO 의 비용(0.02–0.31)보다 훨씬 커서 λ 가 투영 갱신
+  (λ ← max(0, ·))으로 0 에 붙었다. 고장이 아니라 예산 위치 문제다 (실측 기반 후속 기술 조사 「제약 RL」 절과 같은 결론).
+- 성공 정책은 **특권 전문가 BC 에 기댄다** — 계약 §1 의 "순수 RL B" 가 아니다. 이론편이 권한 on-policy DAgger 가 아니라 잡음 주입
+  off-policy BC 였다. 동적 장애물·맵 DR·지연 DR 은 없었다 (트랙 관측은 늘 0).
+- 평가 수치는 끝난 에피소드만 센 것이라 짧은 결말 쪽으로 치우친다. 편향 있는 평가의 정체 1.2–1.4 % (3–30 m 풀) 대비 편향 없는
+  재평가는 1.8 % (BC+PPO, 3–30 m)·1.9–2.1 % (3–15 m) 다 — 경로 범위·평가 seed 가 달라 직접 차이로 읽지는 않는다.
+
+## 무엇을 바꾸게 했나
+- BC 뒤 정규화 고정은 이후 Isaac 학습의 기본 규칙이 됐다 (2D 는 분산 하한으로 같은 문제를 다른 방식으로 막았다 — `…_0840_…varfloor.md`).
+- `export_onnx.py` 가 학습 기록에서 algo·λ 사실을 만들고, 꺼진 라그랑주를 주장하면 rc 1 (f9aff27).
+- 다음 물결 과제: d₁ 훑기 + PID 승수 (완성 계획 B2 는 {0.2, 0.5, 1.0} — 리서치가 0.02–0.1 은 실현 가능 증인(BC 0.168)보다 작다고 지적).
+- 2b r7 이 이 정책을 참조로 다시 쟀고, v1.2.0 순수 PPO 가 BC 없이 같은 성공률에 닿았다.
+
+## 원자료
+- `/home/CAPYI_AI/runs/r1-isaac/train/{bctest,ppo_b_bc,ppo_b_bc_ft,ppo_b_bc_fz}/` (curve.jsonl, summary.json, bc.json, eval_heldout_*/eval.json, ONNX)
+- 리뷰 `/home/CAPYI_AI/logs/agents/r1-isaac/{review_evidence,review_fix,recheck}/`, 2b 재평가 `/home/CAPYI_AI/runs/r7-isaac12/ref/ppo_b_bc_fz/`
+
+## WAVE 보고와 원자료의 차이
+- WAVE recheck "반복 230–300 … CTE 는 1.06–1.75" — 원자료에서 반복 230–300 의 CTE 비용은 1.40–1.75 이고, 1.06–1.75 는 전체 반복의 범위다 (최소 1.055 @ 반복 80). README 의 문장(전체 범위)은 맞다.
+- 커밋 6e051d8 메시지가 붕괴 원인을 actor 해제·학습률로 적은 것은 틀렸다 (6e234ae·WAVE 가 정정).
+- train_ppo.py 주석 "98.9 % → 5.3 %" 와 README "94.6 % → 5.3 %" 는 둘 다 원자료와 맞는 다른 구간이다 (반복 10→30 대 20→30).
+- 그 밖의 수치(2064/2095, 2034/2059, 23.4/28.1 s, 0.112/0.038, λ 반복 60 부터 0)는 원자료와 같다.
+
+## 실행 목록에 등록한 run (`runs/b1-backfill.jsonl`, entry = 이 파일)
+
+| run_id | 종류 | 시뮬 | 커밋 | 시드 | 표기 |
+|---|---|---|---|---|---|
+| `W1_r1_bctest` | probe | isaac | unknown-noHEAD | 0 | [측정] |
+| `W1_r1_ppo_b_bc` | train | isaac | f262d91 | 0 | [측정] |
+| `W1_r1_ppo_b_bc_ft` | train | isaac | 6e051d8 | 0 | [측정] |
+| `W1_r1_ppo_b_bc_fz` | train | isaac | 6e234ae | 0 | [측정] |
+| `W1_r1_ppo_b_bc_eval_heldout_bc` | eval | isaac | unknown-eval-code (학습 f262d91) | env seed 없음 (Isaac 경고 Seed not set), 경로 풀 seed 1 | [측정] |
+| `W1_r1_ppo_b_bc_fz_eval_heldout_bc` | eval | isaac | unknown-eval-code (학습 6e234ae) | env seed 없음 (Isaac 경고 Seed not set), 경로 풀 seed 1 | [측정] |
+| `W1_r1_ppo_b_bc_fz_eval_heldout_final` | eval | isaac | unknown-eval-code (학습 6e234ae) | env seed 없음 (Isaac 경고 Seed not set), 경로 풀 seed 1 | [측정] |
+| `W1_r1_review_rerun_eval_final` | eval | isaac | f8feb56 | env seed 없음 (Isaac 경고 Seed not set), 경로 풀 seed 1 | [측정] |
+| `W1_r1_review_rerun_eval_bc` | eval | isaac | f8feb56 | env seed 없음 (Isaac 경고 Seed not set), 경로 풀 seed 1 | [측정] |
