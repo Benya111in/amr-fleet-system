@@ -100,10 +100,12 @@ trap cleanup EXIT
 
 # 비대화형 bash 의 `&` 작업은 SIGINT 를 무시(SIG_IGN)한 채 시작하고 그 처분이 exec 로 자식에게 이어진다 — s3 재생에서
 # 행 런치 6 개가 SIGINT 에 반응하지 않고 SIGKILL 됐다 (row.log 에 SIGINT 처리 줄 없음, host_*.log "Killed").
-# 처분을 기본으로 되돌린 뒤 exec 한다.
-sigint_dfl() {
-  python3 -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])' "$@"
-}
+# [측정 b2-offline tmp/sigtest.sh] `&` 로 띄운 ros2 launch 의 /proc/<pid>/status SigIgn 에 SIGINT 비트가 있다.
+# 처분을 기본으로 되돌린 뒤 exec 한다. **셸 함수로 감싸면 안 된다** — 함수를 `&` 로 부르면 서브셸이 생겨 $! 가 런치가
+# 아니라 그 서브셸을 가리키고 SIGINT 가 런치에 닿지 않는다 (첫 고침이 그래서 실패: launch_exit "SIGKILL after 60s").
+# 배열을 단순 명령으로 실행하면 bash 가 fork 한 자식이 곧바로 python3 → ros2 로 exec 되어 $! = 런치 PID 다
+# [측정 tmp/sigtest2.sh: SIGINT 1 s 뒤 "user interrupted with ctrl-c", 두 노드 "finished cleanly"].
+SIGDFL=(python3 -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])')
 
 for a in "${ANCHORS[@]}"; do
   IFS='|' read -r parent child via <<< "$a"
@@ -120,7 +122,7 @@ done
 i=0
 for pl in "${PRE_LAUNCH[@]}"; do
   # shellcheck disable=SC2086
-  sigint_dfl ros2 launch $pl > "$OUT/pre_launch_$i.log" 2>&1 &
+  "${SIGDFL[@]}" ros2 launch $pl > "$OUT/pre_launch_$i.log" 2>&1 &
   PIDS+=($!)
   i=$((i + 1))
 done
@@ -128,7 +130,7 @@ done
 # LIO-SAM save_map 은 $HOME + destination 을 지우고 다시 만든다 → HOME 을 출력 디렉터리로
 export HOME="$OUT"
 # shellcheck disable=SC2086
-sigint_dfl ros2 launch $LAUNCH database_path:="$OUT/rtabmap.db" > "$OUT/row.log" 2>&1 &
+"${SIGDFL[@]}" ros2 launch $LAUNCH database_path:="$OUT/rtabmap.db" > "$OUT/row.log" 2>&1 &
 LAUNCH_PID=$!
 PIDS+=("$LAUNCH_PID")
 python3 "$SCRIPTS/slam_probe.py" --row "$ROW" --out "$OUT" > "$OUT/probe.log" 2>&1 &
