@@ -18,7 +18,9 @@
 #   --scenario-timeout SEC           시나리오 하나의 wall 상한 (기본 1800, 14 는 운용 시간 + 30 분)
 #   --log-dir DIR                    결과 루트 (기본 logs/itest)
 #   --domain-id N|auto|env           ROS_DOMAIN_ID (기본 auto: 이 실행 전용 1~101 난수 — dev 스택·다른 실행과
-#                                    섞이지 않게. 'env' 면 현재 값 유지. 병렬 CI 는 N 을 명시)
+#                                    섞이지 않게. 'env' 면 현재 값 유지. 병렬 CI 는 N 을 명시). N(과 env 값)은 0~101 ·
+#                                    215~232 만 받는다: 102~214 는 참가자 포트가 Linux 임시 포트 범위(32768~60999)와
+#                                    겹쳐 거부한다 (종료 코드 2 — ROS 2 문서 "The ROS_DOMAIN_ID", hold_failsafe.md §7)
 #   --ign-partition NAME|auto|env    IGN_PARTITION (기본 auto: ITEST_IGN_PARTITION, 없으면 itest_<난수> — 바꿀 때
 #                                    원래 값을 출력한다. 'env' 면 호출한 셸의 IGN_PARTITION 유지)
 #   --include-long                   기본 세트에 장시간 시나리오(14) 포함
@@ -30,6 +32,7 @@
 #   --unit-only                      하네스 단위 테스트만
 #   --coverage                       하네스 단위 테스트 커버리지 (pytest-cov → logs/itest/unit/)
 #   -v, --verbose                    러너 출력을 화면에도 (항상 <id>/launch.log 에 남는다)
+#   --self-test                      도메인 규칙 자체 시험만 돌리고 끝낸다 (ROS·빌드 불필요)
 #
 # 시행 수 (명세 캠페인 기본값, 스모크에서 줄일 때 — 줄이면 시행 수 판정이 실패한다)
 #   ITEST_TRIALS (08, 30) · ITEST_RT_SAMPLES (13, 50) · ITEST_MR_TASKS (12, 5) · ITEST_SOAK_HOURS (14, 4.0)
@@ -48,7 +51,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS="${ROS_WS:-$(dirname "${SCRIPT_DIR}")}"
 cd "${WS}"
 
-usage() { sed -n '2,48p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { awk 'NR == 1 {next} /^#/ {sub(/^# ?/, ""); print; next} {exit}' "${BASH_SOURCE[0]}"; }
 
 SELECT=()
 LOG_DIR="${WS}/logs/itest"
@@ -62,6 +65,7 @@ UNIT_ONLY=0
 COVERAGE=0
 VERBOSE=0
 LIST=0
+SELF_TEST=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --sim) export ITEST_SIM="$2"; shift 2 ;;
@@ -83,11 +87,91 @@ while [ $# -gt 0 ]; do
         --coverage) COVERAGE=1; shift ;;
         -v|--verbose) VERBOSE=1; shift ;;
         --list) LIST=1; shift ;;
+        --self-test) SELF_TEST=1; shift ;;
         -h|--help) usage; exit 0 ;;
         -*) echo "알 수 없는 옵션: $1" >&2; usage >&2; exit 2 ;;
         *) SELECT+=("$1"); shift ;;
     esac
 done
+
+# 이 실행 전용 DDS 도메인 규칙. 참가자 p 의 수신 포트는 7400 + 250·d + {10, 11} + 2·p 다 (Fast DDS 기본 포트 공식).
+# 도메인 102~214 는 그 포트가 Linux 임시 포트 범위(32768~60999)와 겹친다 — 다른 프로세스의 송신 소켓이 참가자 포트를
+# 먼저 잡으면 그 참가자의 UDP 포트만 다음 번호로 밀려 UDP·SHM 포트 번호가 어긋난다 (리서치 「실측 기반 후속 기술 조사」).
+# 시나리오 12 에서 늦게 뜬 실행기가 매칭된 채 traffic/hold 를 못 받은 실행들이 도메인 210 이었다. 그래서 경고가 아니라
+# 거부한다. 233 이상은 포트가 65535 를 넘는다.
+rand16() { od -An -N2 -tu2 /dev/urandom | tr -d ' '; }
+# 검사한 도메인(10 진수로 정규화)을 출력하고 0, 거부면 이유를 stderr 로 내고 2.
+check_domain_id() {
+    local v="$1"
+    case "${v}" in
+        ''|*[!0-9]*) echo "--domain-id: 0~101 · 215~232 정수, auto, env 중 하나: '${v}'" >&2; return 2 ;;
+    esac
+    v="${v#"${v%%[!0]*}"}"          # 앞자리 0 을 지운다 (bash 산술은 0 으로 시작하는 수를 8 진수로 읽는다)
+    [ -n "${v}" ] || v=0
+    if [ "${#v}" -gt 3 ] || [ "${v}" -gt 232 ]; then
+        echo "--domain-id ${1} 거부: 232 를 넘으면 참가자 포트가 65535 를 넘는다" >&2
+        return 2
+    fi
+    if [ "${v}" -ge 102 ] && [ "${v}" -le 214 ]; then
+        echo "--domain-id ${v} 거부: 참가자 포트가 Linux 임시 포트 범위(32768~60999)와 겹친다 (ROS 2 문서 안전 범위" \
+             "0~101 · 215~232, hold_failsafe.md §7). auto(1~101) 또는 215~229 를 쓴다" >&2
+        return 2
+    fi
+    echo "${v}"
+}
+# auto: 1~101 난수 (/dev/urandom — 새 컨테이너마다 거의 같은 $$ 로 만들면 병렬 실행이 같은 값을 받는다).
+# 호출한 셸의 값(인자 1)은 피한다.
+pick_auto_domain() {
+    local d=$(( 1 + $(rand16) % 101 ))
+    [ "${d}" = "${1:-0}" ] && d=$(( d % 101 + 1 ))
+    echo "${d}"
+}
+# 사용자 유니캐스트 포트(7411 + 250·d + 2·p)가 임시 포트 범위(도메인 ≤ 101) 또는 65535 에 닿기 전까지의 참가자 수.
+# 232 → 63 (ROS 2 문서의 "도메인 232 는 63 프로세스" 와 같다). 5대 시나리오 12 는 참가자 ≈ 150~170.
+domain_port_ceiling() {
+    local d="$1" limit=65535
+    [ "${d}" -le 101 ] && limit=32767
+    echo $(( (limit - 7411 - 250 * d) / 2 + 1 ))
+}
+self_test_domain() {
+    local fail=0 d out rc exp item arg want_rc want_out i
+    for d in $(seq 0 240); do
+        exp=2
+        if [ "${d}" -le 101 ] || { [ "${d}" -ge 215 ] && [ "${d}" -le 232 ]; }; then exp=0; fi
+        rc=0; out=$(check_domain_id "${d}" 2>/dev/null) || rc=$?
+        if [ "${rc}" != "${exp}" ] || { [ "${exp}" = 0 ] && [ "${out}" != "${d}" ]; }; then
+            echo "FAIL 도메인 ${d}: rc=${rc} 출력='${out}' (기대 rc=${exp})"; fail=1
+        fi
+    done
+    # 인자:기대 rc:기대 출력
+    for item in 'abc:2:' ':2:' '-1:2:' '1.5:2:' '1 :2:' '0101:0:101' '0210:2:' '007:0:7' '000:0:0' \
+                '0000000000000000000001:0:1' '99999999999999999999:2:' '1000:2:'; do
+        arg="${item%%:*}"; want_rc="${item#*:}"; want_out="${want_rc#*:}"; want_rc="${want_rc%%:*}"
+        rc=0; out=$(check_domain_id "${arg}" 2>/dev/null) || rc=$?
+        if [ "${rc}" != "${want_rc}" ] || [ "${out}" != "${want_out}" ]; then
+            echo "FAIL 인자 '${arg}': rc=${rc} 출력='${out}' (기대 rc=${want_rc} 출력='${want_out}')"; fail=1
+        fi
+    done
+    for i in $(seq 1 2000); do
+        d=$(pick_auto_domain 50)
+        if [ "${d}" -lt 1 ] || [ "${d}" -gt 101 ] || [ "${d}" = 50 ]; then
+            echo "FAIL auto: ${d} (1~101 이고 호출 셸 값 50 이 아니어야 한다)"; fail=1; break
+        fi
+    done
+    [ "$(pick_auto_domain 101)" != 101 ] || { echo "FAIL auto: 101 을 피하지 못했다"; fail=1; }
+    for item in 0:12679 99:304 100:179 101:54 215:2188 229:438 232:63; do
+        d="${item%%:*}"
+        if [ "$(domain_port_ceiling "${d}")" != "${item#*:}" ]; then
+            echo "FAIL 참가자 상한 ${d}: $(domain_port_ceiling "${d}") (기대 ${item#*:})"; fail=1
+        fi
+    done
+    if [ "${fail}" = 0 ]; then echo "self-test: 통과"; else echo "self-test: 실패"; fi
+    return "${fail}"
+}
+if [ "${SELF_TEST}" = "1" ]; then
+    rc=0; self_test_domain || rc=$?
+    exit "${rc}"
+fi
 
 # ROS setup.bash 는 미정의 변수를 참조하므로 소싱 동안만 -u 를 끈다.
 set +u
@@ -125,20 +209,18 @@ if [ "${LIST}" = "1" ]; then
     exit 0
 fi
 
-# 이 실행 전용 DDS 도메인·Gazebo 파티션 (같은 컨테이너의 dev 스택/다른 실행과 섞이지 않게).
-# 난수는 /dev/urandom — 새 컨테이너마다 거의 같은 $$ 로 만들면 병렬 실행이 같은 값을 받는다.
-# 도메인은 1~101 (ROS 2 Linux 권장 상한 101: 그 위는 포트가 임시 포트 범위와 겹친다), 호출한 셸의 값은 피한다.
-rand16() { od -An -N2 -tu2 /dev/urandom | tr -d ' '; }
+# 이 실행 전용 DDS 도메인·Gazebo 파티션 (같은 컨테이너의 dev 스택/다른 실행과 섞이지 않게). 규칙은 위 check_domain_id.
 if [ "${DOMAIN_ID}" = "auto" ]; then
-    d=$(( 1 + $(rand16) % 101 ))
-    [ "${d}" = "${ROS_DOMAIN_ID:-0}" ] && d=$(( d % 101 + 1 ))
+    export ROS_DOMAIN_ID="$(pick_auto_domain "${ROS_DOMAIN_ID:-0}")"
+else
+    [ "${DOMAIN_ID}" = "env" ] && DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
+    d=$(check_domain_id "${DOMAIN_ID}") || exit 2
     export ROS_DOMAIN_ID="${d}"
-elif [ "${DOMAIN_ID}" != "env" ]; then
-    case "${DOMAIN_ID}" in
-        ''|*[!0-9]*) echo "--domain-id: 0~232 정수, auto, env 중 하나: ${DOMAIN_ID}" >&2; exit 2 ;;
-    esac
-    [ "${DOMAIN_ID}" -le 101 ] || echo "경고: ROS_DOMAIN_ID ${DOMAIN_ID} > 101 (Linux 임시 포트 범위와 겹칠 수 있다)" >&2
-    export ROS_DOMAIN_ID="${DOMAIN_ID}"
+fi
+ceiling=$(domain_port_ceiling "${ROS_DOMAIN_ID}")
+if [ "${ceiling}" -lt 200 ]; then
+    echo "    참고: 도메인 ${ROS_DOMAIN_ID} 는 참가자 ${ceiling} 개를 넘으면 수신 포트가 임시 포트 범위·65535 에 닿는다" \
+         "(5대 시나리오 12 는 ≈ 150~170 개)"
 fi
 CALLER_PARTITION="${IGN_PARTITION:-}"
 if [ "${PARTITION}" = "env" ]; then
