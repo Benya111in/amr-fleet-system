@@ -91,6 +91,10 @@ def test_rows_play_recorded_clock_and_never_oracle_topics():
                 # imu/data 는 madgwick 입력으로만 튼다 — SLAM 노드는 madgwick 출력만 구독한다
                 assert any('madgwick' in p for p in r.pre_launch), r.name
                 continue
+            if t == rows.IMU_ORACLE and r.oracle:
+                # 오라클 행: SLAM 노드가 정답 방위를 직접 받는다 — 상한 참고용으로만 표기 (런치가 oracle:=true 요구)
+                assert 'oracle:=true' in r.launch, r.name
+                continue
             assert t not in r.play_topics, (r.name, t)
         assert '/tf_static' in r.play_topics
         assert r.input_topic in r.play_topics
@@ -98,23 +102,32 @@ def test_rows_play_recorded_clock_and_never_oracle_topics():
 
 def test_oracle_list_covers_known_ground_truth_topics():
     """정답 토픽 목록 자체를 고정 목록으로 단언 — 목록에서 빠진 토픽은 위 시험이 못 본다 (리뷰 M9)."""
-    known = {'/amr_01/ground_truth/odom', '/amr_01/imu/data_raw', '/amr_01/imu/data'}
+    known = {'/amr_01/ground_truth/odom', '/amr_01/imu/data_raw', '/amr_01/imu/data',
+             '/amr_01/imu/data_gtorient'}
     assert known <= set(rows.ORACLE_TOPICS)
     for r in rows.ROWS.values():
         # 정답 자세·원시 정답 방위는 madgwick 변형 행을 포함해 어떤 행도 틀지 않는다
         assert '/amr_01/ground_truth/odom' not in r.play_topics, r.name
         assert '/amr_01/imu/data_raw' not in r.play_topics, r.name
-    # imu/data 를 트는 행은 madgwick 변형 행 하나뿐이다 (rtabmap.md §1.1 의 예외)
+    # imu/data 를 트는 행은 madgwick 변형 행 하나뿐이다 (madgwick 입력으로만 — rtabmap.md §1.1)
     assert [n for n, r in rows.ROWS.items() if '/amr_01/imu/data' in r.play_topics] == \
         ['rtabmap3d_imulive']
+    # 정답 방위 합성 토픽은 오라클 행만 튼다
+    assert [n for n, r in rows.ROWS.items() if rows.IMU_ORACLE in r.play_topics] == \
+        ['liosam_oracle']
+    # 오라클 표시는 이름에도 드러나야 표에서 섞이지 않는다
+    assert [n for n, r in rows.ROWS.items() if r.oracle] == ['liosam_oracle']
+    for n, r in rows.ROWS.items():
+        assert ('oracle:=true' in r.launch) == r.oracle, n
 
 
 def test_liosam_rows_do_not_play_dynamic_tf():
     """LIO-SAM 은 odometryFrame → base_footprint 를 낸다 — EKF /tf 를 같이 틀면 부모가 둘."""
-    for name in ('liosam_loop', 'liosam_noloop'):
-        assert '/tf' not in rows.row(name).play_topics
-    for name in ('rtabmap3d', 'rtabmap2d', 'slam_toolbox'):
-        assert '/tf' in rows.row(name).play_topics   # 휠-EKF guess 가 TF 로 들어온다
+    for name, r in rows.ROWS.items():
+        if name.startswith('liosam_'):
+            assert '/tf' not in r.play_topics, name
+        else:
+            assert '/tf' in r.play_topics, name     # 휠-EKF guess 가 TF 로 들어온다
 
 
 def test_record_topics_cover_report_list():
@@ -125,7 +138,11 @@ def test_record_topics_cover_report_list():
     assert need <= set(rows.RECORD_TOPICS)
     for r in rows.ROWS.values():
         for t in r.play_topics:
-            assert t in rows.RECORD_TOPICS, (r.name, t)
+            assert t in rows.RECORD_TOPICS + rows.DERIVED_TOPICS, (r.name, t)
+        # 파생 토픽(재계산 madgwick)을 트는 행은 파생 bag 이 필요하다고 표시한다
+        uses_derived = any(t in rows.DERIVED_TOPICS for t in r.play_topics)
+        assert uses_derived == (r.bag == 'madg'), r.name
+    assert not set(rows.DERIVED_TOPICS) & set(rows.RECORD_TOPICS)
 
 
 def test_liosam_config_matches_sensor_contract_and_urdf():
@@ -168,3 +185,112 @@ def test_scan_log_counts_processed_lines():
     assert s['processed_log_lines'] == 2
     assert s['note']['Odom: ratio=0.000000'] == 1 and s['note']["didn't receive IMU newer"] == 1
     assert 'processed_log_lines' not in rows.scan_log(text, rows.row('liosam_loop'))
+
+
+def _launch_args(r):
+    """행 런치 문자열의 k:=v 인자."""
+    return dict(a.split(':=', 1) for a in r.launch.split() if ':=' in a)
+
+
+def test_liosam_overrides_and_oracle_guard():
+    mod = _load_launch('liosam.launch.py')
+    assert mod.overrides('true') == {'loopClosureEnableFlag': True}
+    assert mod.overrides('False') == {'loopClosureEnableFlag': False}
+    for bad in ('/amr_01/imu/data', '/amr_01/imu/data_raw', 'imu/data', rows.IMU_ORACLE):
+        with pytest.raises(RuntimeError):
+            mod.overrides('true', imu_topic=bad)              # 오라클 표시 없이 정답(·항등) 방위
+    assert mod.overrides('true', imu_topic=rows.IMU_ORACLE, oracle='true')['imuTopic'] == \
+        rows.IMU_ORACLE
+    with pytest.raises(RuntimeError):
+        mod.overrides('true', imu_topic='/amr_01/imu/data_madgwick_re', oracle='true')
+    with pytest.raises(RuntimeError):
+        mod.overrides('true', oracle='true')                  # 설정 파일 IMU 는 오라클이 아니다
+    with pytest.raises(RuntimeError):
+        mod.overrides('maybe')
+    with pytest.raises(RuntimeError):
+        mod.overrides('true', oracle='yes')
+    with pytest.raises(RuntimeError):
+        mod.overrides('true', z_tol='-0.1')
+    p = mod.overrides('true', rpy_weight='0.0', z_tol='0', rot_tol='0.0')
+    assert p == {'loopClosureEnableFlag': True, 'imuRPYWeight': 0.0, 'z_tollerance': 0.0,
+                 'rotation_tollerance': 0.0}
+
+
+def test_liosam_rows_resolve_to_intended_parameters():
+    """행 이름과 실제 덮어쓰기가 맞는지 — 평면 행만 z/rot 0, 절제 행은 한 가지씩, 구독 IMU 는 재생된다."""
+    mod = _load_launch('liosam.launch.py')
+    base = _yaml('liosam.yaml')['/**']['ros__parameters']
+    want = {'liosam_loop_re': {}, 'liosam_noloop_re': {},
+            'liosam_rpy0': {'imuRPYWeight': 0.0},
+            'liosam_g001': {},
+            'liosam_planar': {'imuRPYWeight': 0.0, 'z_tollerance': 0.0,
+                              'rotation_tollerance': 0.0},
+            'liosam_oracle': {}}
+    imu = {'liosam_g001': rows.IMU_MADG_RE_G001, 'liosam_oracle': rows.IMU_ORACLE}
+    for name, extra in want.items():
+        r = rows.row(name)
+        a = _launch_args(r)
+        p = mod.overrides(a['loop'], a.get('imu_topic', ''), a.get('rpy_weight', ''),
+                          a.get('z_tol', ''), a.get('rot_tol', ''), a.get('oracle', 'false'))
+        assert p['imuTopic'] == imu.get(name, rows.IMU_MADG_RE), name
+        assert p['imuTopic'] in r.play_topics, name
+        assert p['loopClosureEnableFlag'] == (name != 'liosam_noloop_re'), name
+        assert {k: v for k, v in p.items() if k not in ('imuTopic', 'loopClosureEnableFlag')} \
+            == extra, name
+        assert r.tail_exempt == rows.LIOSAM_TAIL == 2
+    # 기준 행의 평면 사전은 꺼져 있어야 6DoF 기준이 된다
+    assert base['z_tollerance'] >= 1000.0 and base['rotation_tollerance'] >= 1000.0
+    assert base['imuRPYWeight'] == pytest.approx(0.01)
+
+
+def test_rtabmap_rows_imu_subscription_matches_play_topics():
+    """IMU 를 빼는 행은 IMU 를 틀지도 기다리지도 않고, IMU 를 쓰는 행은 그 IMU 를 튼다 (리서치 R11)."""
+    mod = _load_launch('rtabmap.launch.py')
+    assert mod.resolve_imu('none', 'amr_01') == '' and mod.resolve_imu('', 'amr_01') == ''
+    assert mod.resolve_imu('default', 'amr_01') == '/amr_01/imu/data_madgwick'
+    assert mod.resolve_imu('/x/imu/data_madgwick_re', 'amr_01') == '/x/imu/data_madgwick_re'
+    for name, r in rows.ROWS.items():
+        if not name.startswith('rtabmap'):
+            continue
+        a = _launch_args(r)
+        imu = mod.resolve_imu(a.get('imu_topic', 'default'), 'amr_01')
+        setup = mod.node_setup(a['dim'], 'amr_01', '/c', '/s', imu, True, 'slam_map', '/db', 'p',
+                               'i')
+        assert setup[0][1]['wait_imu_to_init'] is bool(imu), name
+        imu_played = [t for t in r.play_topics if 'imu' in t]
+        if name == 'rtabmap3d_imulive':
+            continue                                  # madgwick 입력(imu/data)을 틀고 출력을 구독
+        assert imu_played == ([imu] if imu else []), name
+        assert r.tail_exempt == 0, name
+    assert 'imu' not in ' '.join(rows.row('rtabmap3d_noimu').play_topics)
+    assert 'imu' not in ' '.join(rows.row('rtabmap2d_noimu').play_topics)
+
+
+def test_missing_play_topics_against_bag_metadata():
+    """파생 bag 토픽을 원 bag 으로 돌리면 재생 전에 잡는다 (replay_row.sh 의 사전 검사)."""
+    meta = """rosbag2_bagfile_information:
+  version: 5
+  topics_with_message_count:
+    - topic_metadata:
+        name: /clock
+        type: rosgraph_msgs/msg/Clock
+      message_count: 3
+    - topic_metadata:
+        name: /tf_static
+        type: tf2_msgs/msg/TFMessage
+      message_count: 1
+    - topic_metadata:
+        name: /amr_01/lidar3d/points
+        type: sensor_msgs/msg/PointCloud2
+      message_count: 3
+    - topic_metadata:
+        name: /amr_01/imu/data_madgwick
+        type: sensor_msgs/msg/Imu
+      message_count: 3
+"""
+    topics = rows.bag_topics(meta)
+    assert topics == ['/clock', '/tf_static', '/amr_01/lidar3d/points',
+                      '/amr_01/imu/data_madgwick']
+    assert rows.missing_play_topics(rows.row('liosam_loop'), topics) == []
+    assert rows.missing_play_topics(rows.row('liosam_planar'), topics) == [rows.IMU_MADG_RE]
+    assert rows.missing_play_topics(rows.row('rtabmap3d_noimu'), topics) == ['/tf']
