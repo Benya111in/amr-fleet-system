@@ -86,3 +86,29 @@ def test_tf_tree_wrong_root_and_cycle():
 def test_tf_leading_slash_ignored():
     r = tftree.check([('/map', 'base')], ['/base'], root='map')
     assert r['valid']
+
+
+def test_cdr_header_key_is_exact_integer():
+    assert bagstat.cdr_header_key(_cdr(9, 480000000)) == (9, 480000000)
+    with pytest.raises(ValueError):
+        bagstat.cdr_header_key(b'\x00\x01\x00')
+
+
+def test_matched_tail_exempt_separates_structural_tail():
+    """LIO-SAM 2 장 캐시: 마지막 2 장 누락은 판정 누락에서 빼고 따로 센다. 원래 계수는 그대로 둔다."""
+    inp = [0.1 * i for i in range(10)]
+    out = [s for i, s in enumerate(inp) if i not in (3, 8, 9)]
+    m = bagstat.matched(inp, out, tail_exempt=2)
+    assert m['missing'] == 3 and m['input'] == 10                  # 옛 계수
+    assert m['judged_input'] == 8 and m['judged_missing'] == 1
+    assert m['tail_missing'] == 2 and m['tail_exempt'] == 2
+    assert m['judged_missing_stamps'] == pytest.approx([0.3])
+    assert m['missing_all'] == pytest.approx([0.3, 0.8, 0.9])
+    # 끝 장을 처리했으면 tail_missing 0 — 끝 장 여부는 입력 순서가 아니라 스탬프로 정한다
+    m2 = bagstat.matched(list(reversed(inp)), inp[:-2] + [inp[-1]], tail_exempt=2)
+    assert m2['judged_missing'] == 0 and m2['tail_missing'] == 1
+    m0 = bagstat.matched(inp, out)
+    assert m0['judged_missing'] == 3 and m0['tail_missing'] == 0
+    assert bagstat.matched(inp[:1], [], tail_exempt=5)['tail_exempt'] == 1
+    with pytest.raises(ValueError):
+        bagstat.matched(inp, out, tail_exempt=-1)
