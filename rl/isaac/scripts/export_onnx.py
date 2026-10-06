@@ -14,7 +14,7 @@
 검사 (하나라도 어긋나면 rc 1):
   - 입력 obs [batch, 291] float32, 출력 action·mu·log_std [batch, 2] float32, opset 17, 필수 메타데이터
   - algo 문자열이 학습 기록과 모순되지 않는다 (algo_claim_consistent)
-  - ORT(CPU) 출력 = torch PolicyB 출력 (1e-5): golden decision 관측 17 개, 학습 env 의 실제 관측
+  - ORT(CPU) 출력 = torch PolicyB·PolicySAC 출력 (1e-5): golden decision 관측 17 개, 학습 env 의 실제 관측
     (eval_policy.py 가 남긴 obs_batch.npz, 있으면), 표준정규 무작위 관측 256 개, 배치 1·N 모두
   - Isaac 안(torch 2.7, CUDA)에서 계산한 PolicyB 출력과 ORT 출력 차이 (obs_batch.npz 의 out) — 보고만
 모델 파일은 커밋하지 않는다 (.gitignore *.onnx). 결과 <run>/onnx_check.json.
@@ -51,7 +51,7 @@ def main():
     import onnx
     import onnxruntime as ort
     ck = torch.load(os.path.join(a.run, a.policy), map_location='cpu')
-    pol = PE.PolicyB.from_rsl_state_dict(ck['state_dict'], ck.get('activation', 'elu')).eval()
+    pol = PE.load_policy(ck).eval()          # PPO·PPO-PIDLagrangian = PolicyB, SAC = PolicySAC
     head = ''
     hp = os.path.join(a.run, 'HEAD.txt')
     if os.path.exists(hp):
@@ -70,7 +70,7 @@ def main():
         bc_info = json.load(open(bp))
     stem = os.path.splitext(a.policy)[0]
     kind = a.kind if a.kind != 'auto' else ('bc' if stem.endswith('_bc') else 'final')
-    facts = PE.lagrange_facts(summ, rows)
+    facts = PE.pid_facts(summ) or PE.lagrange_facts(summ, rows)
     meta = PE.onnx_metadata(kind, summ, facts, head, C.CONTRACT_VERSION, algo=a.algo,
                             bc_info=bc_info)
     claim_ok = kind == 'bc' or PE.algo_claim_ok(meta['algo'], facts)

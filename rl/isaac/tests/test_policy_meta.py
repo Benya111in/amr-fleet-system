@@ -100,3 +100,44 @@ def test_pure_ppo_says_unconstrained():
     assert m['constraint'] == 'none' and m['reward_version'] == '1.2.0'
     assert m['train_path_len_m'] == '3:15' and m['contract_version'] == '1.2.0'
     assert not any(k.startswith('lagrange') for k in m)
+
+
+# ---------------------------------------------------------------- B 단계: SAC·PID 라그랑주
+def _pid_summary(lam_final, d=0.5):
+    return {'pid_lagrangian': {'cost': 'intervention', 'budget_d': d, 'kp': 0.5, 'ki': 0.05,
+                               'kd': 0.1, 'lambda_max': 10.0, 'lambda_final': lam_final},
+            'seed': 3, 'env_steps': 39321600, 'dr': True, 'safety_filter': 'canonical'}
+
+
+def test_pid_facts_and_algo_active():
+    """PID 학습: 끝 승수 > 0 이면 활성으로 적고 algo 주장이 통과한다, 제약 메타데이터가 붙는다."""
+    s = _pid_summary(1.7)
+    f = PE.pid_facts(s)
+    assert f['active_at_end'] and f['final'] == [1.7] and f['d1'] == 0.5
+    algo = PE.describe_algo('final', s, f)
+    assert 'PIDLagrangian' in algo and 'final lambda 1.7' in algo and PE.algo_claim_ok(algo, f)
+    meta = PE.onnx_metadata('final', s, f, 'abc', C.CONTRACT_VERSION)
+    assert meta['constraint'].startswith('intervention <= 0.5')
+    assert meta['lagrange_final'] == json.dumps([1.7]) and meta['train_dr'] == 'true'
+    assert meta['intervention_budget_d1'] == '0.5'
+
+
+def test_pid_facts_inactive_says_unconstrained_at_end():
+    """끝 승수 0 이면 '제약 비활성 = 끝에서 사실상 제약 없음' 을 밝혀야 algo 주장이 통과한다."""
+    s = _pid_summary(0.0, d=1.0)
+    f = PE.pid_facts(s)
+    assert not f['active_at_end']
+    algo = PE.describe_algo('final', s, f)
+    assert 'unconstrained' in algo and PE.algo_claim_ok(algo, f)
+    assert not PE.algo_claim_ok('PPO-PIDLagrangian active', f)
+
+
+def test_sac_algo_and_no_constraint():
+    """SAC 학습 기록: algo 는 summary 의 SAC 문자열 + 제약 없음, constraint = none."""
+    s = {'algo': 'SAC (skrl 2.1.0, squashed Gaussian, twin Q, auto entropy)', 'seed': 1,
+         'env_steps': 1000, 'dr': False}
+    f = PE.lagrange_facts(s, [])
+    assert PE.pid_facts(s) is None
+    meta = PE.onnx_metadata('final', s, f, 'abc', C.CONTRACT_VERSION)
+    assert meta['algo'].startswith('SAC') and 'unconstrained' in meta['algo']
+    assert meta['constraint'] == 'none' and meta['train_dr'] == 'false'
