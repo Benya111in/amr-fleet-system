@@ -3,14 +3,15 @@
 #   rl/isaac/run_isaac.sh <태그> <worktree 기준 스크립트 경로> [인자…]
 # 예: rl/isaac/run_isaac.sh smoke rl/isaac/scripts/smoke_env.py --num_envs 256
 # 에이전트 id AMR_AI_ID (기본 r7-isaac12): 컨테이너 이름 amr-ai-<id>-<태그> (--rm), 산출 루트
-# /home/CAPYI_AI/runs/<id> 를 같은 경로로 마운트하고 컨테이너 안 AMR_ISAAC_RUNS 로 알린다 (자산 캐시 <루트>/assets).
+# AMR_RUNS_ROOT (기본 /home/CAPYI_AI/runs/<id>) 를 같은 경로로 마운트하고 컨테이너 안 AMR_ISAAC_RUNS 로 알린다
+# (자산 캐시 <루트>/assets). 다른 run 의 정책을 읽을 때는 EXTRA_DOCKER_ARGS 로 읽기 전용 마운트를 더한다.
 # 시작 전 GPU 여유 ≥ MIN_FREE_MIB (기본 16000) 를 확인한다 (COORDINATION §3: Isaac ≤ 14 GB). 같은 에이전트의
 # Isaac 프로세스를 하나 더 띄울 때는 호출하는 쪽이 자기 합계 ≤ 14 GB 를 확인하고 MIN_FREE_MIB 를 낮춘다.
 set -uo pipefail
 A=/home/CAPYI_AI
 C=$A/cache/isaac
 ID=${AMR_AI_ID:-r7-isaac12}
-RUNS=$A/runs/$ID
+RUNS=${AMR_RUNS_ROOT:-$A/runs/$ID}     # 산출 루트 (보너스 1 완성 단계: /home/CAPYI_AI/runs/bonus1/<id>)
 WT=$(cd "$(dirname "$0")/../.." && pwd)
 TAG=$1
 SCRIPT=$2
