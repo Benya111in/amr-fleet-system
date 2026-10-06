@@ -151,6 +151,7 @@ class FleetSim:
         # 제한 평균 지연: 끝나지 않은 작업은 지평선에서 자른다 (완료된 쉬운 작업만 보는 편향을 막는다)
         rm = [min(comp[t][0] if t in comp else H, H) - c for t, c in self.created.items()]
         rmean = sum(rm) / len(rm) if rm else None
+        early = [t for t, c in self.created.items() if c <= H - 300.0]   # 따라잡기 판정용
         stuck = sum(1 for r in self.robots if r.alive and r.wait_since is not None
                     and H - r.wait_since > cfg.wait_max_s)
         vz = _agent_stats([r.zone_agent for r in self.robots])
@@ -166,6 +167,7 @@ class FleetSim:
             'completed': len(comp),
             'completed_after_fault': after,
             'unfinished': len(self.arrivals) - len(comp),
+            'n_early': len(early), 'completed_early': sum(1 for t in early if t in comp),
             'latency_mean': _r(sum(lat) / len(lat)) if lat else None,
             'latency_p50': _r(_pct(lat, 0.5)), 'latency_p90': _r(_pct(lat, 0.9)),
             'latency_rmean': _r(rmean),
