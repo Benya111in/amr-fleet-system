@@ -1,30 +1,32 @@
 # rl/isaac — Isaac Lab 2.3.2 학습 환경 (보너스 1, 비교군 B)
 
 명세 5장 보너스 1 (`31_*.md` 323행): "Isaac Sim의 강화학습 환경을 활용하여 PPO/SAC 기반 내비게이션 정책을
-학습시킨다." 이 디렉터리는 그 Isaac 트랙이다. 관측·행동·보상·비용·종료는 `rl/contract/` 계약 v1.1.0 을 따른다.
-결과 수치·실패 기록의 원자료는 `/home/CAPYI_AI/runs/r1-isaac/` 에 있다 (커밋하지 않는다 — `train/<run>/` 의
-`curve.jsonl`·`summary.json`·`eval_heldout_*`). 이 문서는 구조와 사용법이다.
+학습시킨다." 이 디렉터리는 그 Isaac 트랙이다. 관측·행동·보상·비용·종료는 `rl/contract/` **계약 v1.2.0** 을 따른다
+(2차 물결 r7 이 보상을 v1.1.0 → v1.2.0 으로 올렸다 — 아래 「계약 v1.2.0 과 BC 없는 순수 PPO」).
+결과 수치·실패 기록의 원자료는 커밋하지 않는다: 1차 물결(v1.1.0, BC 예열) `/home/CAPYI_AI/runs/r1-isaac/`,
+2차 물결(v1.2.0, 순수 PPO) `/home/CAPYI_AI/runs/r7-isaac12/` (`train/<run>/` 의 `curve.jsonl`·`summary.json`·
+`eval_*/eval.json`·`episodes.npz`, 학습 전에 정한 판정 규칙 `protocol.json`). 이 문서는 구조와 사용법이다.
 
 ## 구성
 
 | 파일 | 내용 | Isaac 필요 |
 |---|---|---|
-| `amr_isaac/contract_torch.py` | 계약 기준 구현(numpy)의 배치 torch 판 — 관측 291, 보상 6 항, 비용 5, 이탈 상태기계, `integrate_b`, 프로파일러, safety_lite | 아니오 |
+| `amr_isaac/contract_torch.py` | 계약 기준 구현(numpy)의 배치 torch 판 — 관측 291, 보상 8 항(v1.2.0, `reward.RewardSpec` 을 그대로 받는다), 전이 전 거리 캐시 `observe_with_cache`, 비용 5, 이탈 상태기계, `integrate_b`, 프로파일러, safety_lite | 아니오 |
 | `amr_isaac/warehouse_geom.py` | `warehouse.sdf`(읽기 전용) + include 모델 → 충돌 상자 229 개 → 삼각형 메시 / 2D 사각형 129 개 / 0.05 m 점유 격자 | 아니오 |
-| `amr_isaac/paths.py`, `assets.py` | 전역 코스트맵 팽창 + A* 간선 비용으로 비용 최단 경로 풀 (캐시 `/home/CAPYI_AI/runs/r1-isaac/assets`, 커밋 안 함) | 아니오 |
-| `amr_isaac/env_math.py` | env 의 순수 함수 — 풋프린트 분리축 충돌 `footprint_hits`, safety_lite 접근 거리 `approach_distance`, 원호 적분 `integrate_pose`, 서브스텝 이동·접촉 `move_and_collide` | 아니오 |
+| `amr_isaac/paths.py`, `assets.py` | 전역 코스트맵 팽창 + A* 간선 비용으로 비용 최단 경로 풀 (캐시 `$AMR_ISAAC_RUNS/assets`, 커밋 안 함 — 해시 `58eaa34ae5`) | 아니오 |
+| `amr_isaac/env_math.py` | env 의 순수 함수 — 풋프린트 분리축 충돌 `footprint_hits`, safety_lite 접근 거리 `approach_distance`, 원호 적분 `integrate_pose`, 서브스텝 이동·접촉 `move_and_collide`, 경로 길이 필터 `select_paths_by_length`, 보상 판 `reward_spec_for`, 에피소드 기록 `EpisodeLog` | 아니오 |
 | `amr_isaac/env_cfg.py`, `env.py`, `tasks.py` | `DirectRLEnv` — `AMR-Isaac-Nav-B-v0` (학습), `AMR-Isaac-Nav-B-Eval-v0` (held-out 경로·명목 동역학) | 예 |
 | `amr_isaac/agents/rsl_rl_ppo_cfg.py` | rsl_rl PPO 설정 (γ 0.995, λ 0.97, rollout 64) | 예 |
 | `amr_isaac/expert.py` | BC 예열용 특권 정보 전문가 (경로 순수 추종) | 아니오 |
 | `amr_isaac/policy_export.py` | rsl_rl state dict → 계약형 `PolicyB` → ONNX (`onnx_io.md`) | 아니오 |
-| `scripts/` | `build_assets` · `smoke_env` · `check_golden_in_sim` · `train_ppo` · `eval_policy` · `export_onnx` · `plot_curves` · `gpu_monitor.sh` | 일부 |
-| `tests/` | golden 31 대조, 기준 구현과 무작위 차분, 창고 변환기·경로 풀, env 순수 함수(`test_env_math.py`: numpy 기준판·계약 원호 적분·사례 대조) | 아니오 |
-| `run_isaac.sh` | Isaac 컨테이너 실행기 (`env/verify/verify_isaac.sh` 의 마운트·환경변수, 이름 `amr-ai-r1-isaac-<태그>`) | — |
+| `scripts/` | `build_assets` · `smoke_env` · `check_golden_in_sim` · `train_ppo` · `eval_unbiased`(판정용) · `eval_policy`(1차 물결, 편향 있음) · `export_onnx` · `plot_curves` · `gpu_monitor.sh` | 일부 |
+| `tests/` | golden 32 대조(직접·env 캐시 두 길), 기준 구현과 무작위 차분(v1.2.0·v1.1.0), v1.2.0 보상 손 사례(`test_reward_v12.py`), 창고 변환기·경로 풀, env 순수 함수(`test_env_math.py`), ONNX 메타데이터 | 아니오 |
+| `run_isaac.sh` | Isaac 컨테이너 실행기 (`env/verify/verify_isaac.sh` 의 마운트·환경변수). `AMR_AI_ID`(기본 `r7-isaac12`)로 이름 `amr-ai-<id>-<태그>`·산출 루트 `/home/CAPYI_AI/runs/<id>` 를 정하고 컨테이너에 `AMR_ISAAC_RUNS` 로 넘긴다 | — |
 
 ## 실행
 
 ```bash
-WT=/home/CAPYI_AI/wt/r1-isaac; R=/home/CAPYI_AI/runs/r1-isaac
+WT=/home/CAPYI_AI/wt/r7-isaac12; R=/home/CAPYI_AI/runs/r7-isaac12
 # 1) 순수 시험 (CPU, Isaac 불필요)
 docker run --rm -v $WT:/ws -w /ws/rl/isaac amr-ai/rl:0.3 python3 -m pytest -q tests
 # 2) 창고 기하·경로 풀 캐시 (없으면 env 가 스스로 만든다 — 한 프로세스로 수 분)
@@ -39,13 +41,83 @@ rl/isaac/run_isaac.sh golden rl/isaac/scripts/check_golden_in_sim.py
 rl/isaac/run_isaac.sh train rl/isaac/scripts/train_ppo.py --num_envs 2048 --iterations 300 --run <run> \
     --bc_steps 200 --critic_warmup 20 --init_std 0.25 --lr 1e-4 --schedule fixed --entropy 0 \
     --lagrange 0,0.05,0.05,0.05,0.005/0.5,0.01,0.01,0.01,0.001/5.0
-rl/isaac/run_isaac.sh eval rl/isaac/scripts/eval_policy.py --policy $R/train/<run>/policy_final.pt
+# 2차 물결 (계약 v1.2.0): BC·라그랑주 없는 순수 PPO = 제약 없는 PPO, 경로 3–15 m, 20M 사본
+rl/isaac/run_isaac.sh v12s0 rl/isaac/scripts/train_ppo.py --num_envs 2048 --iterations 300 --run v12_s0 \
+    --seed 0 --reward 1.2.0 --path_len 3:15 --save_at_env_steps 20e6
+# 판정 평가: env 마다 첫 에피소드만, 평가 seed 고정, unfinished 0 (eval_policy.py 는 짧은 결말 쪽으로 치우친다)
+rl/isaac/run_isaac.sh ev rl/isaac/scripts/eval_unbiased.py --policy $R/train/<run>/policy_final.pt \
+    --num_envs 2048 --seed 4242 --path_len 3:15 --tag final_heldout_3_15
 # algo·train_steps·라그랑주 사실은 summary.json·curve.jsonl·bc.json 에서 메타데이터로 옮긴다 (--algo 를 주지 않는다)
 docker run --rm -v $WT:/ws -v $R:$R -w /ws amr-ai/rl:0.3 python3 rl/isaac/scripts/export_onnx.py --run $R/train/<run> \
-    --obs_batch $R/train/<run>/eval_heldout_final/obs_batch.npz
+    --obs_batch $R/train/<run>/eval_final_heldout_3_15/obs_batch.npz
 ```
 
 앱 종료(`app.close()`)가 CPU 100 % 로 멈춘 적이 있어 모든 Isaac 스크립트는 끝에서 `os._exit` 한다.
+
+## 계약 v1.2.0 과 BC 없는 순수 PPO (2차 물결 r7, 2026-10-06)
+
+**불리한 것 먼저.**
+- **제약 없는 PPO 다.** 라그랑주 승수는 0 그대로(`--lagrange` 안 줌), BC 없음. 계약 §7 의 비용 제약을 쓰지 않았고
+  1차 물결의 d₁ 문제(§7.2 훑기)는 이번 범위 밖이다. 그 대가 [측정, 아래 표]: 안전 개입 비용이 에피소드당
+  1.66–3.00 으로 1차 물결 BC+PPO(0.168)의 10–18 배, §7.2 임시 범위 {0.02–0.2} 밖이다. 86–97 % 가 정체 에피소드
+  (약 2 %)에서 나온다 — 목표 0.15–0.18 m 앞에서 멈춘 채 φ 를 향해 계속 명령한다. 성공 에피소드만 봐도 0.05–0.26 으로
+  BC+PPO(0.011)보다 크다.
+- **충돌이 0 이 아니다.** 3–15 m 1·0·2 건 / 2048, 3–30 m 5·2·1 건 / 2048 (BC+PPO 는 둘 다 0). 3–30 m 의 8 건은
+  두 목표로 가는 경로뿐이다 — 시드 0 의 5 건은 목표 (−29.58, 18.43), 시드 1·2 의 3 건은 목표 (1.68, −8.57) (최대 이탈
+  0.57–0.78 m, 목표 1.1–2.7 m 앞). 두 목표는 아래의 좁은 목표 축이다 (장애물 여유 0.425·0.375 m). 3–15 m 시드 2 의
+  1 건은 다른 목표다.
+- **시드 3 개뿐이다.** 실패 0/3 은 2D 의 실패율 1/11 을 반박하지 못한다 (0/3 의 95 % 상한 70.8 %; p = 1/11 이어도
+  0/3 이 나올 확률 75 %).
+- 학습 경로를 3–15 m 로 좁혔다 (2D 2a 와 같게, 계약 §10 은 3–30 m). 대조 v1.1.0(1차 물결 `ppo_b_s0`)은 3–30 m·11.8M
+  이라 경로 범위·예산이 다르다 — 같은 3–15 m 의 v1.1.0 Isaac run 은 **미측정** (경로 커리큘럼 run `ppo_b_s0_cur` 는 짧은
+  경로에서 시작해도 7.9M 동안 0 이었다).
+- 남은 실패 약 2 % (대부분 정체)는 정책들이 상당 부분 같은 경로에서 낸다. 다섯 정책(v1.2.0 3 시드·BC+PPO·BC)이
+  모두 실패한 13 건은 9 경로·목표 4 개이고, 그 목표는 held-out 3–15 m 목표 511 개 중 장애물 여유가 가장 좁은 쪽
+  (0.375–0.425 m, 1–5 번째)이다 — 몸체 반길이 0.30 m 라 목표에서 앞 끝이 상자에 0.08–0.13 m 로 E-STOP 거리 0.30 m 안이다.
+  정책보다 경로 풀(`paths.GOAL_CLEARANCE` 0.40)과 φ 의 문제로 본다 [계산, 인과는 미검증].
+
+**설정** (학습 전에 정함, `/home/CAPYI_AI/runs/r7-isaac12/protocol.json`): `rsl_rl_ppo_cfg.py` 그대로(1차 물결 대조와
+같은 하이퍼파라미터 — 엔트로피 0.003, lr 3e-4 adaptive, MLP 512-256-128), 보상 v1.2.0, DR 켬, 커리큘럼 없음,
+2048 env × 300 반복 = 39.3M env-steps, 시드 0·1·2. 멈춤 규칙: 20M(반복 160) 사본에서 시드 0·1 모두 5 % 미만이면 시드 2
+를 돌리지 않는다 → 0.983·0.979 라 돌렸다. 판정: 마지막 반복 정책, `eval_unbiased.py` (held-out 풀 seed 1 의 3–15 m,
+명목 동역학, 평가 seed 4242, env 2048 개의 첫 에피소드, unfinished 0), 통과 기준 성공 ≥ 0.90.
+
+**결과** [측정, 공유 부하 하 예비값 — loadavg 5–16, 2D 학습과 GPU 공유]:
+
+| | 시드 0 | 시드 1 | 시드 2 | BC+PPO (1차, v1.1.0) | BC 만 |
+|---|---|---|---|---|---|
+| 성공 3–15 m (판정) | **0.979 ± 0.003** | **0.982 ± 0.003** | **0.983 ± 0.003** | 0.979 | 0.981 |
+| 정체 / 충돌 / 시간 상한 | 0.020 / 0.0005 / 0.0005 | 0.018 / 0 / 0 | 0.016 / 0.0010 / 0 | 0.021 / 0 / 0 | 0.019 / 0 / 0 |
+| 평균 주행 시간 (전체 / 성공) s | 12.06 / 11.60 | 11.99 / 11.62 | 11.98 / 11.65 | 13.12 / 12.67 | 17.64 / 17.28 |
+| 개입 비용 /에피소드 | 2.84 | 1.66 | 3.00 | 0.168 | 0.055 |
+| 20M 사본 성공 | 0.983 | 0.979 | (평가 안 함) | — | — |
+| 성공 3–30 m (보조) | 0.981 | 0.978 | 0.978 | 0.982 | — |
+| 학습 롤아웃 성공 ≥ 0.1 / ≥ 0.9 | 2.6M / 3.9M | 2.6M / 3.9M | 2.6M / 5.2M | — | — |
+
+- 1차 물결 대조 v1.1.0 순수 PPO 6 설정은 5.9–11.8M 동안 0–0.1 % (`/home/CAPYI_AI/runs/r1-isaac/train/ppo_b_s0*` 등).
+- 학습 벽시계 (프로세스, 시작~끝): 1 955 · 1 963 · 1 711 s, 합 1.56 h (상한 4 h). 컨테이너 GPU 최대 3.4 GB/run.
+- ONNX: 세 정책 모두 `export_onnx.py` fails 0, ORT 대 torch ≤ 3.3e-6, Isaac CUDA 대 ORT ≤ 7.2e-7, 메타데이터
+  `algo` = "PPO (rsl_rl 3.1.2), unconstrained (no Lagrangian / cost constraint)", `constraint` = none,
+  `contract_version`·`reward_version` = 1.2.0.
+- 평가 재현: 같은 정책·seed 로 두 번 돌리면 에피소드별 결과가 비트 단위로 같고, 다른 정책도 첫 에피소드 경로가 같다
+  (`path_ids_sha` 39105bab9dde84e6).
+
+**2D(2a)와의 예비 비교 — "같은 방향인가" 수준이다 (SRCC 가 아니다).** 같은 계약 v1.2.0·같은 3–15 m 범위·같은 평가
+추정량(첫 에피소드, seed 4242, n 2048)이지만 경로 생성기·φ(2D 는 C++ SafetyGate 바인딩, Isaac 은 근사 D)·DR·PPO
+구현(2D: 엔트로피 0, 고정 lr + KL 조기 중단, 보상 표준편차 정규화, MLP 256-256)·예산(2D 14.9M)이 다르다.
+
+| | Isaac v1.2.0 (3 시드) | 2D v1.2.0 (11 시드) |
+|---|---|---|
+| 시드별 성공 | 0.979 · 0.982 · 0.983 | 10 시드 0.948–0.990, 시드 2 0.0005 |
+| 실패 시드 (< 0.90) | 0/3 | 1/11 (직전 정지 끌개) |
+| 평균 주행 시간 (전체 에피소드) | 11.98–12.06 s | 통과 시드 11.87–12.63 s |
+| 평가 경로 평균 길이 | 9.98 m | 9.97 m |
+| 정체 / 충돌 | 1.6–2.0 % / 0–0.10 % | 통과 시드 1.0–5.2 % / 0 |
+| 개입 비용 /에피소드 | 1.66–3.00 | 통과 시드 0.02–0.14 (φ 가 다르다) |
+| 학습 롤아웃 성공 10 % 도달 | 2.6M (chunk 해상도 1.3M) | 통과 시드 2.6–3.7M |
+
+방향은 같다: v1.1.0 에서 두 시뮬레이터 모두 순수 PPO 가 실패했고, v1.2.0 에서 두 시뮬레이터 모두 BC 없이 약 98 % 에
+닿으며 주행 시간도 비슷하다. 다른 점은 Isaac 쪽의 충돌·개입이 크다는 것이다 (제약 없는 PPO + 근사 φ).
 
 ## 전이 한 번 (Δt = 0.1 s = 물리 0.02 s × 5)
 
@@ -74,7 +146,7 @@ raw 행동 → `u = tanh(raw)` → `integrate_b` (ray 클램프) → 결정 주�
    선택은 다를 수 있다). C++ 평활기(숏컷 + Gauss–Seidel) 대신 숏컷만 근사한 뒤 0.05 m 재표본.
 8. **관측 정규화** — rsl_rl `EmpiricalNormalization` 의 통계 갱신을 쓰고 적용 식만 계약식으로 바꿨다
    (`train_ppo.ContractNormalization`). 분산 하한 1e-2 를 두었고 ONNX 에도 같은 σ² 를 넣는다.
-9. **학습 전용 커리큘럼** — 경로 길이 상한(구조 파라미터, 20 % 는 전체 풀 균일, contract §10)과 **v_cap**
+9. **학습 전용 커리큘럼** (1차 물결, v1.1.0) — 경로 길이 상한(구조 파라미터, 20 % 는 전체 풀 균일, contract §10)과 **v_cap**
    (관측된다; 평가·비교는 v_cap = 1.0). 둘 다 계약에 없는 [설계 선택]이고, 처음부터의 PPO 에서는 성공을 만들지
    못했다 (`train/ppo_b_s0_cur`·`ppo_b_s0_cv`·`ppo_b_s0_cv_ent`·`ppo_b_lag_a`·`ppo_b_lag_b` 의 `curve.jsonl`:
    60–100 반복에서 성공률 최대 0.1 %). 지금 조합은 쓰지 않는다.
