@@ -31,6 +31,7 @@ from amr_msgs.msg import TrackedObstacleArray
 from nav_msgs.msg import Odometry, Path
 import rclpy
 from rclpy.action import ActionClient
+from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
 from std_msgs.msg import Float64, Float64MultiArray
 from tf2_ros import Buffer, TransformListener
@@ -77,6 +78,24 @@ class Smoke(Node):
         self.n_plans = 0
         self.create_subscription(Path, 'plan', self._plan, 10)
         self.cmd_t = []
+        # 자세 시계열 (A2 2 회차의 위치추정 붕괴 진단용): 5 Hz 로 지면 진실 · odom EKF · TF map·odom
+        self.poses = []
+        self.create_timer(0.2, self._sample, clock=Clock(clock_type=ClockType.STEADY_TIME))
+
+    def _sample(self):
+        def odom_xy(m):
+            if m is None:
+                return None
+            p = m.pose.pose
+            q = p.orientation
+            return [p.position.x, p.position.y, math.atan2(
+                2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))]
+        mp = self.pose_map()
+        op = self.pose_map(frame='odom')
+        self.poses.append({'t': time.monotonic(), 'sim': self.get_clock().now().nanoseconds * 1e-9,
+                           'gt': odom_xy(self.gt), 'odom_ekf': odom_xy(self.odom),
+                           'tf_map': list(mp) if mp else None,
+                           'tf_odom': list(op) if op else None})
 
     def _plan(self, m):
         self.plan = m
@@ -207,6 +226,8 @@ def main():
         if not client.wait_for_server(timeout_sec=60.0):
             summary['error'] = '액션 서버 없음'
         else:
+            # /clock 을 받기 전이면 노드 시각이 0 이라 sim 경과가 부풀려진다 (A2 2 회차) → 받을 때까지
+            spin_until(node, lambda: node.get_clock().now().nanoseconds > 0, 10.0)
             t0 = time.monotonic()
             ts0 = node.get_clock().now()
             fut = client.send_goal_async(goal)
@@ -300,6 +321,7 @@ def main():
         json.dump({'stats_fields': 'rl_controller.cpp kStatsFields 순서',
                    'stats_t': [t - t0s for t in node.stats_t], 'stats': node.stats,
                    'cmd_t': [t - t0s for t in node.cmd_t],
+                   'poses': [dict(p, t=p['t'] - t0s) for p in node.poses],
                    'cmd': [[c.linear.x, c.angular.z] for c in node.cmds]}, f)
     with open(os.path.join(args.out, 'summary.json'), 'w', encoding='utf-8') as f:
         json.dump(summary, f, ensure_ascii=False, indent=1)

@@ -8,7 +8,9 @@
 #         bash src/amr_rl_controller/scripts/smoke_gazebo.sh <tag> <model> <B|C>
 # 선택 환경 변수 (A2): OUT_ROOT (기본 /runs/smoke), WORLD (system.launch.py world:= — 예: 움직이는 장애물을 뺀
 #   사본, scripts/make_static_world.py), GOALS ("x,y,yaw;x,y,yaw;…" — 주면 navigate 를 차례로, 결과 goal_<k>/),
-#   FOLLOW_LAST=1 (follow 를 navigate 뒤에), NAV_TIMEOUT (기본 180 s).
+#   FOLLOW_LAST=1 (follow 를 navigate 뒤에), NAV_TIMEOUT (기본 180 s),
+#   BASELINE_DWA=1 (대조: replace_dwa 없이 띄워 BT 기본 제어기 'DWA' = 원래 amr_navigation DWA 가 navigate·follow 를
+#   몬다 — 같은 스택·같은 파라미터에서 제어기만 바뀐다. RL 은 'RL' 로 실리지만 쓰지 않는다).
 set +u
 TAG=$1; MODEL=$2; MODE=$3
 OUT=${OUT_ROOT:-/runs/smoke}/$TAG; mkdir -p $OUT
@@ -22,8 +24,9 @@ ros2 launch amr_bringup system.launch.py with_navigation:=false with_fleet:=fals
   > $OUT/system.log 2>&1 &
 SP=$!
 sleep ${WAIT_SYS:-60}
+REPLACE=true; [ "$BASELINE_DWA" = "1" ] && REPLACE=false
 ros2 launch amr_rl_controller rl_navigation.launch.py model_path:=$MODEL mode:=$MODE \
-  replace_dwa:=true robot_name:=amr_01 use_sim_time:=true > $OUT/nav.log 2>&1 &
+  replace_dwa:=$REPLACE robot_name:=amr_01 use_sim_time:=true > $OUT/nav.log 2>&1 &
 NP=$!
 # lifecycle 전이 응답 유실 안전망 (amr_bringup lifecycle_watchdog — bringup 이 navigation 을 켤 때 쓰는 것과 같음).
 # 1 차 실행(gz_c_heur_a)에서 controller_server change_state 응답이 유실돼 매니저가 멈췄다.
