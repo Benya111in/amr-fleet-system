@@ -27,6 +27,18 @@ def test_box_inventory(geo):
     assert all(b.is_planar() for b in boxes)
 
 
+def test_all_2d_obstacles_cross_lidar_plane(geo):
+    # 정본 φ 의 깊이 점군 'empty' 모델의 전제: 몸체 높이 띠의 장애물은 모두 LiDAR 평면(지면 +0.20 m)을 지난다
+    # (LiDAR 가 못 보는 낮은·높은 띠 안 물체가 없다). 창고가 바뀌어 이 전제가 깨지면 README 「정본 safety φ」 를 고친다.
+    boxes = geo[0]
+    band = [b for b in boxes
+            if not (b.z_range()[1] < W.Z_BAND_LO or b.z_range()[0] > W.Z_BAND_HI)]
+    assert len(band) == 129
+    below = [b.name for b in band if b.z_range()[0] > W.LIDAR_Z]
+    above = [b.name for b in band if b.z_range()[1] < W.LIDAR_Z]
+    assert below == [] and above == []
+
+
 def test_walls_inner_faces(geo):
     boxes = geo[0]
     walls = [b for b in boxes if b.name.startswith('warehouse_walls')]
