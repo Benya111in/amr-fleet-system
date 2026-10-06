@@ -46,6 +46,13 @@
     utilization_mode: assigned       # [시작 전용] robot_utilization 의 busy 정의: assigned = 진행 중 작업 보유
                                      # 시간 (작업 로그 duration 과 같은 구간) | moving = MOVING/DOCKING/LOADING
     task_schema_path: ""             # [시작 전용] "" = share/amr_fleet/config/task_schema.json
+    # 작업 게시판 · 권위자 표식 (보너스 4 P0, task_board.py, docs/research/fleet-distributed/p0.md §4)
+    task_board_depth: 256            # [시작 전용] /fleet/task_board 구독 이력 깊이 (RELIABLE + TRANSIENT_LOCAL,
+                                     # ≥ 미처리 작업 상한). 게시물은 전역 task_id 필수 · 재전송은 한 번만 처리
+    epoch: 0                         # [시작 전용] 권위자 epoch (assign_task · task_events 에 싣는다).
+                                     # 0 = epoch_file 이 있으면 그 값 + 1, 없으면 1
+    epoch_file: ""                   # [시작 전용] "" = 영속 안 함. 경로면 시작마다 +1 해 원자적으로 쓴다
+    leader_id: ""                    # [시작 전용] "" = 노드 전체 이름 (/fleet/fleet_manager_node)
     robot_params_path: ""            # [시작 전용] "" = $ROS_WS/config/robot_params.yaml (payload 질량 표)
     scheduler:                       # [시작 전용] 전부
       band_width: 32                 # 우선순위 밴드 폭 (0~255 → 8 밴드), 밴드 안에서 EDF

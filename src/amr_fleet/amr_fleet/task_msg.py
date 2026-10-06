@@ -4,6 +4,8 @@ TaskSpec ↔ amr_msgs/msg/Task 변환 (ROS 메시지 의존, rclpy 는 쓰지 �
 - deadline: None ↔ builtin_interfaces/Time(0, 0)
 - created : header.stamp (0 이면 변환 시각 now)
 - yaw     : z 축 회전 쿼터니언 (x=y=0)
+- version : 그대로. epoch · leader_id · seq 는 작업이 아니라 그 메시지를 낸 권위자의 표식이라 TaskSpec 에
+            없다 (fleet_manager 가 낼 때 채운다 — task_board.CommandStamp)
 """
 
 from __future__ import annotations
@@ -98,6 +100,7 @@ def spec_to_msg(spec: TaskSpec, stamp: Optional[Time] = None) -> Task:
     msg.item_type = spec.item_type
     msg.item_mass = float(spec.item_mass)
     msg.status = int(spec.status)
+    msg.version = int(spec.version)
     return msg
 
 
@@ -124,4 +127,5 @@ def spec_from_msg(msg: Task, now: float, id_factory: Callable[[], str] = generat
         robot_id=msg.robot_id,
         created=created if created is not None else float(now),
         status=int(msg.status),
+        version=int(msg.version),
     )

@@ -87,6 +87,7 @@ class TaskSpec:
     robot_id: str = ''                     # 비어 있으면 자동 할당
     created: float = 0.0                   # 접수 시각, 노드 시계 [s]
     status: int = STATUS_PENDING
+    version: int = 0                       # 게시판 판 (amr_msgs/Task.version, task_board.TaskLedger)
 
     def has_deadline(self) -> bool:
         """마감이 지정되어 있는지."""

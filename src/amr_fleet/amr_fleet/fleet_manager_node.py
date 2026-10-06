@@ -3,6 +3,10 @@ fleet_manager_node — 중앙 작업 관리자 (components.md §3.6 / §5.6, 명
 
 네임스페이스 /fleet 에서 뜬다.
 - Sub  task_request (std_msgs/String, JSON). 스키마 + 의미 규칙 위반은 fleet/INVALID_TASK 알림 후 버린다
+- Sub  task_board (amr_msgs/Task, RELIABLE + TRANSIENT_LOCAL, 깊이 task_board_depth) — 작업 소스가 서버와 따로
+       내는 게시판 (보너스 4 P0). 전역 task_id 필수, status = PENDING 만. 늦게 뜬(재기동한) 관리자도 이력을 받는다.
+       두 경로 모두 TaskLedger 로 멱등: 같은 id · 같은 판 · 같은 내용의 재전송은 조용히 무시, 다른 내용 · 낮은 판 ·
+       높은 판(갱신 — 아직 지원 안 함)은 fleet/INVALID_TASK (task_board.py)
 - SrvS assign_task (amr_msgs/AssignTask, robot_id 가 비면 자동 할당). JSON 경로와 같은 검증, 위반은 success=false
 - Sub  /amr_XX/robot_state, /amr_XX/task_status
 - SrvC /amr_XX/assign_task (호출 전 송신 지연 큐: 링크 fleet→amr_XX 의 CommEmulator 지연·유실 — 기본
@@ -10,6 +14,9 @@ fleet_manager_node — 중앙 작업 관리자 (components.md §3.6 / §5.6, 명
 - Pub  task_events (Task, 전이마다) · status (FleetStatus, 1 Hz) · alerts (DiagnosticArray)
 - Sub  traffic_events (DiagnosticArray, 교착 카운트)
 - 로그 logs/tasks_YYYYmmdd.csv (작업), logs/allocation_YYYYmmdd.csv (할당 최적성 지표). 날짜는 벽시계
+
+권위자 표식: assign_task 요청과 task_events 마다 (epoch, leader_id, seq) 를 싣는다 (amr_msgs/Task). epoch 는
+파라미터 > epoch_file(시작마다 +1 영속) > 1. 받는 쪽 펜싱은 분산 에이전트(P3) 몫이다.
 
 시계: 모든 시각(마감·접수·이벤트 stamp)은 노드 시계다 (use_sim_time 이면 /clock). ISO 마감은 접수 때
 노드 시계로 옮긴다 (task_schema.parse_deadline).
@@ -66,6 +73,10 @@ from amr_fleet.allocation import (
 from amr_fleet.kpi import STATUS_ERROR, STATUS_ESTOP, STATUS_IDLE, KpiTracker
 from amr_fleet.comm_emulator import FLEET, from_node_params
 from amr_fleet.scheduler import SchedulerConfig, TaskScheduler
+from amr_fleet.task_board import (
+    ACCEPT, BOARD_DEPTH, CONFLICT, DUPLICATE, STALE, UPDATE, CommandStamp, TaskLedger,
+    resolve_epoch,
+)
 from amr_fleet.task_msg import float_to_time, spec_from_msg, spec_to_msg
 from amr_fleet.task_schema import (
     ROBOT_ID_RE, STATUS_COMPLETED, STATUS_FAILED, STATUS_IN_PROGRESS, STATUS_NAMES,
@@ -81,7 +92,7 @@ from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult
 import rclpy
 from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
 
 ROBOT_STATE_RE = re.compile(r'^/([A-Za-z0-9_]+)/robot_state$')
@@ -97,8 +108,14 @@ STARTUP_ONLY_PARAMS = frozenset({
     'comm_latency_ms', 'drop_rate', 'seed', 'comm_model_file', 'log_dir', 'log_time_format',
     'allocation_period_s',
     'status_period_s', 'discovery_period_s', 'throughput_window_s', 'utilization_mode',
-    'task_schema_path', 'robot_params_path',
+    'task_schema_path', 'robot_params_path', 'task_board_depth', 'epoch', 'epoch_file',
+    'leader_id',
 })
+_LEDGER_REASONS = {
+    CONFLICT: '같은 task_id · 같은 판(version {v}) 인데 내용이 다르다 (소스가 id 를 다시 썼다)',
+    STALE: '이미 더 높은 판을 받은 작업의 옛 판(version {v})',
+    UPDATE: '이미 접수한 작업의 새 판(version {v}) — 작업 갱신은 아직 지원하지 않는다 (P3)',
+}
 # 실행 중 바꿀 수 있는 수치 파라미터와 하한 (매번 읽는다)
 RUNTIME_MIN = {
     'allocation_batch_size': 0, 'allocation_batch_window_s': 0.0, 'robot_state_timeout_s': 0.1,
@@ -211,6 +228,16 @@ class FleetManagerNode(Node):
         self.create_subscription(String, 'task_request', self._on_task_request, 50)
         self.create_subscription(DiagnosticArray, 'traffic_events', self._on_traffic_event, 20)
         self.create_service(AssignTask, 'assign_task', self._on_assign_task_srv)
+        # 작업 게시판: 작업 소스가 서버와 따로 낸다. 이력(TRANSIENT_LOCAL)으로 재기동한 관리자도 받는다
+        self._ledger = TaskLedger()
+        self.board_duplicates = 0
+        board_qos = QoSProfile(depth=max(1, int(p('task_board_depth'))),
+                               reliability=ReliabilityPolicy.RELIABLE,
+                               durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.create_subscription(Task, 'task_board', self._on_task_board, board_qos)
+        # 권위자 표식 (epoch, leader_id, seq) — assign_task 요청과 task_events 에 싣는다
+        self._command = CommandStamp(resolve_epoch(int(p('epoch')), str(p('epoch_file'))),
+                                     str(p('leader_id')) or self.get_fully_qualified_name())
 
         self._robots: Dict[str, _Robot] = {}
         self._inflight: Dict[str, _Dispatch] = {}   # task_id → 응답 대기 호출
@@ -237,6 +264,7 @@ class FleetManagerNode(Node):
             f'fleet_manager 시작: strategy={self._strategy.name}, robots={sorted(self._robots)}, '
             f'comm={self._comm.describe()}, '
             f'batch_window={float(p("allocation_batch_window_s")) * 1e3:g} ms, '
+            f'epoch={self._command.epoch} leader={self._command.leader_id}, '
             f'use_sim_time={p("use_sim_time")}, log_dir={self._log_dir}')
 
     # ------------------------------------------------------------------ 파라미터
@@ -268,6 +296,10 @@ class FleetManagerNode(Node):
             'utilization_mode': 'assigned',  # assigned (작업 보유 시간) | moving (이동·도킹·적재)
             'task_schema_path': '',
             'robot_params_path': '',
+            'task_board_depth': BOARD_DEPTH,  # /fleet/task_board 구독 이력 깊이 (≥ 미처리 작업 상한)
+            'epoch': 0,                      # 권위자 epoch. 0 = epoch_file 이 있으면 그 값 + 1, 없으면 1
+            'epoch_file': '',                # '' = 영속 안 함. 경로면 시작마다 +1 해 원자적으로 쓴다
+            'leader_id': '',                 # '' = 노드 전체 이름 (/fleet/fleet_manager_node)
             'scheduler.band_width': 32,
             'scheduler.deadline_weight': 1.0,
             'scheduler.fifo_weight': 0.0,
@@ -373,14 +405,53 @@ class FleetManagerNode(Node):
         now = self._now()
         try:
             spec = self._schema.from_json(msg.data, now, wall_now=time.time())
-            self._check_admissible(spec)
+            fresh = self._check_admissible(spec)
         except TaskValidationError as exc:
             hint = TASK_ID_HINT_RE.search(msg.data[:4096] if isinstance(msg.data, str) else '')
             self._reject_task('task_request', str(exc), hint.group(1) if hint else '')
             self.get_logger().warn(f'버린 작업 요청 원문(앞 200자): {msg.data[:200]!r}')
             return
+        if not fresh:
+            self._duplicate(spec, 'task_request')
+            return
         self._admit(spec, now)
         self._request_batch_allocation()
+
+    @_guarded
+    def _on_task_board(self, msg: Task) -> None:
+        """
+        /fleet/task_board 게시물 1건: 전역 task_id 필수, status PENDING 만. 멱등 규칙은 TaskLedger.
+
+        게시물의 마감은 절대 시각(노드 시계)이고 접수 시각은 받은 시각이다.
+        """
+        now = self._now()
+        task_id = msg.task_id if TASK_ID_RE.match(msg.task_id or '') else ''
+        try:
+            if not msg.task_id:
+                raise TaskValidationError('task_board 게시물에는 전역 task_id 가 있어야 한다 '
+                                          '(받는 쪽마다 따로 만들면 같은 작업이 두 번 처리된다)')
+            if int(msg.status) != STATUS_PENDING:
+                raise TaskValidationError(
+                    f'task_board 게시물 status 는 PENDING 이어야 한다 ({int(msg.status)}) — 완료 표시로 '
+                    f'작업을 닫는 규칙은 아직 없다 (P3)')
+            spec = spec_from_msg(msg, now, item_masses=self._item_masses)
+            spec.created = now
+            self._schema.validate_spec(spec, now)
+            fresh = self._check_admissible(spec)
+        except TaskValidationError as exc:
+            self._reject_task('task_board', str(exc), task_id)
+            return
+        if not fresh:
+            self._duplicate(spec, 'task_board')
+            return
+        self._admit(spec, now)
+        self._request_batch_allocation()
+
+    def _duplicate(self, spec: TaskSpec, source: str) -> None:
+        """같은 작업의 재전송 (두 경로로 같은 작업 포함): 알림 없이 무시한다."""
+        self.board_duplicates += 1
+        self.get_logger().info(f'{spec.task_id}: 이미 접수한 작업의 재전송({source}, version '
+                               f'{spec.version}) — 무시')
 
     def _on_assign_task_srv(self, req: AssignTask.Request, resp: AssignTask.Response):
         try:
@@ -396,11 +467,19 @@ class FleetManagerNode(Node):
         spec.created = now          # 접수 시각은 노드 시계 (클라이언트 stamp 는 다른 시계일 수 있다)
         try:
             self._schema.validate_spec(spec, now)
-            self._check_admissible(spec)
+            fresh = self._check_admissible(spec)
         except TaskValidationError as exc:
             hint = req.task.task_id if TASK_ID_RE.match(req.task.task_id or '') else ''
             self._reject_task('assign_task', str(exc), hint)
             resp.success, resp.robot_id, resp.message = False, '', safe_text(exc)
+            return resp
+        if not fresh:
+            self._duplicate(spec, 'assign_task')
+            rec = self._sm.get(spec.task_id)
+            d = self._inflight.get(spec.task_id)
+            resp.success = True
+            resp.robot_id = (d.robot_id if d is not None else '') or (rec.robot_id if rec else '')
+            resp.message = f'{spec.task_id}: duplicate'
             return resp
         self._admit(spec, now)
         self._allocate_round()      # 응답에 robot_id 를 주려고 배치 창 없이 바로 할당
@@ -411,13 +490,24 @@ class FleetManagerNode(Node):
         resp.message = f'{spec.task_id}: ' + ('dispatching' if rid else 'queued')
         return resp
 
-    def _check_admissible(self, spec: TaskSpec) -> None:
-        """검증을 통과한 작업이 이 플릿에 들어올 수 있는지: 새 task_id, 등록된 고정 로봇."""
+    def _check_admissible(self, spec: TaskSpec) -> bool:
+        """
+        검증을 통과한 작업이 이 플릿에 들어올 수 있는지: 새 task_id(멱등 규칙), 등록된 고정 로봇.
+
+        새 작업이면 True, 이미 받은 같은 작업(같은 판 · 같은 내용)이면 False, 그 밖은 TaskValidationError.
+        """
+        verdict = self._ledger.check(spec, spec.version)
+        if verdict == DUPLICATE:
+            return False
+        if verdict != ACCEPT:
+            raise TaskValidationError(f'{spec.task_id}: ' + _LEDGER_REASONS[verdict].format(
+                v=spec.version))
         if spec.task_id in self._sm:
             raise TaskValidationError(f'중복 task_id: {spec.task_id}')
         if spec.robot_id and spec.robot_id not in self._robots:
             raise TaskValidationError(
                 f'robot_id {spec.robot_id} 는 등록되지 않은 로봇 (등록: {",".join(sorted(self._robots))})')
+        return True
 
     def _reject_task(self, source: str, reason: str, task_id: str = '') -> None:
         self.invalid_tasks += 1
@@ -425,6 +515,7 @@ class FleetManagerNode(Node):
                     values=alert_values(task_id, source=source))
 
     def _admit(self, spec: TaskSpec, now: float) -> None:
+        self._ledger.record(spec, spec.version)
         self._sm.add(spec, now)
         self._scheduler.push(spec)
         self.get_logger().info(
@@ -594,6 +685,7 @@ class FleetManagerNode(Node):
         # 스탬프 의미는 모듈 설명 참고: pickup = 명령 시각(없으면 0), dropoff = 접수 시각
         msg.pickup_pose.header.stamp = float_to_time(rec.command_time)
         msg.dropoff_pose.header.stamp = float_to_time(rec.created_time)
+        msg.epoch, msg.leader_id, msg.seq = self._command.next()
         self._pub_events.publish(msg)
         self.get_logger().info(f'task_event {ev.task_id}: {ev.name} robot={rec.robot_id or "-"} '
                                f'({ev.reason})')
@@ -693,6 +785,7 @@ class FleetManagerNode(Node):
         req.task.header.stamp = float_to_time(now)
         req.task.pickup_pose.header.stamp = req.task.dropoff_pose.header.stamp = \
             req.task.header.stamp
+        req.task.epoch, req.task.leader_id, req.task.seq = self._command.next()
         timeout_at = now + (delay or 0.0) + float(self._param('assign_timeout_s'))
         self._inflight[task_id] = _Dispatch(robot_id, req, now, timeout_at, delay)
         self._robots[robot_id].inflight = task_id
