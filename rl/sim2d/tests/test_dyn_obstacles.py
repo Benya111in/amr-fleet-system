@@ -77,6 +77,16 @@ def test_footprint_obstacle_distance_zero_iff_contact_and_matches_sampling():
     d = G.footprint_obstacle_distance(pose, ob)
     hit = G.rect_hits_obstacles(pose, ob)
     assert bool((d[~hit] > 0).all())
+    # 장애물 꼭짓점이 로봇 긴 변에 가장 가까운 배치 (로봇 꼭짓점만 보면 거리를 크게 잰다)
+    p1 = torch.tensor([[0.0, 0.0, 0.0]], dtype=torch.float64)
+    hd = math.hypot(0.3, 0.2)                  # AMR 상자 중심 → 꼭짓점 (0.3, 0.2)
+    yaw = -math.pi / 2 - math.atan2(0.2, 0.3)  # 그 꼭짓점이 −y (로봇 쪽) 를 향하게
+    ob1 = {'xy': torch.tensor([[[0.0, CC.HALF_W + 0.10 + hd]]], dtype=torch.float64),
+           'yaw': torch.tensor([[yaw]], dtype=torch.float64),
+           'kind': torch.tensor([[1]]), 'r': torch.zeros(1, 1, dtype=torch.float64),
+           'box': torch.tensor([[OB.AMR_BOX]], dtype=torch.float64),
+           'active': torch.ones(1, 1, dtype=torch.bool)}
+    assert float(G.footprint_obstacle_distance(p1, ob1)[0]) == pytest.approx(0.10, abs=1e-6)
     # 표본 기준: 풋프린트 경계 점 ↔ 몸체 거리 (원은 중심−반경, 사각형은 body_distance)
     u = torch.linspace(-1, 1, 41, dtype=torch.float64)
     hl, hw = CC.HALF_L, CC.HALF_W
@@ -113,6 +123,11 @@ def test_start_filter_removes_conflicts_and_keeps_obstacles():
     c1 = e1.obst.start_conflict(idx, e1.t, e1.pose[:, :2], 3.0, 1.0, dt=0.05)
     assert int(c0.sum()) > 0, '거를 것이 없는 시드 — 시험이 공허하다'
     assert int(c1.sum()) == 0
+    # start_conflict 와 다른 경로(Obstacles.state + body_distance)로 조밀 시각에서 다시 확인한다
+    for k in range(61):
+        st = e1.obst.state(e1.t + 0.05 * k)
+        d = OB.body_distance(st, e1.pose[:, :2])
+        assert not bool(((d < 1.0) & st['active']).any()), k
     assert e1.clear_stats['conflict0'] > 0
     # 위상만 바꾸고 끄는 것은 드물다
     assert e1.clear_stats['disabled'] <= 0.2 * e1.clear_stats['conflict0']
@@ -149,6 +164,11 @@ def test_episode_min_separation_and_stationary_collision():
     other = ~coll & torch.isfinite(rec['min_sep'])
     assert bool((rec['min_sep'][other] > 0).all())
     assert bool(rec['finished'].all())
+    # 움직이는 정책: 주행 중 접촉과 '회전 중 정지 접촉' 은 겹치지 않는다
+    rf = D.first_episodes(env, D.ESCAPE['follow_0.8'], 4242)
+    cf = rf['outcome'] == 1
+    assert int((cf & rf['collision_moving']).sum()) > 0
+    assert not bool((cf & rf['collision_moving'] & rf['collision_turning']).any())
 
 
 @gpu
