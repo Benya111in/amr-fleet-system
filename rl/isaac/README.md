@@ -84,7 +84,8 @@ raw 행동 → `u = tanh(raw)` → `integrate_b` (ray 클램프) → 결정 주�
    갱신하게 만들었다 (단일 critic, J = 끝난 에피소드의 비할인 비용 합 평균). 기록하는 반환은 계약 보상이다.
    - **계약과 다르게 한 것**: 개입 예산 d₁ 을 5.0/에피소드로 두었다. 계약 §7.2 는 d₁ 이 미측정인 동안
      {0.02, 0.05, 0.1, 0.2} 를 훑어 (개입, 주행시간, 성공률) Pareto 곡선과 마지막 λ 를 보고하라고 정해 두었다.
-     5.0 은 그 범위 밖이고 훑기도 하지 않았다. 처음 이 문서는 "계약이 미정" 이라고 적었는데 틀린 말이었다.
+     5.0 은 그 범위 밖이고 훑기도 하지 않았다. 처음 이 문서는 "계약이 미정이라" 5.0 으로 두었다고 적었는데,
+     계약에서 미정인 것은 최종 값(DWA 실측 × 1.2)뿐이고 그때까지의 훑기 범위는 정해져 있었다.
    - **무슨 일이 있었나** [측정, `train/ppo_b_bc_fz/curve.jsonl`·`summary.json`]: 개입 비용(0.02–0.31/에피소드)이
      늘 d₁ 보다 훨씬 작아 λ₁ 은 줄기만 했다. 다른 채널도 비용이 예산(충돌 0.02·이탈 5·복귀 10·CTE 50)보다 작아
      (충돌·이탈·복귀 0, CTE 1.06–1.75) 같은 방향이었다. λ 는 반복 50 기록에 [0, 0.00033, 0, 0, 0.00012],
@@ -98,7 +99,8 @@ raw 행동 → `u = tanh(raw)` → `integrate_b` (ray 클램프) → 결정 주�
    - **ONNX 메타데이터**: 처음 내보낸 `policy_final.onnx` 의 `algo` 는 "Lagrangian penalty" 라고 적었다 — 틀렸다.
      이제 `export_onnx.py` 가 algo 를 학습 기록에서 만들고(`policy_export.describe_algo`), `lagrange_final`·
      `lagrange_all_zero_from_iteration`·`intervention_budget_d1`·`intervention_budget_in_contract_sweep` 을
-     메타데이터에 넣는다. 끝 λ 가 전부 0 인데 algo 가 라그랑주를 주장하면 검사 `algo_claim_consistent` 가 실패한다(rc 1).
+     메타데이터에 넣는다. 끝 λ 가 전부 0 인데 algo 가 라그랑주를 주장하면 (`--algo` 로 주어도) 모델 파일을 쓰지 않고
+     rc 1 로 끝난다 (`algo_claim_consistent`). `ppo_b_bc_fz` 의 두 ONNX 는 이렇게 다시 내보냈다 (가중치는 같다).
      BC 정책은 `train_steps` = 0 (RL 단계 없음) 과 `bc_samples` 를 적는다 (처음에는 PPO 단계 수를 적었다).
    - **다음 물결**: d₁ ∈ {0.02, 0.05, 0.1, 0.2} 훑기와 마지막 λ 보고 (계약 §7.2), 승수 갱신은 PID Lagrangian 권장.
 11. **BC 예열** — 특권 정보 전문가(`amr_isaac/expert.py`, 1.0 m 앞 경로점 순수 추종 + 목표 거리 비례 감속)
