@@ -169,6 +169,12 @@ def test_level_probs_sampling():
     assert bool((env.obst.active[env.ep_level == 3].sum(1) <= 3).all())
     with pytest.raises(ValueError):
         env.set_level_probs([1.0, 0.0])
+    # 'random' 모드는 Gazebo 수준을 뽑지 않는다
+    er = make(n=512, seed=2, mode='random')
+    er.set_level_probs(p)
+    er.gen.manual_seed(2)
+    er.reset()
+    assert not bool((er.ep_level == er.n_levels - 1).any())
 
 
 def test_level_sampler_learnability():
@@ -195,9 +201,16 @@ class _FakeEnv:
         self.dev = torch.device('cpu')
         self.N = 4
         self.cfg = type('c', (), {'arm': 'B'})()
+        self.k = 0
 
     def reset(self):
         return torch.zeros(self.N, 291)
+
+    def step(self, u):
+        self.k += 1
+        z = torch.zeros(self.N, dtype=torch.bool)
+        return (torch.full((self.N, 291), float(self.k)), torch.zeros(self.N), z, z,
+                {'cost': torch.zeros(self.N, 5)})
 
 
 def _eps(c):
@@ -219,6 +232,11 @@ def test_pid_lagrangian_defaults_equal_pi_and_channels():
     tr3 = Trainer(_FakeEnv(), cfg3)
     assert tr3.update_lagrange(_eps(0.22))[0] == pytest.approx(2.0 * 0.2)   # e 0 → 0.2
     assert tr3.update_lagrange(_eps(0.12))[0] == 0.0                         # 감소 → D 0
+    cfg5 = PPOConfig(lagrangian=True, lag_kp=1.0, lag_ki=0.0, lag_kd=2.0, lag_max=100.0,
+                     rollout=2, lag_channels=(0,))
+    tr5 = Trainer(_FakeEnv(), cfg5)
+    tr5.update_lagrange(_eps(0.22))
+    assert tr5.update_lagrange(_eps(0.12))[0] == pytest.approx(0.1)   # 감소 오차는 D 에서 빼지 않는다
     cfg4 = PPOConfig(lagrangian=True, lag_ki=1.0, lag_ema=0.5, lag_max=100.0, rollout=2,
                      lag_channels=(0,))
     tr4 = Trainer(_FakeEnv(), cfg4)
@@ -348,3 +366,13 @@ def test_kl_to_bc_reference_is_frozen_copy():
     kl1 = torch.distributions.kl_divergence(tr.model.dist(obs), tr.bc_ref.dist(obs)).sum(-1)
     assert float(kl1.min()) > 0.1
     assert not any(p.requires_grad for p in tr.bc_ref.parameters())
+
+
+def test_freeze_norm_stops_running_stats():
+    """freeze_norm 이면 롤아웃이 관측 정규화 통계를 바꾸지 않는다 (KL-to-BC 기준과 같은 정규화)."""
+    for frozen in (False, True):
+        tr = Trainer(_FakeEnv(), PPOConfig(rollout=3, freeze_norm=frozen))
+        c0, m0 = float(tr.model.norm.count), tr.model.norm.mean.clone()
+        tr.collect()
+        changed = float(tr.model.norm.count) != c0 or not torch.equal(m0, tr.model.norm.mean)
+        assert changed != frozen
