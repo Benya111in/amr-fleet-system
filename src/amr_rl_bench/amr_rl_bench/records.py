@@ -15,14 +15,16 @@ import os
 SCHEMA = 'amr_rl_bench/gzbench/v1'
 EPISODE_V1 = 'amr_rl_eval/episode/v1'
 
-# gzbench/v1 열 순서 (빈 칸 = 그 제어기에 해당 없음 또는 측정 실패 — 이유는 setup_error·note 에)
+# gzbench/v1 열 순서 (빈 칸 = 그 제어기에 해당 없음 또는 측정 실패 — 이유는 setup_error·note 에).
+# 2026-10-07 덧붙인 열 (A5 리뷰 반영, 기존 열 뜻은 그대로): outcome_contract_est, est_end_gap_s.
 COLUMNS = [
     'schema', 'run_tag', 'exec_index', 'scenario_id', 'scenario_set', 'scenario_seed',
     'difficulty',
     'controller', 'arm', 'policy_id', 'handover_radius', 'commit', 'rtf_target', 'started_wall',
     'setup_ok', 'setup_error', 'teleport_err_m', 'seed_tries', 'loc_err_start_m',
     'loc_err_start_yaw', 'accept_tries', 'path_ref_m', 'time_limit_s', 'goal_straight_m',
-    'outcome_contract', 'contract_note', 'outcome_system', 'nav2_status', 'cancel_reason',
+    'outcome_contract', 'contract_note', 'outcome_contract_est', 'outcome_system',
+    'nav2_status', 'cancel_reason',
     't_contract_s', 'nav_time_s', 't_strict_gt_s', 't_strict_est_s', 't_stall_s',
     'strict_gt', 'strict_est', 'nav2compat_gt', 'nav2compat_est', 'system_success',
     'final_ok_gt', 'final_ok_est', 'final_dist_gt_m', 'final_dist_est_m', 'final_yaw_err_gt',
@@ -37,7 +39,7 @@ COLUMNS = [
     'min_clear_dynamic_m',
     'near_goal_stop_s', 'near_goal_stop_max_s',
     'loc_err_max_m', 'loc_err_p95_m', 'loc_err_end_m', 'loc_err_end_yaw', 'loc_collapse',
-    'lost_events', 'lost_at_start',
+    'lost_events', 'lost_at_start', 'est_end_gap_s',
     'decisions', 'src_policy', 'src_fallback_cell', 'src_dwa', 'src_align', 'dwa_state',
     'dwa_policy_error', 'dwa_timeout', 'dwa_nonfinite', 'dwa_handover',
     'decision_period_mean_s', 'decision_period_p05_s', 'decision_period_p95_s',

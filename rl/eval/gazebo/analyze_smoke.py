@@ -97,8 +97,13 @@ def session(path, expect, suffix=''):
         osys = {}
         for r in rs:
             osys[r['outcome_system']] = osys.get(r['outcome_system'], 0) + 1
+        oce = {}
+        for r in rs:
+            key = r.get('outcome_contract_est') or '(열 없음)'
+            oce[key] = oce.get(key, 0) + 1
         out['by_set'][which] = {
-            'n': len(rs), 'outcome_contract': oc, 'outcome_system': osys,
+            'n': len(rs), 'outcome_contract': oc, 'outcome_contract_est': oce,
+            'outcome_system': osys,
             'strict_gt': rate(rs, 'strict_gt'), 'strict_est': rate(rs, 'strict_est'),
             'nav2compat_gt': rate(rs, 'nav2compat_gt'),
             'system_success': rate(rs, 'system_success'),
@@ -149,6 +154,12 @@ def session(path, expect, suffix=''):
         'loc_err_end_yaw_q': q([num(r['loc_err_end_yaw']) for r in ok]),
         'loc_err_max_q': q([num(r['loc_err_max_m']) for r in ok]),
         'strict_flip_gt_vs_est': sum(1 for r in ok if r['strict_gt'] != r['strict_est']),
+        'strict_flip_ids': [r['scenario_id'] for r in ok if r['strict_gt'] != r['strict_est']],
+        # 기록 끝 − 마지막 실제 추정 표본 (A5 리뷰 차단 1: 정착 구간까지 표집하면 ≤ 0.1 s, 옛 원자료 0.4–0.8 s = 근사)
+        'est_end_gap_q': q([num(r.get('est_end_gap_s')) for r in ok]),
+        'est_end_gap_max': (round(float(np.nanmax([num(r.get('est_end_gap_s')) for r in ok])), 4)
+                            if ok and any(math.isfinite(num(r.get('est_end_gap_s'))) for r in ok)
+                            else None),
         'final_ok_flip_gt_vs_est': sum(1 for r in ok if r['final_ok_gt'] != r['final_ok_est']),
         'v_max_gt': round(float(np.nanmax([num(r['v_max_gt']) for r in ok])), 3) if ok else None,
         'w_max_gt': round(float(np.nanmax([num(r['w_max_gt']) for r in ok])), 3) if ok else None,

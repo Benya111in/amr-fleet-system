@@ -32,6 +32,21 @@ def episode(gt, goal=(10.0, 0.0, 0.0), t_limit=50.0, status=4, reason='', **kw):
     return ep
 
 
+def runner_shape(ep, final_est=None, final_t=None):
+    """
+    실행기가 남기는 모양으로 바꾼다: 추정 표본은 t_end(Nav2 종료)까지만, 최종 추정은 기록 끝에 따로.
+
+    A5 리뷰 차단 1: episode() 는 추정을 정착 구간까지 지면 진실과 같게 넣어, 정착 구간 추정이 없는 실제 원자료(A5-4)의 결함을
+    시험이 잡지 못했다. final_t 가 None 이면 'final' 에 't' 를 넣지 않는다 (옛 원자료 — 지표가 기록 끝 시각을 쓴다).
+    """
+    ep['est'] = [r for r in ep['est'] if r[0] <= ep['t_end']]
+    if final_est is not None:
+        ep['final']['est'] = list(final_est)
+    if final_t is not None:
+        ep['final']['t'] = final_t
+    return ep
+
+
 def test_success_layers_and_rtf():
     """목표 0.03 m 앞에서 정지 → 엄격·Nav2 호환 성공, 계약 성공, RTF 0.8."""
     m = M.episode_metrics(episode(drive(9.97)))
@@ -224,6 +239,126 @@ def test_nav2_success_while_moving_counts_when_robot_stops_in_settle():
     assert m['outcome_contract'] == 'success' and m['strict_gt']
     assert m['t_strict_gt_s'] > m['nav_time_s']
     assert m['contract_note'] is None
+    assert m['strict_est'] and m['outcome_contract_est'] == 'success'
+
+
+def test_runner_shape_moving_success_uses_final_estimate():
+    """
+    m035 꼴: Nav2 가 목표 0.13 m 에서 움직이며 성공 → 추정 표본은 거기서 끝나고 정착 뒤 최종 추정 0.03 m.
+
+    낡은 추정(0.13 m)을 끝값으로 끌어 쓰면 strict_est 가 거짓 실패가 된다 (리뷰 차단 1 (a)). 최종 추정을 기록 끝 표본으로
+    덧붙이면 정답 기준과 같이 성공.
+    """
+    gt = drive(9.97, hold=2.0)
+    t_move_end = next(r[0] for r in gt if r[4] == 0.0)
+    ep = episode(gt)
+    ep['t_end'] = t_move_end - 0.10            # x ≈ 9.87, 1 m/s
+    runner_shape(ep, final_est=[9.97, 0.0, 0.0])
+    m = M.episode_metrics(ep)
+    assert m['strict_gt'] and m['outcome_contract'] == 'success'
+    assert m['strict_est'] and m['outcome_contract_est'] == 'success'
+    assert m['t_strict_est_s'] == pytest.approx(gt[-1][0] - gt[0][0])   # 기록 끝 한 점에서
+    assert m['est_end_gap_s'] == pytest.approx(gt[-1][0] - ep['est'][-1][0])
+    assert m['est_end_gap_s'] > 1.0
+
+
+def test_runner_shape_stale_estimate_inside_goal_is_not_success():
+    """
+    반대 꼴: Nav2 종료 순간 추정이 0.05 m (움직이는 중) → 로봇은 지나쳐 0.13 m 에 선다 (최종 추정도 0.13).
+
+    낡은 추정을 끝값으로 쓰면 '멈춘 지면 진실 속도 + 0.05 m 추정' 으로 거짓 성공이 난다.
+    """
+    gt = drive(10.13, hold=2.0)
+    ep = episode(gt, status=4)
+    ep['t_end'] = next(r[0] for r in gt if r[1] >= 9.95)
+    runner_shape(ep, final_est=[10.13, 0.0, 0.0])
+    m = M.episode_metrics(ep)
+    assert not m['strict_gt']
+    assert not m['strict_est'] and m['outcome_contract_est'] == m['outcome_contract'] == 'stall'
+    assert m['final_dist_est_m'] == pytest.approx(0.13, abs=1e-6)
+
+
+def test_est_success_after_stall_is_not_strict():
+    """
+    s114 꼴: 0.12 m 에 서서 20 s 뒤 정체(계약 종단) — 그 뒤 추정이 0.09 m 로 바뀌어도 추정 기준 성공이 아니다 (리뷰 차단 1 (b)).
+
+    정체 전에 추정이 이미 0.09 m 였다면 (s089 꼴, 진짜 위치추정 갈림) 추정 기준은 성공이다.
+    """
+    gt = drive(9.88, hold=40.0)
+    t0 = gt[0][0]
+    late = [[r[0], r[1] + (0.03 if r[0] - t0 > 40.0 else 0.0), r[2], r[3]] for r in gt]
+    ep = episode(gt, t_limit=120.0, est=late)
+    ep['final']['est'] = [9.91, 0.0, 0.0]
+    m = M.episode_metrics(ep)
+    assert m['outcome_contract'] == 'stall' and not m['strict_gt']
+    assert m['t_strict_est_s'] == pytest.approx(40.0, abs=0.05)
+    assert m['t_stall_s'] < m['t_strict_est_s']
+    assert m['outcome_contract_est'] == 'stall' and not m['strict_est']
+    early = [[r[0], r[1] + 0.03, r[2], r[3]] for r in gt]
+    ep2 = episode(gt, t_limit=120.0, est=early)
+    ep2['final']['est'] = [9.91, 0.0, 0.0]
+    m2 = M.episode_metrics(ep2)
+    assert m2['outcome_contract'] == 'stall' and not m2['strict_gt']
+    assert m2['outcome_contract_est'] == 'success' and m2['strict_est']
+
+
+def test_timeout_final_estimate_measured_after_limit_is_outside_window():
+    """
+    시간 상한(12 s)에 0.15 m 에 서 있다가 취소 → 정착 뒤(상한 뒤) 잰 최종 추정이 0.08 m.
+
+    최종 추정은 잰 시각(기록 끝)의 표본이라 상한 밖 — 상한 전 성공으로 끼지 않는다. 추정 표본은 상한 0.5 s 전에 끊긴다
+    (TF 조회 실패) — 최종 추정을 '상한 안 마지막 지면 진실 시각' 에 붙이면 거짓 성공이 된다.
+    """
+    gt = drive(9.85, hold=4.0)
+    t0 = gt[0][0]
+    ep = episode(gt, t_limit=12.0, status=5, reason='timeout')
+    ep['t_end'] = t0 + 12.0
+    runner_shape(ep, final_est=[9.92, 0.0, 0.0])
+    ep['est'] = [r for r in ep['est'] if r[0] - t0 <= 11.5]
+    m = M.episode_metrics(ep)
+    assert m['outcome_contract'] == 'timeout' and not m['strict_gt']
+    assert m['outcome_contract_est'] == 'timeout' and not m['strict_est']
+    assert m['t_strict_est_s'] is None
+    # 실행기가 final.t 를 남기면 그 시각을 쓴다 (같은 결론)
+    ep2 = runner_shape(episode(gt, t_limit=12.0, status=5, reason='timeout'),
+                       final_est=[9.92, 0.0, 0.0], final_t=gt[-1][0])
+    ep2['t_end'] = t0 + 12.0
+    ep2['est'] = [r for r in ep2['est'] if r[0] <= ep2['t_end']]
+    assert not M.episode_metrics(ep2)['strict_est']
+
+
+def test_interp_pose_only_inside_samples_and_short_gaps():
+    """추정 보간은 표본 구간 안, 틈 ≤ EST_MAX_GAP 에서만 (끝값 고정·긴 틈 보간 금지)."""
+    tt = np.array([0.0, 0.1, 0.2, 1.0, 1.1])
+    tr = np.stack([tt, 0 * tt, 0 * tt], 1)
+    q = np.array([-0.1, 0.05, 0.2, 0.5, 1.05, 1.1, 1.2])
+    x, _, _, ok = M._interp_pose(tt, tr, q)
+    assert list(ok) == [False, True, True, False, True, True, False]
+    assert x[1] == pytest.approx(0.05) and math.isnan(x[3]) and math.isnan(x[0])
+    _, _, _, ok1 = M._interp_pose([1.0], [[0.0, 0.0, 0.0]], [1.0, 1.01])
+    assert list(ok1) == [True, False]
+    _, _, _, ok0 = M._interp_pose([], np.zeros((0, 3)), [1.0])
+    assert list(ok0) == [False]
+
+
+def test_late_estimate_is_not_extrapolated_back_to_start():
+    """추정 표본이 5 s 늦게 시작해도 그 앞을 첫 표본 값으로 채우지 않는다 (채우면 5 m 오차 = 거짓 붕괴)."""
+    gt = drive(9.97)
+    t0 = gt[0][0]
+    est = [[r[0], r[1], r[2], r[3]] for r in gt if r[0] - t0 >= 5.0]
+    m = M.episode_metrics(episode(gt, est=est))
+    assert m['loc_err_max_m'] == pytest.approx(0.0, abs=1e-9)
+    assert not m['loc_collapse']
+    assert m['strict_est']
+
+
+def test_contract_first_order_and_ties():
+    """시간순 첫째, 같은 시각이면 접촉 → 성공 → 정체 → 상한."""
+    assert M.contract_first(None, None, None, None) is None
+    assert M.contract_first(5.0, 5.0, None, None) == (5.0, 'collision')
+    assert M.contract_first(None, 7.0, 7.0, 7.0) == (7.0, 'success')
+    assert M.contract_first(None, 9.0, 8.0, None) == (8.0, 'stall')
+    assert M.contract_first(None, None, 9.0, 8.0) == (8.0, 'timeout')
 
 
 def test_system_ended_short_of_goal_is_stall_not_timeout():

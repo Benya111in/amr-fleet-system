@@ -14,7 +14,9 @@ Gazebo 다회 에피소드 실행기 — 한 Gazebo 세션에서 시나리오를
   3. 코스트맵 비우기 (전역·지역 clear_entirely) 뒤 1 s
   4. navigate_to_pose (BT 기본 제어기 = 런치가 정한 DWA 또는 RL) → 종료: Nav2 종료 상태, 접촉(즉시 취소), 시간 상한
      min(120, 20 + 3L) s sim (취소), 감시견(sim 시각 정지 30 s 벽시계 → error)
-  5. 정착(지면 진실 |v| < 0.01·|ω| < 0.02 또는 3 s) 뒤 최종 자세 → 지표(amr_rl_bench.metrics) → CSV·에피소드 원자료
+  5. 정착(지면 진실 |v| < 0.01·|ω| < 0.02 또는 3 s, 이어 0.2 s) 뒤 최종 자세 → 지표(amr_rl_bench.metrics) → CSV·에피소드
+     원자료. 추정 자세(TF map→base)는 감시 루프와 정착 대기 내내 표집한다 (A5 리뷰 차단 1 — 전에는 Nav2 종료까지만 표집해
+     정착 구간의 추정 기준 판정이 낡은 추정으로 이뤄졌다). 최종 추정 = 마지막 표본, 그 시각 = final.t
 점검 탐침 (--probe scan,step): 스캔 규약 표본·구동 계단 응답을 에피소드 앞에 한 번 (전이 점검 2·5).
 """
 
@@ -30,6 +32,7 @@ import time
 from amr_rl_bench import metrics as M
 from amr_rl_bench import records as R
 from amr_rl_bench import scenarios as S
+from amr_rl_bench.settle import settle
 from amr_rl_bench.world_geom import StaticWorld
 from diagnostic_msgs.msg import DiagnosticArray
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, Twist
@@ -225,6 +228,15 @@ class Bench(Node):
             return None
         q = t.transform.rotation
         return t.transform.translation.x, t.transform.translation.y, yaw_of(q)
+
+    def sample_est(self):
+        """추정 자세 표본 하나를 기록에 넣는다. 반환 [t_sim, x, y, yaw] 또는 None (TF 없음)."""
+        e = self.est_pose()
+        if e is None:
+            return None
+        row = [self.now(), e[0], e[1], e[2]]
+        self._put('est', row)
+        return row
 
     def sleep_sim(self, dt, wall_cap=None):
         """노드 시계(sim)로 dt 쉰다 (벽시계 상한 wall_cap, 기본 dt/0.1 + 5). 반환: sim 이 흘렀나."""
@@ -442,21 +454,22 @@ class Bench(Node):
                     time.sleep(0.02)
                 status = res_fut.result().status if res_fut.done() else None
                 break
-            # 추정 자세 표본 (20 Hz 근처)
-            e = self.est_pose()
-            if e is not None:
-                self._put('est', [now, e[0], e[1], e[2]])
+            # 추정 자세 표본 (루프 주기, 약 50 Hz 벽시계)
+            self.sample_est()
         t_end, w_end = self.now(), time.monotonic()
-        # 정착: 멈출 때까지 (최대 3 s sim) — 그동안도 기록한다 (최종 자세 진단)
-        self.wait_until(self.stopped, 3.0)
-        time.sleep(0.2)
-        e = self.est_pose()
+        # 정착: 멈출 때까지 (최대 3 s sim) + 0.2 s — 그동안도 지면 진실·추정 자세를 기록한다 (최종 자세 진단, 리뷰 차단 1)
+        st = settle(self.now, self.stopped, self.sample_est, sim_timeout=3.0, tail_wall=0.2)
+        e = st['final']
         g = self.gt_last
         rec = self.stop_record()
+        if e is None and rec['est']:
+            e = rec['est'][-1]      # 마지막 순간 TF 조회가 실패했으면 가장 최근 표본 (그 시각과 함께)
         ep = dict(rec)
         ep.update({'goal': sc['goal'], 't0': t0, 't_end': t_end, 't_limit': sc['time_limit_s'],
                    'nav2_status': status, 'cancel_reason': reason,
-                   'final': {'gt': g[1:6] if g else None, 'est': list(e) if e else None},
+                   'final': {'gt': g[1:6] if g else None, 'est': list(e[1:4]) if e else None,
+                             't': e[0] if e else None},
+                   'settle': {'stopped': st['stopped'], 'n_samples': st['n_samples']},
                    'wall': {'t0': w0, 't_end': w_end}})
         try:
             mt = M.episode_metrics(ep)

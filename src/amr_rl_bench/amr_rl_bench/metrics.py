@@ -7,6 +7,12 @@
 층위 성공 (A3 재판정의 Isaac 정의를 Gazebo 로 옮긴 것):
   - strict (계약 §8 성공 사건): 목표 xy ≤ 0.10 m 이고 |v| ≤ 0.05 m/s 인 표본이 (계약 종단 사건 전에) 있다.
     _gt = 지면 진실 자세·속도, _est = 위치추정(TF map→base) 자세 + 지면 진실 속도.
+    두 기준 모두 같은 종단 순서 규칙을 쓴다 (A5 리뷰 차단 1 의 (b)): {접촉, 그 기준의 엄격 성공, 정체, 시간 상한} 중 시간순 첫째가
+    성공이어야 한다 — 접촉·정체·상한은 물리 사건이라 두 기준 모두 지면 진실로 본다. 추정 기준 결과는 outcome_contract_est.
+  - 추정 자세 시계열 (A5 리뷰 차단 1 의 (a)): 실제 표본 사이 틈이 EST_MAX_GAP 이하인 곳에서만 선형 보간하고, 표본 구간 밖과
+    더 긴 틈은 미정(nan — 판정에 쓰지 않는다). 최종 추정 final.est 는 그 측정 시각(final.t, 없으면 기록 끝 = 마지막 지면 진실
+    시각)의 표본으로 덧붙인다. 실행기가 정착 구간을 표집하기 전의 원자료(A5-4 스모크)에서는 정착 구간의 추정 판정이 이 끝 한
+    점으로만 이뤄진다 (근사 — est_end_gap_s 가 그 틈).
   - nav2compat: 목표 xy ≤ 0.25 m 인 표본이 접촉 전에 있다 (속도·yaw 무관, Nav2 SimpleGoalChecker 기본값).
   - system_success: Nav2 navigate_to_pose 가 SUCCEEDED (배포 goal checker: 추정 자세 xy 0.10·yaw 0.05).
   - final_*: 에피소드가 끝나고 정착 시간 뒤의 최종 거리·yaw 오차·속도 (분포로 보고).
@@ -42,6 +48,8 @@ INTERVENTION_LEAD = 0.005
 CONTACT_RELEASE = 0.05                  # 접촉 사건 분리 (collision_monitor contact_release 와 같다)
 LOC_COLLAPSE = 0.5                      # 위치추정 붕괴 문턱 (b1-plugin 다음 ④)
 ROTATING_W = 0.1                        # goal checker 가 회전 중 성공을 낸 것 (b1-plugin 다음 ⑨)
+# 추정 자세 보간 최대 틈 [s sim] — 실행기 감시 루프 표본 간격 p99 0.03, 최대 0.165 s (A5-4 원자료 49 에피소드)
+EST_MAX_GAP = 0.25
 
 
 def wrap(a):
@@ -217,14 +225,45 @@ def near_goal_stop(t, dist, v, w):
     return total, longest
 
 
-def _interp_pose(track_t, track, t):
-    """자세 시계열을 시각 t 로 (선형, yaw 는 감아서)."""
+def _interp_pose(track_t, track, t, max_gap=EST_MAX_GAP):
+    """
+    자세 시계열을 시각 t 로 (선형, yaw 는 감아서) — 표본 구간 안이고 둘러싼 표본 틈이 max_gap 이하인 곳만.
+
+    표본 시각과 같으면 틈과 무관하게 그 표본. 그 밖(구간 밖·긴 틈)은 nan — np.interp 의 끝값 고정을 쓰지 않는다.
+    반환 (x, y, yaw, valid). track_t 는 오름차순.
+    """
     track_t = np.asarray(track_t, dtype=float)
-    track = np.asarray(track, dtype=float)
+    track = np.asarray(track, dtype=float).reshape(-1, 3)
+    t = np.asarray(t, dtype=float)
+    if track_t.size == 0:
+        nan = np.full(t.shape, np.nan)
+        return nan, nan.copy(), nan.copy(), np.zeros(t.shape, bool)
     x = np.interp(t, track_t, track[:, 0])
     y = np.interp(t, track_t, track[:, 1])
-    yaw = np.interp(t, track_t, np.unwrap(track[:, 2]))
-    return x, y, wrap(yaw)
+    yaw = wrap(np.interp(t, track_t, np.unwrap(track[:, 2])))
+    n = track_t.size
+    i = np.searchsorted(track_t, t, side='left')            # track_t[i-1] < t <= track_t[i]
+    exact = (i < n) & (track_t[np.minimum(i, n - 1)] == t)
+    j = np.clip(i, 1, max(1, n - 1))
+    gap = track_t[np.minimum(j, n - 1)] - track_t[j - 1] if n > 1 else np.full(t.shape, np.inf)
+    valid = (t >= track_t[0]) & (t <= track_t[-1]) & (exact | (gap <= max_gap))
+    return (np.where(valid, x, np.nan), np.where(valid, y, np.nan), np.where(valid, yaw, np.nan),
+            valid)
+
+
+def contract_first(t_contact, t_success, t_stall, t_timeout):
+    """
+    계약 종단 사건 중 시간순 첫째 → (시각, 이름) 또는 None.
+
+    같은 시각이면 접촉 → 성공 → 정체 → 시간 상한 순으로 이긴다. 정답·추정 두 기준이 같은 함수를 쓴다 (리뷰 차단 1 (b)).
+    """
+    ev = [(t, k, name) for k, (t, name) in enumerate(
+        ((t_contact, 'collision'), (t_success, 'success'), (t_stall, 'stall'),
+         (t_timeout, 'timeout'))) if t is not None]
+    if not ev:
+        return None
+    t, _, name = min(ev)
+    return t, name
 
 
 def episode_metrics(ep):
@@ -243,7 +282,8 @@ def episode_metrics(ep):
       cmd_nav: [[t, t_wall, v, w], …] (cmd_vel_nav),
       zone: [[t, z], …], lost: [[t, b], …], stats: [[t, t_wall, row], …] (RL 플러그인),
       scan_stamps: [[t_recv, t_stamp], …],
-      final: {'gt': [x, y, yaw, v, w], 'est': [x, y, yaw]} (정착 뒤), wall: {'t0', 't_end'}.
+      final: {'gt': [x, y, yaw, v, w], 'est': [x, y, yaw], 't': 잰 sim 시각 (없으면 기록 끝)} (정착 뒤),
+      wall: {'t0', 't_end'}.
     """
     gx, gy, gyaw = ep['goal']
     t0, t_end, t_limit = ep['t0'], ep['t_end'], ep['t_limit']
@@ -254,9 +294,18 @@ def episode_metrics(ep):
     gt = gta[gta[:, 0] <= t_end] if gta.size else gta
     t_rec = float(gta[-1, 0]) if gta.shape[0] else t_end
     est_raw = np.asarray(ep.get('est') or np.zeros((0, 4)), dtype=float).reshape(-1, 4)
+    fin = ep.get('final') or {}
+    fg, fe = fin.get('gt'), fin.get('est')
+    # 최종 추정은 잰 시각의 표본으로 (실행기 final.t, 옛 원자료는 기록 끝 = 마지막 지면 진실 시각)
+    t_fin = fin.get('t')
+    if t_fin is None and gt_raw.shape[0]:
+        t_fin = float(gt_raw[-1, 0])
+    t_rec_end = float(gt_raw[-1, 0]) if gt_raw.shape[0] else t_end
+    m = {'est_end_gap_s': float(t_rec_end - est_raw[-1, 0]) if est_raw.shape[0] else None}
+    if fe and t_fin is not None and (est_raw.shape[0] == 0 or t_fin > est_raw[-1, 0] + 1e-9):
+        est_raw = np.vstack([est_raw, [[float(t_fin), fe[0], fe[1], fe[2]]]])
     esta = est_raw[(est_raw[:, 0] >= t0) & (est_raw[:, 0] <= t_lim)] if est_raw.size else est_raw
     est = esta[esta[:, 0] <= t_end] if esta.size else esta
-    m = {}
     tg = gt[:, 0]
     d_gt = np.hypot(gt[:, 1] - gx, gt[:, 2] - gy)
     speed = np.abs(gt[:, 4])
@@ -290,39 +339,32 @@ def episode_metrics(ep):
     t_strict_gt = float(tga[strict_gt][0]) if strict_gt.any() else None
     t_strict_est = None
     d_est_at_gt = None
-    if esta.shape[0] >= 2 and gta.shape[0]:
-        ex, ey, _ = _interp_pose(esta[:, 0], esta[:, 1:4], tga)
-        d_est_at_gt = np.hypot(ex - gx, ey - gy)
+    if esta.shape[0] and gta.shape[0]:
+        ex, ey, _, _ = _interp_pose(esta[:, 0], esta[:, 1:4], tga)
+        d_est_at_gt = np.hypot(ex - gx, ey - gy)            # 미정 = nan → 아래 비교는 거짓
         se = (d_est_at_gt <= STRICT_XY) & (speeda <= STRICT_V)
         t_strict_est = float(tga[se][0]) if se.any() else None
     t_stall = first_stall(tg, gt[:, 1:3], t0) if gt.shape[0] else None
     # --- 계약 종단 사건: 시간순 첫 (접촉 → 성공 → 정체 → 시간 상한). 같은 시각이면 접촉이 이긴다
     reason = ep.get('cancel_reason') or ''
-    events = []
-    if t_contact is not None:
-        events.append((t_contact, 0, 'collision'))
-    if t_strict_gt is not None:
-        events.append((t_strict_gt, 1, 'success'))
-    if t_stall is not None:
-        events.append((t_stall, 2, 'stall'))
-    if t_end >= t_lim - 1e-3 or reason == 'timeout':
-        events.append((t_lim, 3, 'timeout'))
-    events.sort()
-    m['contract_note'] = None
-    if events:
-        t_c, _, outcome = events[0]
-    elif reason == 'watchdog':
-        t_c, outcome = t_end, 'error'
+    t_timeout = t_lim if (t_end >= t_lim - 1e-3 or reason == 'timeout') else None
+    if reason == 'watchdog':
+        fallback = (t_end, 'error', None)
     else:
-        t_c, outcome = t_end, 'stall'
-        m['contract_note'] = 'ended_without_success'
+        fallback = (t_end, 'stall', 'ended_without_success')
+
+    def judge(t_success):
+        first = contract_first(t_contact, t_success, t_stall, t_timeout)
+        return (first[0], first[1], None) if first else fallback
+    t_c, outcome, m['contract_note'] = judge(t_strict_gt)
     m['outcome_contract'] = outcome
+    m['outcome_contract_est'] = judge(t_strict_est)[1]
     m['t_contract_s'] = float(t_c - t0)
     m['t_strict_gt_s'] = None if t_strict_gt is None else t_strict_gt - t0
     m['t_strict_est_s'] = None if t_strict_est is None else t_strict_est - t0
     m['t_stall_s'] = None if t_stall is None else t_stall - t0
     m['strict_gt'] = t_strict_gt is not None and outcome == 'success'
-    m['strict_est'] = t_strict_est is not None and (t_contact is None or t_strict_est < t_contact)
+    m['strict_est'] = t_strict_est is not None and m['outcome_contract_est'] == 'success'
     pre = tga < (t_contact if t_contact is not None else math.inf)
     m['nav2compat_gt'] = bool(np.any(d_gta[pre] <= NAV2_XY)) if d_gta.size else False
     m['nav2compat_est'] = bool(np.any(d_est_at_gt[pre] <= NAV2_XY)) \
@@ -337,8 +379,6 @@ def episode_metrics(ep):
     m['outcome_system'] = ('succeeded' if st == 4 else 'aborted' if st == 6 else
                            reason if reason else 'canceled' if st == 5 else 'error')
     m['nav_time_s'] = float(t_end - t0)
-    fin = ep.get('final') or {}
-    fg, fe = fin.get('gt'), fin.get('est')
     m['final_dist_gt_m'] = math.hypot(fg[0] - gx, fg[1] - gy) if fg else None
     m['final_yaw_err_gt'] = abs(float(wrap(fg[2] - gyaw))) if fg else None
     m['final_speed_gt'] = abs(fg[3]) if fg else None
@@ -403,12 +443,13 @@ def episode_metrics(ep):
         tot, lng = near_goal_stop(tg, d_gt, gt[:, 4], gt[:, 5])
         m['near_goal_stop_s'], m['near_goal_stop_max_s'] = tot, lng
     # --- 위치추정
-    if est.shape[0] >= 2 and gt.shape[0]:
-        ex, ey, eyaw = _interp_pose(est[:, 0], est[:, 1:4], tg)
-        err = np.hypot(ex - gt[:, 1], ey - gt[:, 2])
-        m['loc_err_max_m'] = float(err.max())
-        m['loc_err_p95_m'] = quantiles(err, (95,))[0]
-        m['loc_collapse'] = bool(err.max() > LOC_COLLAPSE)
+    if est.shape[0] and gt.shape[0]:
+        ex, ey, _, ok = _interp_pose(est[:, 0], est[:, 1:4], tg)
+        err = np.hypot(ex - gt[:, 1], ey - gt[:, 2])[ok]    # 표본 구간 밖·긴 틈은 빼고
+        if err.size:
+            m['loc_err_max_m'] = float(err.max())
+            m['loc_err_p95_m'] = quantiles(err, (95,))[0]
+            m['loc_collapse'] = bool(err.max() > LOC_COLLAPSE)
     lost = ep.get('lost') or []
     m['lost_events'] = sum(1 for (ti, b), (_, b0) in zip(lost[1:], lost[:-1])
                            if b and not b0 and t0 <= ti <= t_end) + \
