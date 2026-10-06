@@ -34,8 +34,13 @@
 | 2026-10-06 19:18 | b1-backfill | 시도했지만 안 된 것과 그 이유 — 1차·2a·2b 물결 막다른 길 목록 | [entries/2026-10-06_1918_b1-backfill_dead-ends-what-failed-and-why.md](entries/2026-10-06_1918_b1-backfill_dead-ends-what-failed-and-why.md) |
 | 2026-10-06 20:22 | b1-plugin | A2-5 목표 yaw 정렬이 지나치는 결함 — 저크·지연을 넣은 정지 속도로 고치기 | [entries/2026-10-06_2022_b1-plugin_align-overshoot.md](entries/2026-10-06_2022_b1-plugin_align-overshoot.md) |
 | 2026-10-06 21:29 | b1-isaac-phi | A3d 정본 φ env 결선의 env 안 교차 시험과 결선 변이 검사 (리뷰 권고 반영) | [entries/2026-10-06_2129_b1-isaac-phi_env-wiring-check.md](entries/2026-10-06_2129_b1-isaac-phi_env-wiring-check.md) |
+| 2026-10-06 22:10 | b1-gzbench | A5-1 플러그인 결정 주기를 sim 시각 기준으로 — 고치기와 RTF 별 확인 | [entries/2026-10-06_2210_b1-gzbench_simtime-decision.md](entries/2026-10-06_2210_b1-gzbench_simtime-decision.md) |
+| 2026-10-06 22:49 | b1-gzbench | A5-2 Gazebo 다회 에피소드 하네스·시나리오 집합 v1·에피소드 지표 정의 | [entries/2026-10-06_2249_b1-gzbench_harness-scenarios.md](entries/2026-10-06_2249_b1-gzbench_harness-scenarios.md) |
+| 2026-10-06 23:35 | b1-gzbench | A5-4 하네스 스모크 — DWA 20 · RL(v12_s1) 20, 에피소드당 벽시계·RTF 와 단계 C 소요 추정 | [entries/2026-10-06_2335_b1-gzbench_smoke-dwa-rl.md](entries/2026-10-06_2335_b1-gzbench_smoke-dwa-rl.md) |
+| 2026-10-06 23:35 | b1-gzbench | A5-3 Gazebo 전이 점검 6 종 — Isaac·2D 계약 값과 대조 | [entries/2026-10-06_2335_b1-gzbench_transfer-checks.md](entries/2026-10-06_2335_b1-gzbench_transfer-checks.md) |
+| 2026-10-07 01:18 | b1-gzbench | A5-5 리뷰 반영 — strict_est 지표 결함 수정·재계산과 독점 시간대 재측정 | [entries/2026-10-07_0118_b1-gzbench_review-fix.md](entries/2026-10-07_0118_b1-gzbench_review-fix.md) |
 
-## 실행 목록 요약 (284 건, 원본 `runs/<에이전트>.jsonl`)
+## 실행 목록 요약 (316 건, 원본 `runs/<에이전트>.jsonl`)
 
 | run_id | 단계 | 종류 | 시뮬 | 커밋 | 시드 | 핵심 결과 | 표기 |
 |---|---|---|---|---|---|---|---|
@@ -230,6 +235,38 @@
 | W2b_r7_mut_isaac_M5a_bbdbe2f | W2b | test | isaac | bbdbe2f | n/a (결정적) | caught=True, decision_fails=0, step_fails=6, n_decision=17 | [측정] |
 | W2b_r7_mut_isaac_M5c_bbdbe2f | W2b | test | isaac | bbdbe2f | n/a (결정적) | caught=True, decision_fails=0, step_fails=12, n_decision=17 | [측정] |
 | W2b_r7_review_mutation_ab8b16f | W2b | test | offline | ab8b16f | n/a (결정적) | mutants=12, caught=11, survived=['R11 env_math 판 일치 가드 제거 (지금 상수로는 닿을 수 없는 방어 가드)'] | [측정] |
+| A5_b1gzbench_simtime_t1 | A5 | test | offline | e461e74 | 0 | build_rc=0, warnings=0, tests=248, failures=42 | 실패 |
+| A5_b1gzbench_simtime_t2 | A5 | test | offline | e461e74 | 0 | build_rc=0, warnings=0, tests=221, failures=2 | 실패 |
+| A5_b1gzbench_simtime_t3 | A5 | test | offline | e461e74 | 0 | build_rc=0, warnings=0, tests=221, failures=0 | [측정] |
+| A5_b1gzbench_mutation | A5 | test | offline | 46af8ea | 0 | mutants=18, caught=18, survived=[], base=엔진 17/17, 플러그인 18/0 실패 | [측정] |
+| A5_b1gzbench_scenarios_v1 | A5 | probe | offline | f71f946 | 20261006 | main=200, stress=200, tries=9024, length_reject=465 | [계산] |
+| A5_b1gzbench_bench_t1 | A5 | test | offline | f71f946 | 0 | build_rc=0, pytest=26/26, flake8=E501 7, pep257=D403·D205·D400·D401 다수 | 실패 |
+| A5_b1gzbench_bench_t2 | A5 | test | offline | f71f946 | 0 | build_rc=0, pytest=26/26, flake8=0, pep257=0 | [측정] |
+| A5_b1gzbench_gz_simtime_fix_rtf10 | A5 | gazebo | gazebo | f71f946 | 0 | decision_period_mean_s=0.09996, decision_period_median_s=0.097, q05_50_95=[0.079, 0.097, 0.138], rtf_range=[0.8269, 0.9319] | [측정] |
+| A5_b1gzbench_gz_simtime_fix_rtf05 | A5 | gazebo | gazebo | f71f946 | 0 | decision_period_mean_s=0.09999, decision_period_median_s=0.099, q05_50_95=[0.091, 0.099, 0.1186], rtf_range=[0.472, 0.4856] | [측정] |
+| A5_b1gzbench_gz_simtime_legacy_rtf05 | A5 | gazebo | gazebo | f71f946 | 0 | decision_period_mean_s=0.04835, decision_period_median_s=0.04904, q05_50_95=[0.0439, 0.049, 0.0501], rtf_range=[0.4742, 0.4938] | [측정] |
+| A5_b1gzbench_simtime1b_t1 | A5 | test | offline | 52e4d55 | 0 | build_rc=0, failures=ZohRampSlopeIsPerSimSecond — dt 0.08 에서 30 틱 뒤에도 지수 평균 잔차로 틱당 변화가 a·dt 를 2e-6 넘음 (시험 허용 1e-6 이 너무 빡빡) + cpplint 줄 길이 1, n=267 | 실패 |
+| A5_b1gzbench_simtime1b_t2 | A5 | test | offline | 52e4d55 | 0 | build_rc=0, warnings=0, tests=267, failures=0 | [측정] |
+| A5_b1gzbench_mutation_r2 | A5 | test | offline | 1952ad9 | 0 | mutants=17, caught=15, survived=['S10 (지수 평균→직전 간격) — 단조 클램프가 톱니를 막아 기존 시험으로는 갈리지 않음 → 추정기 시험 추가 (r3)'], harness_error=['S2 원문 문자열이 1b 에서 바뀌어 적용 안 됨 (원문 0 회) → r3 에서 고침'] | [측정] |
+| A5_b1gzbench_mutation_r3 | A5 | test | offline | 1952ad9 | 0 | mutants=3, caught=3, base_engine=통과 (19 시험), base_plugin=18/0 실패 | [측정] |
+| A5_b1gzbench_gz_simtime_fix1b_rtf10 | A5 | gazebo | gazebo | 1952ad9 | 0 | decision_period_mean_s=0.09998, decision_period_median_s=0.097, q05_50_95=[0.083, 0.097, 0.137], rtf_range=[0.701, 0.9475] | [측정] |
+| A5_b1gzbench_gz_simtime_fix1b_rtf05 | A5 | gazebo | gazebo | 1952ad9 | 0 | decision_period_mean_s=0.09998, decision_period_median_s=0.1, q05_50_95=[0.089, 0.1, 0.117], rtf_range=[0.3959, 0.4921] | [측정] |
+| A5_b1gzbench_shake1_rl | A5 | gazebo | gazebo | eaf2ac8 | 0 | error=ros2 run amr_rl_bench gzbench_runner.py → No executable found: 스크립트에 실행 권한이 없었다 (Write 로 만든 파일 644, symlink 설치). 스택은 정상 기동 (수명주기 10 s 에 4/4), 에피소드 0, n=0 | 실패 |
+| A5_b1gzbench_shake2_rl | A5 | gazebo | gazebo | f015ee9 | 0 | episodes=3, outcome_contract=['success', 'success', 'success'], final_dist_gt_m=[0.042, 0.031, 0.028], wall_episode_s=[43.3, 35.6, 27.9] | [측정] |
+| A5_b1gzbench_scenarios_v1_regen | A5 | probe | offline | c7be0db | 20261006 | identical_except=['generated', 'generator_commit'], identical=True, generator_commit_field=빈 칸 — 컨테이너 안에서 git 이 워크트리 .git 을 못 읽음 (두 파일 모두), n=400 | [계산] |
+| A5_b1gzbench_smoke_dwa | A5 | gazebo | gazebo | 6841180 | 0 | n=20, errors=0, H1=True, H2=True | [측정] |
+| A5_b1gzbench_smoke_rl | A5 | gazebo | gazebo | 5222f95 | 1 | n=20, errors=0, H1=True, H2=True | [측정] |
+| A5_b1gzbench_smoke_rlho | A5 | gazebo | gazebo | 5222f95 | 1 | n=6, errors=0, H1=True, H2=True | [측정] |
+| A5_b1gzbench_smoke_analysis | A5 | probe | offline | unknown | 0 | recompute_changed={'smoke_dwa': 'outcome_contract 13, strict_gt 12, t_contract_s 12 등', 'smoke_rl': '0', 'smoke_rlho': '0', 'shake2_rl': 'min_dist·interventions 3'}, scan_visual_median_abs_m=[0.022, 0.0218, 0.0225, 0.0226, 0.022], plant_T_m_lin_s=[0.004, 0.005, 0.002], plant_T_d_lin_s=[0.003, 0.003, 0.0] | [계산] |
+| A5_b1gzbench_final_dwa | A5 | gazebo | gazebo | 0eea11b | 0 | episodes=3, outcome_contract=['success', 'success', 'success'], final_dist_gt_m=[0.053, 0.018, 0.036], H1_H4=통과 | [측정] |
+| A5_b1gzbench_final_clean | A5 | test | offline | 0eea11b | 0 | build_rc=0, warnings=0, tests=271, failures=0 | [측정] |
+| A5_b1gzbench_review_mutation | A5 | test | offline | a0a829a | 0 | n=12, r1_caught=10/12, r1_missed=['M6', 'S3'], r2_caught=12/12 | [측정] |
+| A5_b1gzbench_review_bt1 | A5 | test | offline | a0a829a | 0 | n=40, build_rc=0, warnings=0, amr_rl_bench_pytest=40/40 (건너뜀 0) | [측정] |
+| A5_b1gzbench_review_recompute | A5 | eval | offline | 0fd7157 | 0 | n=52, E1_prediction=match, strict_flip={'smoke_dwa': '1/20 (s089)', 'smoke_rl': '2/20 (s012, s178)', 'smoke_rlho': '1/6 (s021)', 'final_dwa': '0/3'}, strict_est_dwa={'main': '10/10', 'stress': '5/10'} | [계산] |
+| A5_b1gzbench_excl_dwa | A5 | gazebo | gazebo | 7a380c0 | 0 | n=20, errors=0, H1=True, H2=True | [측정] 독점 시간대 (gz·cpu 슬롯 독점, Isaac 동시) |
+| A5_b1gzbench_excl_rl | A5 | gazebo | gazebo | 7a380c0 | 1 | n=20, errors=0, H1=True, H2=True | [측정] 독점 시간대 (gz·cpu 슬롯 독점, Isaac 동시) |
+| A5_b1gzbench_excl_analysis | A5 | eval | offline | 7a380c0 | 0 | n=40, X1=est_end_gap 최대 0.0 · −0.001 s, 재계산 바뀐 칸 0, X2=H1–H4 두 팔 통과, X3=결정 주기 0.0998–0.1001 | [측정]+[계산] |
+| A5_b1gzbench_review_clean | A5 | test | offline | d81d6a0 | 0 | n=284, build_rc=0, packages=13, warnings=0 | [측정] |
 | A3a_xcheck_dev1_quick_first_port | A3 | test | offline | 469d78d | 20261006 | total_checks=1685000, total_mismatches=5160, fp_motions_x_points=200x100, win_arrays=2000 | 실패 |
 | A3a_prune_probe | A3 | probe | offline | cf27dd6 | 1 | pruned_seq_eq_cpp=300/300, unpruned_min_eq_cpp=280/300, cpp_ge_unpruned_always=True, n=300 | [측정] |
 | A3a_xcheck_dev2_quick_after_fix | A3 | test | offline | 469d78d | 20261006 | total_checks=1685000, total_mismatches=0, fp_motions_x_points=200x100, win_arrays=2000 | [측정] |
