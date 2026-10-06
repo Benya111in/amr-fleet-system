@@ -32,7 +32,8 @@ def main():
     ap.add_argument('--out', required=True)
     a = ap.parse_args()
     fig, axes = plt.subplots(1, 3, figsize=(16, 4.5))
-    for run in a.runs:
+    for i, run in enumerate(a.runs):
+        col = f'C{i % 10}'
         name = os.path.basename(run.rstrip('/'))
         re_rows = load(os.path.join(run, 'reeval.jsonl'))
         if re_rows:
@@ -51,26 +52,27 @@ def main():
             x = [r['env_steps'] / 1e6 for r in ev]
             se = [2 * r.get('success_se', 0.0) for r in ev]
             axes[0].errorbar(x, [r.get('success', 0) for r in ev], yerr=se, fmt='o-',
-                             capsize=2, label=lab)
-            axes[1].plot(x, [r.get('collision', 0) for r in ev], 'o-', label=lab)
+                             capsize=2, color=col, label=lab)
+            axes[1].plot(x, [r.get('collision', 0) for r in ev], 'o-', color=col, label=lab)
         for h in heur:
-            axes[0].axhline(h['success'], ls=':', lw=1, color='k',
+            axes[0].axhline(h['success'], ls=':', lw=1, color=col,
                             label=f"{name} heuristic (n={h['episodes']})")
         if tr:
             x = [r['env_steps'] / 1e6 for r in tr if 'success' in r]
             lab_tr = f'{name} train rollout (finished-episode rate)'
-            axes[0].plot(x, [r['success'] for r in tr if 'success' in r], alpha=0.4,
-                         label=lab_tr)
-            axes[1].plot(x, [r['collision'] for r in tr if 'success' in r], alpha=0.4,
-                         label=lab_tr)
-            axes[2].plot(x, [r['return'] for r in tr if 'success' in r], label=name)
+            axes[0].plot(x, [r['success'] for r in tr if 'success' in r], alpha=0.35,
+                         color=col, lw=1, label=lab_tr)
+            axes[1].plot(x, [r['collision'] for r in tr if 'success' in r], alpha=0.35,
+                         color=col, lw=1, label=lab_tr)
+            axes[2].plot(x, [r['return'] for r in tr if 'success' in r], color=col, label=name)
     axes[0].set_title('success rate (eval error bar = ±2 SE)')
     axes[1].set_title('collision rate')
     axes[2].set_title('train episode return (raw reward)')
     for ax in axes:
         ax.set_xlabel('env steps [M]')
         ax.grid(alpha=0.3)
-    axes[0].legend(fontsize=7)
+    axes[0].legend(fontsize=6)
+    axes[2].legend(fontsize=7)
     fig.tight_layout()
     fig.savefig(a.out, dpi=110)
     print('saved', a.out)
