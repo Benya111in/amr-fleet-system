@@ -27,6 +27,14 @@ double clamp(double x, double lo, double hi)
   return x < lo ? lo : (x > hi ? hi : x);
 }
 
+/// [s] dt_est 하한 — /clock 해상도(Gazebo 물리 1 ms) 아래로는 추정하지 않는다
+constexpr double kMinTickDt = 1e-3;
+/// dt_est 지수 이동 평균 계수 (A5-1b): 벽시계 루프가 밀렸다 따라잡는 1–5 ms 틱 하나가 추정을
+/// 흔들지 않게.
+/// 직전 간격을 그대로 쓰면 그 틱에서 램프가 뒤로 물러나 명령이 톱니가 됐다 (Gazebo 실측, A5-1 노트
+/// 1 회차).
+constexpr double kTickDtEmaAlpha = 0.2;
+
 // 제자리 정렬의 정지각 [rad] (A2-5): 지연 t_c 동안 지금 각가속도 a0(회전 방향 성분, 음수면 0 으로
 // 보수적)를 유지 → 저크 j 로 각가속도를 0 까지 → 저크 제한 정지 (SpeedProfile::stoppingDistance).
 // 지금 가속 중인 것을 빼면 하류 각저크 필터가 가속도를 +α 에서 뒤집는 동안 더 돈다 — 오프라인
@@ -60,7 +68,7 @@ double alignStopSpeed(double e, double a0, double t_c)
 }  // namespace
 
 DecisionEngine::DecisionEngine(const EngineConfig & cfg, PolicyInterface * policy)
-: cfg_(cfg), policy_(policy)
+: cfg_(cfg), policy_(policy), dt_est_(cfg.control_period)
 {
   ticks_per_decision_ = std::max(
     1, static_cast<int>(std::lround(cfg_.decision_period / std::max(1e-6, cfg_.control_period))));
@@ -69,8 +77,10 @@ DecisionEngine::DecisionEngine(const EngineConfig & cfg, PolicyInterface * polic
 void DecisionEngine::reset()
 {
   synced_ = false;
+  dt_est_ = cfg_.control_period;
   kind_ = Kind::kNone;
-  tick_in_period_ = 0;
+  in_handover_ = false;
+  last_period_ = 0.0;
   prev_ = {};
   prev_cell_ = -1;
   dev_ = DevState{};
@@ -83,25 +93,29 @@ void DecisionEngine::resetEpisode()
 {
   dev_ = DevState{};
   prev_cell_ = -1;
+  in_handover_ = false;
   if (policy_) {
     policy_->resetHidden();
   }
 }
 
-void DecisionEngine::closePeriod()
+void DecisionEngine::closePeriod(double elapsed)
 {
   if (kind_ == Kind::kNone) {
     return;
   }
   Accel a;
   if (kind_ == Kind::kDwa) {
-    a = {(v_out_ - v_cmd_) / cfg_.decision_period, (w_out_ - w_cmd_) / cfg_.decision_period};
+    // 실행 가속도 = 그 주기 동안 실제로 바뀐 명령 / 실제 sim 경과 (A5-1: 공칭 0.1 이 아니다)
+    const double e = elapsed > 1e-6 ? elapsed : cfg_.decision_period;
+    a = {(v_out_ - v_cmd_) / e, (w_out_ - w_cmd_) / e};
     v_cmd_ = v_out_;
     w_cmd_ = w_out_;
   } else {
     a = {target_.a_v, target_.a_w};
-    v_cmd_ = target_.v;
-    w_cmd_ = target_.w;
+    const Command c = rampAt(elapsed);
+    v_cmd_ = c.v;
+    w_cmd_ = c.w;
   }
   for (std::size_t k = prev_.size() - 1; k > 0; --k) {
     prev_[k] = prev_[k - 1];
@@ -139,10 +153,11 @@ int DecisionEngine::selectC(const PolicyOutput & out, const MaskResult & m, Tick
   return sel;
 }
 
-void DecisionEngine::startPeriod(TickInput & in, TickResult & res)
+void DecisionEngine::startPeriod(TickInput & in, TickResult & res, double dev_dt)
 {
   res.new_decision = true;
   ContractState & s = in.state;
+  v_hi_ = std::min(s.v_cap, C::kVMaxHw);
   s.v_cmd = v_cmd_;
   s.w_cmd = w_cmd_;
   s.prev_actions = prev_;
@@ -151,13 +166,35 @@ void DecisionEngine::startPeriod(TickInput & in, TickResult & res)
   if (in.state_ok && !s.path.empty()) {
     try {
       const double e = ContractPath(s.path).project({s.pose.x, s.pose.y}).dist;
-      dev_ = devUpdate(dev_, e, cfg_.decision_period);
+      dev_ = devUpdate(dev_, e, dev_dt);
     } catch (const std::exception & ex) {
       in.state_ok = false;
       in.state_error = ex.what();
     }
   }
   s.dev = dev_;
+
+  auto dwa = [&](DwaReason why, const std::string & err) {
+      kind_ = Kind::kDwa;
+      res.source = Source::kDwa;
+      res.dwa_reason = why;
+      res.error = err;
+      prev_cell_ = -1;
+    };
+
+  // 근접 인계: 목표 직선거리 ≤ r_h 이면 DWA 가 끝(정렬 포함)까지 몬다. 풀 때는 r_h + 히스테리시스.
+  if (cfg_.handover_radius > 0.0) {
+    if (in_handover_) {
+      in_handover_ = !(in.dist_to_goal > cfg_.handover_radius + cfg_.handover_hysteresis);
+    } else {
+      in_handover_ = in.dist_to_goal <= cfg_.handover_radius;
+    }
+    res.handover = in_handover_;
+    if (in_handover_) {
+      dwa(DwaReason::kHandover, "근접 인계 (목표 " + std::to_string(in.dist_to_goal) + " m)");
+      return;
+    }
+  }
 
   // 목표 성공 조건 → 제자리 yaw 정렬 (ω 만, α 한계)
   if (in.dist_to_goal <= cfg_.goal_xy_tol && std::abs(s.v_meas) <= cfg_.goal_stop_speed) {
@@ -183,13 +220,6 @@ void DecisionEngine::startPeriod(TickInput & in, TickResult & res)
     return;
   }
 
-  auto dwa = [&](DwaReason why, const std::string & err) {
-      kind_ = Kind::kDwa;
-      res.source = Source::kDwa;
-      res.dwa_reason = why;
-      res.error = err;
-      prev_cell_ = -1;
-    };
   if (!in.state_ok || policy_ == nullptr) {
     dwa(DwaReason::kStateInvalid, policy_ ? in.state_error : std::string("정책 없음"));
     return;
@@ -256,7 +286,10 @@ void DecisionEngine::startPeriod(TickInput & in, TickResult & res)
 
 TickResult DecisionEngine::tick(TickInput & in)
 {
-  if (!synced_ || in.now - last_tick_ > cfg_.reset_gap || in.now < last_tick_) {
+  const double dp = cfg_.decision_period;
+  const bool resync = !synced_ || in.now - last_tick_ > cfg_.reset_gap || in.now < last_tick_;
+  double tick_dt = 0.0;
+  if (resync) {
     // 재동기: 측정 속도에서 이어 간다 (정지 상태 시작이면 0)
     const double v_hi = std::min(in.state.v_cap, C::kVMaxHw);
     v_cmd_ = clamp(in.state.v_meas, C::kVMin, std::max(C::kVMin, v_hi));
@@ -267,40 +300,86 @@ TickResult DecisionEngine::tick(TickInput & in)
       prev_ = {};
     }
     kind_ = Kind::kNone;
-    tick_in_period_ = ticks_per_decision_;
     synced_ = true;
+  } else {
+    tick_dt = in.now - last_tick_;
+    if (tick_dt > 0.0) {
+      // sim 시계가 멈춘 틱(간격 0)은 추정을 바꾸지 않는다
+      dt_est_ += kTickDtEmaAlpha * (clamp(tick_dt, kMinTickDt, dp) - dt_est_);
+      dt_est_ = clamp(dt_est_, kMinTickDt, dp);
+    }
   }
   last_tick_ = in.now;
   v_cap_ = in.state.v_cap;
 
   TickResult res;
-  if (kind_ == Kind::kNone || tick_in_period_ >= ticks_per_decision_) {
-    closePeriod();
-    tick_in_period_ = 0;
-    startPeriod(in, res);
+  const bool due = kind_ == Kind::kNone || in.now >= next_boundary_ - 0.5 * dt_est_;
+  if (due) {
+    const bool fresh = kind_ == Kind::kNone;
+    const double elapsed = in.now - period_start_;
+    closePeriod(elapsed);
+    last_period_ = fresh ? 0.0 : elapsed;
+    // 이탈 타이머: 실제 경과. 재동기 뒤 첫 결정은 공백을 세지 않는다 (예전처럼 한 주기)
+    startPeriod(in, res, fresh ? dp : clamp(elapsed, 0.0, cfg_.reset_gap));
+    // 경계 격자: 오차가 쌓이지 않게 직전 경계 + 0.1. 새로 시작했거나 그 경계도 이미 지났으면 지금
+    // + 0.1
+    double nb = next_boundary_ + dp;
+    if (fresh || in.now >= nb - 0.5 * dt_est_) {
+      nb = in.now + dp;
+    }
+    next_boundary_ = nb;
+    period_start_ = in.now;
+    t_emit_ = 0.0;
     period_info_ = res;
   } else {
     res = period_info_;
     res.new_decision = false;
     res.obs_ms = res.mask_ms = res.infer_ms = 0.0;
   }
-  ++tick_in_period_;
+  res.sim_now = in.now;
+  res.tick_dt = tick_dt;
+  res.last_period = last_period_;
+  res.dt_est = dt_est_;
+  res.handover = in_handover_;
 
   if (kind_ == Kind::kDwa) {
     res.need_dwa = true;
     return res;
   }
-  if (tick_in_period_ >= ticks_per_decision_) {
-    res.v = target_.v;
-    res.w = target_.w;
-  } else {
-    const double t = std::min(cfg_.decision_period, tick_in_period_ * cfg_.control_period);
-    res.v = v_cmd_ + target_.a_v * t;
-    res.w = w_cmd_ + target_.a_w * t;
-  }
+  // ZOH 램프: 이 틱이 다음 틱까지 붙잡을 값 = 결정 뒤 sim 경과 + 다음 틱까지의 추정. 한 결정 주기
+  // 안에서는
+  // 램프 시각을 되돌리지 않는다 (추정이 줄어든 틱에 명령이 뒤로 물러나지 않게 — A5-1b)
+  t_emit_ = std::max(t_emit_, in.now - period_start_ + dt_est_);
+  const Command c = rampAt(t_emit_);
+  res.v = c.v;
+  res.w = c.w;
   v_out_ = res.v;
   w_out_ = res.w;
   return res;
+}
+
+Command DecisionEngine::rampAt(double t) const
+{
+  const double dp = cfg_.decision_period;
+  Command c = target_;
+  if (std::abs(t - dp) <= 1e-9) {
+    return c;   // 0.1 s 정각 (20 Hz·RTF 1): 계약 적분의 끝 명령 그대로
+  }
+  if (t < dp || kind_ == Kind::kAlign) {
+    // 정렬은 되먹임 제어라 0.1 뒤에는 끝 명령을 붙잡는다 (목표 ω 를 넘지 않게)
+    const double tt = std::min(t, dp);
+    c.v = v_cmd_ + target_.a_v * tt;
+    c.w = w_cmd_ + target_.a_w * tt;
+    return c;
+  }
+  // 정책 주기가 0.1 보다 길다 (결정 격자 + 이산 틱): 가속도를 다음 결정까지 붙잡는다 (ZOH). 끝
+  // 명령에서 멈추면
+  // 긴 주기마다 a·(e − 0.1) 를 잃어 평균 가속이 a 보다 작아진다 — 격자 평균 주기는 0.1 이라 이렇게
+  // 해야
+  // 명령이 a·t 를 따른다. 속도 상자(ray 클램프와 같은 한계) 밖으로는 나가지 않는다.
+  c.v = clamp(v_cmd_ + target_.a_v * t, C::kVMin, std::max(C::kVMin, v_hi_));
+  c.w = clamp(w_cmd_ + target_.a_w * t, -C::kWMax, C::kWMax);
+  return c;
 }
 
 FallbackCommand DecisionEngine::brakeStep() const

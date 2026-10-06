@@ -7,6 +7,12 @@
 //  - 추론 시간 초과 → DWA, DWA 폴백 끔 → 계약 제동 규칙, setSpeedLimit → v_cap
 //  - 정책 → DWA 폴백 전환에서도 틱당 계약 가속 한계·속도 제한·벽 앞 제동 (내부 DWA 의 창 중심이
 //    낡음 → 실제 직전 명령으로 syncLastCommand, 측정이 window_reset 밖이면 계약 동적 창 자름)
+//  - A5-1: 노드는 sim 시계(use_sim_time, 시험이 /clock 을 낸다)로 돈다 — 결정은 sim 시각 0.1 s
+//  격자라 틱마다
+//    시계를 0.05 s (RTF 1) 씩 진행한다 (Rig::cvc). 벽시계로 부르면 틱 사이가 수 ms 라 결정이 거의
+//    일어나지 않는다.
+//    RTF 0.7 (틱 0.035 s) 에서도 결정 주기가 sim 0.1 s 인지, 근접 인계가 DWA(사유 5)로 넘기는지
+//    본다.
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -27,6 +33,7 @@
 #include "nav2_costmap_2d/costmap_2d_ros.hpp"
 #include "pluginlib/class_loader.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "rosgraph_msgs/msg/clock.hpp"
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
 #include "std_msgs/msg/float64_multi_array.hpp"
@@ -115,6 +122,8 @@ struct Rig
   std::shared_ptr<tf2_ros::Buffer> tf;
   rclcpp::Node::SharedPtr pub_node;
   rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr scan_pub;
+  rclcpp::Publisher<rosgraph_msgs::msg::Clock>::SharedPtr clock_pub;
+  double sim_t{100.0};   ///< [s] 시험이 내는 /clock
   rclcpp::executors::SingleThreadedExecutor exec;
   std::vector<std_msgs::msg::Float64MultiArray> stats;
   rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr stats_sub;
@@ -133,6 +142,37 @@ struct Rig
       [this](const std_msgs::msg::Float64MultiArray::SharedPtr m) {stats.push_back(*m);});
     exec.add_node(node->get_node_base_interface());
     exec.add_node(pub_node);
+    clock_pub = pub_node->create_publisher<rosgraph_msgs::msg::Clock>("/clock", 10);
+    setClock(sim_t);
+  }
+
+  /// /clock 을 t 로 내고 노드 시계가 그 값이 될 때까지 기다린다 (Humble 은 시계 구독을 따로 돈다).
+  void setClock(double t)
+  {
+    sim_t = t;
+    rosgraph_msgs::msg::Clock c;
+    c.clock = rclcpp::Time(static_cast<int64_t>(std::llround(t * 1e9)), RCL_ROS_TIME);
+    for (int k = 0; k < 400; ++k) {
+      if (k % 20 == 0) {
+        clock_pub->publish(c);
+      }
+      exec.spin_some(std::chrono::milliseconds(1));
+      if (std::abs(node->now().seconds() - t) < 1e-9) {
+        return;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    ADD_FAILURE() << "노드 시계가 /clock " << t << " 로 바뀌지 않았다 (지금 " <<
+      node->now().seconds() << ")";
+  }
+
+  /// sim 시계를 dt 만큼 진행한 뒤 한 틱 (controller_server 의 한 번 호출).
+  geometry_msgs::msg::TwistStamped cvc(
+    RLController & ctrl, const geometry_msgs::msg::PoseStamped & p,
+    const geometry_msgs::msg::Twist & v, double dt = 0.05)
+  {
+    setClock(sim_t + dt);
+    return ctrl.computeVelocityCommands(p, v, nullptr);
   }
 
   /// 720 빔 스캔 (range 이 inf 면 무반사) 을 내고 구독 콜백까지 돌린다.
@@ -165,6 +205,7 @@ std::vector<rclcpp::Parameter> params(
   const std::vector<rclcpp::Parameter> & extra = {})
 {
   std::vector<rclcpp::Parameter> p{
+    rclcpp::Parameter("use_sim_time", true),
     rclcpp::Parameter("controller_frequency", 20.0),
     rclcpp::Parameter("FollowPath.rl.model_path", model(model_file)),
     rclcpp::Parameter("FollowPath.rl.mode", mode)};
@@ -176,8 +217,9 @@ std::vector<rclcpp::Parameter> params(
 /// 차이 최댓값을 모은다.
 struct Loop
 {
-  explicit Loop(RLController & c)
-  : ctrl(c) {}
+  Loop(Rig & r, RLController & c)
+  : rig(r), ctrl(c) {}
+  Rig & rig;
   RLController & ctrl;
   geometry_msgs::msg::Twist vel;
   double x{1.0};
@@ -186,7 +228,7 @@ struct Loop
 
   amr_rl_controller::TickResult step()
   {
-    const auto cmd = ctrl.computeVelocityCommands(pose(x, 3.0, 0.0), vel, nullptr);
+    const auto cmd = rig.cvc(ctrl, pose(x, 3.0, 0.0), vel);
     max_dv = std::max(max_dv, std::abs(cmd.twist.linear.x - vel.linear.x));
     max_dw = std::max(max_dw, std::abs(cmd.twist.angular.z - vel.angular.z));
     vel.linear.x = cmd.twist.linear.x;
@@ -222,7 +264,7 @@ TEST(RLControllerPlugin, ModeCRunsPolicyWhenScanArrives)
   // 스캔 없음 → 입력 무효 → 그 결정 주기(2 틱)는 DWA 폴백
   geometry_msgs::msg::TwistStamped cmd;
   for (int k = 0; k < 2; ++k) {
-    cmd = ctrl.computeVelocityCommands(pose(1.0, 3.0, 0.0), vel, nullptr);
+    cmd = rig.cvc(ctrl, pose(1.0, 3.0, 0.0), vel);
     EXPECT_EQ(ctrl.lastResult().source, Source::kDwa);
     EXPECT_EQ(ctrl.lastResult().dwa_reason, DwaReason::kStateInvalid);
     EXPECT_TRUE(std::isfinite(cmd.twist.linear.x));
@@ -231,7 +273,7 @@ TEST(RLControllerPlugin, ModeCRunsPolicyWhenScanArrives)
   double x = 1.0;
   for (int k = 0; k < 40; ++k) {
     rig.publishScan();
-    cmd = ctrl.computeVelocityCommands(pose(x, 3.0, 0.0), vel, nullptr);
+    cmd = rig.cvc(ctrl, pose(x, 3.0, 0.0), vel);
     const auto r = ctrl.lastResult();
     ASSERT_NE(r.source, Source::kDwa) << k << " " << r.error;
     EXPECT_GE(cmd.twist.linear.x, -1e-9);
@@ -246,7 +288,7 @@ TEST(RLControllerPlugin, ModeCRunsPolicyWhenScanArrives)
   EXPECT_EQ(c.dwa[1], 1U);
   rig.spin();
   ASSERT_FALSE(rig.stats.empty());
-  EXPECT_EQ(rig.stats.back().data.size(), 26U);
+  EXPECT_EQ(rig.stats.back().data.size(), 31U);
   ctrl.deactivate();
   ctrl.cleanup();
 }
@@ -262,7 +304,7 @@ TEST(RLControllerPlugin, ModeBRunsPolicy)
   geometry_msgs::msg::Twist vel;
   for (int k = 0; k < 10; ++k) {
     rig.publishScan(3.0);
-    const auto cmd = ctrl.computeVelocityCommands(pose(1.0, 3.0, 0.0), vel, nullptr);
+    const auto cmd = rig.cvc(ctrl, pose(1.0, 3.0, 0.0), vel);
     EXPECT_EQ(ctrl.lastResult().source, Source::kPolicy) << ctrl.lastResult().error;
     EXPECT_GE(cmd.twist.linear.x, -1e-9);
     EXPECT_LE(std::abs(cmd.twist.angular.z), 1.5 + 1e-9);
@@ -305,7 +347,7 @@ TEST(RLControllerPlugin, TimeoutFallsBackToDwaAndSpeedLimitSetsVcap)
   geometry_msgs::msg::Twist vel;
   for (int k = 0; k < 6; ++k) {
     rig.publishScan();
-    const auto cmd = ctrl.computeVelocityCommands(pose(1.0, 3.0, 0.0), vel, nullptr);
+    const auto cmd = rig.cvc(ctrl, pose(1.0, 3.0, 0.0), vel);
     EXPECT_EQ(ctrl.lastResult().source, Source::kDwa);
     EXPECT_EQ(ctrl.lastResult().dwa_reason, DwaReason::kTimeout);
     EXPECT_LE(cmd.twist.linear.x, 0.5 + 1e-9);
@@ -329,10 +371,10 @@ TEST(RLControllerPlugin, WithoutDwaFallbackBrakesByContractRule)
   vel.linear.x = 0.6;
   vel.angular.z = 0.3;
   // 스캔 없음: 재동기 v 0.6 → 틱마다 a 1.0 × 0.05 감속, ω 는 α 2.0 × 0.05 씩 0 쪽으로
-  auto cmd = ctrl.computeVelocityCommands(pose(1.0, 3.0, 0.0), vel, nullptr);
+  auto cmd = rig.cvc(ctrl, pose(1.0, 3.0, 0.0), vel);
   EXPECT_NEAR(cmd.twist.linear.x, 0.55, 1e-9);
   EXPECT_NEAR(cmd.twist.angular.z, 0.2, 1e-9);
-  cmd = ctrl.computeVelocityCommands(pose(1.0, 3.0, 0.0), vel, nullptr);
+  cmd = rig.cvc(ctrl, pose(1.0, 3.0, 0.0), vel);
   EXPECT_NEAR(cmd.twist.linear.x, 0.50, 1e-9);
   EXPECT_NEAR(cmd.twist.angular.z, 0.1, 1e-9);
 }
@@ -349,18 +391,18 @@ TEST(RLControllerPlugin, StaleOrMalformedScanFallsBackToDwa)
   // 나이 1.0 s > scan_timeout 0.3 s, 그다음 빔 719 개: 두 결정 모두 입력 무효 → DWA
   rig.publishScan(5.0, 1.0);
   for (int k = 0; k < 2; ++k) {
-    ctrl.computeVelocityCommands(pose(1.0, 3.0, 0.0), vel, nullptr);
+    rig.cvc(ctrl, pose(1.0, 3.0, 0.0), vel);
     EXPECT_EQ(ctrl.lastResult().dwa_reason, DwaReason::kStateInvalid);
   }
   rig.publishScan(5.0, 0.0, C::kLidarSamples - 1);
   for (int k = 0; k < 2; ++k) {
-    ctrl.computeVelocityCommands(pose(1.0, 3.0, 0.0), vel, nullptr);
+    rig.cvc(ctrl, pose(1.0, 3.0, 0.0), vel);
     EXPECT_EQ(ctrl.lastResult().dwa_reason, DwaReason::kStateInvalid);
   }
   EXPECT_EQ(ctrl.counters().dwa[1], 2U);
   // 정상 스캔 → 정책
   rig.publishScan(5.0);
-  ctrl.computeVelocityCommands(pose(1.0, 3.0, 0.0), vel, nullptr);
+  rig.cvc(ctrl, pose(1.0, 3.0, 0.0), vel);
   EXPECT_NE(ctrl.lastResult().source, Source::kDwa);
 }
 
@@ -372,7 +414,7 @@ TEST(RLControllerPlugin, NoPlanThrows)
   ctrl.configure(rig.node, "FollowPath", rig.tf, rig.costmap);
   ctrl.activate();
   EXPECT_THROW(
-    ctrl.computeVelocityCommands(pose(1.0, 3.0, 0.0), geometry_msgs::msg::Twist(), nullptr),
+    rig.cvc(ctrl, pose(1.0, 3.0, 0.0), geometry_msgs::msg::Twist()),
     nav2_core::PlannerException);
 }
 
@@ -387,7 +429,7 @@ TEST(RLControllerPlugin, PolicyToDwaHandoverKeepsContractStepLimits)
   ctrl.configure(rig.node, "FollowPath", rig.tf, rig.costmap);
   ctrl.activate();
   ctrl.setPlan(straightPlan(1.0, 3.0, 8.0));
-  Loop loop(ctrl);
+  Loop loop(rig, ctrl);
   for (int k = 0; k < 2; ++k) {
     ASSERT_EQ(loop.step().source, Source::kDwa) << k;   // 스캔 없음
   }
@@ -434,7 +476,7 @@ TEST(RLControllerPlugin, DwaAfterPolicyDecelerationStaysUnderSpeedLimit)
   ctrl.configure(rig.node, "FollowPath", rig.tf, rig.costmap);
   ctrl.activate();
   ctrl.setPlan(straightPlan(1.0, 3.0, 8.0));
-  Loop loop(ctrl);
+  Loop loop(rig, ctrl);
   for (int k = 0; k < 8; ++k) {
     ASSERT_EQ(loop.step().source, Source::kDwa) << k;   // 스캔 없음
   }
@@ -493,7 +535,7 @@ TEST(RLControllerPlugin, DwaBrakeAfterPolicyStretchDoesNotAccelerateTowardWall)
   ctrl.configure(rig.node, "FollowPath", rig.tf, rig.costmap);
   ctrl.activate();
   ctrl.setPlan(straightPlan(1.0, 3.0, 8.0));
-  Loop loop(ctrl);
+  Loop loop(rig, ctrl);
   dwaThenPolicyDecel(rig, ctrl, loop, 8);
   if (HasFatalFailure()) {
     return;
@@ -545,7 +587,7 @@ TEST(RLControllerPlugin, DwaUsesSyncedCenterWhenMeasuredSpeedLags)
   ctrl.configure(rig.node, "FollowPath", rig.tf, rig.costmap);
   ctrl.activate();
   ctrl.setPlan(straightPlan(1.0, 3.0, 8.0));
-  Loop loop(ctrl);
+  Loop loop(rig, ctrl);
   for (int k = 0; k < 2; ++k) {
     ASSERT_EQ(loop.step().source, Source::kDwa) << k;
   }
@@ -563,7 +605,7 @@ TEST(RLControllerPlugin, DwaUsesSyncedCenterWhenMeasuredSpeedLags)
   geometry_msgs::msg::Twist lag;
   lag.linear.x = v_cmd - 0.15;   // 측정이 명령보다 늦다 (window_reset_v 0.3 안)
   rig.publishScan(std::numeric_limits<double>::infinity(), 1.0);
-  auto cmd = ctrl.computeVelocityCommands(pose(loop.x, 3.0, 0.0), lag, nullptr);
+  auto cmd = rig.cvc(ctrl, pose(loop.x, 3.0, 0.0), lag);
   auto r = ctrl.lastResult();
   ASSERT_EQ(r.source, Source::kDwa);
   EXPECT_FALSE(r.dwa_limited);
@@ -572,7 +614,7 @@ TEST(RLControllerPlugin, DwaUsesSyncedCenterWhenMeasuredSpeedLags)
   const double v1 = cmd.twist.linear.x;
   lag.linear.x = v1 - 0.15;
   rig.publishScan(std::numeric_limits<double>::infinity(), 1.0);
-  cmd = ctrl.computeVelocityCommands(pose(loop.x, 3.0, 0.0), lag, nullptr);
+  cmd = rig.cvc(ctrl, pose(loop.x, 3.0, 0.0), lag);
   EXPECT_FALSE(ctrl.lastResult().dwa_limited);
   EXPECT_EQ(ctrl.counters().dwa_window_syncs, syncs0 + 1U);   // DWA 명령 = 낸 명령 → 맞출 것 없음
   EXPECT_EQ(ctrl.counters().dwa_limited, limited0);
@@ -591,7 +633,7 @@ TEST(RLControllerPlugin, DwaCommandIsClampedWhenMeasuredLagExceedsWindowReset)
   ctrl.configure(rig.node, "FollowPath", rig.tf, rig.costmap);
   ctrl.activate();
   ctrl.setPlan(straightPlan(1.0, 3.0, 8.0));
-  Loop loop(ctrl);
+  Loop loop(rig, ctrl);
   for (int k = 0; k < 2; ++k) {
     ASSERT_EQ(loop.step().source, Source::kDwa) << k;
   }
@@ -608,7 +650,7 @@ TEST(RLControllerPlugin, DwaCommandIsClampedWhenMeasuredLagExceedsWindowReset)
   geometry_msgs::msg::Twist lag;
   lag.linear.x = v_cmd - 0.35;
   rig.publishScan(std::numeric_limits<double>::infinity(), 1.0);
-  auto cmd = ctrl.computeVelocityCommands(pose(loop.x, 3.0, 0.0), lag, nullptr);
+  auto cmd = rig.cvc(ctrl, pose(loop.x, 3.0, 0.0), lag);
   auto r = ctrl.lastResult();
   ASSERT_EQ(r.source, Source::kDwa);
   EXPECT_TRUE(r.dwa_limited);
@@ -617,7 +659,7 @@ TEST(RLControllerPlugin, DwaCommandIsClampedWhenMeasuredLagExceedsWindowReset)
   const double v1 = cmd.twist.linear.x;
   lag.linear.x = v1 - 0.35;
   rig.publishScan(std::numeric_limits<double>::infinity(), 1.0);
-  cmd = ctrl.computeVelocityCommands(pose(loop.x, 3.0, 0.0), lag, nullptr);
+  cmd = rig.cvc(ctrl, pose(loop.x, 3.0, 0.0), lag);
   EXPECT_EQ(ctrl.counters().dwa_window_syncs, syncs0 + 2U);   // 자른 명령으로 다시 맞춤
   EXPECT_LE(std::abs(cmd.twist.linear.x - v1), kDvTick + 1e-9);
 }
@@ -641,7 +683,7 @@ TEST(RLControllerPlugin, OmegaOnlyMismatchIsSyncedWithoutClamp)
   double y = 3.0;
   double th = -0.6;
   auto step = [&]() {
-      const auto cmd = ctrl.computeVelocityCommands(pose(x, y, th), vel, nullptr);
+      const auto cmd = rig.cvc(ctrl, pose(x, y, th), vel);
       vel = cmd.twist;
       x += vel.linear.x * std::cos(th) * 0.05;
       y += vel.linear.x * std::sin(th) * 0.05;
@@ -690,7 +732,7 @@ TEST(RLControllerPlugin, DwaAfterLongPolicyStretchTracksPathAhead)
   ctrl.configure(rig.node, "FollowPath", rig.tf, rig.costmap);
   ctrl.activate();
   ctrl.setPlan(straightPlan(1.0, 3.0, 30.0));
-  Loop loop(ctrl);
+  Loop loop(rig, ctrl);
   for (int k = 0; k < 2; ++k) {
     ASSERT_EQ(loop.step().source, Source::kDwa) << k;   // 스캔 없음 → DWA (경로 창 색인 ≈ 0)
   }
@@ -715,4 +757,87 @@ TEST(RLControllerPlugin, DwaAfterLongPolicyStretchTracksPathAhead)
   }
   EXPECT_GE(min_v, v0 - 0.05) << "DWA 가 경로 앞쪽을 보지 못하고 감속했다";
   EXPECT_LT(max_abs_w, 0.05) << "DWA 가 뒤쪽 경로로 돌아서려 했다";
+}
+
+// A5-1: RTF 0.7 (sim 틱 0.035 s) 에서 결정은 sim 0.1 s 마다 — 60 틱 = 2.1 s 에 결정 21 ± 1 (틱 수
+// 결정이면 30).
+// stats 27 (now) 의 결정 틱 차분과 28 (last_period) 이 같고 평균 0.1 이다.
+TEST(RLControllerPlugin, DecisionsFollowSimClockNotTickCount)
+{
+  REQUIRE_MODELS();
+  Rig rig("sc", params("fixture_b.onnx", "B"));
+  RLController ctrl;
+  ctrl.configure(rig.node, "FollowPath", rig.tf, rig.costmap);
+  ctrl.activate();
+  ctrl.setPlan(straightPlan(1.0, 3.0, 6.0));
+  geometry_msgs::msg::Twist vel;
+  std::vector<double> t_dec;
+  std::vector<double> last_period;
+  for (int k = 0; k < 60; ++k) {
+    rig.publishScan(3.0);
+    const auto cmd = rig.cvc(ctrl, pose(1.0, 3.0, 0.0), vel, 0.035);
+    const auto r = ctrl.lastResult();
+    ASSERT_EQ(r.source, Source::kPolicy) << k << " " << r.error;
+    EXPECT_NEAR(r.sim_now, rig.sim_t, 1e-6);
+    if (r.new_decision) {
+      t_dec.push_back(r.sim_now);
+      last_period.push_back(r.last_period);
+    }
+    vel = cmd.twist;
+  }
+  const auto c = ctrl.counters();
+  EXPECT_GE(c.decisions, 20U);
+  EXPECT_LE(c.decisions, 22U);
+  ASSERT_GE(t_dec.size(), 20U);
+  const double mean_period = (t_dec.back() - t_dec.front()) / static_cast<double>(t_dec.size() - 1);
+  EXPECT_NEAR(mean_period, 0.1, 0.003);
+  for (std::size_t i = 1; i < t_dec.size(); ++i) {
+    EXPECT_NEAR(last_period[i], t_dec[i] - t_dec[i - 1], 1e-6) << i;
+  }
+  rig.spin();
+  ASSERT_FALSE(rig.stats.empty());
+  const auto & st = rig.stats.back().data;
+  ASSERT_EQ(st.size(), 31U);
+  EXPECT_NEAR(st[26], 0.035, 1e-6);   // tick_dt
+  EXPECT_NEAR(st[29], 0.035, 1e-6);   // dt_est
+}
+
+// 근접 인계 (A5): handover_radius 0.4 → 목표 0.3 m 앞에서는 내부 DWA (사유 5), 1 m 앞에서는 정책.
+// DWA 폴백을 끈 채 인계를 켜면 configure 가 거부한다.
+TEST(RLControllerPlugin, HandoverRadiusHandsOverToDwaNearGoal)
+{
+  REQUIRE_MODELS();
+  Rig rig("ho", params(
+      "fixture_b.onnx", "B", {
+    rclcpp::Parameter("FollowPath.rl.handover_radius", 0.4)}));
+  RLController ctrl;
+  ctrl.configure(rig.node, "FollowPath", rig.tf, rig.costmap);
+  ctrl.activate();
+  ctrl.setPlan(straightPlan(1.0, 3.0, 6.0));   // 목표 (7, 3)
+  geometry_msgs::msg::Twist vel;
+  for (int k = 0; k < 4; ++k) {
+    rig.publishScan(3.0);
+    rig.cvc(ctrl, pose(6.0, 3.0, 0.0), vel);
+    EXPECT_EQ(ctrl.lastResult().source, Source::kPolicy) << k;
+    EXPECT_FALSE(ctrl.lastResult().handover);
+  }
+  for (int k = 0; k < 4; ++k) {
+    rig.publishScan(3.0);
+    rig.cvc(ctrl, pose(6.7, 3.0, 0.0), vel);
+    EXPECT_EQ(ctrl.lastResult().source, Source::kDwa) << k;
+    EXPECT_EQ(ctrl.lastResult().dwa_reason, DwaReason::kHandover) << k;
+    EXPECT_TRUE(ctrl.lastResult().handover);
+  }
+  EXPECT_EQ(ctrl.counters().dwa[static_cast<std::size_t>(DwaReason::kHandover)], 2U);
+  rig.spin();
+  ASSERT_FALSE(rig.stats.empty());
+  EXPECT_NEAR(rig.stats.back().data[30], 1.0, 1e-12);
+  EXPECT_NEAR(rig.stats.back().data[5], 5.0, 1e-12);
+
+  Rig bad("hob", params(
+      "fixture_b.onnx", "B", {
+    rclcpp::Parameter("FollowPath.rl.handover_radius", 0.4),
+    rclcpp::Parameter("FollowPath.rl.dwa_fallback", false)}));
+  RLController c2;
+  EXPECT_THROW(c2.configure(bad.node, "FollowPath", bad.tf, bad.costmap), std::runtime_error);
 }

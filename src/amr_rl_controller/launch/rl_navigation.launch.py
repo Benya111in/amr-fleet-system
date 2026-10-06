@@ -4,6 +4,8 @@ RLController 를 얹은 navigation 스택 — 기존 런치·nav2_params.yaml �
     ros2 launch amr_rl_controller rl_navigation.launch.py model_path:=/p/policy_c.onnx mode:=C
     ros2 launch amr_rl_controller rl_navigation.launch.py model_path:=... replace_dwa:=true
     ros2 launch amr_rl_controller rl_navigation.launch.py model_path:=... sim:=kinematic
+    ros2 launch amr_rl_controller rl_navigation.launch.py model_path:=... replace_dwa:=true \
+        handover_radius:=0.4    (근접 인계: 목표 0.4 m 안은 내부 DWA)
 
 params_file(기본 amr_navigation config/nav2_params.yaml)을 읽어 amr_rl_controller.params 로
 RL 블록을 덧씌운 임시 파일을 만들고, 그것을 params_file 로 넘겨 amr_navigation 의
@@ -36,6 +38,8 @@ def _setup(context):
         overrides['max_inference_ms'] = float(get('max_inference_ms'))
     if get('dwa_fallback'):
         overrides['dwa_fallback'] = get('dwa_fallback').lower() == 'true'
+    if get('handover_radius'):
+        overrides['handover_radius'] = float(get('handover_radius'))
     path, cid = write_overlay(src, get('model_path'), get('mode'), get('controller_id'),
                               get('replace_dwa').lower() == 'true', overrides)
     sim = get('sim')
@@ -64,6 +68,8 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('replace_dwa', default_value='false'),
         DeclareLaunchArgument('max_inference_ms', default_value=''),
         DeclareLaunchArgument('dwa_fallback', default_value=''),
+        DeclareLaunchArgument('handover_radius', default_value='',
+                              description="근접 인계 반경 [m] ('' = 플러그인 기본 0 = 끔)"),
         DeclareLaunchArgument('params_file', default_value=''),
         DeclareLaunchArgument('sim', default_value='none', description='none | kinematic'),
         # 포함한 런치의 인자(robot_name, prefix, use_sim_time, config_dir, x0, map …)는 여기서 선언하지

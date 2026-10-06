@@ -11,12 +11,16 @@
 #   FOLLOW_LAST=1 (follow 를 navigate 뒤에), NAV_TIMEOUT (기본 180 s),
 #   BASELINE_DWA=1 (대조: replace_dwa 없이 띄워 BT 기본 제어기 'DWA' = 원래 amr_navigation DWA 가 navigate·follow 를
 #   몬다 — 같은 스택·같은 파라미터에서 제어기만 바뀐다. RL 은 'RL' 로 실리지만 쓰지 않는다).
+# 선택 환경 변수 (A5): EXTRA_OVERLAY (/ros2_ws/install 위에 덧씌울 작업공간 setup.bash — 예: 고치기 전 플러그인),
+#   CLOCK_PROBE=1 (스택이 뜬 뒤 /clock·제어기 stats 의 수신 주기를 clock_hz.txt·stats_hz.txt 에 남긴다).
 set +u
 TAG=$1; MODEL=$2; MODE=$3
 OUT=${OUT_ROOT:-/runs/smoke}/$TAG; mkdir -p $OUT
 WORLD_ARG=""; [ -n "$WORLD" ] && WORLD_ARG="world:=$WORLD"
 source /opt/ros/humble/setup.bash; source /ros2_ws/install/setup.bash
+[ -n "$EXTRA_OVERLAY" ] && source "$EXTRA_OVERLAY"
 export ROS_WS=/ros2_ws
+echo "overlay: ${EXTRA_OVERLAY:-없음} | amr_rl_controller prefix: $(ros2 pkg prefix amr_rl_controller 2>&1)" > $OUT/overlay.txt
 echo "loadavg start $(cat /proc/loadavg)" > $OUT/load.txt
 echo "env ROS_DOMAIN_ID=$ROS_DOMAIN_ID IGN_PARTITION=$IGN_PARTITION ROS_LOCALHOST_ONLY=$ROS_LOCALHOST_ONLY" >> $OUT/load.txt
 ros2 launch amr_bringup system.launch.py with_navigation:=false with_fleet:=false \
@@ -54,6 +58,9 @@ for prm in default_nav_to_pose_bt_xml goal_reached_tol; do
   echo "bt_navigator $prm: $(timeout 15 ros2 param get /amr_01/bt_navigator $prm 2>&1)" >> $OUT/params.txt
 done
 timeout 30 ros2 topic echo --once /amr_01/scan_filtered --field header > $OUT/scan_once.txt 2>&1
+if [ "$CLOCK_PROBE" = "1" ]; then
+  timeout 12 ros2 topic hz /clock --window 2000 > $OUT/clock_hz.txt 2>&1
+fi
 follow() {
   ros2 run amr_rl_controller rl_smoke.py --mode follow --controller-id DWA --length 5 --timeout 120 \
     --out $OUT/follow --ros-args -r __ns:=/amr_01 -p use_sim_time:=true > $OUT/follow.log 2>&1
