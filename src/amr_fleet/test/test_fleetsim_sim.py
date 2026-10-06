@@ -5,12 +5,15 @@ fleetsim 실행: 결정성, 불변식(동시 점유 0 · 작업 보존 · 운동
 """
 
 import json
+import math
 import os
 import subprocess
 import sys
 
 import pytest
 
+from amr_fleet.comm_emulator import FLEET
+from amr_fleet.fleetsim import plan
 from amr_fleet.fleetsim.config import ARMS, Arm, RunConfig, task_stream
 from amr_fleet.fleetsim.robot import ACC, V_MAX
 from amr_fleet.fleetsim.sim import FleetSim, run
@@ -115,8 +118,15 @@ def test_server_crash_stops_central_but_not_fallback():
     assert hyb['cbaa_tasks'] > 0
 
 
-def test_no_fallback_without_fault():
-    r = run(cfg('A9_hybrid_vote', loss=0.2, horizon_s=600.0))
+@pytest.mark.parametrize('fault', ['F0', 'F5'])
+def test_no_fallback_without_server_loss(fault):
+    """
+    서버가 살아 있으면 전환하지 않는다 — 분할(F5)의 소수쪽 2 대가 하트비트를 잃어도 과반이 아니다.
+
+    F5 칸은 리뷰 변이 X3(과반 대신 자기 의심만으로 전환)을 잡는다: 소수쪽이 혼자 협상 모드로 들어간다.
+    """
+    r = run(cfg('A9_hybrid_vote', loss=0.2, fault=fault, horizon_s=600.0, t_fault=300.0,
+                partition_s=180.0))
     assert r['first_fallback_s'] is None and r['cbaa_tasks'] == 0
 
 
@@ -188,3 +198,128 @@ def test_task_lock_prevents_duplicates_under_aggressive_commit(monkeypatch):
         strict += run(cfg('A6_cbaa_vote', **base))['dup_tasks']
     assert opt > 0
     assert strict == 0
+
+
+@pytest.mark.parametrize('seed', [8, 13, 24])
+def test_task_lock_quorum_prevents_partition_duplicates(seed):
+    """
+    작업 ID 잠금의 **과반 정족수** 가 분할 중복을 막는다 (리뷰 B2, 변이 X4).
+
+    F5(분할 180 s) 손실 0 에서 낙관 A7 은 소수쪽과 다수쪽이 같은 작업을 실행한다(양성 대조, 시드마다 > 0).
+    엄격 A6 은 소수쪽 2 대가 3 표를 못 모아 잠그지 못하므로 0 이어야 한다. 자기 표만으로 잠기게 하면(X4) 이 시험이
+    실패한다 — 이른 확정 시험(위)은 executor_of · 한 라운드 지연이 막아 정족수를 시험하지 못했다.
+    시드는 P4 리뷰 재실행에서 A7 이 중복을 낸 칸을 골랐다 (원본 A6 0 · A7 1, X4 변이 A6 1).
+    """
+    base = dict(loss=0.0, fault='F5', seed=seed, arrival_rate=1.0 / 45.0, t_fault=300.0,
+                partition_s=180.0, horizon_s=600.0)
+    opt = run(cfg('A7_cbaa_opt_vote', **base))
+    strict = run(cfg('A6_cbaa_vote', **base))
+    assert opt['dup_tasks'] > 0, opt['dup_detail']
+    assert strict['dup_tasks'] == 0, strict['dup_detail']
+
+
+HOLD_ARMS = ['A1h_nearest_hold', 'A5h_cbaa_hold']
+
+
+# p0.md §5: 결정점 거리 D = 1.85 m. 도크 구역 넷만 approach_m 1.5 로 미달 (배치 간격 2 m 때문, 문서화된 위험)
+DECISION_DISTANCE_M = 1.85
+
+
+@pytest.mark.parametrize('arm', HOLD_ARMS)
+def test_hold_mode_protects_zones_meeting_decision_distance(arm):
+    """
+    현행 hold 의미(A1h · A5h), 서버 생존 · 손실 0: 결정점 거리를 지키는 구역(교차로 · 통로)은 동시 점유 0.
+
+    hold 는 거부 목록이라 요청 거리가 결정점 거리보다 짧은 도크 구역(p0.md §5 "미달")에서는 거절 hold 가 늦어 들어갈 수
+    있다 — 그것은 시험이 아니라 스윕 결과로 보고한다 (허가 목록 A1 은 이 위험을 가린다, 리뷰 B1). hold 를 내지 않는
+    서버(변이 H2)는 hold_true_pub 단언이 잡는다. 운동학 한계 · 작업 보존도 함께.
+    """
+    w = default_world()
+    short = {z for z, a in w.approach.items() if a < DECISION_DISTANCE_M}
+    assert short == set(plan.BELOW_DECISION_ZONES)
+    for s in (101, 102):
+        r = run(cfg(arm, loss=0.0, seed=s, horizon_s=600.0, arrival_rate=1.0 / 45.0))
+        bad = [v for v in r['cooccupancy_detail'] if v['zone'] not in short]
+        assert not bad, (arm, s, bad)
+        assert r['max_speed'] <= V_MAX + 1e-9 and r['max_decel'] <= ACC + 1e-6, (arm, s)
+        assert r['completed'] + r['unfinished'] == r['n_tasks']
+        assert r['completed'] >= 5 and r['server']['hold_true_pub'] > 0, (arm, s, r['server'])
+
+
+def test_hold_true_stops_robot_with_bounded_decel_and_false_releases():
+    """
+    hold=true 를 받으면 그 자리에서 최대 감속 ≤ 1.0 m/s² 로 서고 더 나아가지 않는다, false 면 다시 간다 (변이 H1).
+
+    현행 실행기는 hold=true 에 주행 goal 을 취소한다 — 정지선이 아니라 지금 자리에서 선다.
+    """
+    sim = FleetSim(cfg('A1h_nearest_hold'))
+    r = sim.robots[0]
+    r.on_message(0.0, FLEET, 'hold', (1, False))
+    r._start_leg(0.0, 'dock_a', 'to_pickup', 'probe')
+    t, dt = 0.0, sim.cfg.dt
+    while r.v < 0.6 and t < 10.0:
+        r.step(t, dt)
+        t += dt
+    assert r.v >= 0.6, '가속하지 못했다 (hold=false 인데 섰다)'
+    r.on_message(t, FLEET, 'hold', (2, True))
+    s0, v0, prev = r.s, r.v, r.v
+    for _ in range(30):
+        r.step(t, dt)
+        t += dt
+        assert prev - r.v <= ACC * dt + 1e-9
+        prev = r.v
+    assert r.v == 0.0
+    assert r.s - s0 <= v0 * v0 / (2.0 * ACC) + v0 * dt + 1e-6
+    s1 = r.s
+    for _ in range(20):
+        r.step(t, dt)
+        t += dt
+    assert r.s == s1
+    r.on_message(t, FLEET, 'hold', (3, False))
+    for _ in range(20):
+        r.step(t, dt)
+        t += dt
+    assert r.s > s1 + 0.1
+
+
+@pytest.mark.parametrize('seed', [11, 101])
+def test_latched_hold_fails_open_after_server_crash(seed):
+    """
+    현행 latched hold: 서버가 죽으면 마지막 값이 남는다 (hold_failsafe.md D4 · §4 위험 1, 리뷰 B1).
+
+    충돌 순간 hold=false 였던 로봇은 관리 없이 계속 움직이고(fail-open), hold=true 였던 로봇은 그 자리에 선다.
+    허가 목록 모형(A1)은 충돌 뒤 새 구역에 못 들어가므로 A1h 가 충돌 뒤 더 많이 끝낸다.
+    """
+    base = dict(loss=0.0, fault='F1', t_fault=150.0, horizon_s=600.0, seed=seed,
+                arrival_rate=1.0 / 45.0)
+    snap = {}
+
+    class CrashSpy(FleetSim):
+        def _crash_server(self, now):
+            snap.update({r.id: (r.hold, r.x, r.y) for r in self.robots})
+            super()._crash_server(now)
+
+    sim = CrashSpy(cfg('A1h_nearest_hold', **base))
+    res = sim.run()
+    assert len(snap) == 5
+    moved = {r.id: math.hypot(r.x - snap[r.id][1], r.y - snap[r.id][2]) for r in sim.robots}
+    held = [rid for rid, (h, _, _) in snap.items() if h]
+    free = [rid for rid, (h, _, _) in snap.items() if not h]
+    assert all(moved[rid] <= 0.6 for rid in held), (held, moved)       # 최대 감속 정지 거리 0.5 m
+    assert free and max(moved[rid] for rid in free) > 1.0, (free, moved)
+    cen = run(cfg('A1_nearest_central', **base))
+    assert res['completed_after_fault'] > cen['completed_after_fault']
+
+
+def test_hold_follows_latest_seq_and_waits_before_first_value():
+    """수신한 hold: 첫 값 전 = 대기(D2), 신뢰 경로 재전송으로 늦게 온 옛 seq 는 새 값을 덮지 않는다 (변이 H4)."""
+    sim = FleetSim(cfg('A1h_nearest_hold'))
+    r = sim.robots[0]
+    zone = sorted(sim.world.boxes)[0]
+    assert r.hold is True and not r.permitted(zone)
+    r.on_message(1.0, FLEET, 'hold', (2, False))
+    assert r.permitted(zone)
+    r.on_message(1.1, FLEET, 'hold', (1, True))
+    assert r.hold is False and r.permitted(zone)
+    r.on_message(1.2, FLEET, 'hold', (3, True))
+    assert not r.permitted(zone)

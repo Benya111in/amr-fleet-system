@@ -105,3 +105,32 @@ def test_primary_decision_rules(monkeypatch):
     assert res['S']['decision'] == '우월'
     assert res['E']['decision'].startswith('동등')
     assert res['U']['decision'] == '판정 불가'
+
+
+def _hold_row(arm, seed, fault='F1', loss=0.2, completed=4, zones=None, pre=0):
+    zones = zones or {}
+    return {'arm': arm, 'loss': loss, 'fault': fault, 'seed': seed, 'rep': 0,
+            'completed': completed, 'completed_after_fault': 0, 'latency_rmean': 100.0,
+            'cooccupancy_events': sum(zones.values()), 'cooccupancy_zones': zones,
+            'cooccupancy_pre_fault': pre, 'cooccupancy_s': float(sum(zones.values())),
+            'stuck_end': 0, 'dup_tasks': 0, 'q_bins': [0] * 20}
+
+
+def test_hold_report_classifies_dock_and_prefault_events_and_p1h():
+    """리뷰 B1 보고(report hold): 도크(결정점 미달) 사건 · 고장 전 사건 분리, P1h 판정 규칙."""
+    from amr_fleet.fleetsim.report import hold_markdown, hold_safety
+    rows = []
+    for s in range(1, 31):
+        z = {'dock_a_approach': 1, 'x_bc_1': 1} if s <= 3 else {}
+        rows.append(_hold_row('A1h_nearest_hold', s, completed=5, zones=z, pre=1 if z else 0))
+        rows.append(_hold_row('A1_nearest_central', s, completed=4))
+        rows.append(_hold_row('A9_hybrid_vote', s, completed=20 + s % 3))
+    saf = {(x['arm'], x['fault'], x['loss']): x for x in hold_safety(rows)}
+    h = saf[('A1h_nearest_hold', 'F1', 0.2)]
+    assert (h['cooc_runs'], h['cooc_events'], h['cooc_dock'], h['cooc_pre']) == (3, 6, 3, 3)
+    assert h['cooc_upper'] is None
+    a = saf[('A1_nearest_central', 'F1', 0.2)]
+    assert a['cooc_runs'] == 0 and a['cooc_upper'] == pytest.approx(1 - 0.05 ** (1 / 30))
+    md, data = hold_markdown(rows)
+    assert data['primary']['decision'] == '우월' and data['primary']['k_pos'] == 30
+    assert 'P1h' in md

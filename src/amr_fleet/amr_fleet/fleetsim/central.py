@@ -16,7 +16,16 @@
 교통 (traffic_manager*.py · traffic.yaml)
 - 로봇 관측(자세 · 경로 · 진행량, 10 Hz, 모의 링크)으로 2 Hz 마다 request_chain → ZoneTokenManager.update.
   관측이 3 s 넘게 끊긴 로봇은 frozen(보유 유지), 5 s 넘으면 lost(마지막 몸체가 걸친 구역만 유지).
-- 결과(로봇별 보유 구역)를 2 Hz 로 로봇에 보낸다 (상태 전송, 모의 링크). 로봇은 마지막 메시지의 보유 구역에만 들어간다.
+- 허가 목록 모드(traffic 'central', A1–A3 · A5): 결과(로봇별 보유 구역)를 2 Hz 로 로봇에 보낸다 (상태 전송, 모의 링크).
+  로봇은 마지막 메시지의 보유 구역에만 들어간다 — 서버가 죽으면 다음 정지선에서 영구히 선다 (fail-closed).
+  **현행과 다르다** (리뷰 B1): 현행은 아래 hold 의미다.
+- hold 모드(traffic 'hold', A1h · A2h · A5h — 현행 traffic_manager_node 의미): 토큰을 요청했는데 못 받은
+  로봇만 hold=true (traffic_manager._compose 의 토큰 hold), 나머지 관측된 로봇(관측이 끊긴 stale · lost 포함 —
+  요청이 없다)은 false.
+  값이 바뀔 때만(`_apply`: `hold != r.hold`) 신뢰 경로로 보낸다 (RELIABLE/TRANSIENT_LOCAL — 모형 관례: 유실 시 0.2 s
+  재전송, seq 로 옛 값 무시). 초기값은 내지 않고(D5) 처음 평가한 값을 낸다. 한 번도 관측 못 한 로봇은 서버 시작
+  obs_timeout_s(3 s) 뒤 false (D6). 로봇은 마지막으로 받은 값을 따른다 (첫 값 전 = 대기, D2 · D4) — 서버가 죽거나
+  갈라지면 hold=false 였던 로봇은 관리 없이 움직인다 (fail-open, hold_failsafe.md §4 위험 1).
 - 교차 예측 hold · 교착 해소(포켓 · 우회)는 넣지 않는다 (p4.md 한계).
 """
 
@@ -70,6 +79,8 @@ class _RobotView:
     obs: Optional[dict] = None
     obs_rx: float = -1e9
     grant_seq: int = 0
+    hold_sent: Optional[bool] = None       # hold 모드: 마지막으로 낸 값 (None = 아직 안 냄)
+    hold_seq: int = 0
 
 
 @dataclasses.dataclass
@@ -86,13 +97,14 @@ class CentralServer:
 
     name = FLEET
 
-    def __init__(self, sim, strategy: Optional[str], traffic: bool):
+    def __init__(self, sim, strategy: Optional[str], traffic: bool, hold: bool = False):
         self.sim = sim
         self.world = sim.world
         self.cfg = sim.cfg
         self.alive = True
         self.strategy = make_strategy(strategy) if strategy else None
         self.traffic = traffic
+        self.hold = bool(hold and traffic)
         self.robots: Dict[str, _RobotView] = {r: _RobotView() for r in self.world.robot_ids}
         self.tasks: Dict[str, Tuple[TaskSpec, str, Optional[str]]] = {}   # id → (spec, 상태, 로봇)
         self.sched = TaskScheduler()
@@ -102,6 +114,8 @@ class CentralServer:
         self.hb_seq = 0
         self.stats: Dict[str, int] = dict(dispatch=0, dispatch_lost=0, abort=0, robot_lost=0,
                                           failed_robot_lost=0, late_start=0, rejected=0)
+        if self.hold:
+            self.stats.update(hold_pub=0, hold_true_pub=0)
         self._allocating = False
         self._realloc = False
 
@@ -357,12 +371,34 @@ class CentralServer:
                 dirs = {z: directions[rid].get(z) for z in zones}
                 requests[rid] = TokenRequest(rid, zones, dirs,
                                              priority=int(ob.get('priority', -1)))
-        self.tm.update(now, requests, occupancy, upcoming, directions, frozen)
+        decisions = self.tm.update(now, requests, occupancy, upcoming, directions, frozen)
+        if self.hold:
+            self._publish_holds(now, {rid for rid, d in decisions.items() if not d.granted})
+            return
         for rid in w.robot_ids:
             r = self.robots[rid]
             r.grant_seq += 1
             held = frozenset(self.tm.held_by(rid))
             self.sim.net.send(now, FLEET, rid, 'grant', (r.grant_seq, held))
+
+    def _publish_holds(self, now: float, waits: Set[str]) -> None:
+        """현행 hold 의미: 토큰 대기 = hold=true, 바뀔 때만 신뢰 경로로 (traffic_manager_node._apply)."""
+        for rid in self.world.robot_ids:
+            r = self.robots[rid]
+            if r.obs is None:
+                # D5 · D6: 관측 전에는 내지 않고, obs_timeout_s 동안 관측이 없으면 false (관리 밖)
+                if r.hold_sent is not None or now < 3.0:
+                    continue
+                h = False
+            else:
+                h = rid in waits
+            if h == r.hold_sent:
+                continue
+            r.hold_sent = h
+            r.hold_seq += 1
+            self.stats['hold_pub'] += 1
+            self.stats['hold_true_pub'] += int(h)
+            self.sim.net.send_reliable(now, FLEET, rid, 'hold', (r.hold_seq, h))
 
 
 __all__ = ['CentralServer', 'SsiStrategy', 'make_strategy']

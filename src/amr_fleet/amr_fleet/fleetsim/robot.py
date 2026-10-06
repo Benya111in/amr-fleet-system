@@ -7,7 +7,10 @@
 a 로 설 수 있는 이산 상한 — 를 지키고, 위치는 멈출 점을 넘지 않게 자른다.
 
 구역 게이트: 경로 위 구역 방문마다 정지선(차체 외접원이 닿기 전)이 있고, 허가가 없으면 그 앞에 선다.
-- 중앙: 서버가 보낸 마지막 보유 구역 집합 (seq 증가분만)
+- 중앙(허가 목록, A1–A3 · A5): 서버가 보낸 마지막 보유 구역 집합 (seq 증가분만) — 서버가 죽으면 fail-closed
+- hold(현행 의미, A1h · A2h · A5h): 마지막으로 받은 traffic/hold 가 false 면 통과(정지선 없음), true 면 현행
+  실행기처럼 그 자리에서 최대 감속(1.0 m/s²)으로 선다. 첫 값 전에는 대기(hold_failsafe.md D2). 서버가 죽어도
+  마지막 값을 유지한다(D4) — false 였으면 관리 없이 움직인다 (fail-open).
 - 투표: ZoneAgent.may_enter('zone:<id>') — 과반 ENTER_ACK 로 만든 HELD
 - 없음(유령 기준선): 늘 허가
 투표 모드에서 요청은 중앙과 같은 request_chain(요청 거리 · 사슬 간격 · 구역 안 대기 금지)으로 만들고, 차체가 구역을
@@ -105,6 +108,9 @@ class Robot:
         # 중앙 교통 허가
         self.allowed: FrozenSet[str] = frozenset()
         self.allowed_seq = 0
+        # 현행 hold 의미 (traffic 'hold'): 첫 값 전 = 대기 (D2, 교통 관리 중)
+        self.hold = True
+        self.hold_seq = 0
         # 투표
         members = self.world.robot_ids
         self.zone_agent: Optional[ZoneAgent] = None
@@ -160,7 +166,16 @@ class Robot:
             return True
         if t == 'central':
             return zone_id in self.allowed
+        if t == 'hold':
+            return not self.hold
         return self.zone_agent.may_enter('zone:' + zone_id)
+
+    def zone_claim(self, zone_id: str) -> bool:
+        """대기 그래프(오라클)용: 이 로봇이 구역 허가를 쥐었다고 보는가. hold 모드는 서버 토큰 장부로 본다."""
+        if self.arm.traffic == 'hold':
+            srv = self.sim.server
+            return srv is not None and self.id in srv.tm.holders(zone_id)
+        return self.permitted(zone_id)
 
     def contact_zones(self) -> List[str]:
         """차체 외접원이 지금 닿은 구역 (경로 접촉 구간 기준, 경로가 없으면 위치로)."""
@@ -219,6 +234,11 @@ class Robot:
             if seq > self.allowed_seq:
                 self.allowed_seq = seq
                 self.allowed = zones
+        elif kind == 'hold':
+            seq, h = payload
+            if seq > self.hold_seq:             # 신뢰 경로 재전송이 새 값을 덮지 않게
+                self.hold_seq = seq
+                self.hold = bool(h)
         elif kind == 'assign':
             self._on_assign(now, payload)
         elif kind == 'hb':
@@ -484,6 +504,13 @@ class Robot:
 
     def _barrier(self) -> float:
         s = self.s
+        if self.arm.traffic == 'hold':
+            if not self.hold:
+                return math.inf, None
+            # 현행 실행기: hold=true 면 그 자리에서 주행 goal 을 취소한다 → 최대 감속으로 선다 (정지선과 무관).
+            # 대기 구역 표시는 앞으로 처음 닿을 구역 (없으면 'hold')
+            nxt = next((p.zone_id for p in self.leg.passes if p.s_touch > s + 1e-9), 'hold')
+            return s + self.v * self.v / (2.0 * ACC), nxt
         for p in self.leg.passes:
             if p.s_clear < s or p.s_touch <= s + 1e-9 or p.stop_s < s - 1e-6:
                 continue

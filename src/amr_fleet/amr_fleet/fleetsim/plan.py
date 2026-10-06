@@ -59,7 +59,24 @@ EXPLORE_METRICS = ['completed', 'latency_rmean', 'completed_after_fault', 'wait_
 FACTORIAL = {'CC': 'A2_hungarian_central', 'CV': 'A4_hungarian_vote',
              'DC': 'A5_cbaa_central', 'DV': 'A6_cbaa_vote'}
 
+# ------------------------------------------------------------- 리뷰 B1 반영: 현행 hold 의미 (P4-5)
+# 본 스윕의 중앙 교통(A1–A3 · A5)은 허가 목록(서버가 죽으면 fail-closed)이었다. 현행은 latched hold
+# (거부 목록, 서버가 죽으면 hold=false 로봇은 fail-open)다. 같은 셀 · 같은 시드로 hold 의미 비교군을 더 돌려
+# 대조한다 (노트 P4-5 사전 등록).
+HOLD_ARMS = ['A1h_nearest_hold', 'A2h_hungarian_hold', 'A5h_cbaa_hold']
+HOLD_TWINS = {'A1h_nearest_hold': 'A1_nearest_central',
+              'A2h_hungarian_hold': 'A2_hungarian_central',
+              'A5h_cbaa_hold': 'A5_cbaa_central'}
+HOLD_PRIMARY = {'id': 'P1h', 'a': 'A1h_nearest_hold', 'b': 'A9_hybrid_vote', 'loss': 0.2,
+                'fault': 'F1', 'metric': 'completed', 'kind': 'superiority',
+                'pred': 'hold 의미 현행(충돌 뒤 hold=false 로봇은 진행 중 작업을 끝낸다)에 대해서도 B − A ≥ +10 건'}
+FACTORIAL_HOLD = {'CC': 'A2h_hungarian_hold', 'CV': 'A4_hungarian_vote',
+                  'DC': 'A5h_cbaa_hold', 'DV': 'A6_cbaa_vote'}
+# 요청 거리(approach_m 1.5)가 결정점 거리 1.85 m 에 미달인 구역 (p0.md §5, 배치 간격 2 m 때문 — 문서화된 위험)
+BELOW_DECISION_ZONES = ('dock_1_approach', 'dock_2_approach', 'dock_a_approach', 'dock_b_approach')
+
 __all__ = ['AA_ARMS', 'AA_CELLS', 'AA_METRICS', 'DIAG_ARMS', 'EQUIV_MARGIN',
            'EXPLORE_METRICS', 'EXPLORE_VS', 'FACTORIAL', 'HORIZON_S', 'MAIN_ARMS', 'MAIN_FAULTS',
            'MAIN_LOSSES', 'PRIMARY', 'RATE', 'SAFE_ARMS', 'SEEDS', 'STRICT_ARMS',
-           'SUPERIORITY_MIN_K', 'T_FAULT_S']
+           'SUPERIORITY_MIN_K', 'T_FAULT_S', 'BELOW_DECISION_ZONES', 'FACTORIAL_HOLD', 'HOLD_ARMS',
+           'HOLD_PRIMARY', 'HOLD_TWINS']

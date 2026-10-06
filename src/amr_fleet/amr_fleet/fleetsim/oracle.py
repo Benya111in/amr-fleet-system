@@ -97,11 +97,13 @@ class Oracle:
             if r.wait_since is not None and now - r.wait_since > self.sim.cfg.wait_max_s:
                 self.long_waits.add((r.id, round(r.wait_since, 3)))
             z = r.wait_zone
-            box = self.world.boxes[z]
+            box = self.world.boxes.get(z)
+            if box is None:                      # hold 모드: 앞에 구역 없이 hold=true 로 선 로봇
+                continue
             for h in robots:
                 if h is r:
                     continue
-                if h.permitted(z) or rect_box_overlap(h.x, h.y, h.th, box):
+                if h.zone_claim(z) or rect_box_overlap(h.x, h.y, h.th, box):
                     adj[r.id].append(h.id)
         comps = [frozenset(c) for c in strongly_connected_components(adj) if len(c) >= 2]
         live = set(comps)
@@ -126,12 +128,19 @@ class Oracle:
         hard = [v for v in self.viol if not v['shared_corridor']]
         dl = [c for c in self.cycles if c['t1'] - c['t0'] >= self.confirm_s]
         dup = sorted(t for t, ls in self.loads.items() if len({r for _, r in ls}) >= 2)
+        cfg = self.sim.cfg
+        zones: Dict[str, int] = {}
+        for v in hard:
+            zones[v['zone']] = zones.get(v['zone'], 0) + 1
+        pre = sum(1 for v in hard if cfg.fault == 'F0' or v['t0'] < cfg.t_fault)
         return {
             'cooccupancy_events': len(hard),
             'cooccupancy_s': round(sum(v['t1'] - v['t0'] for v in hard), 3),
             'cooccupancy_detail': [{'zone': v['zone'], 't0': round(v['t0'], 2),
                                     't1': round(v['t1'], 2), 'robots': v['robots']}
                                    for v in hard[:5]],
+            'cooccupancy_zones': dict(sorted(zones.items())),     # 구역별 사건 수 (전부)
+            'cooccupancy_pre_fault': pre,                         # 고장 시각 전에 시작한 사건 (F0 은 전부)
             'shared_corridor_events': len(self.viol) - len(hard),
             'dup_tasks': len(dup),
             'dup_detail': dup[:5],

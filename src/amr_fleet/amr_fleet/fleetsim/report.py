@@ -3,6 +3,7 @@ P4 결과 표 (plan.py 의 사전 등록 규칙 그대로) — 마크다운 + JS
 
   python3 -m amr_fleet.fleetsim.report aa   --runs A/runs.jsonl --out DIR
   python3 -m amr_fleet.fleetsim.report main --runs M/runs.jsonl [--aa DIR/aa.json] --out DIR
+  python3 -m amr_fleet.fleetsim.report hold --runs M/runs.jsonl H/runs.jsonl --out DIR  (리뷰 B1)
 
 표의 수치는 모두 같은 seed 쌍의 실행 단위 값이다 (작업 단위 아님).
 """
@@ -21,7 +22,7 @@ from amr_fleet.fleetsim.analysis import (
     compare, divergence, fmt, holm, index, load_runs, mde, metric, paired, pearson, zero_upper,
 )
 
-SHORT = {a: a.split('_', 1)[0] for a in plan.MAIN_ARMS + plan.DIAG_ARMS}
+SHORT = {a: a.split('_', 1)[0] for a in plan.MAIN_ARMS + plan.DIAG_ARMS + plan.HOLD_ARMS}
 
 
 def _ci(c: dict, nd: int = 1) -> str:
@@ -307,10 +308,146 @@ def main_markdown(rows: List[dict], aa: Optional[dict]) -> (str, dict):
     return '\n'.join(L) + '\n', data
 
 
+# ---------------------------------------------------------------------- 리뷰 B1: hold 의미 (P4-5)
+def _below(r: dict) -> int:
+    z = r.get('cooccupancy_zones') or {}
+    return sum(n for k, n in z.items() if k in plan.BELOW_DECISION_ZONES)
+
+
+def hold_safety(rows: List[dict]) -> List[dict]:
+    """(비교군, 고장, 손실) → 동시 점유 실행 · 사건 · 그중 도크(결정점 미달) · 고장 전 사건 · 끝 고착."""
+    out = []
+    arms = plan.HOLD_ARMS + sorted(set(plan.HOLD_TWINS.values()))
+    for arm in arms:
+        for fault in plan.MAIN_FAULTS:
+            for loss in plan.MAIN_LOSSES:
+                rs = [r for r in rows if r['arm'] == arm and r['fault'] == fault
+                      and r['loss'] == loss]
+                if not rs:
+                    continue
+                n = len(rs)
+                runs = sum(1 for r in rs if r['cooccupancy_events'] > 0)
+                ev = sum(r['cooccupancy_events'] for r in rs)
+                pre_known = all('cooccupancy_pre_fault' in r for r in rs)
+                out.append({
+                    'arm': arm, 'fault': fault, 'loss': loss, 'n': n, 'cooc_runs': runs,
+                    'cooc_events': ev, 'cooc_upper': zero_upper(n) if runs == 0 else None,
+                    'cooc_dock': sum(_below(r) for r in rs) if pre_known else None,
+                    'cooc_pre': (sum(r['cooccupancy_pre_fault'] for r in rs)
+                                 if pre_known else None),
+                    'cooc_s': sum(r['cooccupancy_s'] for r in rs),
+                    'stuck_runs': sum(1 for r in rs if r['stuck_end'] > 0),
+                    'dup_runs': sum(1 for r in rs if r['dup_tasks'] > 0),
+                    'completed': st.mean(r['completed'] for r in rs)})
+    return out
+
+
+def hold_markdown(rows: List[dict]) -> (str, dict):
+    idx = index(rows)
+    saf = hold_safety(rows)
+    L = ['# 리뷰 B1: 현행 hold 의미(latched, 거부 목록) 대 P4 1 차 허가 목록 모형', '',
+         '같은 셀 · 같은 시드 1–30. hold 비교군 = A1h · A2h · A5h, 짝 = A1 · A2 · A5 (P4-main-01).', '',
+         '## 동시 점유 (실행 단위) — 도크 = 요청 거리가 결정점 거리 미달인 구역(p0.md §5)', '']
+    L += _head('비교군', '고장', '손실', 'n', '동시 점유 실행', '사건', '그중 도크', '고장 전 사건',
+               '점유 시간 합 [s]', '0 건 상한', '끝 고착 실행', '중복 실행', '평균 완료')
+    for s in saf:
+        L.append(_row(SHORT[s['arm']], s['fault'], f"{s['loss']:g}", s['n'], s['cooc_runs'],
+                      s['cooc_events'], '-' if s['cooc_dock'] is None else s['cooc_dock'],
+                      '-' if s['cooc_pre'] is None else s['cooc_pre'], fmt(s['cooc_s'], 1),
+                      _pct100(s['cooc_upper']), s['stuck_runs'], s['dup_runs'],
+                      fmt(s['completed'])))
+    L += ['', '## hold 의미 − 허가 목록 (같은 seed 쌍, p 를 주장하지 않는다)', '']
+    L += _head('쌍', '고장', '손실', '지표', '평균 허가 목록 → hold', '쌍차 [95% CI]', 'k+/k−/k0')
+    pairs = []
+    for h, a in plan.HOLD_TWINS.items():
+        for fault in plan.MAIN_FAULTS:
+            for loss in plan.MAIN_LOSSES:
+                for m in ('completed', 'completed_after_fault', 'latency_rmean',
+                          'cooccupancy_events'):
+                    c = compare(idx, a, h, loss, fault, m)
+                    if c['n'] < 2:
+                        continue
+                    pairs.append(c)
+                    L.append(_row(f'{SHORT[h]} − {SHORT[a]}', fault, f'{loss:g}', m,
+                                  f"{fmt(c['mean_a'])} → {fmt(c['mean_b'])}", _ci(c),
+                                  f"{c['k_pos']}/{c['k_neg']}/{c['k_zero']}"))
+    p = plan.HOLD_PRIMARY
+    c = compare(idx, p['a'], p['b'], p['loss'], p['fault'], p['metric'])
+    if c['n'] >= 2:
+        lo = c['ci95'][0]
+        ok = c['wilcoxon_p'] < 0.05 and lo > 0 and c['k_pos'] >= plan.SUPERIORITY_MIN_K
+        c['decision'] = '우월' if ok else '판정 불가'
+    else:
+        c['decision'] = '데이터 없음'
+    c.update({'id': p['id'], 'pred': p['pred']})
+    L += ['', '## P1h 재확인 (단일 비교, 판정 규칙은 P1 과 같음 — Holm 가족 밖)', '']
+    L += _head('id', 'B − A', '셀', 'n', '평균 A → B', '쌍차 [95% CI]', 'd_z', 'k+/k−/k0',
+               'Wilcoxon p', '판정', '예측')
+    L.append(_row(c['id'], f"{SHORT[c['b']]} − {SHORT[c['a']]}",
+                  f"손실 {c['loss']:g} {c['fault']} {c['metric']}", c['n'],
+                  f"{fmt(c['mean_a'])} → {fmt(c['mean_b'])}", _ci(c), fmt(c['dz']),
+                  f"{c['k_pos']}/{c['k_neg']}/{c['k_zero']}", fmt(c['wilcoxon_p'], 4),
+                  f"**{c['decision']}**", c['pred']))
+    f = plan.FACTORIAL_HOLD
+    fac = []
+    for loss in plan.MAIN_LOSSES:
+        for fault in plan.MAIN_FAULTS:
+            seeds = sorted(sd for (a, lo, fa, sd, r) in idx if a == f['CC'] and lo == loss
+                           and fa == fault and r == 0
+                           and all((f[k], loss, fault, sd, 0) in idx for k in f))
+            if not seeds:
+                continue
+            vals = {k: [metric(idx[(f[k], loss, fault, sd, 0)], 'completed') for sd in seeds]
+                    for k in f}
+            cooc = {k: sum(1 for sd in seeds
+                           if idx[(f[k], loss, fault, sd, 0)]['cooccupancy_events'] > 0)
+                    for k in f}
+            n = len(seeds)
+            traf = [0.5 * ((vals['CV'][i] - vals['CC'][i]) + (vals['DV'][i] - vals['DC'][i]))
+                    for i in range(n)]
+            alloc = [0.5 * ((vals['DC'][i] - vals['CC'][i]) + (vals['DV'][i] - vals['CV'][i]))
+                     for i in range(n)]
+            inter = [(vals['DV'][i] - vals['DC'][i]) - (vals['CV'][i] - vals['CC'][i])
+                     for i in range(n)]
+            z = [0.0] * n
+            fac.append({'loss': loss, 'fault': fault, 'n': n,
+                        'means': {k: st.mean(vals[k]) for k in f}, 'cooc_runs': cooc,
+                        'alloc': paired(z, alloc), 'traffic': paired(z, traf),
+                        'interaction': paired(z, inter)})
+    L += ['', '## 2×2 를 hold 의미로 (CC = A2h, CV = A4, DC = A5h, DV = A6; 완료 수, 괄호 = 동시 점유 실행)',
+          '']
+    L += _head('손실', '고장', 'CC', 'CV', 'DC', 'DV', '할당 효과 [CI]', '교통 효과 [CI]',
+               '상호작용 [CI]')
+    for x in fac:
+        mm, cc = x['means'], x['cooc_runs']
+        L.append(_row(f"{x['loss']:g}", x['fault'],
+                      *[f'{fmt(mm[k])} ({cc[k]})' for k in ('CC', 'CV', 'DC', 'DV')],
+                      _ci(x['alloc']), _ci(x['traffic']), _ci(x['interaction'])))
+    qs = {}
+    for loss in (0.2,):
+        for fault in ('F1', 'F5'):
+            for arm in ('A1_nearest_central', 'A1h_nearest_hold', 'A9_hybrid_vote'):
+                rs = [r for r in rows if r['arm'] == arm and r['loss'] == loss
+                      and r['fault'] == fault]
+                if rs:
+                    nb = len(rs[0]['q_bins']) // 2
+                    qs[(loss, fault, arm)] = [st.mean(sum(r['q_bins'][2 * k:2 * k + 2])
+                                                      for r in rs) for k in range(nb)]
+    if qs:
+        nb = len(next(iter(qs.values())))
+        L += ['', '## Q(t): 120 s 구간별 평균 완료 수', '']
+        L += _head('손실', '고장', '비교군', *[f'{120 * k}–{120 * (k + 1)}' for k in range(nb)])
+        for (loss, fault, arm), q in sorted(qs.items()):
+            L.append(_row(f'{loss:g}', fault, SHORT[arm], *[fmt(x) for x in q]))
+    data = {'safety': saf, 'pairs': pairs, 'primary': c, 'factorial': fac,
+            'qcurves': {'|'.join(map(str, k)): v for k, v in qs.items()}}
+    return '\n'.join(L) + '\n', data
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('which', choices=['aa', 'main'])
+    ap.add_argument('which', choices=['aa', 'main', 'hold'])
     ap.add_argument('--runs', required=True, nargs='+')
     ap.add_argument('--aa', default=None)
     ap.add_argument('--out', required=True)
@@ -324,6 +461,14 @@ def main(argv=None) -> int:
         md = aa_markdown(rep)
         with open(os.path.join(a.out, 'aa.md'), 'w', encoding='utf-8') as f:
             f.write(md)
+        print(md)
+        return 0
+    if a.which == 'hold':
+        md, data = hold_markdown(rows)
+        with open(os.path.join(a.out, 'hold.md'), 'w', encoding='utf-8') as f:
+            f.write(md)
+        with open(os.path.join(a.out, 'hold.json'), 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=1, default=str)
         print(md)
         return 0
     aa = None

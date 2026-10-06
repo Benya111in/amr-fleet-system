@@ -19,7 +19,11 @@ from amr_fleet.task_schema import Pose2D, TaskSpec
 CENTRAL_ALLOC = ('nearest', 'hungarian', 'ssi')
 CBAA_ALLOC = ('cbaa_strict', 'cbaa_opt', 'cbaa_event')
 ALLOC = CENTRAL_ALLOC + CBAA_ALLOC
-TRAFFIC = ('central', 'vote', 'none')
+TRAFFIC = ('central', 'vote', 'none', 'hold')
+# central: 서버가 2 Hz 로 보내는 보유 구역 집합에만 들어간다 (허가 목록, 서버가 죽으면 fail-closed — P4 1 차 모형)
+# hold   : 현행 traffic/hold (std_msgs/Bool, latched) 의미 — 토큰을 못 받은 로봇만 hold=true, 바뀔 때만 신뢰 경로로
+#          보내고 로봇은 마지막 값을 따른다 (첫 값 전 = 대기). 서버가 죽으면 hold=false 로봇은 관리 없이 움직인다
+#          (fail-open, hold_failsafe.md D4 · §4 위험 1). 리뷰 B1 반영 비교군 A1h · A2h · A5h
 FAULTS = ('F0', 'F1', 'F5', 'F6')
 FAULT_DOC = {
     'F0': '무장애',
@@ -53,6 +57,11 @@ class Arm:
         return self.alloc in CENTRAL_ALLOC
 
     @property
+    def central_traffic(self) -> bool:
+        """중앙 서버(traffic_manager)가 구역 토큰을 관리하는가 (허가 목록 또는 latched hold)."""
+        return self.traffic in ('central', 'hold')
+
+    @property
     def needs_task_lock(self) -> bool:
         """픽업 전에 작업 ID 투표 잠금이 필요한가 (엄격 협상 · 폴백 설계)."""
         return self.alloc in ('cbaa_strict', 'cbaa_event') or self.fallback
@@ -69,6 +78,10 @@ ARMS: Dict[str, Arm] = {a.name: a for a in (
     Arm('A8_cbaa_event_vote', 'cbaa_event', 'vote'),           # D4 이벤트 구동 방송 (부정 대조군)
     Arm('A9_hybrid_vote', 'hungarian', 'vote', fallback=True),  # 제안 설계: 중앙 최적화 + 투표 안전 + 폴백
     Arm('X0_hungarian_none', 'hungarian', 'none'),             # 진단: 교통 무시(유령) 기준선
+    # 리뷰 B1: 현행 latched hold 의미 (서버 사망 뒤 hold=false 로봇은 fail-open) — A1 · A5 의 충실도 대조
+    Arm('A1h_nearest_hold', 'nearest', 'hold'),                # 현행 기본, hold 의미
+    Arm('A2h_hungarian_hold', 'hungarian', 'hold'),            # 2×2 CC 칸, hold 의미
+    Arm('A5h_cbaa_hold', 'cbaa_strict', 'hold'),               # 2×2 DC 칸, hold 의미
 )}
 
 

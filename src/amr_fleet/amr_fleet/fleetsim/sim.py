@@ -46,11 +46,12 @@ class FleetSim:
         self.oracle = Oracle(self)
         self.robots: List[Robot] = [Robot(self, r) for r in self.world.robot_ids]
         self.by_id: Dict[str, Robot] = {r.id: r for r in self.robots}
-        need_server = self.arm.central_alloc or self.arm.traffic == 'central'
+        need_server = self.arm.central_alloc or self.arm.central_traffic
         self.server: Optional[CentralServer] = None
         if need_server:
             self.server = CentralServer(self, self.arm.alloc if self.arm.central_alloc else None,
-                                        traffic=self.arm.traffic == 'central')
+                                        traffic=self.arm.central_traffic,
+                                        hold=self.arm.traffic == 'hold')
             self.net.register(FLEET, self.server.on_message)
         for r in self.robots:
             self.net.register(r.id, r.on_message)
@@ -86,7 +87,7 @@ class FleetSim:
             ph = 0.5 * i / n                                   # 로봇마다 위상을 엇갈린다
             if arm.central_alloc:
                 q.schedule(ph + 0.01, r.state_timer)
-            if arm.traffic == 'central':
+            if arm.central_traffic:
                 q.schedule(ph / 5.0 + 0.02, r.obs_timer)
             if not arm.central_alloc or arm.fallback:
                 q.schedule(ph + 0.03, r.beacon_timer)
