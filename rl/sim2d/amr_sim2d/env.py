@@ -19,6 +19,7 @@ import numpy as np
 import torch
 
 from . import contract_torch as T
+from . import geometry2d as G
 from . import kernels as K
 from . import obstacles as OB
 from . import raycast as RC
@@ -33,12 +34,15 @@ SPIN_W, SPIN_V = 1.0, 0.1                    # 진단: |ω| > 1.0 rad/s 이고 |
 
 
 def _resolve_spec(reward):
-    """EnvConfig.reward → RewardSpec (None = 계약 기본 v1.2.0, 문자열 = reward_variants 이름)."""
+    """EnvConfig.reward → RewardSpec (None = 계약 기본, 문자열 = reward_variants·dyn_candidates 이름)."""
     if reward is None:
         return T.SPEC
     if isinstance(reward, str):
         from amr_rl_contract import reward_variants
-        return reward_variants.get(reward)
+        from . import dyn_candidates
+        if reward in reward_variants.CANDIDATES:
+            return reward_variants.get(reward)
+        return dyn_candidates.get(reward)
     return reward
 
 
@@ -66,6 +70,14 @@ class EnvConfig:
     compile: bool = True                        # torch.compile 고정 N 경로
     reward: object = None                       # RewardSpec 또는 후보 이름 (None = 계약 기본)
     truncate: bool = True                       # False = 정체·시간 상한을 플래그만 (분석용 연속 롤아웃)
+    # 시작점 거르기 (obstacles.clear_start): 처음 window 초 동안 시작점 radius 안에 들어오는 장애물을 다시 위상
+    # 추첨하거나 끈다. 0 = 끔 (2차 물결 2a 까지의 배치와 같은 난수열). 근거: dyn_obstacles.md §2
+    start_clear_window: float = 0.0
+    start_clear_radius: float = 1.0
+    start_clear_tries: int = 8
+    # 배치 수준 표본 확률 (learnability 커리큘럼): 길이 obstacle_slots + 2 — 수준 k ≤ slots 는 무작위 k 개,
+    # 마지막 수준은 Gazebo 7 개 배치. None = obstacle_mode/p_gazebo/n_obstacles 대로 (기존 난수열)
+    level_probs: tuple = None
     dr_ranges: dict = field(default_factory=lambda: {
         'plant_tm': (0.048, 0.112), 'plant_td': (0.02, 0.08), 'accel_scale': (0.84, 1.0),
         'obs_delay': (0.0, 0.15), 'action_delay': (0.0, 0.06),
@@ -115,6 +127,11 @@ class Sim2DEnv:
             f'P={self.P}), N={N}, arm={cfg.arm}, triton={self.use_triton}, cache={pool["cache"]}, '
             f'reward={self.spec.name}')
         self.obst = OB.Obstacles(N, cfg.obstacle_slots, dev)
+        self.n_levels = cfg.obstacle_slots + 2
+        self.level_probs = None
+        if cfg.level_probs is not None:
+            self.set_level_probs(cfg.level_probs)
+        self.clear_stats = {'conflict0': 0, 'rephased': 0, 'disabled': 0, 'resets': 0}
         self._alloc()
         self._compile()
         self.av_lat, self.aw_lat = T.lattice(dev, self.fd)
@@ -166,6 +183,10 @@ class Sim2DEnv:
         # 에피소드 진단 (학습 신호 아님): 시작 거리, 이동 거리, 제자리 회전 스텝, 최대 경로 이탈, 목표 최소 거리
         self.ep_d0, self.ep_travel, self.ep_maxe, self.ep_gmin = z(), z(), z(), z()
         self.ep_spin = z(dt=torch.long)
+        # 동적 장애물 진단 (2차 물결 r6-dyn): 배치 수준, 리셋 때 활성 장애물 수, 장애물 최소 이격, 회전 중 접촉
+        self.ep_level = z(dt=torch.long)
+        self.ep_nobs0 = z(dt=torch.long)
+        self.ep_minsep = torch.full((N,), INF, dtype=fd, device=dev)
         self.lidar_sigma, self.beam_drop = z(), z()
         self.trk_drop, self.trk_psig, self.trk_vsig = z(), z(), z()
         self.ep_ret, self.ep_len = z(), z(dt=torch.long)
@@ -190,6 +211,16 @@ class Sim2DEnv:
             self.cfg.path_len = tuple(path_len)
         if n_obstacles is not None:
             self.cfg.n_obstacles = (int(n_obstacles[0]), int(n_obstacles[1]))
+
+    def set_level_probs(self, probs):
+        """배치 수준 표본 확률 (길이 obstacle_slots + 2, 합 > 0) — 다음 리셋부터. None = 기존 배치 규칙."""
+        if probs is None:
+            self.level_probs = None
+            return
+        p = torch.as_tensor(probs, dtype=torch.float64, device=self.dev).clamp_min(0.0)
+        if p.numel() != self.n_levels or float(p.sum()) <= 0:
+            raise ValueError(f'level_probs 길이 {p.numel()} ≠ {self.n_levels} 또는 합 0')
+        self.level_probs = p / p.sum()
 
     def bstate(self):
         """현재 상태의 BState 뷰 (복사 없음)."""
@@ -283,14 +314,26 @@ class Sim2DEnv:
         self.ep_travel[idx] = 0.0
         self.ep_maxe[idx] = 0.0
         self.ep_spin[idx] = 0
+        self.ep_nobs0[idx] = self.obst.active[idx].sum(dim=1)
+        self.ep_minsep[idx] = INF
 
     def _place_obstacles(self, idx):
         cfg = self.cfg
         n = idx.numel()
         self.obst.reset_slots(idx)
+        self.ep_level[idx] = 0
         if cfg.obstacle_mode == 'none' or cfg.obstacle_slots == 0:
             return
-        if cfg.obstacle_mode == 'gazebo':
+        gz_level = self.n_levels - 1
+        lv = None
+        if self.level_probs is not None and cfg.obstacle_mode in ('random', 'mixed'):
+            p = self.level_probs
+            if cfg.obstacle_mode == 'random':
+                p = p.clone()
+                p[gz_level] = 0.0
+            lv = torch.multinomial(p, n, replacement=True, generator=self.gen)
+            gz = lv == gz_level
+        elif cfg.obstacle_mode == 'gazebo':
             gz = torch.ones(n, dtype=torch.bool, device=self.dev)
         elif cfg.obstacle_mode == 'mixed':
             gz = torch.rand(n, generator=self.gen, device=self.dev) < cfg.p_gazebo
@@ -299,13 +342,25 @@ class Sim2DEnv:
         ig, ir = idx[gz], idx[~gz]
         if ig.numel():
             self.obst.place_gazebo(ig, self.t[ig], self.gen)
+            self.ep_level[ig] = gz_level
         if ir.numel():
-            cnt = torch.randint(cfg.n_obstacles[0], cfg.n_obstacles[1] + 1, (ir.numel(),),
-                                generator=self.gen, device=self.dev)
+            if lv is not None:
+                cnt = lv[~gz]
+            else:
+                cnt = torch.randint(cfg.n_obstacles[0], cfg.n_obstacles[1] + 1, (ir.numel(),),
+                                    generator=self.gen, device=self.dev)
             self.obst.place_random(
                 ir, self.edt, self.map_meta, self.map_idx[ir],
                 (self.path_pts[ir], self.path_n[ir], self.path_cum[ir], self.path_len[ir]),
                 self.pose[ir, :2], cnt, self.gen)
+            self.ep_level[ir] = cnt
+        if cfg.start_clear_window > 0:
+            st = self.obst.clear_start(idx, self.t[idx], self.pose[idx, :2],
+                                       cfg.start_clear_window, cfg.start_clear_radius, self.gen,
+                                       tries=cfg.start_clear_tries)
+            for k, v in st.items():
+                self.clear_stats[k] += v
+            self.clear_stats['resets'] += n
 
     # ------------------------------------------------------------ 감지
     def _obst_params(self):
@@ -367,6 +422,7 @@ class Sim2DEnv:
         def _post(st, P, a_prev, a_exec, collided, interv):
             return K.post_step(st, P, a_prev, a_exec, collided, interv, spec, trunc_on)
         self._k = {'substep': wrap(K.substep), 'post': wrap(_post),
+                   'minsep': wrap(_min_separation),
                    'obst': wrap(K.obstacle_state), 'sense': _sense_rest,
                    'min_ttc': wrap(K.min_ttc), 'ray_obst': wrap(RC.raycast_obstacles),
                    'observe': wrap(_observe_all), 'mask': wrap(_mask_static)}
@@ -391,6 +447,7 @@ class Sim2DEnv:
             fb_used = a == C.FALLBACK_INDEX
             v1, w1, av, aw = T.integrate_c(a, self.v_cmd, self.w_cmd)
         a_exec = torch.stack([av, aw], dim=1)
+        w_pre = self.w
         mt = self._k['min_ttc'](self.bstate()) if cfg.safety else torch.full_like(self.v, INF)
         S = {k: getattr(self, k) for k in self._S_KEYS}
         p = self.prof
@@ -411,8 +468,13 @@ class Sim2DEnv:
         p.lin_v, p.lin_a, p.ang_v, p.ang_a, p.w_ref, p.curv_mode = (
             S['lin_v'], S['lin_a'], S['ang_v'], S['ang_a'], S['w_ref'], S['curv'])
         collided, coll_moving = S['collided'], S['coll_moving']
+        coll_turning = collided & ~coll_moving & (w_pre.abs() > 0.1)
         interv = S['interv'] / SUB
         self.t = self.t + C.DT
+        if cfg.obstacle_slots:
+            sep = self._k['minsep'](self.pose, self._obst_params(), self.t)
+            sep = torch.where(collided, torch.zeros_like(sep), sep)
+            self.ep_minsep = torch.minimum(self.ep_minsep, sep)
         if cfg.safety:
             self.min_ttc = mt
         a_prev = self.prev_actions[:, 0].clone()
@@ -438,7 +500,8 @@ class Sim2DEnv:
         self.ep_fallback += fb_used.long()
         done = term | trunc
         info = {'cost': r['cost'].float(), 'success': r['success'], 'collision': collided,
-                'collision_moving': coll_moving, 'stalled': r['stalled'],
+                'collision_moving': coll_moving, 'collision_turning': coll_turning,
+                'stalled': r['stalled'],
                 'timeout': r['timeout'], 'interv': interv, 'fallback': fb_used,
                 'terms': r['terms'], 'a_prev': a_prev, 'a_exec': a_exec,
                 # 전이 뒤 값 (리셋 전 사본) — 분석 도구가 다른 RewardSpec 으로 보상을 다시 계산할 때 쓴다
@@ -459,7 +522,10 @@ class Sim2DEnv:
                 'fallback': self.ep_fallback[di].clone(), 'd_start': self.ep_d0[di].clone(),
                 'd_final': torch.maximum(self.d_arc[di], self.d_goal[di]),
                 'travel': self.ep_travel[di].clone(), 'spin_steps': self.ep_spin[di].clone(),
-                'max_e': self.ep_maxe[di].clone(), 'goal_min': self.ep_gmin[di].clone()}
+                'max_e': self.ep_maxe[di].clone(), 'goal_min': self.ep_gmin[di].clone(),
+                'collision_turning': coll_turning[di], 'level': self.ep_level[di].clone(),
+                'n_obst': self.ep_nobs0[di].clone(), 'min_sep': self.ep_minsep[di].clone(),
+                'env_idx': di.clone()}
             self._reset_idx(di)
             # 리셋된 env 의 관측: 부분집합 eager 대신 고정 N 컴파일 함수로 전체를 다시 계산해 고른다
             # (커널 발행 수가 부분집합 크기와 무관해진다)
@@ -469,6 +535,11 @@ class Sim2DEnv:
                 pj = T.project_onto_path(st.path_pts, st.path_n, st.path_cum, st.pose[:, :2])
                 self.mask[di] = T.compute_mask(st, pj)['mask']
         return obs, rew.float(), term, trunc, info
+
+
+def _min_separation(pose, op, t):
+    """풋프린트–장애물 몸체 최소 거리 [N] (시각 t 의 지면 진실, 진단)."""
+    return G.footprint_obstacle_distance(pose, K.obstacle_state(op, t))
 
 
 def _mask_static(st, proj):

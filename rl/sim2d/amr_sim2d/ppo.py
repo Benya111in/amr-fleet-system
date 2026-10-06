@@ -178,13 +178,20 @@ class PPOConfig:
     target_kl: float = 0.03
     hidden: tuple = (256, 256)
     reward_norm: bool = True
-    # 라그랑주 승수 (계약 §7): 비용 채널별 PI 갱신 λ ← max(0, λ_I + Kp·e), λ_I += Ki·e,
-    # e = (끝난 에피소드의 평균 비할인 비용 합 − 예산). 예산 None 인 채널(개입, §7.2 미정)은 λ = 0.
+    # 라그랑주 승수 (계약 §7): 비용 채널별 PID 갱신 λ ← clip(λ_I + Kp·e + Kd·max(0, e − e_prev), 0, λ_max),
+    # λ_I ← max(0, λ_I + Ki·e), e = (끝난 에피소드 평균 비할인 비용 합의 EMA − 예산) (Stooke 2020 PID Lagrangian,
+    # 「이론」 249행). 예산 None 인 채널(개입, §7.2 미정)과 lag_channels 밖 채널은 λ = 0.
     lagrangian: bool = False
     lag_kp: float = 0.0
     lag_ki: float = 2e-4
+    lag_kd: float = 0.0
     lag_max: float = 2.0
+    lag_ema: float = 0.0                     # 비용 EMA 계수 (0 = 이번 갱신 값 그대로)
+    lag_channels: tuple = None               # None = 예산이 있는 모든 채널
     budgets: tuple = C.COST_BUDGETS
+    # KL-to-BC (후보 ④, r6-dyn): loss += kl_bc · KL(π_θ ‖ π_BC), π_BC = BC 직후 정책의 고정 사본 (B 전용)
+    kl_bc: float = 0.0
+    freeze_norm: bool = False                # True = 관측 정규화 통계를 더 갱신하지 않는다 (KL-to-BC 와 함께)
 
 
 class Trainer:
@@ -220,6 +227,8 @@ class Trainer:
         self.ep_hist = []
         self.lam = torch.zeros(C.N_COSTS, device=dev)
         self.lam_i = torch.zeros(C.N_COSTS, device=dev)
+        self.lag_cost = [None] * C.N_COSTS     # 비용 EMA
+        self.lag_err = [0.0] * C.N_COSTS       # 직전 오차 (D 항)
 
     def _scale(self, r, done):
         """할인 수익 표준편차로 나누기만 (계약 §6). done 이면 누적 수익 초기화."""
@@ -245,7 +254,8 @@ class Trainer:
         eps = []
         for t in range(self.T):
             mask = env.mask if self.arm == 'C' else None
-            m.norm.update(self.obs)
+            if not self.cfg.freeze_norm:
+                m.norm.update(self.obs)
             u, a, logp = m.act(self.obs, mask)
             v = m.value(self.obs, mask)
             obs2, r, term, trunc, info = env.step(u)
@@ -282,15 +292,70 @@ class Trainer:
         """끝난 에피소드의 평균 비용 합으로 λ 를 PI 갱신 → λ 목록."""
         if not (self.cfg.lagrangian and eps):
             return self.lam.tolist()
+        cfg = self.cfg
         cost = torch.cat([e['cost'] for e in eps]).float().mean(0)
-        for i, d in enumerate(self.cfg.budgets):
-            if d is None:
+        for i, d in enumerate(cfg.budgets):
+            if d is None or (cfg.lag_channels is not None and i not in cfg.lag_channels):
                 continue
-            e = float(cost[i]) - d
-            self.lam_i[i] = max(0.0, float(self.lam_i[i]) + self.cfg.lag_ki * e)
-            lam = max(0.0, float(self.lam_i[i]) + self.cfg.lag_kp * e)
-            self.lam[i] = min(self.cfg.lag_max, lam)
+            c = float(cost[i])
+            if self.lag_cost[i] is not None and cfg.lag_ema > 0:
+                c = cfg.lag_ema * self.lag_cost[i] + (1.0 - cfg.lag_ema) * c
+            self.lag_cost[i] = c
+            e = c - d
+            self.lam_i[i] = max(0.0, float(self.lam_i[i]) + cfg.lag_ki * e)
+            de = max(0.0, e - self.lag_err[i])
+            lam = float(self.lam_i[i]) + cfg.lag_kp * e + cfg.lag_kd * de
+            self.lag_err[i] = e
+            self.lam[i] = min(cfg.lag_max, max(0.0, lam))
         return self.lam.tolist()
+
+    @torch.no_grad()
+    def collect_demo(self, demo, steps, executor=None, z_clip=0.97):
+        """
+        시연자 demo(obs) 의 레이블로 상태–행동 쌍을 모은다 (B).
+
+        executor None 이면 demo 행동으로 굴리고, 아니면 executor 행동으로 굴리면서 demo 로 레이블한다 (DAgger).
+        정규화 통계도 이 관측으로 갱신한다. 반환 (obs_all, z_all) — z = atanh(u).
+        """
+        env, m = self.env, self.model
+        obs_l, z_l = [], []
+        obs = self.obs
+        for _ in range(steps):
+            u = demo(obs)
+            obs_l.append(obs)
+            z_l.append(torch.atanh(u.float().clamp(-z_clip, z_clip)))
+            m.norm.update(obs)
+            act = u if executor is None else executor(obs)
+            obs, *_ = env.step(act)
+        self.obs = obs
+        return torch.cat(obs_l), torch.cat(z_l)
+
+    def fit_bc(self, obs_all, z_all, epochs=30, batch=8192, log=print):
+        """정책 평균 μ(obs) 를 z_all 에 회귀 (MSE) → 마지막 MSE."""
+        m = self.model
+        opt = torch.optim.Adam(m.pi.parameters(), lr=1e-3)
+        n = obs_all.shape[0]
+        tot = 0.0
+        for ep in range(epochs):
+            perm = torch.randperm(n, device=self.dev)
+            tot = 0.0
+            for i in range(0, n, batch):
+                idx = perm[i:i + batch]
+                loss = ((m.pi(m.norm(obs_all[idx])) - z_all[idx]) ** 2).mean()
+                opt.zero_grad(set_to_none=True)
+                loss.backward()
+                opt.step()
+                tot += float(loss) * idx.numel()
+            if ep % 10 == 0 or ep == epochs - 1:
+                log(f'[bc] epoch {ep} mse {tot / n:.4f} (n={n})')
+        return tot / n
+
+    def set_bc_reference(self):
+        """현재 정책을 KL-to-BC 기준으로 고정한다 (깊은 사본, 기울기 없음)."""
+        import copy
+        self.bc_ref = copy.deepcopy(self.model).eval()
+        for p in self.bc_ref.parameters():
+            p.requires_grad_(False)
 
     def behavior_clone(self, demo, steps, epochs=30, batch=8192, z_clip=0.97, log=print):
         """
@@ -394,6 +459,13 @@ class Trainer:
                 pg = -torch.min(ratio * a_mb, clipped).mean()
                 vl = 0.5 * ((v - ret[idx]) ** 2).mean()
                 loss = pg + cfg.vf_coef * vl - cfg.ent_coef * ent.mean()
+                if cfg.kl_bc > 0 and getattr(self, 'bc_ref', None) is not None:
+                    d_new = self.model.dist(obs[idx])
+                    with torch.no_grad():
+                        d_ref = self.bc_ref.dist(obs[idx])
+                    klb = torch.distributions.kl_divergence(d_new, d_ref).sum(-1).mean()
+                    loss = loss + cfg.kl_bc * klb
+                    stats['kl_bc'] = stats.get('kl_bc', 0.0) + float(klb)
                 self.opt.zero_grad(set_to_none=True)
                 loss.backward()
                 nn.utils.clip_grad_norm_(self.model.parameters(), cfg.max_grad_norm)
@@ -410,8 +482,9 @@ class Trainer:
             stats['kl'] = float(torch.stack(kls).mean())
             if cfg.target_kl and stats['kl'] > cfg.target_kl:
                 break
-        for k in ('pi_loss', 'v_loss', 'entropy', 'clipfrac'):
-            stats[k] /= max(1, nupd)
+        for k in ('pi_loss', 'v_loss', 'entropy', 'clipfrac', 'kl_bc'):
+            if k in stats:
+                stats[k] /= max(1, nupd)
         if self.arm == 'B':
             stats['std'] = self.model.log_std.exp().tolist()
         return stats
@@ -446,6 +519,24 @@ def episode_summary(eps):
         out['max_e'] = float(cat['max_e'].double().mean())
         out['goal_min_median'] = float(cat['goal_min'].double().median())
         out['near_goal_0p5'] = float((cat['goal_min'] <= 0.5).double().mean())
+    if 'min_sep' in cat:      # 동적 장애물 진단 (r6-dyn): 정지 중·회전 중 접촉, 최소 이격, 배치 수준별 성공
+        coll = cat['collision']
+        out['collision_stationary'] = float((coll & ~cat['collision_moving']).float().mean())
+        out['collision_turning'] = float(cat['collision_turning'].float().mean())
+        ms = cat['min_sep'].double()
+        fin = torch.isfinite(ms)
+        out['episodes_with_obstacles'] = int(fin.sum())
+        if bool(fin.any()):
+            out['min_sep_median'] = float(ms[fin].median())
+            out['min_sep_mean'] = float(ms[fin].mean())
+            out['min_sep_lt_0p3'] = float((ms[fin] < 0.3).double().mean())
+        lvl = cat['level']
+        out['by_level'] = {}
+        for k in torch.unique(lvl).tolist():
+            m = lvl == k
+            out['by_level'][str(k)] = {'n': int(m.sum()),
+                                       'success': float(cat['success'][m].float().mean()),
+                                       'collision': float(coll[m].float().mean())}
     return out
 
 
