@@ -137,3 +137,16 @@ def test_arm_validation():
         RunConfig(ARMS['A1_nearest_central'], loss=1.0)
     with pytest.raises(ValueError):
         RunConfig(ARMS['A1_nearest_central'], fault='F9')
+
+
+def test_idle_robots_wait_at_their_waiting_pose():
+    """하역 뒤 대기 자세(스폰 자세)로 돌아가 IDLE — 복귀 중에는 IDLE 이 아니다 (accept_while_returning false)."""
+    sim = FleetSim(cfg('A1_nearest_central', horizon_s=900.0, arrival_rate=1.0 / 120.0))
+    res = sim.run()
+    assert res['completed'] >= 1
+    w = sim.world
+    for r in sim.robots:
+        if r.idle():
+            assert (r.x, r.y) == pytest.approx(w.places[f'spawn_{r.id}'])
+        if r.stage == 'return':
+            assert not r.idle()

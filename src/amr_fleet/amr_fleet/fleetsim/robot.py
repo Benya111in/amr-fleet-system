@@ -13,7 +13,10 @@ a 로 설 수 있는 이산 상한 — 를 지키고, 위치는 멈출 점을 �
 투표 모드에서 요청은 중앙과 같은 request_chain(요청 거리 · 사슬 간격 · 구역 안 대기 금지)으로 만들고, 차체가 구역을
 완전히 빠져나오면(s > s_clear) release 한다.
 
-작업: IDLE → to_pickup → (잠금 대기) → load → to_drop → unload → IDLE. "실행 시작" = load 시작 (중복 실행 판정 지점).
+작업: IDLE → to_pickup → (잠금 대기) → load → to_drop → unload → return → IDLE. "실행 시작" = load 시작
+(중복 실행 판정 지점). 하역 뒤에는 대기 자세(스폰 자세)로 돌아가고(task_executor.xml ReturnToWaiting,
+launch_utils waiting_pose = 스폰 자세), 복귀 중에는 새 작업을 받지 않는다 (behavior.yaml accept_while_returning:
+false, 복귀 중 상태 MOVING → fleet_manager 후보 아님). 협상도 복귀 중에는 하지 않는다.
 엄격 협상·폴백 설계는 load 전에 작업 ID 투표 잠금(task:<id>, 별도 ZoneAgent)을 쥐어야 한다. 잠금은 완료 뒤에도 풀지 않는다
 (끝난 작업을 다른 로봇이 다시 잠가 실행하지 못하게).
 """
@@ -44,8 +47,9 @@ ACC = 1.0                   # acc_lim_x = |decel_lim_x|
 OMEGA = 1.5                 # rotate_to_heading_angular_vel
 ROT_MIN = 0.785             # rotate_to_heading_min_angle
 SNAP_M = 1e-3
-IDLE, TO_PICKUP, WAIT_LOCK, LOAD, TO_DROP, UNLOAD = (
-    'idle', 'to_pickup', 'wait_lock', 'load', 'to_drop', 'unload')
+IDLE, TO_PICKUP, WAIT_LOCK, LOAD, TO_DROP, UNLOAD, RETURN = (
+    'idle', 'to_pickup', 'wait_lock', 'load', 'to_drop', 'unload', 'return')
+DRIVING = (TO_PICKUP, TO_DROP, RETURN)
 RETURN_HYSTERESIS_S = 30.0  # 관찰자 복귀 히스테리시스 (보고서)
 
 
@@ -302,9 +306,13 @@ class Robot:
         """라운드 k 시작 (sim 이 모든 로봇에 T_b 마다 부른다). 직전 라운드를 끝내고 새 라운드를 연다."""
         if not self.alive or not self.negotiating:
             return
+        if self.task is None and self.stage != IDLE:
+            self.cbaa_round = None          # 복귀 중: 협상하지 않는다 (돌아오면 새 라운드부터)
+            return
         if self.arm.fallback and self.task is not None and (
                 self.cbaa is None or self.cbaa.executing is None):
-            return            # 폴백 설계: 중앙이 준 작업을 하는 동안은 협상에 끼지 않는다 (L_t = 1)
+            self.cbaa_round = None          # 폴백 설계: 중앙이 준 작업 중에는 협상에 끼지 않는다 (L_t = 1)
+            return
         ag = self.cbaa
         if ag is None:
             cfg = AgentConfig.strict_mode() if self.arm.alloc != 'cbaa_opt' or self.arm.fallback \
@@ -372,19 +380,19 @@ class Robot:
             self.request_task_lock(spec.task_id)
         self._send_status(now, 'IN_PROGRESS')
         self.sim.oracle.assigned(spec.task_id, self.id, now, via)
-        self._start_leg(now, pick, TO_PICKUP)
+        self._start_leg(now, pick, TO_PICKUP, spec.task_id)
 
     def _send_status(self, now: float, status: str) -> None:
         if self.arm.central_alloc and self.task is not None:
             self.sim.net.send_reliable(now, self.id, FLEET, 'task_status',
                                        (self.task.task_id, status))
 
-    def _start_leg(self, now: float, goal: str, stage: str) -> None:
+    def _start_leg(self, now: float, goal: str, stage: str, tag: str) -> None:
         self.leg = self.world.leg(self.place, goal)
         self.s = 0.0
         self.v = 0.0
         self.stage = stage
-        self.vmax = leg_speed(self.cfg, self.id, self.task.task_id, stage, V_MAX)
+        self.vmax = leg_speed(self.cfg, self.id, tag, stage, V_MAX)
         path = self.leg.path
         self.rot_s = [path.cum[i + 1] for i, a in enumerate(path.turn_angles()) if a > ROT_MIN]
 
@@ -396,6 +404,8 @@ class Robot:
         elif self.stage == TO_DROP:
             self.stage = UNLOAD
             self.dwell_until = now + dwell_s(self.cfg, self.task, self.id, 'unload')
+        elif self.stage == RETURN:
+            self.stage = IDLE
 
     def _try_load(self, now: float) -> None:
         tid = self.task.task_id
@@ -413,10 +423,14 @@ class Robot:
         self._send_status(now, 'COMPLETED')
         self.done.add(tid)
         self.task = None
-        self.stage = IDLE
         self.task_req = None if self.task_req == tid else self.task_req
         if self.cbaa is not None:
             self.cbaa.set_tasks([t for t in self.cbaa.tasks if t != tid])
+        home = f'spawn_{self.id}'
+        if self.place == home:
+            self.stage = IDLE
+        else:
+            self._start_leg(now, home, RETURN, tid + ':return')
 
     # ------------------------------------------------------------------ 한 단계
     def step(self, now: float, dt: float) -> None:
@@ -435,19 +449,19 @@ class Robot:
         elif st in (LOAD, UNLOAD) and t1 >= self.dwell_until:
             if st == LOAD:
                 _, drop = self.sim.task_docks[self.task.task_id]
-                self._start_leg(now, drop, TO_DROP)
+                self._start_leg(now, drop, TO_DROP, self.task.task_id)
             else:
                 self._complete(t1)
         if self.arm.traffic == 'vote':
             self._vote_traffic(now)
-        if self.stage in (TO_PICKUP, TO_DROP):
+        if self.stage in DRIVING:
             self._drive(now, dt)
 
     def _vote_traffic(self, now: float) -> None:
         ag = self.zone_agent
         contact = set(self.contact_zones())
         auth = {r[5:] for r in ag.authorized() if r.startswith('zone:')}
-        leg = self.leg if self.stage in (TO_PICKUP, TO_DROP) else None
+        leg = self.leg if self.stage in DRIVING else None
         ahead = set()
         if self.leg is not None:
             ahead = {p.zone_id for p in self.leg.passes if p.s_clear >= self.s - 1e-9}
