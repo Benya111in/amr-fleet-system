@@ -34,12 +34,15 @@ SPIN_W, SPIN_V = 1.0, 0.1                    # 진단: |ω| > 1.0 rad/s 이고 |
 
 
 def _resolve_spec(reward):
-    """EnvConfig.reward → RewardSpec (None = 계약 기본 v1.2.0, 문자열 = reward_variants 이름)."""
+    """EnvConfig.reward → RewardSpec (None = 계약 기본, 문자열 = reward_variants·dyn_candidates 이름)."""
     if reward is None:
         return T.SPEC
     if isinstance(reward, str):
         from amr_rl_contract import reward_variants
-        return reward_variants.get(reward)
+        from . import dyn_candidates
+        if reward in reward_variants.CANDIDATES:
+            return reward_variants.get(reward)
+        return dyn_candidates.get(reward)
     return reward
 
 
