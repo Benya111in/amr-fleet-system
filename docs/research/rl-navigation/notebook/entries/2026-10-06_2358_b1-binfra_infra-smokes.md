@@ -38,7 +38,7 @@ B 실행자(b1-sweep·b1-sac·b1-dr·b1-ppo10-eval)가 코드 수정 없이 돌�
    algo 주장 일치·ORT 대 torch ≤ 1e-5). SAC 는 `algo` 가 SAC 이고 `constraint` = none, PID 는 `constraint` = "intervention <= d ...".
 5. **시험** (B0_pytest_cpu·B0_pytest_isaac_ppo_lag): CPU (amr-ai/rl:0.3) 전체 + Isaac 이미지 파이썬의 test_ppo_lag 3 개.
 
-6. **학습 env 동치 점검** (B0_equiv_f007e2e·B0_equiv_aa07062_a·_b — 2026-10-07 00:55 추가, 결과 전): 이 브랜치의 env 변경(지연 버퍼 확장,
+6. **학습 env 동치 점검** (B0_equiv_f007e2e·B0_equiv_aa07062_a·_b — 2026-10-07 00:29 추가 (커밋 `fef24b0`), 결과 전): 이 브랜치의 env 변경(지연 버퍼 확장,
    평가 전용 고정 경로·교란·관측 지연·구동 이득 경로, `dr_snapshot`)이 **학습 동작을 바꾸지 않는가** — B1 (b1-ppo10, `f007e2e` 코드) 과
    B2·B3·B4 (이 브랜치 코드) 가 같은 env 위에 있는지. `train_ppo.py --num_envs 512 --iterations 3 --seed 0 --phi canonical --path_len 3:15`
    (DR 켬) 를 옛 코드 `f007e2e` 사본 1 회, 새 코드 `aa07062` 사본 2 회.
@@ -46,7 +46,7 @@ B 실행자(b1-sweep·b1-sac·b1-dr·b1-ppo10-eval)가 코드 수정 없이 돌�
      새 코드 두 번부터 다르면 (GPU 비결정성) 이 점검은 **판정 불가** 로 적고 곡선(curve.jsonl) 값의 차이만 기록한다.
    - 예측: 셋 다 비트 동일 (코드 읽기: 바뀐 경로는 이득 1·관측 지연 0·고정 경로 없음에서 꺼지고, 지연 버퍼는 읽는 칸이 같다).
 
-7. **PID 오차 자르기 선택지** (B0_smoke_pid_d0p2_clip — 2026-10-07 01:05 추가. **d 0.2 스모크 결과를 본 뒤** 정한 변형이다: 그 run 에서
+7. **PID 오차 자르기 선택지** (B0_smoke_pid_d0p2_clip — 2026-10-07 00:32 추가 (커밋 `9ac2d8c`). **d 0.2 스모크 결과를 본 뒤** 정한 변형이다: 그 run 에서
    정규화 오차가 수백이라 적분이 반복 4 에 상한 10 에 붙고 40 반복 내내 λ 9–10, 롤아웃 성공 0.9 % 였다). 같은 설정에
    `--pid_err_clip -1,1` 만 더한다 (커밋 `fc26b7f` 사본).
    - 예측: 적분은 반복당 최대 K_i = 0.05 오르므로 λ 는 처음 10 반복 안에 비례항(K_p·1 = 0.5) + 적분 ≤ 1.0 수준에 머물고, 롤아웃 성공은
