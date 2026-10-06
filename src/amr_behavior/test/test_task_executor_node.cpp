@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -25,6 +26,7 @@
 #include "nav2_msgs/srv/clear_entire_costmap.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
+#include "rosgraph_msgs/msg/clock.hpp"
 #include "sensor_msgs/msg/battery_state.hpp"
 #include "spin_thread.hpp"
 #include "std_msgs/msg/bool.hpp"
@@ -386,6 +388,69 @@ TEST_F(ExecutorNodeTest, ChargerClaimsAreSharedBetweenExecutors)
     std::this_thread::sleep_for(50ms);
   }
   EXPECT_FALSE(got.has_value());
+}
+
+TEST_F(ExecutorNodeTest, ChargerClaimHeartbeatFollowsNodeClock)
+{
+  // 점유 심장박동은 노드 시계(use_sim_time 이면 /clock)로 낸다 — 받는 쪽 만료와 같은 시간 축
+  // (보너스 4 P0, fleet-distributed/p0.md §2). sim 시각이 멈추면 벽시계가 흘러도 내지 않는다.
+  const std::string topic = "/claims_sim_test/charger_claims";
+  auto aux = std::make_shared<rclcpp::Node>("claims_sim_aux");
+  auto clock_pub = aux->create_publisher<rosgraph_msgs::msg::Clock>("/clock", rclcpp::ClockQoS());
+  std::atomic<int> beats{0};
+  auto sub = aux->create_subscription<std_msgs::msg::String>(
+    topic, rclcpp::QoS(10), [&beats](const std_msgs::msg::String::SharedPtr) {++beats;});
+  const std::vector<rclcpp::Parameter> overrides = {
+    rclcpp::Parameter(
+      "bt_xml", std::string(AMR_BEHAVIOR_SOURCE_DIR) + "/behavior_trees/task_executor.xml"),
+    rclcpp::Parameter("robot_id", "amr_02"),
+    rclcpp::Parameter("use_sim_time", true),
+    rclcpp::Parameter("groot.enabled", false),
+    rclcpp::Parameter("docks.ids", std::vector<std::string>{"charger_c1"}),
+    rclcpp::Parameter("docks.charger_c1.staging", std::vector<double>{-26.0, -16.64, -1.57}),
+    rclcpp::Parameter("charger_dock_ids", std::vector<std::string>{"charger_c1"}),
+    rclcpp::Parameter("charger_claims_topic", topic),
+  };
+  auto node = std::make_shared<amr_behavior::TaskExecutorNode>(
+    rclcpp::NodeOptions().parameter_overrides(overrides).arguments(
+      {"--ros-args", "-r", "__ns:=/amr_02"}));
+  rclcpp::executors::SingleThreadedExecutor exec;
+  exec.add_node(node);
+  exec.add_node(aux);
+  amr_behavior_test::SpinThread spinner(exec);
+  auto publish_clock = [&clock_pub](int32_t sec) {
+      rosgraph_msgs::msg::Clock c;
+      c.clock.sec = sec;
+      clock_pub->publish(c);
+    };
+  auto wait = [](const std::function<bool()> & cond, std::chrono::milliseconds limit) {
+      const auto end = std::chrono::steady_clock::now() + limit;
+      while (std::chrono::steady_clock::now() < end) {
+        if (cond()) {
+          return true;
+        }
+        std::this_thread::sleep_for(20ms);
+      }
+      return cond();
+    };
+  ASSERT_TRUE(
+    wait(
+      [&]() {
+        publish_clock(10);
+        return node->now().seconds() == 10.0 && sub->get_publisher_count() > 0;
+      }, 5000ms));
+  // 점유 바뀜 → 한 번 바로 낸다
+  ASSERT_TRUE(node->context()->selectCharger().has_value());
+  ASSERT_TRUE(wait([&]() {return beats.load() >= 1;}, 3000ms));
+  const int frozen = beats.load();
+  std::this_thread::sleep_for(2500ms);   // 벽시계 2.5 s, sim 은 10 s 에 정지
+  EXPECT_EQ(beats.load(), frozen) << "sim 시각이 멈췄는데 심장박동이 나갔다 (벽시계 타이머?)";
+  for (int32_t sec = 11; sec <= 14; ++sec) {   // sim 1 s 씩 4 번
+    publish_clock(sec);
+    std::this_thread::sleep_for(150ms);
+  }
+  EXPECT_TRUE(wait([&]() {return beats.load() >= frozen + 2;}, 3000ms))
+    << "sim 시각이 흘렀는데 심장박동이 없다: " << beats.load() - frozen;
 }
 
 TEST_F(ExecutorNodeTest, EstopAndBatteryGateAcceptance)

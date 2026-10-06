@@ -386,14 +386,16 @@ void TaskExecutorNode::createInterfaces()
     });
 
   // 충전소 점유 공유 (전역 토픽, 다중 로봇). 심장박동 1 Hz, charger_claim_timeout 안에 못
-  // 들으면 무효.
+  // 들으면 무효. 심장박동은 노드 시계(use_sim_time 이면 /clock)로 낸다 — 받는 쪽 만료도
+  // 노드 시계로 재므로 같은 시간 축이어야 한다. 벽시계 1 Hz 면 RTF > 3 에서 sim 3 s 안에
+  // 한 번도 오지 않아 살아 있는 점유가 풀린다 (보너스 4 P0, fleet-distributed/p0.md §2).
   if (!charger_claims_topic_.empty()) {
     claim_pub_ = create_publisher<std_msgs::msg::String>(charger_claims_topic_, rclcpp::QoS(10));
     claim_sub_ = create_subscription<std_msgs::msg::String>(
       charger_claims_topic_, rclcpp::QoS(10),
       [this](const std_msgs::msg::String::SharedPtr msg) {onChargerClaim(msg->data);});
-    claim_timer_ = create_wall_timer(
-      std::chrono::seconds(1), [this]() {
+    claim_timer_ = rclcpp::create_timer(
+      this, get_clock(), std::chrono::seconds(1), [this]() {
         const std::string claim = ctx_->chargerClaim();
         if (!claim.empty()) {
           publishChargerClaim(claim, ctx_->chargerClaimSince());
