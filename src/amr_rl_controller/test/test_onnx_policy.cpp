@@ -1,7 +1,8 @@
 // OnnxPolicy (ORT C++ 세션 래퍼) 시험.
 //  - 계약 고정물(fixture_b/c.onnx)을 C++ 관측·마스크로 끝-끝 실행해 r0 의 기대 출력
 //    (rl/contract/onnx/fixtures/fixture_expected.json, 파이썬 onnxruntime) 과 1e-5 안에서 일치
-//  - configure 시점 검증: 주 버전·obs_dim·arm·메타데이터 누락·없는 파일 → 예외
+//  - configure 시점 검증: 주 버전·obs_dim·arm·메타데이터 누락·없는 파일 → 예외,
+//    부 버전만 다르면 받는다
 //  - 순환(h_in/h_out) 상태 전달과 resetHidden, NaN 출력 모델 → 엔진 DWA 폴백
 #include <gtest/gtest.h>
 
@@ -9,6 +10,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -117,6 +119,7 @@ TEST(OnnxPolicy, RejectsContractViolationsAtLoad)
 {
   REQUIRE_MODELS();
   EXPECT_THROW(OnnxPolicy(cfg("bad_major_c.onnx", Arm::kC)), std::runtime_error);
+  EXPECT_THROW(OnnxPolicy(cfg("bad_major0_c.onnx", Arm::kC)), std::runtime_error);
   EXPECT_THROW(OnnxPolicy(cfg("bad_obsdim_c.onnx", Arm::kC)), std::runtime_error);
   EXPECT_THROW(OnnxPolicy(cfg("no_meta_c.onnx", Arm::kC)), std::runtime_error);
   EXPECT_THROW(OnnxPolicy(cfg("arm_b_meta_c_io.onnx", Arm::kC)), std::runtime_error);
@@ -127,6 +130,19 @@ TEST(OnnxPolicy, RejectsContractViolationsAtLoad)
   auto c = cfg("no_meta_c.onnx", Arm::kC);
   c.require_metadata = false;
   EXPECT_NO_THROW(OnnxPolicy p(c));
+}
+
+TEST(OnnxPolicy, AcceptsSameMajorDifferentMinorContractVersion)
+{
+  // onnx_io.md: 주 버전이 같으면 받는다 (v1.2.0 은 보상만 바꿔 1.1.0 정책의 입출력이 같다)
+  REQUIRE_MODELS();
+  for (const char * f : {"minor_110_c.onnx", "minor_190_c.onnx"}) {
+    std::unique_ptr<OnnxPolicy> p;
+    EXPECT_NO_THROW(p = std::make_unique<OnnxPolicy>(cfg(f, Arm::kC))) << f;
+    if (p) {
+      EXPECT_NE(p->metadata().at("contract_version"), C::kContractVersion) << f;
+    }
+  }
 }
 
 TEST(OnnxPolicy, FallbackOnlyMaskSelectsFallback)

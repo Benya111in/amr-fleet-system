@@ -7,7 +7,8 @@
 - fixture_b.onnx·fixture_c.onnx: r0 계약의 고정물 생성기(rl/contract/onnx/make_fixtures.py)를
   그대로 불러 만든다 → 기대 출력은 커밋된 rl/contract/onnx/fixtures/fixture_expected.json.
 - fixture_c_gru.onnx: 같은 입출력 + h_in/h_out (GRU 1 층, hidden 16) — 순환 경로 시험.
-- 결함 모델: 주 버전 2, obs_dim 290, 메타데이터 없음, arm 메타데이터 불일치, NaN logits — configure 거부·폴백 시험.
+- 결함 모델: 주 버전 2·0, obs_dim 290, 메타데이터 없음, arm 메타데이터 불일치, NaN logits —
+  configure 거부·폴백 시험. 부 버전만 다른 모델(1.1.0·1.9.0)은 받아야 한다.
 - 크기 대표 모델 (지연 측정용, --sizes 일 때만): size_c_mlp256 (MLP 391→256→256→100),
   size_c_cnn_gru128 (섹터 180 Conv1d 2 층 + MLP + GRU 128), size_b_mlp256 (291→256→256→2).
   학습 정책이 아직 없어서 실무 보고서·계약이 권하는 구조의 크기만 흉내 낸다.
@@ -104,6 +105,10 @@ def _defects(out_dir, c_path):
     m = onnx.load(c_path)
     for name, props in (
             ('bad_major_c.onnx', _base_meta('C', contract_version='2.0.0')),
+            ('bad_major0_c.onnx', _base_meta('C', contract_version='0.9.0')),
+            # 같은 주 버전의 다른 부 버전은 받는다 (onnx_io.md — 1.1.0 정책도 입출력이 같다)
+            ('minor_110_c.onnx', _base_meta('C', contract_version='1.1.0')),
+            ('minor_190_c.onnx', _base_meta('C', contract_version='1.9.0')),
             ('bad_obsdim_c.onnx', _base_meta('C', obs_dim='290')),
             ('no_meta_c.onnx', {}),
             # 입출력은 C 인데 메타데이터 arm 이 B — 메타데이터 검사만 가를 수 있다

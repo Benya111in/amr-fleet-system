@@ -6,6 +6,7 @@
 #include <exception>
 #include <string>
 
+#include "amr_navigation/core/speed_profile.hpp"
 #include "amr_rl_controller/core/dev_state.hpp"
 #include "amr_rl_controller/core/geometry.hpp"
 
@@ -24,6 +25,37 @@ double msSince(const std::chrono::steady_clock::time_point & t0)
 double clamp(double x, double lo, double hi)
 {
   return x < lo ? lo : (x > hi ? hi : x);
+}
+
+// 제자리 정렬의 정지각 [rad] (A2-5): 지연 t_c 동안 지금 각가속도 a0(회전 방향 성분, 음수면 0 으로
+// 보수적)를 유지 → 저크 j 로 각가속도를 0 까지 → 저크 제한 정지 (SpeedProfile::stoppingDistance).
+// 지금 가속 중인 것을 빼면 하류 각저크 필터가 가속도를 +α 에서 뒤집는 동안 더 돈다 — 오프라인
+// 폐루프 [계산]: 그것만 빼면 초기 오차 1.0 rad 에서 0.118 rad 지나쳤다.
+double alignStopAngle(double w, double a0, double t_c)
+{
+  const double j = C::kAngJerkMax;
+  a0 = std::max(0.0, a0);
+  double d = w * t_c + 0.5 * a0 * t_c * t_c;
+  const double w1 = w + a0 * t_c;
+  const double t0 = a0 / j;
+  d += w1 * t0 + 0.5 * a0 * t0 * t0 - j * t0 * t0 * t0 / 6.0;
+  const double w2 = w1 + a0 * a0 / (2.0 * j);
+  return d + amr_navigation::core::SpeedProfile::stoppingDistance(w2, C::kAlphaMax, j, 0.0);
+}
+
+/// alignStopAngle(ω, a0, t_c) ≤ e 인 최대 ω ∈ [0, ω_max] (단조 증가 → 이분법).
+double alignStopSpeed(double e, double a0, double t_c)
+{
+  if (alignStopAngle(C::kWMax, a0, t_c) <= e) {
+    return C::kWMax;
+  }
+  double lo = 0.0;
+  double hi = C::kWMax;
+  for (int i = 0; i < 50; ++i) {
+    const double m = 0.5 * (lo + hi);
+    (alignStopAngle(m, a0, t_c) <= e ? lo : hi) = m;
+  }
+  return lo;
 }
 }  // namespace
 
@@ -135,8 +167,14 @@ void DecisionEngine::startPeriod(TickInput & in, TickResult & res)
     const double e = in.yaw_error_to_goal;
     double w_des = 0.0;
     if (std::abs(e) > 0.5 * cfg_.yaw_tol) {
-      w_des = std::copysign(
-        std::min({C::kWMax, std::sqrt(2.0 * C::kAlphaMax * std::abs(e)), 2.0 * std::abs(e)}), e);
+      // 정지 가능 속도: 하류 velocity_profiler 의 각저크 필터(램프 α/j)와 명령→실속도 지연
+      // (align_latency), 지금 각가속도(a_w_meas = 프로파일러 기준값)를 넣은 정지각이 |e| 이하인
+      // 최대 ω — DWA 의 선속도 목표 접근(dwa.cpp:650-653, SpeedProfile::maxSpeedForStop)과 같은
+      // 생각에 가속 상태를 더했다. 1차 물결의 사다리꼴 √(2α|e|) 는 지나쳤다 (A2 Gazebo 실측: goal
+      // checker 가 성공을 낸 뒤 0.16–0.26 rad 더 돌았다).
+      const double a0 = std::copysign(1.0, e) * s.a_w_meas;
+      const double w_stop = alignStopSpeed(std::abs(e), a0, cfg_.align_latency);
+      w_des = std::copysign(std::min({C::kWMax, w_stop, cfg_.align_gain * std::abs(e)}), e);
     }
     target_.v = std::max(0.0, v_cmd_ - C::kAMax * dp);
     target_.w = clamp(w_des, w_cmd_ - C::kAlphaMax * dp, w_cmd_ + C::kAlphaMax * dp);

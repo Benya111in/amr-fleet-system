@@ -288,6 +288,18 @@ void DWAController::setSpeedLimit(const double & speed_limit, const bool & perce
   }
 }
 
+void DWAController::syncLastCommand(double v, double w)
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!std::isfinite(v) || !std::isfinite(w)) {
+    has_last_ = false;   // 창 중심 = 측정 속도 (core::DwaPlanner::windowCenter)
+    return;
+  }
+  has_last_ = true;
+  v_last_ = v;
+  w_last_ = w;
+}
+
 void DWAController::onObstacles(const amr_msgs::msg::TrackedObstacleArray::SharedPtr msg)
 {
   std::lock_guard<std::mutex> lock(obs_mutex_);

@@ -1,16 +1,23 @@
-// C++ 계약 구현을 r0 의 golden 벡터(rl/contract/golden/*.json)와 대조한다.
+// C++ 계약 구현을 r0 의 golden 벡터(rl/contract/golden/*.json, 계약 v1.2.0, 32 사례)와 대조한다.
 //   decision d01–d17: 관측 291 (1e-5), 마스크 100·셀별 speed/jerk/fp 판정 (정확 일치),
 //                     VO 진입 시각 (1e-4, null = +inf), 포화 여부, 폴백 명령 (1e-9)
 //   integrate i01:    B 적분·C 적분·격자 최근접·BC 레이블 (1e-9 / 정확 일치), 격자 값
+//   step s01–s12:     이탈 상태기계 (보상 항은 학습 환경 몫 — 플러그인은 보상을 계산하지 않는다)
+//   profiler p01:     Gazebo 하류 사슬의 velocity_profiler 코어(amr_navigation)가 학습 환경의
+//                     기준 모델과 같은지 (1e-6) — 플러그인 코드는 아니지만 전이 점검 (§5.4)
+//   safety f01:       safety_lite = 학습 환경의 근사 φ. 플러그인·Gazebo 는 정본 safety_node 라
+//                     대상이 아니다 (contract.md §7.4)
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <limits>
+#include <map>
 #include <string>
 #include <vector>
 
+#include "amr_navigation/core/velocity_profiler.hpp"
 #include "amr_rl_controller/core/contract.hpp"
 #include "amr_rl_controller/core/dev_state.hpp"
 #include "amr_rl_controller/core/geometry.hpp"
@@ -42,8 +49,26 @@ std::vector<std::string> goldenFiles(const std::string & prefix)
 
 TEST(ContractGolden, DecisionCasesPresent)
 {
-  // v1.1.0: decision 17 사례 (d01–d17)
+  // v1.1.0 이후 decision 17 사례 (d01–d17) — v1.2.0 은 보상만 바꿔 값이 같다
   EXPECT_EQ(goldenFiles("d").size(), 17U);
+}
+
+TEST(ContractGolden, AllCasesAccountedForAtThisVersion)
+{
+  // v1.2.0: 32 사례 = decision 17 + step 12 + integrate 1 + profiler 1 + safety 1 (§12).
+  // 모든 파일의 contract_version 이 이 플러그인의 판과 같아야 한다 — 계약이 바뀌면 먼저 깨진다.
+  // 새 종류의 사례가 생기면 (아래 kinds 밖) 플러그인이 다뤄야 하는지 정하고 이 시험을 고친다.
+  const auto all = goldenFiles("");
+  EXPECT_EQ(all.size(), 32U);
+  std::map<std::string, int> kinds;
+  for (const auto & f : all) {
+    const auto j = golden::load(f);
+    EXPECT_EQ(j["contract_version"].get<std::string>(), std::string(C::kContractVersion)) << f;
+    ++kinds[j["kind"].get<std::string>()];
+  }
+  const std::map<std::string, int> want{
+    {"decision", 17}, {"step", 12}, {"integrate", 1}, {"profiler", 1}, {"safety", 1}};
+  EXPECT_EQ(kinds, want);
 }
 
 TEST(ContractGolden, ObservationMatches)
@@ -51,7 +76,7 @@ TEST(ContractGolden, ObservationMatches)
   for (const auto & f : goldenFiles("d")) {
     const auto j = golden::load(f);
     ASSERT_EQ(j["kind"], "decision") << f;
-    EXPECT_EQ(j["contract_version"], C::kContractVersion) << f;
+    EXPECT_EQ(j["contract_version"].get<std::string>(), std::string(C::kContractVersion)) << f;
     const double tol = j["tolerance"]["obs"].get<double>();
     const auto s = golden::toState(j["state"]);
     const auto obs = buildObservation(s);
@@ -162,7 +187,8 @@ TEST(ContractGolden, IntegrateMatches)
 
 TEST(ContractGolden, DevMachineMatchesStepCases)
 {
-  // step 사례 s01–s11: pre.dev 와 post 자세의 경로 거리 e → expected.dev (reward.dev_update)
+  // step 사례 s01–s12: pre.dev 와 post 자세의 경로 거리 e → expected.dev (reward.dev_update).
+  // v1.2.0 은 s01–s11 의 보상 항만 바꿨고 (dev·e 그대로), s12 (목표 지나침) 를 더했다.
   int n = 0;
   for (const auto & f : goldenFiles("s")) {
     const auto j = golden::load(f);
@@ -179,7 +205,46 @@ TEST(ContractGolden, DevMachineMatchesStepCases)
     EXPECT_NEAR(d.t_since_peak, ed["t_since_peak"].get<double>(), 1e-9) << f;
     ++n;
   }
-  EXPECT_EQ(n, 11);
+  EXPECT_EQ(n, 12);
+}
+
+TEST(ContractGolden, ProfilerCaseMatchesNavigationVelocityProfilerCore)
+{
+  // p01: 정책 명령 램프 → 50 Hz 기준 (v_ref, ω_ref, a_ref). 학습 환경(2D·Isaac)은 기준 구현
+  // profiler.ProfilerReference 를, Gazebo 는 amr_navigation 의 velocity_profiler_node 를 쓴다 —
+  // 그 코어 (PI 끔 = 기준 경로만) 가 golden 과 같아야 학습과 배포의 하류 사슬이 같다.
+  const auto files = goldenFiles("p01");
+  ASSERT_EQ(files.size(), 1U);
+  const auto j = golden::load(files[0]);
+  ASSERT_EQ(j["kind"], "profiler");
+  const double tol = j["tolerance"]["profiler"].get<double>();
+  const auto & e = j["expected"];
+  const double dt = e["dt"].get<double>();
+  amr_navigation::core::VelocityProfilerConfig pc;
+  pc.linear = {-0.5, C::kVMaxHw, C::kAMax, C::kJerkMax};
+  pc.angular = {-C::kWMax, C::kWMax, C::kAlphaMax, C::kAngJerkMax};
+  pc.use_pid = false;
+  amr_navigation::core::VelocityProfiler prof(pc);
+  int n = 0;
+  for (const auto & st : e["steps"]) {
+    const double v0 = st["cmd_from"][0].get<double>();
+    const double w0 = st["cmd_from"][1].get<double>();
+    const double v1 = st["cmd_to"][0].get<double>();
+    const double w1 = st["cmd_to"][1].get<double>();
+    const auto & ref = st["ref"];
+    const int k_n = static_cast<int>(ref.size());
+    amr_navigation::core::ProfilerOutput out;
+    for (int k = 1; k <= k_n; ++k) {
+      const double f = static_cast<double>(k) / k_n;
+      out = prof.update(v0 + f * (v1 - v0), w0 + f * (w1 - w0), false, 0.0, 0.0, dt);
+      const auto & r = ref[static_cast<std::size_t>(k - 1)];
+      EXPECT_NEAR(out.v_ref, r[0].get<double>(), tol) << n << " " << k;
+      EXPECT_NEAR(out.w_ref, r[1].get<double>(), tol) << n << " " << k;
+    }
+    EXPECT_NEAR(out.a_ref, st["a_ref"].get<double>(), tol) << n;
+    ++n;
+  }
+  EXPECT_EQ(n, 28);
 }
 
 TEST(ContractGeometry, WrapAngleMatchesPythonModulo)

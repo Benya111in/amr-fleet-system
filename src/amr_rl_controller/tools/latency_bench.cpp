@@ -8,6 +8,9 @@
 //          직전 행동 0 (저크 통과 9 셀),
 //          동적 트랙 8 개 (VO 계산), 경로 30 m (600 점 투영).
 // 출력: 단계별 p50 / p90 / p99 / max / mean [ms] 와 20 Hz 예산 50 ms 대비 비율.
+// 환경 변수 LATENCY_PERIOD_MS (A2): 반복 사이에 이만큼 쉰다 — 플러그인처럼 결정 주기(100 ms)마다
+// 한 번 부를 때의 지연 (캐시·클럭이 식은 상태). 0 이면 쉬지 않는 연속 반복 (1차 물결 r3 측정과
+// 같음).
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -18,6 +21,7 @@
 #include <fstream>
 #include <limits>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -69,6 +73,8 @@ int main(int argc, char ** argv)
   const int threads = argc > 4 ? std::atoi(argv[4]) : 1;
   const int warmup = argc > 5 ? std::atoi(argv[5]) : 200;
   const bool worst = argc > 6 && std::string(argv[6]) == "worst";
+  const char * period_env = std::getenv("LATENCY_PERIOD_MS");
+  const double period_ms = period_env ? std::atof(period_env) : 0.0;
 
   std::vector<amr_rl_controller::ContractState> states;
   for (const auto & e : fs::directory_iterator(std::string(RL_CONTRACT_DIR) + "/golden")) {
@@ -114,6 +120,9 @@ int main(int argc, char ** argv)
     };
   int failures = 0;
   for (int k = 0; k < warmup + iters; ++k) {
+    if (period_ms > 0.0) {
+      std::this_thread::sleep_for(std::chrono::duration<double, std::milli>(period_ms));
+    }
     const auto & s = states[static_cast<std::size_t>(k) % states.size()];
     const auto t0 = clk::now();
     const auto obs = amr_rl_controller::buildObservation(s);
@@ -139,9 +148,10 @@ int main(int argc, char ** argv)
     }
   }
   std::printf(
-    "model %s | mode %s | iters %d (warmup %d) | intra_op %d | states %zu%s | failures %d\n",
+    "model %s | mode %s | iters %d (warmup %d) | intra_op %d | states %zu%s | failures %d | "
+    "period %.1f ms\n",
     model.c_str(), c_mode ? "C" : "B", iters, warmup, threads, states.size(),
-    worst ? " (합성 최악 장면)" : " (golden d01-d17)", failures);
+    worst ? " (합성 최악 장면)" : " (golden d01-d17)", failures, period_ms);
   std::printf("%s\n", policy.describe().c_str());
   std::printf("| 단계   |   p50 ms |   p90 ms |   p99 ms |   max ms |  mean ms | p99/50ms |\n");
   std::printf("|--------|----------|----------|----------|----------|----------|----------|\n");
