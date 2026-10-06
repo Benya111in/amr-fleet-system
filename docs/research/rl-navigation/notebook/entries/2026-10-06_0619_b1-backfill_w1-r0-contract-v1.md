@@ -64,3 +64,12 @@ Isaac(r1)·2D(r2)·C++ 플러그인(r3)·평가(r4)가 **같은 관측·행동·
 ## WAVE 보고와 원자료의 차이
 - 없음 (시험 수와 대조 건수는 로그와 같다). `HEAD.txt` 와 `baseline_698585d.log` 는 worktree 경로 오류("not a git repository")를
   담고 있어 출처로 쓸 수 없다 — 커밋은 로그 머리의 HEAD 줄과 커밋 기록으로 정했다.
+
+## 실행 목록에 등록한 run (`runs/b1-backfill.jsonl`, entry = 이 파일)
+
+| run_id | 종류 | 시뮬 | 커밋 | 시드 | 표기 |
+|---|---|---|---|---|---|
+| `W1_r0_crosscheck_cpp_698585d` | test | offline | 698585d | n/a (결정적 입력) | [측정] |
+| `W1_r0_crosscheck_cpp_b1eb0c7` | test | offline | b1eb0c7 | n/a (결정적 입력) | [측정] |
+| `W1_r0_pytest_ffc93af` | test | offline | ffc93af | n/a (결정적 입력) | [측정] |
+| `W1_r0_pytest_b1eb0c7` | test | offline | b1eb0c7 | n/a (결정적 입력) | [측정] |

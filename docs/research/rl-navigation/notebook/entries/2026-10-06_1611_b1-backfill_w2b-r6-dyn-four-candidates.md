@@ -66,3 +66,27 @@
 - ③ lag_s1 충돌: 학습 run 의 eval.jsonl 0.2969, 짝 평가(paired.json·rv_paired.json) 0.2979 — 같은 seed 인데 2 건 차이 (평가 경로 차이, 원인 미확인).
 - 리서치 보고서 「실측 기반 후속 기술 조사」 「제약 RL」 절은 ③ 을 "4 시드 0.28/0.52/0.00/0.04" 로 인용했다 — 원자료는 5 시드(+ s4 0.018)와 리뷰 s5 0.409 다.
 - 그 밖(시드별 성공·충돌·λ, 92.5 %, 100 대 39, 3.76 h)은 원자료와 같다.
+
+## 실행 목록에 등록한 run (`runs/b1-backfill.jsonl`, entry = 이 파일)
+
+| run_id | 종류 | 시뮬 | 커밋 | 시드 | 표기 |
+|---|---|---|---|---|---|
+| `W2b_r6_g2_cur_s0` | train | 2d | 73675fd | 0 | [측정] |
+| `W2b_r6_g2_cur_s1` | train | 2d | 73675fd | 1 | [측정] |
+| `W2b_r6_g2_armc_s0` | train | 2d | 73675fd | 0 | [측정] |
+| `W2b_r6_g2_armc_s1` | train | 2d | 73675fd | 1 | [측정] |
+| `W2b_r6_g2_lag_s0` | train | 2d | 73675fd | 0 | [측정] |
+| `W2b_r6_g2_lag_s1` | train | 2d | 73675fd | 1 | [측정] |
+| `W2b_r6_g2_lag_s2` | train | 2d | 73675fd | 2 | [측정] |
+| `W2b_r6_g2_lag_s3` | train | 2d | 73675fd | 3 | [측정] |
+| `W2b_r6_g2_lag_s4` | train | 2d | 73675fd | 4 | [측정] |
+| `W2b_r6_g2_bc_s0` | train | 2d | 70eb1ac | 0 | [측정] |
+| `W2b_r6_g2_bc_s1` | train | 2d | 70eb1ac | 1 | [측정] |
+| `W2b_r6_g2_bc_s2` | train | 2d | 70eb1ac | 2 | [측정] |
+| `W2b_r6_g2_bc_s3` | train | 2d | 70eb1ac | 3 | [측정] |
+| `W2b_r6_g2_bc_s4` | train | 2d | 70eb1ac | 4 | [측정] |
+| `W2b_r6_review_bc_s5` | train | 2d | 3b5657c | 5 | [측정] |
+| `W2b_r6_review_lag_s5` | train | 2d | 3b5657c | 5 | [측정] |
+| `W2b_r6_g2_bc_s0_aborted_73675fd` | train | 2d | 73675fd | 0 | 실패 |
+| `W2b_r6_g2_paired_eval` | eval | 2d | 70eb1ac | 4242 | [측정] |
+| `W2b_r6_review_rv_paired` | eval | 2d | 3b5657c | 4242,9001 | [측정] |

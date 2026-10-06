@@ -59,3 +59,18 @@
 
 ## WAVE 보고와 원자료의 차이
 - WAVE fix 의 재평가 수치는 원자료와 같다. 리뷰 증거 파일의 mtime 은 모두 09:21:16 (복사 시각)이라 리뷰 실행 시각은 기록되지 않았다.
+
+## 실행 목록에 등록한 run (`runs/b1-backfill.jsonl`, entry = 이 파일)
+
+| run_id | 종류 | 시뮬 | 커밋 | 시드 | 표기 |
+|---|---|---|---|---|---|
+| `W1_r2_smoke_B1_reeval` | eval | 2d | 5b42ca8 | 1000 | [측정] |
+| `W1_r2_B_main1_reeval` | eval | 2d | 5b42ca8 | 1000 | [측정] |
+| `W1_r2_B_lag1_reeval` | eval | 2d | 5b42ca8 | 1000 | [측정] |
+| `W1_r2_B_noobs1_reeval` | eval | 2d | 5b42ca8 | 1000 | [측정] |
+| `W1_r2_C_scratch1_reeval` | eval | 2d | 5b42ca8 | 1000 | [측정] |
+| `W1_r2_C_scratch2_reeval` | eval | 2d | 5b42ca8 | 1000 | [측정] |
+| `W1_r2_B_bc1_reeval` | eval | 2d | 5b42ca8 | 1000 | [측정] |
+| `W1_r2_B_bc2_reeval` | eval | 2d | 5b42ca8 | 1000 | [측정] |
+| `W1_r2_B_bc3_reeval` | eval | 2d | 5b42ca8 | 1000,2000 | [측정] |
+| `W1_r2_review_diag2_unbiased` | eval | 2d | 658aa73 | 1000,2000 | [측정] |

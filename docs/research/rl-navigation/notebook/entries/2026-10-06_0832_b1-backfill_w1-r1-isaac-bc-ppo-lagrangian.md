@@ -83,3 +83,17 @@ BC+PPO 0.979 (개입 0.168, 평균 13.12 s), BC 0.981 (개입 0.055, 17.64 s), 3
 - 커밋 6e051d8 메시지가 붕괴 원인을 actor 해제·학습률로 적은 것은 틀렸다 (6e234ae·WAVE 가 정정).
 - train_ppo.py 주석 "98.9 % → 5.3 %" 와 README "94.6 % → 5.3 %" 는 둘 다 원자료와 맞는 다른 구간이다 (반복 10→30 대 20→30).
 - 그 밖의 수치(2064/2095, 2034/2059, 23.4/28.1 s, 0.112/0.038, λ 반복 60 부터 0)는 원자료와 같다.
+
+## 실행 목록에 등록한 run (`runs/b1-backfill.jsonl`, entry = 이 파일)
+
+| run_id | 종류 | 시뮬 | 커밋 | 시드 | 표기 |
+|---|---|---|---|---|---|
+| `W1_r1_bctest` | probe | isaac | unknown-noHEAD | 0 | [측정] |
+| `W1_r1_ppo_b_bc` | train | isaac | f262d91 | 0 | [측정] |
+| `W1_r1_ppo_b_bc_ft` | train | isaac | 6e051d8 | 0 | [측정] |
+| `W1_r1_ppo_b_bc_fz` | train | isaac | 6e234ae | 0 | [측정] |
+| `W1_r1_ppo_b_bc_eval_heldout_bc` | eval | isaac | unknown-eval-code (학습 f262d91) | env seed 없음 (Isaac 경고 Seed not set), 경로 풀 seed 1 | [측정] |
+| `W1_r1_ppo_b_bc_fz_eval_heldout_bc` | eval | isaac | unknown-eval-code (학습 6e234ae) | env seed 없음 (Isaac 경고 Seed not set), 경로 풀 seed 1 | [측정] |
+| `W1_r1_ppo_b_bc_fz_eval_heldout_final` | eval | isaac | unknown-eval-code (학습 6e234ae) | env seed 없음 (Isaac 경고 Seed not set), 경로 풀 seed 1 | [측정] |
+| `W1_r1_review_rerun_eval_final` | eval | isaac | f8feb56 | env seed 없음 (Isaac 경고 Seed not set), 경로 풀 seed 1 | [측정] |
+| `W1_r1_review_rerun_eval_bc` | eval | isaac | f8feb56 | env seed 없음 (Isaac 경고 Seed not set), 경로 풀 seed 1 | [측정] |

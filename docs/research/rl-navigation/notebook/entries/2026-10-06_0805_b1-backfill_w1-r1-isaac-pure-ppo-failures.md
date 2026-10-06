@@ -67,3 +67,14 @@
 - 커밋 f262d91 메시지 "라그랑주 벌점을 더해도 80 반복 동안 성공 0" 도 틀렸다 — lag_a 1 회(반복 30), lag_b 1 회(반복 20) [측정]. WAVE 리뷰가 claims_false 에 함께 적었다.
 - 커밋 972bff6 메시지 "커리큘럼 없이 2048 env 80 반복 (10.5M step) 성공 0" — 원자료 ppo_b_s0 는 90 반복 11.8M 까지 돌았다 (커밋 시점이 학습 중). 결론은 같다.
 - WAVE "6 설정 5.9–11.8M step, 성공률 0–0.1 %" 는 원자료와 같다 (최대 0.06 %).
+
+## 실행 목록에 등록한 run (`runs/b1-backfill.jsonl`, entry = 이 파일)
+
+| run_id | 종류 | 시뮬 | 커밋 | 시드 | 표기 |
+|---|---|---|---|---|---|
+| `W1_r1_ppo_b_s0` | train | isaac | ef0b609 | 0 | [측정] |
+| `W1_r1_ppo_b_s0_cur` | train | isaac | 972bff6 | 0 | [측정] |
+| `W1_r1_ppo_b_s0_cv` | train | isaac | b062a1a | 0 | [측정] |
+| `W1_r1_ppo_b_s0_cv_ent` | train | isaac | b062a1a | 0 | [측정] |
+| `W1_r1_ppo_b_lag_a` | train | isaac | 120b974 | 0 | [측정] |
+| `W1_r1_ppo_b_lag_b` | train | isaac | 120b974 | 0 | [측정] |

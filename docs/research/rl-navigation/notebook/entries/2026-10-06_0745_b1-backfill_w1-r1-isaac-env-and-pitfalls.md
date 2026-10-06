@@ -67,3 +67,17 @@ Isaac 함정 (이 호스트, Isaac Sim 5.1 / Lab 2.3.2 / RTX 5090 / Rocky 8.10):
 - smoke 2048 의 "loadavg 36" 은 원자료 json 에 없다 (출처 미확인 — 공유 부하 수치로만 인용).
 - CUDA 700 함정은 WAVE impl 이 [측정] 으로 적었지만 출력 로그가 없어 [문서주장] 이다 (리뷰가 이미 지적).
 - 그 밖의 수치(golden 오차, smoke 처리량, 휴리스틱 성공, PPO 처리량 22.8k/42.3k)는 원자료와 같다.
+
+## 실행 목록에 등록한 run (`runs/b1-backfill.jsonl`, entry = 이 파일)
+
+| run_id | 종류 | 시뮬 | 커밋 | 시드 | 표기 |
+|---|---|---|---|---|---|
+| `W1_r1_test0` | probe | isaac | unknown-noHEAD | 0 | [측정] |
+| `W1_r1_scale_1024` | probe | isaac | unknown-noHEAD | 0 | [측정] |
+| `W1_r1_scale_2048` | probe | isaac | unknown-noHEAD | 0 | [측정] |
+| `W1_r1_smoke_2048` | probe | isaac | unknown-noHEAD | n/a | [측정] |
+| `W1_r1_smoke_256` | probe | isaac | unknown-noHEAD | n/a | [측정] |
+| `W1_r1_smoke_256_review_fix` | probe | isaac | 29eba4d | n/a | [측정] |
+| `W1_r1_golden_in_sim_first` | test | isaac | unknown-noHEAD | n/a | [측정] |
+| `W1_r1_golden_in_sim_f262d91` | test | isaac | f262d91 | n/a | [측정] |
+| `W1_r1_golden_in_sim_review_fix` | test | isaac | 29eba4d | n/a | [측정] |

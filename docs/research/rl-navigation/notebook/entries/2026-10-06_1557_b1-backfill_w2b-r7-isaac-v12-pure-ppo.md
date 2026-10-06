@@ -74,3 +74,29 @@
 - "정체는 목표 0.15–0.18 m 앞" 은 중앙값만 맞고 11/110 건은 1.6–7.4 m 앞이다 (리뷰가 지적, episodes.npz 는 이 기록에서 다시 읽지 않음).
 - 리서치 「목표 직전 정지와 전이」 절의 "정지 거리 중앙값 0.15–0.18 m" 도 같은 반올림 (리뷰 재계산 0.148–0.180 m).
 - 그 밖(시드별 성공·건수·주행 시간·개입·학습 시점·벽시계)은 원자료와 같다.
+
+## 실행 목록에 등록한 run (`runs/b1-backfill.jsonl`, entry = 이 파일)
+
+| run_id | 종류 | 시뮬 | 커밋 | 시드 | 표기 |
+|---|---|---|---|---|---|
+| `W2b_r7_v12_s0` | train | isaac | 5e48670 | 0 | [측정] |
+| `W2b_r7_v12_s0_eval_final_3_15` | eval | isaac | 5e48670 | 평가 seed 4242 | [측정] |
+| `W2b_r7_v12_s0_eval_final_3_30` | eval | isaac | 5e48670 | 평가 seed 4242 | [측정] |
+| `W2b_r7_v12_s0_eval_it160_3_15` | eval | isaac | 5e48670 | 평가 seed 4242 | [측정] |
+| `W2b_r7_v12_s1` | train | isaac | 5e48670 | 1 | [측정] |
+| `W2b_r7_v12_s1_eval_final_3_15` | eval | isaac | 5e48670 | 평가 seed 4242 | [측정] |
+| `W2b_r7_v12_s1_eval_final_3_30` | eval | isaac | 5e48670 | 평가 seed 4242 | [측정] |
+| `W2b_r7_v12_s1_eval_it160_3_15` | eval | isaac | 5e48670 | 평가 seed 4242 | [측정] |
+| `W2b_r7_v12_s2` | train | isaac | 5e48670 | 2 | [측정] |
+| `W2b_r7_v12_s2_eval_final_3_15` | eval | isaac | 5e48670 | 평가 seed 4242 | [측정] |
+| `W2b_r7_v12_s2_eval_final_3_30` | eval | isaac | 5e48670 | 평가 seed 4242 | [측정] |
+| `W2b_r7_ref_bcppo_eval_3_15` | eval | isaac | bbdbe2f | 평가 seed 4242 | [측정] |
+| `W2b_r7_ref_bcppo_eval_3_15_rerun` | eval | isaac | bbdbe2f | 평가 seed 4242 | [측정] |
+| `W2b_r7_ref_bc_eval_3_15` | eval | isaac | bbdbe2f | 평가 seed 4242 | [측정] |
+| `W2b_r7_ref_bcppo_eval_3_30` | eval | isaac | bbdbe2f | 평가 seed 4242 | [측정] |
+| `W2b_r7_review_rv_v12_s3` | train | isaac | ab8b16f | 3 | [측정] |
+| `W2b_r7_review_rv_v12_s3_eval_3_15` | eval | isaac | ab8b16f | 평가 seed 4242 | [측정] |
+| `W2b_r7_review_rv_v11_s0` | train | isaac | ab8b16f | 0 | [측정] |
+| `W2b_r7_review_rv_v11_s0_eval_3_15` | eval | isaac | ab8b16f | 평가 seed 4242 | [측정] |
+| `W2b_r7_golden_in_sim_174fda8` | test | isaac | 174fda8 | n/a | [측정] |
+| `W2b_r7_smoke_174fda8` | probe | isaac | 174fda8 | n/a | [측정] |

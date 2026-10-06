@@ -62,3 +62,19 @@ G1 의 후보 보상 가운데 어느 것이 **BC 없는 순수 PPO** 로 2D 정
 
 ## WAVE 보고와 원자료의 차이
 - 없음 (성공·정체·회전·1 m 밖 비율, 30 % 도달 5.2·7.9M, GPU 벽시계 3 740 s 모두 원자료와 같다).
+
+## 실행 목록에 등록한 run (`runs/b1-backfill.jsonl`, entry = 이 파일)
+
+| run_id | 종류 | 시뮬 | 커밋 | 시드 | 표기 |
+|---|---|---|---|---|---|
+| `W2a_r5_g2_prog50_s0` | train | 2d | 394e974 | 0 | [측정] |
+| `W2a_r5_g2_prog50_st_s0` | train | 2d | 394e974 | 0 | [측정] |
+| `W2a_r5_g2_pbrs_eff_s0` | train | 2d | 394e974 | 0 | [측정] |
+| `W2a_r5_g2_prog25_s0` | train | 2d | 394e974 | 0 | [측정] |
+| `W2a_r5_g2_prog50_s1` | train | 2d | 394e974 | 1 | [측정] |
+| `W2a_r5_g2_prog50_st_s1` | train | 2d | 394e974 | 1 | [측정] |
+| `W2a_r5_g2_pbrs_eff_s1` | train | 2d | 394e974 | 1 | [측정] |
+| `W2a_r5_g2_prog25_s1` | train | 2d | 394e974 | 1 | [측정] |
+| `W2a_r5_g2_v110_s0` | train | 2d | 394e974 | 0 | [측정] |
+| `W2a_r5_g2_dyn_prog50_s0` | train | 2d | 394e974 | 0 | [측정] |
+| `W2a_r5_g2_C_prog50_s0` | train | 2d | 394e974 | 0 | [측정] |

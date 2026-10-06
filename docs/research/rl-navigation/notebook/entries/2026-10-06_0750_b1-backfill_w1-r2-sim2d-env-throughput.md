@@ -60,3 +60,12 @@ GPU 예약 메모리 0.20–1.96 GB (4096 env 1.96 GB) [측정].
 
 ## WAVE 보고와 원자료의 차이
 - 처리량 값은 원자료와 같다. 리뷰 재측정 파일의 mtime(09:21:16)은 증거 복사 시각이라 실행 시각은 미상이다.
+
+## 실행 목록에 등록한 run (`runs/b1-backfill.jsonl`, entry = 이 파일)
+
+| run_id | 종류 | 시뮬 | 커밋 | 시드 | 표기 |
+|---|---|---|---|---|---|
+| `W1_r2_bench_B_35ce14e` | probe | 2d | 35ce14e | n/a | [측정] |
+| `W1_r2_bench_B_9f3d0cd` | probe | 2d | 9f3d0cd | n/a | [측정] |
+| `W1_r2_bench_C_9f3d0cd` | probe | 2d | 9f3d0cd | n/a | [측정] |
+| `W1_r2_bench_B_review` | probe | 2d | 658aa73 | n/a | [측정] |

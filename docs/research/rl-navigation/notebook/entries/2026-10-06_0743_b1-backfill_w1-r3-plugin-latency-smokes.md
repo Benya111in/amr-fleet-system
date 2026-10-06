@@ -70,3 +70,17 @@ p99 는 모든 조합에서 ≤ 0.22 ms (50 ms 예산의 0.44 %). 최댓값 7.43
 
 ## WAVE 보고와 원자료의 차이
 - 없음 (지연 p99·최댓값, 스모크 결과·결정 수·시간 모두 원자료와 같다). `kin_follow_c_heur/HEAD.txt` 는 빈 파일이라 그 run 의 커밋은 미상이다 (리뷰 지적).
+
+## 실행 목록에 등록한 run (`runs/b1-backfill.jsonl`, entry = 이 파일)
+
+| run_id | 종류 | 시뮬 | 커밋 | 시드 | 표기 |
+|---|---|---|---|---|---|
+| `W1_r3_kin_follow_c_heur` | test | offline | unknown-emptyHEAD | n/a | [측정] |
+| `W1_r3_kin_follow_c_heur2` | test | offline | d5417a0 | n/a | [측정] |
+| `W1_r3_kin_follow_b_heur` | test | offline | d5417a0 | n/a | [측정] |
+| `W1_r3_kin_follow_c_fixture` | test | offline | d5417a0 | n/a | [측정] |
+| `W1_r3_kin_follow_c_heur_obst` | test | offline | d5417a0 | n/a | [측정] |
+| `W1_r3_kin_nav_c_heur` | test | offline | d5417a0 | n/a | [측정] |
+| `W1_r3_gz_c_heur_a` | gazebo | gazebo | d5417a0 | n/a | 실패 |
+| `W1_r3_gz_c_heur_b` | gazebo | gazebo | d5417a0 | n/a | [측정] |
+| `W1_r3_latency_bench_2` | probe | offline | e085271 | n/a | [측정] |

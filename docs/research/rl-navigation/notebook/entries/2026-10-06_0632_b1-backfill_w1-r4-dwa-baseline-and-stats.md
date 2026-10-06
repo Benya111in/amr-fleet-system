@@ -74,3 +74,18 @@
 
 ## WAVE 보고와 원자료의 차이
 - 없음 — 도달 240/240, 접촉 0/240, 45·15·82/240, 0.883 m, 3.82 s, 15.01/107.32 s, 0.061 m, CTE 값 모두 원자료와 같다.
+
+## 실행 목록에 등록한 run (`runs/b1-backfill.jsonl`, entry = 이 파일)
+
+| run_id | 종류 | 시뮬 | 커밋 | 시드 | 표기 |
+|---|---|---|---|---|---|
+| `W0_dwa_s08_S0a` | gazebo | gazebo | cebd351 | world actor 42, harness 7 | [측정] |
+| `W0_dwa_s08_S0b` | gazebo | gazebo | cebd351 | world actor 42, harness 7 | [측정] |
+| `W0_dwa_s08_S0c` | gazebo | gazebo | cebd351 | world actor 42, harness 7 | [측정] |
+| `W0_dwa_s08_S0d` | gazebo | gazebo | bcc2cca | world actor 42, harness 7 | [측정] |
+| `W0_dwa_s08_S0e` | gazebo | gazebo | bcc2cca | world actor 42, harness 7 | [측정] |
+| `W0_dwa_s08_FINa` | gazebo | gazebo | 80874d3 | world actor 42, harness 7 | [측정] |
+| `W0_dwa_s08_FINb` | gazebo | gazebo | 80874d3 | world actor 42, harness 7 | [측정] |
+| `W0_dwa_s08_regG` | gazebo | gazebo | 80874d3 | world actor 42, harness 7 | [측정] |
+| `W0_dwa_s07_regG` | gazebo | gazebo | 80874d3 | n/a | [측정] |
+| `W0_dwa_s07_E07` | gazebo | gazebo | b37c687 | n/a | [측정] |

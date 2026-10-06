@@ -55,3 +55,16 @@
 ## WAVE 보고와 원자료의 차이
 - WAVE fix 의 "nav |Δω| 0.48·0.47" 은 **전체 틱** 최대(0.482·0.474)다. 전환 틱만 보면 1 회차 0.454 다 (정의 차이, 결론 불변).
 - 그 밖(0.36/0.35/0.35/0.33, 전환 21·22·39·42 회, 8/8 도달)은 원자료와 같다.
+
+## 실행 목록에 등록한 run (`runs/b1-backfill.jsonl`, entry = 이 파일)
+
+| run_id | 종류 | 시뮬 | 커밋 | 시드 | 표기 |
+|---|---|---|---|---|---|
+| `W1_r3_rev_kin_follow_to014_fixed` | test | offline | 45aaf06 | n/a (시간초과 무작위) | [측정] |
+| `W1_r3_rev_kin_follow_to014_prefix` | test | offline | dc56d03 | n/a (시간초과 무작위) | [측정] |
+| `W1_r3_rev_kin_nav_to014_fixed` | test | offline | 45aaf06 | n/a (시간초과 무작위) | [측정] |
+| `W1_r3_rev_kin_nav_to014_prefix` | test | offline | dc56d03 | n/a (시간초과 무작위) | [측정] |
+| `W1_r3_rev2_kin_follow_to014_fixed` | test | offline | ffd359b | n/a (시간초과 무작위) | [측정] |
+| `W1_r3_rev2_kin_follow_to014_prefix` | test | offline | dc56d03 | n/a (시간초과 무작위) | [측정] |
+| `W1_r3_rev2_kin_nav_to014_fixed` | test | offline | ffd359b | n/a (시간초과 무작위) | [측정] |
+| `W1_r3_rev2_kin_nav_to014_prefix` | test | offline | dc56d03 | n/a (시간초과 무작위) | [측정] |

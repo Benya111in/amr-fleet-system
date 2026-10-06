@@ -63,3 +63,24 @@ G2 의 결론 "prog50(= v1.2.0) 은 두 시드 모두 학습된다" 가 독립 �
 - 수정 보고와 contract.md 변경 이력의 "시드 2 성공 0.000" — 원자료 0.000488 (1/2048). 재확인 절이 0.0005 로 적었다. 반올림 차이지만 "성공 0" 은 아니다.
 - 재확인 비차단 2 ("통과 시드가 0.66–3.0M 에 처음 0 을 넘었다" 는 틀림, 실제 0.79–3.01M)·비차단 4 (엔트로피 값의 시점) 는 재확인이 이미 지적했다.
 - 그 밖(시드별 성공, 끌개 지표, L\* 표, 7 건, p\*)은 원자료와 같다.
+
+## 실행 목록에 등록한 run (`runs/b1-backfill.jsonl`, entry = 이 파일)
+
+| run_id | 종류 | 시뮬 | 커밋 | 시드 | 표기 |
+|---|---|---|---|---|---|
+| `W2a_r5_g2_v120_s2` | train | 2d | c9ea4e6 | 2 | [측정] |
+| `W2a_r5_g2_v120_s3` | train | 2d | c9ea4e6 | 3 | [측정] |
+| `W2a_r5_g2_v120_s4` | train | 2d | c9ea4e6 | 4 | [측정] |
+| `W2a_r5_g2_v120_s5` | train | 2d | c9ea4e6 | 5 | [측정] |
+| `W2a_r5_g2_v120_s6` | train | 2d | c9ea4e6 | 6 | [측정] |
+| `W2a_r5_g2_v120_s7` | train | 2d | c9ea4e6 | 7 | [측정] |
+| `W2a_r5_g2_v120_s8` | train | 2d | c9ea4e6 | 8 | [측정] |
+| `W2a_r5_g2_v120_s9` | train | 2d | c9ea4e6 | 9 | [측정] |
+| `W2a_r5_g2_v120_s10` | train | 2d | c9ea4e6 | 10 | [측정] |
+| `W2a_r5_review_v110_s1` | train | 2d | c9ea4e6 | 1 | [측정] |
+| `W2a_r5_review_v120_s1` | train | 2d | c9ea4e6 | 1 | [측정] |
+| `W2a_r5_review_v120_s2` | train | 2d | c9ea4e6 | 2 | [측정] |
+| `W2a_r5_review_v120_full_s2` | train | 2d | c9ea4e6 | 2 | [측정] |
+| `W2a_r5_review_v120_full_s3` | train | 2d | c9ea4e6 | 3 | [측정] |
+| `W2a_r5_review_g01_rerun` | probe | 2d | c9ea4e6 | 777 | [측정] |
+| `W2a_r5_review_eval_ckpt_seed777` | eval | 2d | c9ea4e6 | 777 | [측정] |
