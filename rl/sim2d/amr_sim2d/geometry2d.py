@@ -114,6 +114,53 @@ def rect_hits_obstacles(pose, obs, half_l=C.HALF_L, half_w=C.HALF_W):
     return hit.any(dim=1)
 
 
+def footprint_obstacle_distance(pose, obs, half_l=C.HALF_L, half_w=C.HALF_W):
+    """
+    풋프린트 사각형과 활성 장애물 몸체 사이 최소 거리 [N] (장애물 없음 = inf, 진단용 — 학습 신호 아님).
+
+    원: 사각형-점 거리 − r. 사각형: 두 볼록 다각형이 떨어져 있으면 최소 거리는 한쪽 꼭짓점과 다른 쪽 사이에서
+    나므로 (꼭짓점 8 개 → 상대 사각형) 의 최솟값이다. 겹치면 값이 0 이 아닐 수 있다 — env 는 충돌한 스텝을 0 으로
+    덮는다.
+    """
+    K = obs['xy'].shape[1]
+    if K == 0:
+        return torch.full((pose.shape[0],), float('inf'), dtype=pose.dtype, device=pose.device)
+    x, y, th = pose[:, 0:1], pose[:, 1:2], pose[:, 2:3]
+    c, s = torch.cos(th), torch.sin(th)
+    ox = obs['xy'][..., 0].to(pose.dtype)
+    oy = obs['xy'][..., 1].to(pose.dtype)
+
+    def to_robot_box(wx, wy):
+        dx, dy = wx - x[..., None], wy - y[..., None]
+        lx = c[..., None] * dx + s[..., None] * dy
+        ly = -s[..., None] * dx + c[..., None] * dy
+        return torch.hypot((lx.abs() - half_l).clamp_min(0.0), (ly.abs() - half_w).clamp_min(0.0))
+    d_circ = to_robot_box(ox[..., None], oy[..., None])[..., 0] - obs['r'].to(pose.dtype)
+    box = obs['box'].to(pose.dtype)
+    cb, sb = torch.cos(obs['yaw']).to(pose.dtype), torch.sin(obs['yaw']).to(pose.dtype)
+    sx = torch.tensor([1.0, 1.0, -1.0, -1.0], dtype=pose.dtype, device=pose.device)
+    sy = torch.tensor([1.0, -1.0, 1.0, -1.0], dtype=pose.dtype, device=pose.device)
+    # 로봇 꼭짓점 [N,1,4] → 장애물 좌표 → 장애물 상자까지
+    rcx = x + c * (sx * half_l) - s * (sy * half_w)
+    rcy = y + s * (sx * half_l) + c * (sy * half_w)
+    rx = rcx[:, None, :] - ox[..., None]
+    ry = rcy[:, None, :] - oy[..., None]
+    bx = cb[..., None] * rx + sb[..., None] * ry
+    by = -sb[..., None] * rx + cb[..., None] * ry
+    qx = torch.minimum(torch.maximum(bx, box[..., 0:1]), box[..., 1:2])
+    qy = torch.minimum(torch.maximum(by, box[..., 2:3]), box[..., 3:4])
+    d1 = torch.hypot(bx - qx, by - qy).min(dim=-1).values
+    # 장애물 꼭짓점 [N,K,4] → 로봇 상자까지
+    ex = torch.stack([box[..., 1], box[..., 1], box[..., 0], box[..., 0]], -1)
+    ey = torch.stack([box[..., 3], box[..., 2], box[..., 3], box[..., 2]], -1)
+    wx = ox[..., None] + cb[..., None] * ex - sb[..., None] * ey
+    wy = oy[..., None] + sb[..., None] * ex + cb[..., None] * ey
+    d2 = to_robot_box(wx, wy).min(dim=-1).values
+    d = torch.where(obs['kind'] == 0, d_circ, torch.minimum(d1, d2)).clamp_min(0.0)
+    d = torch.where(obs['active'], d, torch.full_like(d, float('inf')))
+    return d.min(dim=1).values
+
+
 # ------------------------------------------------------------------ 스윕 접근 거리
 def _max_point_speed(a, b, v, w):
     best = torch.zeros_like(v)

@@ -178,12 +178,16 @@ class PPOConfig:
     target_kl: float = 0.03
     hidden: tuple = (256, 256)
     reward_norm: bool = True
-    # 라그랑주 승수 (계약 §7): 비용 채널별 PI 갱신 λ ← max(0, λ_I + Kp·e), λ_I += Ki·e,
-    # e = (끝난 에피소드의 평균 비할인 비용 합 − 예산). 예산 None 인 채널(개입, §7.2 미정)은 λ = 0.
+    # 라그랑주 승수 (계약 §7): 비용 채널별 PID 갱신 λ ← clip(λ_I + Kp·e + Kd·max(0, e − e_prev), 0, λ_max),
+    # λ_I ← max(0, λ_I + Ki·e), e = (끝난 에피소드 평균 비할인 비용 합의 EMA − 예산) (Stooke 2020 PID Lagrangian,
+    # 「이론」 249행). 예산 None 인 채널(개입, §7.2 미정)과 lag_channels 밖 채널은 λ = 0.
     lagrangian: bool = False
     lag_kp: float = 0.0
     lag_ki: float = 2e-4
+    lag_kd: float = 0.0
     lag_max: float = 2.0
+    lag_ema: float = 0.0                     # 비용 EMA 계수 (0 = 이번 갱신 값 그대로)
+    lag_channels: tuple = None               # None = 예산이 있는 모든 채널
     budgets: tuple = C.COST_BUDGETS
 
 
@@ -220,6 +224,8 @@ class Trainer:
         self.ep_hist = []
         self.lam = torch.zeros(C.N_COSTS, device=dev)
         self.lam_i = torch.zeros(C.N_COSTS, device=dev)
+        self.lag_cost = [None] * C.N_COSTS     # 비용 EMA
+        self.lag_err = [0.0] * C.N_COSTS       # 직전 오차 (D 항)
 
     def _scale(self, r, done):
         """할인 수익 표준편차로 나누기만 (계약 §6). done 이면 누적 수익 초기화."""
@@ -282,14 +288,21 @@ class Trainer:
         """끝난 에피소드의 평균 비용 합으로 λ 를 PI 갱신 → λ 목록."""
         if not (self.cfg.lagrangian and eps):
             return self.lam.tolist()
+        cfg = self.cfg
         cost = torch.cat([e['cost'] for e in eps]).float().mean(0)
-        for i, d in enumerate(self.cfg.budgets):
-            if d is None:
+        for i, d in enumerate(cfg.budgets):
+            if d is None or (cfg.lag_channels is not None and i not in cfg.lag_channels):
                 continue
-            e = float(cost[i]) - d
-            self.lam_i[i] = max(0.0, float(self.lam_i[i]) + self.cfg.lag_ki * e)
-            lam = max(0.0, float(self.lam_i[i]) + self.cfg.lag_kp * e)
-            self.lam[i] = min(self.cfg.lag_max, lam)
+            c = float(cost[i])
+            if self.lag_cost[i] is not None and cfg.lag_ema > 0:
+                c = cfg.lag_ema * self.lag_cost[i] + (1.0 - cfg.lag_ema) * c
+            self.lag_cost[i] = c
+            e = c - d
+            self.lam_i[i] = max(0.0, float(self.lam_i[i]) + cfg.lag_ki * e)
+            de = max(0.0, e - self.lag_err[i])
+            lam = float(self.lam_i[i]) + cfg.lag_kp * e + cfg.lag_kd * de
+            self.lag_err[i] = e
+            self.lam[i] = min(cfg.lag_max, max(0.0, lam))
         return self.lam.tolist()
 
     def behavior_clone(self, demo, steps, epochs=30, batch=8192, z_clip=0.97, log=print):
@@ -446,6 +459,24 @@ def episode_summary(eps):
         out['max_e'] = float(cat['max_e'].double().mean())
         out['goal_min_median'] = float(cat['goal_min'].double().median())
         out['near_goal_0p5'] = float((cat['goal_min'] <= 0.5).double().mean())
+    if 'min_sep' in cat:      # 동적 장애물 진단 (r6-dyn): 정지 중·회전 중 접촉, 최소 이격, 배치 수준별 성공
+        coll = cat['collision']
+        out['collision_stationary'] = float((coll & ~cat['collision_moving']).float().mean())
+        out['collision_turning'] = float(cat['collision_turning'].float().mean())
+        ms = cat['min_sep'].double()
+        fin = torch.isfinite(ms)
+        out['episodes_with_obstacles'] = int(fin.sum())
+        if bool(fin.any()):
+            out['min_sep_median'] = float(ms[fin].median())
+            out['min_sep_mean'] = float(ms[fin].mean())
+            out['min_sep_lt_0p3'] = float((ms[fin] < 0.3).double().mean())
+        lvl = cat['level']
+        out['by_level'] = {}
+        for k in torch.unique(lvl).tolist():
+            m = lvl == k
+            out['by_level'][str(k)] = {'n': int(m.sum()),
+                                       'success': float(cat['success'][m].float().mean()),
+                                       'collision': float(coll[m].float().mean())}
     return out
 
 

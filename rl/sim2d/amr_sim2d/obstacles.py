@@ -11,6 +11,10 @@
 배치 방식:
   - 'random': 로봇 A* 경로를 가로지르거나 마주 오는 선분을 env 마다 뽑는다 (DR 축 3).
   - 'gazebo': 팀 Gazebo 월드의 7 개 (gen_warehouse_world.py:28-35, worker_random 제외) 를 무작위 위상으로.
+시작점 거르기 (clear_start, 2차 물결 r6-dyn): 배치 뒤 처음 window 초 동안 장애물 몸체가 시작점에서 radius 안으로
+들어오는 슬롯은 위상을 다시 뽑고, tries 번 안에 못 고치면 끈다. 서 있는 로봇이 반응할 틈 없이 맞는 피할 수 없는
+에피소드를 없애려는 것이다 (「이론」 295행 "해결 불가능한 레벨은 미리 제거"). 근거·측정:
+docs/research/rl-navigation/dyn_obstacles.md §2.
 """
 
 import math
@@ -100,6 +104,61 @@ class Obstacles:
         yaw = torch.where(self.mot == MOT_CIRCLE, ang + 0.5 * math.pi, yaw_p)
         return {'xy': xy, 'vel': vel, 'yaw': yaw, 'kind': self.kind, 'r': self.r,
                 'box': self.box, 'active': self.active}
+
+    def start_conflict(self, idx, t0, start_xy, window, radius, dt=0.25):
+        """
+        [n,K] bool — 활성 슬롯 몸체가 시각 t0 … t0 + window 사이 (dt 간격) 시작점 radius 안에 들어오는가.
+
+        몸체 거리는 body_distance (원 반경·사각형 모양 그대로), 시작점은 로봇 중심(base_link) 이다. 시각 축은
+        env 축에 펼쳐 한 번에 계산한다 (부분집합 리셋마다 불리므로 커널 수를 시각 수와 무관하게).
+        """
+        from .kernels import obstacle_state
+        n = idx.numel()
+        steps = int(math.floor(window / dt + 1e-9)) + 1
+        ts = torch.arange(steps, device=self.device, dtype=self.dtype) * dt
+        tt = (t0[None, :] + ts[:, None]).reshape(-1)                     # [steps·n]
+
+        def rep(x):
+            return x[idx].repeat(steps, *([1] * (x.dim() - 1)))
+        keys = ('active', 'kind', 'r', 'box', 'mot', 'a', 'b', 'speed', 'phase')
+        o = {k: rep(getattr(self, k)) for k in keys}
+        st = obstacle_state(o, tt)
+        d = body_distance(st, start_xy.repeat(steps, 1)).reshape(steps, n, self.k)
+        return (d < radius).any(dim=0) & self.active[idx]
+
+    def clear_start(self, idx, t0, start_xy, window, radius, gen, tries=8):
+        """
+        시작점 거르기 — 처음 window 초 동안 시작점 radius 안에 들어오는 슬롯을 다시 뽑거나 끈다.
+
+        걸린 슬롯은 위상을 tries 번까지 다시 뽑고 그래도 걸리면 끈다. 반환 dict(conflict0, rephased, disabled)
+        — 슬롯 수 (진단).
+
+        위상은 같은 운동의 주기 안에서 균등하게 다시 뽑는다 (왕복 2L/v, 원 2πr/v). 서 있는 장애물(속력 0)은 위상이
+        바뀌어도 같은 자리라 바로 끈다. window ≤ 0 이면 아무것도 하지 않는다.
+        """
+        out = {'conflict0': 0, 'rephased': 0, 'disabled': 0}
+        if window <= 0 or idx.numel() == 0:
+            return out
+        bad = self.start_conflict(idx, t0, start_xy, window, radius)
+        out['conflict0'] = int(bad.sum())
+        first = bad.clone()
+        L = torch.linalg.norm(self.b[idx] - self.a[idx], dim=-1)
+        sp = self.speed[idx]
+        period = torch.where(self.mot[idx] == MOT_CIRCLE, 2.0 * math.pi * self.b[idx][..., 0],
+                             2.0 * L) / sp.clamp_min(1e-6)
+        movable = (sp > 0) & (period > 0)
+        for _ in range(tries):
+            if not bool((bad & movable).any()):
+                break
+            u = torch.rand(bad.shape, generator=gen, device=self.device, dtype=self.dtype)
+            ph = self.phase[idx]
+            self.phase[idx] = torch.where(bad & movable, u * period, ph)
+            bad = self.start_conflict(idx, t0, start_xy, window, radius)
+        act = self.active[idx]
+        self.active[idx] = act & ~bad
+        out['disabled'] = int(bad.sum())
+        out['rephased'] = int((first & ~bad).sum())
+        return out
 
     # ------------------------------------------------------------ 배치
     def place_gazebo(self, idx, t0, gen):
@@ -198,6 +257,24 @@ class Obstacles:
         near = torch.linalg.norm(st['xy'][idx] - start_xy[:, None, :], dim=-1) < \
             min_start_dist + ext
         self.active[idx] = self.active[idx] & ~near
+
+
+def body_distance(st, p):
+    """
+    장애물 몸체(원·회전 사각형)에서 점 p 까지의 거리 [n,K] (안쪽 0).
+
+    st: Obstacles.state() 꼴 dict 의 [n,K] 부분 (xy, yaw, kind, r, box), p: [n,2].
+    """
+    d = p[:, None, :] - st['xy']
+    circ = torch.linalg.norm(d, dim=-1) - st['r']
+    c, s = torch.cos(st['yaw']), torch.sin(st['yaw'])
+    lx = c * d[..., 0] + s * d[..., 1]
+    ly = -s * d[..., 0] + c * d[..., 1]
+    box = st['box']
+    qx = torch.minimum(torch.maximum(lx, box[..., 0]), box[..., 1])
+    qy = torch.minimum(torch.maximum(ly, box[..., 2]), box[..., 3])
+    rect = torch.hypot(lx - qx, ly - qy)
+    return torch.where(st['kind'] == KIND_CIRCLE, circ, rect).clamp_min(0.0)
 
 
 def _edt_at(edt, map_meta, map_idx, xy):
