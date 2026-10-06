@@ -233,6 +233,7 @@ TickResult DecisionEngine::tick(TickInput & in)
     synced_ = true;
   }
   last_tick_ = in.now;
+  v_cap_ = in.state.v_cap;
 
   TickResult res;
   if (kind_ == Kind::kNone || tick_in_period_ >= ticks_per_decision_) {
@@ -264,10 +265,39 @@ TickResult DecisionEngine::tick(TickInput & in)
   return res;
 }
 
-void DecisionEngine::commitDwa(double v, double w)
+FallbackCommand DecisionEngine::brakeStep() const
 {
-  v_out_ = v;
-  w_out_ = w;
+  const double dv = C::kAMax * cfg_.control_period;
+  const double dw = C::kAlphaMax * cfg_.control_period;
+  FallbackCommand c;
+  c.v = v_out_ > 0.0 ? std::max(0.0, v_out_ - dv) : std::min(0.0, v_out_ + dv);
+  c.w = w_out_ - std::copysign(std::min(std::abs(w_out_), dw), w_out_);
+  return c;
+}
+
+FallbackCommand DecisionEngine::commitDwa(double v, double w)
+{
+  // (리뷰 반영) 내부 DWA 는 자기가 마지막으로 낸 명령을 창 중심으로 쓴다. 정책·정렬 구간 뒤에는
+  // 그 값이 낡아, 창이 실제 직전 명령과 어긋난 채 고른 명령이 한 틱에 a_max·Δt_c 를 넘게 뛰었다
+  // (0.30 → 0.15 m/s, 또는 속도 제한 0.20 아래에서 0.35 로 재가속). 그래서 실제로 낸 명령을
+  // 중심으로 계약 동적 창에 다시 넣는다. 매 DWA 틱마다 — 첫 틱만 자르면 DWA 의 v_last 가 계속
+  // 어긋난 채라 다음 틱에 다시 뛴다.
+  FallbackCommand c;
+  if (!std::isfinite(v) || !std::isfinite(w)) {
+    c = brakeStep();
+    c.limited = true;
+  } else {
+    const double dv = C::kAMax * cfg_.control_period;
+    const double dw = C::kAlphaMax * cfg_.control_period;
+    const double v_lo = v_out_ - dv;
+    const double v_hi = std::max(v_lo, std::min(v_cap_, v_out_ + dv));
+    c.v = clamp(v, v_lo, v_hi);
+    c.w = clamp(clamp(w, w_out_ - dw, w_out_ + dw), -C::kWMax, C::kWMax);
+    c.limited = c.v != v || c.w != w;
+  }
+  v_out_ = c.v;
+  w_out_ = c.w;
+  return c;
 }
 
 }  // namespace amr_rl_controller

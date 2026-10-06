@@ -28,7 +28,7 @@ constexpr const char * kStatsFields =
   "5 dwa_reason(0 none 1 state 2 policy_error 3 timeout 4 nonfinite), 6 action, 7 model_action, "
   "8 n_valid, 9 saturated, 10 v, 11 w, 12 new_decision, 13 decisions, 14 dwa_decisions, "
   "15 fallback_cell, 16 invalid_action, 17 timeouts, 18 scan_age, 19 track_age, 20 n_tracks, "
-  "21 v_cap, 22 dev_in, 23 dev_peak";
+  "21 v_cap, 22 dev_in, 23 dev_peak, 24 dwa_limited(누적: 계약 동적 창으로 자른 DWA 틱)";
 
 double toDouble(const std::string & s, double dflt)
 {
@@ -392,13 +392,22 @@ geometry_msgs::msg::TwistStamped RLController::computeVelocityCommands(
       w = cmd.twist.angular.z;
     } else {
       // DWA 폴백을 끈 경우: 계약 폴백 규칙(최대 감속, ω 를 0 쪽으로)을 한 틱 만큼
-      const double dt = engine_->config().control_period;
-      const double v0 = engine_->lastV();
-      const double w0 = engine_->lastW();
-      v = v0 > 0.0 ? std::max(0.0, v0 - C::kAMax * dt) : std::min(0.0, v0 + C::kAMax * dt);
-      w = w0 - std::copysign(std::min(std::abs(w0), C::kAlphaMax * dt), w0);
+      const auto b = engine_->brakeStep();
+      v = b.v;
+      w = b.w;
     }
-    engine_->commitDwa(v, w);
+    // 내부 DWA 의 창 중심은 정책 구간 동안 낡는다 → 실제 직전 명령 기준 계약 동적 창으로 자른다
+    const auto c = engine_->commitDwa(v, w);
+    if (c.limited) {
+      ++counters_.dwa_limited;
+      RCLCPP_WARN_THROTTLE(
+        logger_, *clock_, 2000,
+        "RLController: DWA 명령 (%.3f, %.3f) → (%.3f, %.3f) 계약 가속 한계로 자름 (창 중심 낡음)",
+        v, w, c.v, c.w);
+    }
+    v = c.v;
+    w = c.w;
+    r.dwa_limited = c.limited;
   }
 
   ++counters_.ticks;
@@ -440,9 +449,9 @@ geometry_msgs::msg::TwistStamped RLController::computeVelocityCommands(
     RCLCPP_INFO(
       logger_,
       "RLController: 틱 %zu, 결정 %zu, DWA 폴백(입력 %zu, 오류 %zu, 시간초과 %zu, 비유한 %zu), "
-      "계약 폴백 셀 %zu, 마스크 밖 %zu, 정렬 %zu",
+      "계약 폴백 셀 %zu, 마스크 밖 %zu, 정렬 %zu, DWA 자름 %zu",
       c.ticks, c.decisions, c.dwa[1], c.dwa[2], c.dwa[3], c.dwa[4], c.fallback_cell,
-      c.invalid_action, c.align);
+      c.invalid_action, c.align, c.dwa_limited);
   }
   return cmd;
 }
@@ -466,7 +475,8 @@ void RLController::publishStats(const TickResult & r, double cycle_ms, const Tic
     static_cast<double>(c.fallback_cell), static_cast<double>(c.invalid_action),
     static_cast<double>(c.dwa[static_cast<std::size_t>(DwaReason::kTimeout)]),
     in.state.scan_age, in.state.track_age, static_cast<double>(in.state.tracks.size()),
-    in.state.v_cap, engine_->dev().in_dev ? 1.0 : 0.0, engine_->dev().peak};
+    in.state.v_cap, engine_->dev().in_dev ? 1.0 : 0.0, engine_->dev().peak,
+    static_cast<double>(c.dwa_limited)};
   stats_pub_->publish(st);
 }
 

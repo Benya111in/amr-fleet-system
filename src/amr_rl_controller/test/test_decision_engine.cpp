@@ -149,24 +149,96 @@ TEST(DecisionEngine, DwaFallbackReasons)
     EXPECT_TRUE(r.need_dwa) << c.name;
     EXPECT_EQ(r.dwa_reason, c.why) << c.name;
     EXPECT_EQ(r.source, Source::kDwa) << c.name;
-    eng.commitDwa(0.15, 0.05);
+    EXPECT_FALSE(eng.commitDwa(0.05, 0.05).limited) << c.name;
     auto in2 = openInput(0.05);
     r = eng.tick(in2);
     EXPECT_TRUE(r.need_dwa) << c.name;   // 결정 주기 전체가 DWA
     EXPECT_FALSE(r.new_decision);
-    eng.commitDwa(0.3, 0.1);
-    // 다음 결정: v_cmd = 마지막 DWA 명령, 실행 가속도 = (0.3 − 0)/0.1
+    EXPECT_FALSE(eng.commitDwa(0.1, 0.15).limited) << c.name;
+    // 다음 결정: v_cmd = 마지막 DWA 명령, 실행 가속도 = (0.1 − 0)/0.1, (0.15 − 0)/0.1
     p.ok = true;
     p.infer_ms = 0.1;
     p.u0 = 0.0f;
     auto in3 = openInput(0.1);
     r = eng.tick(in3);
     EXPECT_FALSE(r.need_dwa) << c.name;
-    EXPECT_NEAR(eng.vCmd(), 0.3, 1e-12) << c.name;
-    EXPECT_NEAR(eng.wCmd(), 0.1, 1e-12) << c.name;
-    EXPECT_NEAR(eng.prevActions()[0].first, 3.0, 1e-9) << c.name;
-    EXPECT_NEAR(eng.prevActions()[0].second, 1.0, 1e-9) << c.name;
+    EXPECT_NEAR(eng.vCmd(), 0.1, 1e-12) << c.name;
+    EXPECT_NEAR(eng.wCmd(), 0.15, 1e-12) << c.name;
+    EXPECT_NEAR(eng.prevActions()[0].first, 1.0, 1e-9) << c.name;
+    EXPECT_NEAR(eng.prevActions()[0].second, 1.5, 1e-9) << c.name;
   }
+}
+
+// 리뷰 반영: DWA 틱의 명령도 실제 직전 명령 기준 계약 동적 창 안으로 (내부 DWA 의 창 중심이 낡음)
+TEST(DecisionEngine, DwaCommandIsLimitedToContractWindowAroundLastCommand)
+{
+  const double dv = C::kAMax * 0.05;
+  const double dw = C::kAlphaMax * 0.05;
+  FakePolicy p(Arm::kB);   // u0 0.5 → a_v 0.5 m/s²
+  DecisionEngine eng(EngineConfig{}, &p);
+  for (int k = 0; k < 4; ++k) {
+    auto in = openInput(0.05 * k);
+    ASSERT_FALSE(eng.tick(in).need_dwa);
+  }
+  ASSERT_NEAR(eng.lastV(), 0.10, 1e-12);
+  ASSERT_NEAR(eng.lastW(), 0.0, 1e-12);
+
+  // 정책 실패 → DWA 주기. 낡은 창 중심에서 고른 (0.30, 0.6): v ≤ min(v_cap 0.12, 0.10 + dv)
+  p.ok = false;
+  auto in = openInput(0.20, 0.10);
+  in.state.v_cap = 0.12;
+  ASSERT_TRUE(eng.tick(in).need_dwa);
+  auto c = eng.commitDwa(0.30, 0.6);
+  EXPECT_TRUE(c.limited);
+  EXPECT_NEAR(c.v, 0.12, 1e-12);
+  EXPECT_NEAR(c.w, dw, 1e-12);
+  EXPECT_NEAR(eng.lastV(), 0.12, 1e-12);
+  EXPECT_NEAR(eng.lastW(), dw, 1e-12);
+
+  // 같은 주기 둘째 틱: 감속 쪽 큰 점프 (−0.5, −1.0) → 한 틱 최대 감속
+  in = openInput(0.25, 0.12);
+  in.state.v_cap = 0.12;
+  auto r = eng.tick(in);
+  ASSERT_TRUE(r.need_dwa);
+  ASSERT_FALSE(r.new_decision);
+  c = eng.commitDwa(-0.5, -1.0);
+  EXPECT_TRUE(c.limited);
+  EXPECT_NEAR(c.v, 0.12 - dv, 1e-12);
+  EXPECT_NEAR(c.w, 0.0, 1e-12);
+
+  // 창 안 요청은 그대로
+  in = openInput(0.30, 0.07);
+  ASSERT_TRUE(eng.tick(in).need_dwa);
+  c = eng.commitDwa(0.09, -0.08);
+  EXPECT_FALSE(c.limited);
+  EXPECT_NEAR(c.v, 0.09, 1e-12);
+  EXPECT_NEAR(c.w, -0.08, 1e-12);
+
+  // 속도 제한이 직전 명령 아래로 떨어지면 최대 감속만 (요청이 더 빨라도)
+  in = openInput(0.35, 0.09);
+  in.state.v_cap = 0.0;
+  ASSERT_TRUE(eng.tick(in).need_dwa);
+  c = eng.commitDwa(0.5, -0.08);
+  EXPECT_TRUE(c.limited);
+  EXPECT_NEAR(c.v, 0.09 - dv, 1e-12);
+
+  // 비유한 요청 → 계약 제동 규칙 (v·ω 를 0 쪽으로)
+  in = openInput(0.40, 0.04);
+  ASSERT_TRUE(eng.tick(in).need_dwa);
+  c = eng.commitDwa(std::numeric_limits<double>::quiet_NaN(), 0.0);
+  EXPECT_TRUE(c.limited);
+  EXPECT_NEAR(c.v, 0.0, 1e-12);
+  EXPECT_NEAR(c.w, 0.0, 1e-12);
+
+  // ω 는 ±ω_max 안: 직전 1.45 에서 2.0 요청 → 1.5
+  EngineConfig cfg;
+  DecisionEngine e2(cfg, &p);
+  auto in2 = openInput(0.0);
+  in2.state.w_meas = 1.45;
+  ASSERT_TRUE(e2.tick(in2).need_dwa);   // p.ok = false → DWA, 재동기 ω = 1.45
+  c = e2.commitDwa(0.0, 2.0);
+  EXPECT_TRUE(c.limited);
+  EXPECT_NEAR(c.w, C::kWMax, 1e-12);
 }
 
 TEST(DecisionEngine, ModeCChoosesMaskedCellAndRechecksMask)

@@ -11,9 +11,9 @@
 - 크기 대표 모델 (지연 측정용, --sizes 일 때만): size_c_mlp256 (MLP 391→256→256→100),
   size_c_cnn_gru128 (섹터 180 Conv1d 2 층 + MLP + GRU 128), size_b_mlp256 (291→256→256→2).
   학습 정책이 아직 없어서 실무 보고서·계약이 권하는 구조의 크기만 흉내 낸다.
-- 손으로 만든 배관 시험 정책 (--sizes 일 때, 학습 아님): heuristic_c·heuristic_b — 관측의 subgoal 2
-  (1 m 앞) 방위로 목표 (v, ω) 를 정하고 가속도 공간 P 제어로 고른다. 폐루프 스모크에서 플러그인·마스크·
-  적분 배관을 보려는 것이지 RL 성능과 무관하다.
+- 손으로 만든 배관 시험 정책 (학습 아님): heuristic_c·heuristic_b — 관측의 subgoal 2
+  (1 m 앞) 방위로 목표 (v, ω) 를 정하고 가속도 공간 P 제어로 고른다. 폐루프 스모크와 플러그인 시험
+  (정책 → DWA 전환)에서 플러그인·마스크·적분 배관을 보려는 것이지 RL 성능과 무관하다.
 저장소 .gitignore 가 *.onnx 를 무시하므로 모델은 커밋하지 않고 시험 때 만든다.
 """
 
@@ -248,9 +248,9 @@ def main(out_dir, sizes=False):
     b_path, c_path = mf.export(out_dir)
     _gru_and_nan(out_dir)
     _defects(out_dir, c_path)
+    _heuristic(out_dir)
     if sizes:
         _sizes(out_dir)
-        _heuristic(out_dir)
     print('models:', ' '.join(sorted(f for f in os.listdir(out_dir) if f.endswith('.onnx'))))
 
 

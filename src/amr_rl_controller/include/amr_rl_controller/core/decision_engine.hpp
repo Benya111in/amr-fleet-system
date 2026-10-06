@@ -8,6 +8,9 @@
 //    그 주기의 모든 틱은 호출자가 DWA 로 명령을 만들고 commitDwa() 로 알려 준다.
 //  - 목표 성공 조건(xy ≤ 0.10 m, |v| ≤ 0.05 m/s)에서는 정책 대신 제자리 yaw 정렬 (contract.md §8).
 //  - prev_actions = 실제로 낸 명령의 결정 주기 가속도 (DWA·정렬 주기 포함), 최근 순.
+//  - DWA 명령도 직전에 실제로 낸 명령 기준 계약 동적 창(a_max·Δt_c, α_max·Δt_c, v_cap) 안으로
+//    자른다 (commitDwa). 내부 DWA 의 창 중심(v_last)은 DWA 가 돈 틱에만 갱신되므로 정책·정렬
+//    구간 뒤에는 낡아 있고, DWAController 에 그것을 맞출 공개 API 가 없다.
 #ifndef AMR_RL_CONTROLLER__CORE__DECISION_ENGINE_HPP_
 #define AMR_RL_CONTROLLER__CORE__DECISION_ENGINE_HPP_
 
@@ -69,7 +72,16 @@ struct TickResult
   double obs_ms{0.0};
   double mask_ms{0.0};
   double infer_ms{0.0};
+  bool dwa_limited{false};        ///< 이 틱의 DWA 명령을 계약 동적 창으로 잘랐다 (호출자가 채움)
   std::string error;
+};
+
+/// need_dwa 틱에 실제로 낼 명령 (commitDwa 의 결과).
+struct FallbackCommand
+{
+  double v{0.0};
+  double w{0.0};
+  bool limited{false};            ///< 요청이 계약 동적 창 밖(또는 비유한)이라 바꿨다
 };
 
 class DecisionEngine
@@ -82,8 +94,13 @@ public:
   /// 새 목표 (에피소드 경계): 은닉 상태·이탈 상태만 0 (속도 명령은 연속).
   void resetEpisode();
   TickResult tick(TickInput & in);
-  /// need_dwa 틱에 실제로 낸 명령.
-  void commitDwa(double v, double w);
+  /// need_dwa 틱: 호출자가 만든 명령을 직전에 낸 명령 (lastV, lastW) 기준 계약 동적 창
+  /// v ∈ [lastV − a_max·Δt_c, min(v_cap, lastV + a_max·Δt_c)] (상한 < 하한이면 하한: 최대 감속),
+  /// ω ∈ [lastW − α_max·Δt_c, lastW + α_max·Δt_c] ∩ [−ω_max, ω_max] 로 잘라 기록하고 돌려준다.
+  /// 비유한 요청은 brakeStep(). Δt_c = control_period, v_cap = 이번 틱 입력의 v_cap.
+  FallbackCommand commitDwa(double v, double w);
+  /// 계약 제동 규칙 한 틱: v 를 0 쪽으로 a_max·Δt_c, ω 를 0 쪽으로 α_max·Δt_c (DWA 폴백 끔·비유한).
+  FallbackCommand brakeStep() const;
 
   double vCmd() const {return v_cmd_;}
   double wCmd() const {return w_cmd_;}
@@ -114,6 +131,7 @@ private:
   Command target_;                ///< 정책·정렬 주기의 끝 명령과 실행 가속도
   double v_out_{0.0};             ///< 마지막으로 낸 명령
   double w_out_{0.0};
+  double v_cap_{contract::kVMaxOp};  ///< 마지막 틱 입력의 v_cap (commitDwa 의 상한)
   std::array<Accel, contract::kNPrevActions> prev_{};
   DevState dev_;
   int prev_cell_{-1};

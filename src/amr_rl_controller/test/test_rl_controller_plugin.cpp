@@ -5,8 +5,10 @@
 //  - 스캔 없음 → DWA 폴백(입력 무효), 스캔 있음 → 정책 결정(C·B), 명령 한계
 //  - 계약 위반 모델·모드 불일치·빈 경로 → configure 예외
 //  - 추론 시간 초과 → DWA, DWA 폴백 끔 → 계약 제동 규칙, setSpeedLimit → v_cap
+//  - 정책 → DWA 폴백 전환에서도 틱당 계약 가속 한계·속도 제한 (내부 DWA 의 창 중심이 낡음)
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -166,6 +168,34 @@ std::vector<rclcpp::Parameter> params(
   p.insert(p.end(), extra.begin(), extra.end());
   return p;
 }
+
+/// 완전 추종 폐루프 (측정 속도 = 직전 명령, 직선 경로 y = 3 위 전진). 틱마다 직전 명령과의
+/// 차이 최댓값을 모은다.
+struct Loop
+{
+  explicit Loop(RLController & c)
+  : ctrl(c) {}
+  RLController & ctrl;
+  geometry_msgs::msg::Twist vel;
+  double x{1.0};
+  double max_dv{0.0};
+  double max_dw{0.0};
+
+  amr_rl_controller::TickResult step()
+  {
+    const auto cmd = ctrl.computeVelocityCommands(pose(x, 3.0, 0.0), vel, nullptr);
+    max_dv = std::max(max_dv, std::abs(cmd.twist.linear.x - vel.linear.x));
+    max_dw = std::max(max_dw, std::abs(cmd.twist.angular.z - vel.angular.z));
+    vel.linear.x = cmd.twist.linear.x;
+    vel.angular.z = cmd.twist.angular.z;
+    x += vel.linear.x * 0.05;
+    return ctrl.lastResult();
+  }
+  void resetMax() {max_dv = max_dw = 0.0;}
+};
+
+constexpr double kDvTick = C::kAMax * 0.05;       // a_max·Δt_c (20 Hz)
+constexpr double kDwTick = C::kAlphaMax * 0.05;   // α_max·Δt_c
 }  // namespace
 
 TEST(RLControllerPlugin, PluginlibLoadsByName)
@@ -213,7 +243,7 @@ TEST(RLControllerPlugin, ModeCRunsPolicyWhenScanArrives)
   EXPECT_EQ(c.dwa[1], 1U);
   rig.spin();
   ASSERT_FALSE(rig.stats.empty());
-  EXPECT_EQ(rig.stats.back().data.size(), 24U);
+  EXPECT_EQ(rig.stats.back().data.size(), 25U);
   ctrl.deactivate();
   ctrl.cleanup();
 }
@@ -341,4 +371,86 @@ TEST(RLControllerPlugin, NoPlanThrows)
   EXPECT_THROW(
     ctrl.computeVelocityCommands(pose(1.0, 3.0, 0.0), geometry_msgs::msg::Twist(), nullptr),
     nav2_core::PlannerException);
+}
+
+// 리뷰 반영 (낡은 창 중심, 낮은 쪽): DWA 2 틱(내부 v_last 0.10) → 정책이 0.30 까지 가속 → 낡은 스캔
+// → DWA. 고치기 전에는 DWA 가 0.10 중심 창에서 골라 0.30 → 0.15 (−3.0 m/s²) 로 뛰었다.
+TEST(RLControllerPlugin, PolicyToDwaHandoverKeepsContractStepLimits)
+{
+  REQUIRE_MODELS();
+  Rig rig("h", params("heuristic_c.onnx", "C"));
+  RLController ctrl;
+  ctrl.configure(rig.node, "FollowPath", rig.tf, rig.costmap);
+  ctrl.activate();
+  ctrl.setPlan(straightPlan(1.0, 3.0, 8.0));
+  Loop loop(ctrl);
+  for (int k = 0; k < 2; ++k) {
+    ASSERT_EQ(loop.step().source, Source::kDwa) << k;   // 스캔 없음
+  }
+  bool reached = false;
+  for (int k = 0; k < 200 && !reached; ++k) {
+    rig.publishScan();
+    const auto r = loop.step();
+    ASSERT_NE(r.source, Source::kDwa) << k << " " << r.error;
+    reached = loop.vel.linear.x >= 0.30 - 1e-9 && !r.new_decision;   // 결정 주기 끝
+  }
+  ASSERT_TRUE(reached);
+  const double v_hand = loop.vel.linear.x;
+  ASSERT_LE(v_hand, 0.10 + 0.3);   // 내부 DWA 가 측정값으로 창을 다시 잡지 않는 범위 (0.3)
+  const auto limited0 = ctrl.counters().dwa_limited;
+  for (int j = 0; j < 6; ++j) {
+    rig.publishScan(std::numeric_limits<double>::infinity(), 1.0);   // 낡은 스캔 → DWA
+    const auto r = loop.step();
+    ASSERT_EQ(r.source, Source::kDwa) << j;
+    if (j == 0) {
+      EXPECT_TRUE(r.dwa_limited);   // 시험이 낡은 창을 실제로 밟았다
+    }
+  }
+  EXPECT_LE(loop.max_dv, kDvTick + 1e-9);
+  EXPECT_LE(loop.max_dw, kDwTick + 1e-9);
+  const auto limited = ctrl.counters().dwa_limited;
+  EXPECT_GE(limited, limited0 + 1U);
+  rig.spin();
+  ASSERT_FALSE(rig.stats.empty());
+  EXPECT_NEAR(rig.stats.back().data[24], static_cast<double>(limited), 1e-12);
+}
+
+// 리뷰 반영 (낡은 창 중심, 높은 쪽 + 속도 제한): DWA 8 틱(내부 v_last 0.40) → 속도 제한 0.20 아래로
+// 정책 구간이 감속 → 낡은 스캔 → DWA. 고치기 전에는 DWA 가 0.40 중심 창의 "최대 감속" 0.35 를 내
+// 제한 0.20 위로 다시 가속했다. 첫 틱만 자르면 DWA 의 v_last 가 계속 어긋나 둘째 틱에 다시 뛴다.
+TEST(RLControllerPlugin, DwaAfterPolicyDecelerationStaysUnderSpeedLimit)
+{
+  REQUIRE_MODELS();
+  Rig rig("hs", params("heuristic_c.onnx", "C"));
+  RLController ctrl;
+  ctrl.configure(rig.node, "FollowPath", rig.tf, rig.costmap);
+  ctrl.activate();
+  ctrl.setPlan(straightPlan(1.0, 3.0, 8.0));
+  Loop loop(ctrl);
+  for (int k = 0; k < 8; ++k) {
+    ASSERT_EQ(loop.step().source, Source::kDwa) << k;   // 스캔 없음
+  }
+  ASSERT_GT(loop.vel.linear.x, 0.30);   // 내부 DWA 의 v_last
+  ctrl.setSpeedLimit(0.20, false);
+  bool reached = false;
+  for (int k = 0; k < 40 && !reached; ++k) {
+    rig.publishScan();
+    const auto r = loop.step();
+    ASSERT_NE(r.source, Source::kDwa) << k << " " << r.error;
+    reached = loop.vel.linear.x <= 0.20 + 1e-9 && !r.new_decision;
+  }
+  ASSERT_TRUE(reached);
+  ASSERT_GE(loop.vel.linear.x, 0.40 - 0.3);   // 내부 DWA 가 낡은 v_last 를 창 중심으로 쓰는 범위
+  loop.resetMax();
+  std::size_t limited = 0;
+  for (int j = 0; j < 8; ++j) {
+    rig.publishScan(std::numeric_limits<double>::infinity(), 1.0);
+    const auto r = loop.step();
+    ASSERT_EQ(r.source, Source::kDwa) << j;
+    EXPECT_LE(loop.vel.linear.x, 0.20 + 1e-9) << j;
+    limited += r.dwa_limited ? 1U : 0U;
+  }
+  EXPECT_LE(loop.max_dv, kDvTick + 1e-9);
+  EXPECT_LE(loop.max_dw, kDwTick + 1e-9);
+  EXPECT_GE(limited, 2U);   // 둘째 틱 이후도 잘라야 했다 (DWA v_last 0.35 → 0.30 …)
 }
