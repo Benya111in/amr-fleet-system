@@ -1,0 +1,14 @@
+# BT → 에이전트 명령 (로봇 네임스페이스 fleet_agent/zone_command, 보너스 4 P3)
+# 응답은 "명령을 받았다" 일 뿐이다. 허가 여부는 fleet_agent/state 의 held 로만 판단한다.
+
+uint8 OP_ACQUIRE=0                  # 사슬 전체 진입 허가 요청 (전부-아니면-전무, 진행 중 요청은 대체)
+uint8 OP_RELEASE=1                  # 보유 자원 해제 (에이전트가 몸체가 밖인지 확인한 뒤 RELEASE)
+uint8 OP_CANCEL=2                   # 진행 중 요청 포기 (보유는 그대로)
+uint8 OP_COMMIT_TASK=3              # 작업 ID 잠금 확정 (픽업 시작 직전, resources = [task_id])
+
+uint8 op
+string[] resources
+int32 priority
+---
+bool accepted
+string message
