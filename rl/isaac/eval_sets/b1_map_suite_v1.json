@@ -1,0 +1,18 @@
+{
+ "format": "amr_isaac_map_suite_v1",
+ "note": "b1-mapgen (D3 지도 변형 축). 결과 전에 고정 — 바꾸면 v2 새 파일. 정의는 amr_isaac/mapgen.py·map_bundle.py 머리말.",
+ "eval_set_file": "rl/isaac/eval_sets/b1_eval_sets_v1.json",
+ "sets": ["main_3_15", "stress_3_15"],
+ "maps_per_condition": 8,
+ "assign_seed": 20261008,
+ "tile_spacing_m": [66.0, 46.0],
+ "conditions": [
+  {"name": "jitter_0p15", "kind": "jitter", "sigma_xy": 0.15, "sigma_yaw_deg": 3.0, "clip": 3.0, "seed": 811},
+  {"name": "jitter_0p30", "kind": "jitter", "sigma_xy": 0.30, "sigma_yaw_deg": 6.0, "clip": 3.0, "seed": 812},
+  {"name": "jitter_0p60", "kind": "jitter", "sigma_xy": 0.60, "sigma_yaw_deg": 12.0, "clip": 3.0, "seed": 813},
+  {"name": "scale", "kind": "scale", "lo": 0.75, "hi": 1.25, "seed": 814},
+  {"name": "remove", "kind": "remove", "p": 0.25, "seed": 815},
+  {"name": "add", "kind": "add", "n": 40, "half_lo": 0.15, "half_hi": 0.45, "arc_lo": 0.3, "arc_hi": 0.7,
+   "lateral_sigma": 0.25, "keepout_m": 1.0, "height": 1.0, "seed": 816}
+ ]
+}
