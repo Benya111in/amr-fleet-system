@@ -1,0 +1,27 @@
+# 단계 C 묶음 일정 (사전 등록, 결과 전에 커밋). 열: lane pos batch ctrl start count
+# 묶음 k = scenarios_v1.json exec_order[50k : 50k+50] (주 25 + 스트레스 25). 같은 k 의 dwa·rl 은 같은 레인에서 잇달아.
+# 레인 하나로 갈 때(파일럿 규칙)는 pos 순으로 35·36 을 번갈아 합친 순서로 35 에서 돈다.
+35	0	dwa_b0	dwa	0	50
+35	1	rl_b0	rl	0	50
+35	2	dwa_b2	dwa	100	50
+35	3	rl_b2	rl	100	50
+35	4	dwa_b4	dwa	200	50
+35	5	rl_b4	rl	200	50
+35	6	dwa_b6	dwa	300	50
+35	7	rl_b6	rl	300	50
+35	8	rlho_b0	rl_handover	0	50
+35	9	rlho_b2	rl_handover	100	50
+35	10	rlho_b4	rl_handover	200	50
+35	11	rlho_b6	rl_handover	300	50
+36	0	dwa_b1	dwa	50	50
+36	1	rl_b1	rl	50	50
+36	2	dwa_b3	dwa	150	50
+36	3	rl_b3	rl	150	50
+36	4	dwa_b5	dwa	250	50
+36	5	rl_b5	rl	250	50
+36	6	dwa_b7	dwa	350	50
+36	7	rl_b7	rl	350	50
+36	8	rlho_b1	rl_handover	50	50
+36	9	rlho_b3	rl_handover	150	50
+36	10	rlho_b5	rl_handover	250	50
+36	11	rlho_b7	rl_handover	350	50
