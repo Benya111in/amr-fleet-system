@@ -1,0 +1,57 @@
+{
+ "straight": {
+  "v": "0.34999999999999998",
+  "w": "0",
+  "found": "1",
+  "n_samples": "342",
+  "n_valid": "342",
+  "n_collision": "0",
+  "n_recentered": "0",
+  "best_cost": "0.26000000000000001",
+  "d_goal": "-1"
+ },
+ "turn": {
+  "v": "0",
+  "w": "0.10000000000000001",
+  "found": "1",
+  "n_samples": "342",
+  "n_valid": "342",
+  "n_collision": "0",
+  "n_recentered": "0",
+  "best_cost": "0.43472112546317798",
+  "d_goal": "-1"
+ },
+ "blocked": {
+  "v": "0.45000000000000001",
+  "w": "0",
+  "found": "0",
+  "n_samples": "342",
+  "n_valid": "0",
+  "n_collision": "342",
+  "n_recentered": "0",
+  "best_cost": "inf",
+  "d_goal": "-1"
+ },
+ "goal": {
+  "v": "0",
+  "w": "0",
+  "found": "1",
+  "n_samples": "342",
+  "n_valid": "342",
+  "n_collision": "0",
+  "n_recentered": "0",
+  "best_cost": "0.12639437268410975",
+  "d_goal": "0.022360679774997901"
+ },
+ "narrow": {
+  "v": "0.65000000000000002",
+  "w": "-0.050000000000000003",
+  "found": "1",
+  "n_samples": "353",
+  "n_valid": "123",
+  "n_collision": "230",
+  "n_recentered": "71",
+  "best_cost": "0.15571298858638005",
+  "d_goal": "-1"
+ }
+}
