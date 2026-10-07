@@ -72,7 +72,7 @@ def main():
     with open(a.out, 'w', encoding='utf-8') as f:
         json.dump(res, f, ensure_ascii=False, indent=1)
     lines = ['| 팔 | n | 제외 E1/E2/E3/E4 | 동적 접촉 에피소드 | 정적 접촉 에피소드 | 조우 ≤ 2 m | '
-             '동적 최소 이격 5/50/95/100 % [m] | strict_gt | nav2compat | Nav2 성공 | 개입 평균 | '
+             '동적 최소 이격 5/25/50/75/95 % [m] | strict_gt | nav2compat | Nav2 성공 | 개입 평균 | '
              '최대 이탈 5/50/95/100 % [m] | 복귀 최대 5/50/95/100 % [s] |',
              '|' + '---|' * 13]
     for arm, s in res.items():
