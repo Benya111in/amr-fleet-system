@@ -29,6 +29,7 @@
 | `amr_isaac/policy_export.py` | rsl_rl state dict → 계약형 `PolicyB` → ONNX (`onnx_io.md`) | 아니오 |
 | `scripts/` | `build_assets` · `smoke_env` · `check_golden_in_sim` · `train_ppo` (`--phi`·`--dr`·`--constraint` PID) · `train_sac` · `eval_unbiased`(판정용, `--phi`·`--dwell_k`·층위 지표·진단·`--eval_set`·`--perturb`) · `aggregate_seeds`(시드 집계) · `build_eval_sets` · `eval_policy`(1차 물결, 편향 있음) · `export_onnx`(PPO·SAC·PID) · `plot_curves` · `gpu_monitor.sh` · `analyze_rejudge`(A3b 분석) · `record_phi_wiring`(정본 φ 결선 기록, A3d) | 일부 |
 | `tests/` | golden 32 대조(직접·env 캐시 두 길), 기준 구현과 무작위 차분(v1.2.0·v1.1.0), v1.2.0 보상 손 사례(`test_reward_v12.py`), 창고 변환기·경로 풀, env 순수 함수(`test_env_math.py`), ONNX 메타데이터, 정본 φ (`test_safety_gate_torch.py` — 설정 원문 대조·원본 손 사례(해제 거리·지연 보정 포함)·창 통계 순차 기준판·작은 C++ 교차 시험(`AMR_ISAAC_REQUIRE_CPP=1` 이면 필수)·env 결선(명세 게이트 순차 대조·리셋 = 새 게이트)·평가 지표(`nav2_update`)·결선 변이 대상) | 아니오 |
+| (갱신 2026-10-08) `amr_isaac/{mapgen,map_bundle,map_tiles,env_mapgen,mapgen_stats}.py`, `scripts/{build_map_bundle,smoke_mapgen,eval_mapgen,analyze_mapgen,supp_mapgen,noise_mapgen}.py`, `eval_sets/b1_map_suite_v1.json` | 지도 변형 평가 (b1-mapgen) — 아래 「지도 변형 평가」. 기본 env·`eval_unbiased.py` 는 바꾸지 않은 새 파일들 | `env_mapgen`·`smoke_mapgen`·`eval_mapgen` 만 |
 | `run_isaac.sh` | Isaac 컨테이너 실행기 (`env/verify/verify_isaac.sh` 의 마운트·환경변수). `AMR_AI_ID`(기본 `r7-isaac12`)로 이름 `amr-ai-<id>-<태그>`·산출 루트 `/home/CAPYI_AI/runs/<id>` 를 정하고 컨테이너에 `AMR_ISAAC_RUNS` 로 넘긴다 | — |
 
 ## 실행
@@ -225,6 +226,7 @@ A3c 항목(마지막 반복, 정본 3–15, 평가 seed 4242, 통과 ≥ 0.90)�
 - 스트레스 집합은 3–15 m 경로 83 개·목표 28 개, 3–30 m 경로 244 개·목표 32 개를 되풀이한 n 512 다 — 이항 구간은 너무 좁다.
   **목표 군집 부트스트랩 구간**으로 주장한다 (A3c 스모크: Wilson [0.789, 0.855] 대 군집 [0.679, 0.958]).
 - 맵 다양성(계약 §11 의 1 순위)은 학습에도 교란 묶음에도 없다 — D3 는 동역학·센서·지연 축의 일반화만 말한다.
+  (갱신 2026-10-08: 지도 변형 **평가**는 아래 「지도 변형 평가 (b1-mapgen)」 에 더해졌다. 학습에는 여전히 지도 축이 없다.)
 - SAC 하이퍼파라미터의 대부분은 [설계 선택]이다 (아래 표). PID 이득도 [설계 선택]이다 — 스모크는 λ 가 예산에 반응하는지만 봤다.
 - 공유 GPU 에서 처리량은 부하에 크게 달렸다 (아래 시간은 공유 부하 하 예비값).
 
@@ -362,6 +364,86 @@ docker run --rm -v $WT:/workspace/amr --entrypoint bash amr-ai/isaaclab:2.3.2 -l
 PID 선택지 (기본 꺼짐, Isaac 미측정): `--pid_err_clip=-1,1` — 정규화 오차가 아래로 −1 에 막히고 위로는 수백까지 가서 생기는 비대칭 적분 포화를 막는다
 (1차 물결 쌍대 상승은 [−1, 5] 로 잘랐다). `--constraint_start N` — 처음 N 반복은 λ = 0.
 
+## 지도 변형 평가 (b1-mapgen, 2026-10-08) — D3 의 "지도 변형" 축
+
+근거·사전 등록: 노트 `docs/research/rl-navigation/notebook/entries/2026-10-08_0410_b1-mapgen_dr-map-generalization.md` (결과 전 커밋 `9e41a75`),
+결과·재현: [`docs/research/rl-navigation/b_dr_map.md`](../../docs/research/rl-navigation/b_dr_map.md) (§2 설정, §5 점검, §10 재현).
+학습된 정책을 같은 창고의 **변형 지도** (물체 배치를 흔들거나 빼거나 통로에 새 상자를 놓은 지도) 에서 평가한다. 학습은 바꾸지 않는다.
+
+**기본 env·`eval_unbiased.py` 는 바뀌지 않았다 — 새 파일만 더했다.** [git 기록: `git diff --name-status 74d3a13 4b323d7 -- rl/isaac` 이 모두 A]
+- `env_mapgen.py` 는 `AmrNavEnv` 를 고치지 않는 하위 클래스다. 기본 메서드 (`_setup_scene`·`_apply_action`) 를 그대로 부르고, 그 호출 동안만
+  `env.py` 모듈의 `load_geometry`·`move_and_collide` 이름을 바꿔 끼운다 (기본 코드를 복사하지 않는다).
+- `eval_mapgen.py` 의 `summarize`·`interval_block`·`run_first_episodes` 는 `eval_unbiased.py` 의 것을 옮겼다 (그 파일을 바꾸지 않으려고) —
+  `tests/test_map_tiles.py::test_copied_eval_functions_unchanged` 가 원본과 같음을 확인한다.
+- 기본값 동작 대조 [측정]: 첫 라운드의 명목 행은 `eval_unbiased.py --eval_set` 과 같은 행·같은 순서라, `--max_envs` 가 같으면 에피소드 배열이
+  기존 평가와 비트 같아야 한다 — 10 정책 모두 27 개 배열 비트 같음 (b_dr_map.md §5.1, H3).
+
+**불리한 것 먼저.**
+- **학습 DR 에는 여전히 지도 축이 없다.** 이 평가는 "동역학·센서 DR 이 학습 밖 지도 변형으로 옮겨 가는가" 를 잴 뿐이다 (아래 「계약과 다르게」 5).
+- **계획기가 변형을 안다** — 변형 지도에서 같은 계획기·같은 여유 규칙으로 경로를 다시 계획한다 (낙관 쪽). 명목 경로를 주고 세계만 바꾸는
+  조건 (계획 지도 ≠ 실제) 은 이 스크립트의 선택지에 없다 (미측정).
+- **짝 열화 (같은 행의 명목 − 변형) 는 평가 잡음 실현 아래를 가르지 못한다.** 같은 행이라도 변형 행은 다른 라운드·다른 env 색인에 놓여 시작 yaw
+  draw·LiDAR σ 0.03 잡음 실현이 다르다. 배치 구성 (env 수·행 배치) 이 바뀌면 같은 정책·같은 seed 라도 결말이 달라진다 (리뷰 재실행: 명목 main 켬
+  시드 0 이 +0.15 %p). 정밀하게 재려면 행별 잡음 고정 (행 번호로 시드한 난수) 이 먼저다 (b_dr_map.md §5.3).
+- RayCaster 가 메시 하나만 받아 변형 지도 48 장 + 명목 + 명목 먼 사본을 세계 좌표의 다른 자리 (간격 66 × 46 m, 최대 이동 264 m) 에 한 메시로 놓는다.
+  먼 사본에서 float32 이동 잡음으로 결말 5 120 중 3 개가 달라졌다 (`--nominal_tile far` 탐침).
+- Isaac 쪽 바꿔 끼우기 (메시·충돌) 는 CPU 변이 검사 밖이다 — 스모크 R1–R4 와 명목 행 비트 대조로만 확인했다.
+
+### 파일
+
+| 파일 | 내용 | Isaac 필요 |
+|---|---|---|
+| `amr_isaac/mapgen.py` | 변형 지도 생성 (jitter · scale · remove · add; 움직이는 물체 44 개 = 랙 25·기둥 8·도크 상자 8·충전기 3 (+ 붙은 표지판), 바깥벽·벽 판 고정; 조건 c 의 지도 k 는 `default_rng([cond.seed, k])`) 과 변형 지도 재계획 (`paths.build_pool` 의 경로 한 개 절차, 제외 코드 1–5, 끝 직진 여유 ≥ 0.40 m 로 "변형 주" 재분류) | 아니오 (numpy·scipy) |
+| `amr_isaac/map_bundle.py` | suite JSON → bundle npz (타일 배열 `tile_*`, 행 배열 `row_*`). 타일 0 = 명목 지도 (원래 자리), 마지막 타일 = 명목 먼 사본 | 아니오 |
+| `amr_isaac/map_tiles.py` | env 별 사각형 [N, M, 5] 충돌 판정 — `env_math.footprint_hits` 와 같은 식·같은 연산 순서 (같은 사각형이면 비트 같음, 시험) | 아니오 (torch) |
+| `amr_isaac/env_mapgen.py` | 평가 env — 타일 메시 덧붙임, 경로 풀 덧붙임 (원래 held-out 풀 번호 그대로 + 재계획 경로), env 별 충돌. Isaac 앱이 뜬 뒤에만 import | 예 |
+| `amr_isaac/mapgen_stats.py` | 사전 등록 집계 정의 — P1map (6 조건 1 차 모집단 엄격 성공 평균), S1 짝 열화, S2 조건별 + Holm, S3 충돌률; 팔별 시드 부트스트랩 (reps 4000, seed 0) · 정확 순열 252 분할 | 아니오 |
+| `eval_sets/b1_map_suite_v1.json` | **결과 전에 고정한** 지도 변형 묶음 — 6 조건 (jitter_0p15·0p30·0p60, scale, remove, add) × 지도 8 장, 대상 집합 main_3_15·stress_3_15 (바꾸면 v2 로 새 파일) | — |
+| `scripts/build_map_bundle.py` | 묶음 만들기 (CPU). 같은 suite·같은 코드면 `--workers` 와 무관하게 같은 배열 | 아니오 |
+| `scripts/smoke_mapgen.py` | 정책 없는 Isaac 스모크 — R1 레이캐스트 = 그 env 타일의 CPU 2D 광선, R2 충돌이 env 타일을 따름, R3 정본 φ 의 D 가 변형 지도를 봄, R4 관측이 타일 이동에 불변. 모두 통과면 rc 0 | 예 |
+| `scripts/eval_mapgen.py` | 지도 변형 평가 — env 마다 첫 에피소드, 결정론 tanh(μ), 평가 seed 고정 (`eval_unbiased.py` 와 같은 추정량) | 예 |
+| `scripts/analyze_mapgen.py` | 사전 등록 집계 (`--partial` 은 중간 점검용 — 판정은 두 팔 5 시드 전부로만) | 아니오 |
+| `scripts/supp_mapgen.py` · `scripts/noise_mapgen.py` | 보충 (사전 등록 외, 판정에 쓰지 않음) — 시드 하나 빼기·목표 군집 부트스트랩·실패 꼴·타일별·경로 바뀐 행 / 짝 불일치·리뷰 재실행 대조 (잡음 바닥) | 아니오 |
+| `tests/test_mapgen.py` · `test_map_tiles.py` · `test_mapgen_stats.py` | 명목 지도 재계획 = held-out 풀 경로 비트 재현 (60/60), 변형 생성기·묶음, 타일 충돌 = 공유 사각형 판정, 관측 타일 이동 불변, 옮긴 평가 함수 원본 대조, 집계 정의 (가짜 데이터) | 아니오 |
+
+### 명령
+
+`job_mg.sh` 는 저장소 밖 실행기 (`/home/CAPYI_AI/runs/bonus1/b1-mapgen/job_mg.sh`) 다 — 커밋 사본의 `run_isaac.sh` 를 부르고 `HEAD.txt`·`start/end.txt`·
+`gpu_mem.csv`·`cmd.txt` 를 남기며, GPU 여유 부족 (rc 3) 이면 60 s 뒤 다시 한다. 직접 부를 때는 `run_isaac.sh <이름> <스크립트> … --out <dir>`
+(각 스크립트 머리말). 정책 10 개는 같은 디렉터리의 `driver.py` 가 동시 2 개로 돌렸다.
+
+```bash
+ID=b1-mapgen; WT=/home/CAPYI_AI/wt/$ID; R=/home/CAPYI_AI/runs/bonus1/$ID; B=/home/CAPYI_AI/runs/bonus1
+SRC=$R/src/<커밋>                                  # git archive 사본 (위 「0. 준비」 와 같이). 본 평가는 9e41a75 사본
+ES=/workspace/amr/rl/isaac/eval_sets
+# 1) 지도 묶음 (CPU) — 결과 전에 한 번 만들고 sha256 으로 고정한다 (v1: 7f7bf288…)
+docker run --rm --network none -v $SRC:/ws:ro -v $R:$R -w /ws amr-ai/rl:0.3 python3 rl/isaac/scripts/build_map_bundle.py \
+  --suite rl/isaac/eval_sets/b1_map_suite_v1.json --assets $R/assets --out $R/suite/map_bundle_v1.npz --workers 8
+# 2) 스모크 (정책 없음, Isaac)
+isaac_slot.sh $ID bash $R/job_mg.sh smoke2 rl/isaac/scripts/smoke_mapgen.py --bundle $R/suite/map_bundle_v1.npz
+# 3) 평가 (정책마다, Isaac). --bundle_sha 가 bundle 의 sha256 앞부분과 다르면 rc 2
+isaac_slot.sh $ID bash $R/job_mg.sh mg_on_s0 rl/isaac/scripts/eval_mapgen.py \
+  --policy $B/b1-ppo10/train/B1_ppo10_s0/policy_final.pt --phi canonical --seed 4242 \
+  --eval_set $ES/b1_eval_sets_v1.json --bundle $R/suite/map_bundle_v1.npz --bundle_sha 7f7bf288d909 --max_envs 5120
+# 4) 사전 등록 집계 (CPU) · 보충
+docker run --rm --network none -v $SRC:/ws:ro -v $B:$B:ro -v $R/analysis:$R/analysis -w /ws amr-ai/rl:0.3 \
+  python3 rl/isaac/scripts/analyze_mapgen.py --out $R/analysis/mapgen_analysis.json --md $R/analysis/mapgen_analysis.md
+docker run --rm --network none -v $SRC:/ws:ro -v $B:$B:ro -v $R/analysis:$R/analysis \
+  -v /usr/share/fonts/google-noto-cjk:/fonts:ro -w /ws amr-ai/rl:0.3 \
+  python3 rl/isaac/scripts/supp_mapgen.py --out $R/analysis/supp_mapgen.json --fig $R/analysis/figs/mapgen_conditions
+# 시험 (CPU) — 자산 경로를 주면 234 통과 · 5 건너뜀 (AMR_ISAAC_ASSETS 를 안 주면 233 · 6)
+docker run --rm --network none -e AMR_ISAAC_RUNS=$R -e AMR_ISAAC_ASSETS=$R/assets -v $WT:/ws:ro -v $R:$R:ro -w /ws/rl/isaac \
+  amr-ai/rl:0.3 python3 -m pytest -q tests
+```
+
+- **`eval_mapgen.py` 의 행**: 라운드 = `--max_envs` 개씩. 라운드 1 = 명목 지도의 `--nominal_sets` (기본 4 집합 5 120 행), 그 뒤 = bundle 의 변형
+  유효 행 (조건 → 집합 → 집합 안 순번, 그 행의 타일과 재계획 경로). 시작·목표가 막히거나 경로가 없는 행은 그 조건에서 뺀다 (두 팔 같은 집합).
+- **결과 키** (`eval.json` 의 `by`): 명목 = 집합 이름 (`eval_unbiased` 와 같음), 변형 = `<집합>|<조건>` (유효 행 전부) 와
+  `<집합>|<조건>|variant_main` (변형 지도에서도 끝 직진 여유 ≥ 0.40 m — 사전 등록 1 차 모집단).
+- **탐침 선택지**: `--conditions none` (명목 행만), `--conditions <쉼표 목록>`, `--nominal_tile far` (명목 행을 먼 사본 타일에서 — float32 이동 탐침),
+  `--zero_policy` (행동 0, 파이프라인 시험), `--rows_per_cond N` (조건마다 앞 N 행 — 스모크).
+- 시간 [측정, 공유 부하 하 예비값 — loadavg 라운드 기록 4.20–18.29]: 정책 하나 929–1 430 s (라운드 4 개), 컨테이너 GPU 최대 5 507 MiB.
+
 ## 전이 한 번 (Δt = 0.1 s = 물리 0.02 s × 5)
 
 raw 행동 → `u = tanh(raw)` → `integrate_b` (ray 클램프) → 결정 주기 안 선형 명령 램프 → [50 Hz × 5]
@@ -384,6 +466,7 @@ raw 행동 → `u = tanh(raw)` → `integrate_b` (ray 클램프) → 결정 주�
 4. **동적 장애물 없음** — 트랙 블록은 늘 0, `min_ttc` 없음. 학습 분포에서 트랙 특징이 상수라 배포에서 트랙이
    생기면 정규화 뒤 값이 커진다 (분산 하한 1e-2 로 ±10 이하이지만 학습되지 않은 입력이다). 다음 물결 과제.
 5. **맵 다양성(DR 축 1) 없음** — 창고 한 장. held-out 은 같은 맵의 다른 시작·목표(경로 풀 seed 1)다.
+   (갱신 2026-10-08: 학습은 그대로 한 장이다. 같은 창고의 변형 지도에서 **평가**하는 도구는 「지도 변형 평가 (b1-mapgen)」.)
 6. **DR 구현분** — 플랜트 T_m·T_d·가속 한계 배율, LiDAR σ·빔 드롭아웃. 관측·행동 지연(축 4)과 트랙 누락(축 5)
    은 없다. 순수 지연은 0.02 s 단위로 양자화 (1–4 서브스텝).
 7. **A\* 경로** — `amr_navigation` C++ 플래너를 부르지 않고 같은 비용 규칙의 Dijkstra(같은 최적 비용, 동률 경로
