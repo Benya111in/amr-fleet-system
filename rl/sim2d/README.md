@@ -24,6 +24,7 @@
 | `amr_sim2d/scripted.py` | 착취 표용 결정론적 스크립트 정책 12 종 (대기·추종·지나침·직전 정지·우회·표류·회전·기어가기·원 배회·충돌) |
 | `amr_sim2d/exploit.py` | 궤적을 truncation 없이 기록하고 RewardSpec 별 보상·부트스트랩 가치(연속 롤아웃)를 다시 매긴다 |
 | `dwa_binding/` | pybind11 모듈 `amr_core_py`: `src/amr_navigation/src/core/{astar,grid,path_smoother,geometry}.cpp` + `src/amr_perception/src/{safety_gate,geometry2d}.cpp` 를 **읽기 전용으로 컴파일** |
+| (갱신 2026-10-08) `amr_sim2d/{dwa2d,crosseval}.py`, `dwa_binding/{dwa2d_py.cpp,build_dwa2d.sh,dwa_golden_main.cpp}`, `tools/b5_*` | 2D DWA 와 B5 교차 평가 (b1-b5) — 아래 「2D DWA (b1-b5)」. 기존 파일은 바꾸지 않았다 |
 | `tools/` | `bench_throughput.py`, `train_ppo.py` (`--reward` 후보 이름, `--eval-seed`), `onnx_check.py`, `exploit_table.py` (G0·G1 착취 표), `g2_summary.py` (학습 가능성 표·곡선) |
 | `tests/` | 아래 표 |
 
@@ -178,10 +179,90 @@ v1.2.0 보상, mixed 0–4 + 20 % Gazebo, 30M env-steps, 평가 n = 2 048 (시�
 | 지도 다양성 (DR 1 순위) | **팀 지도 1 장만** | 절차적 생성기 5 종 미구현 (다음 물결). `stack_maps` 는 여러 지도를 받도록 해 두었다 |
 | 커리큘럼 | 경로 길이·장애물 수 선형 단계만 | learnability p(1−p) 샘플링 미구현 |
 | 관측 정규화 | (obs − μ)/√(max(σ², 0.01) + 1e-8) | onnx_io.md 식은 √(σ² + 1e-8). 하한이 없으면 늦게 바뀌는 특징이 폭주한다 (위). 하한은 모델 그래프 안이라 플러그인 쪽은 그대로 |
-| B 의 BC 초기화 | 관측만 쓰는 경로 추종 휴리스틱 시연 | 계약 §1 은 B 를 순수 RL 로 정한다 — BC 를 쓴 run 은 "순수 B" 가 아니다. DWA 시연(C 의 BC)은 바인딩이 없어 못 했다 |
-| 개입 비용 λ | 예산 미정(§7.2)이라 λ = 0 | DWA(A) 의 2D 개입 분포가 필요하다 — 바인딩 미구현 |
+| B 의 BC 초기화 | 관측만 쓰는 경로 추종 휴리스틱 시연 | 계약 §1 은 B 를 순수 RL 로 정한다 — BC 를 쓴 run 은 "순수 B" 가 아니다. DWA 시연(C 의 BC)은 바인딩이 없어 못 했다 (갱신 2026-10-08: 바인딩은 b1-b5 가 만들었다 — 「2D DWA (b1-b5)」. DWA 시연 BC 는 여전히 안 했다) |
+| 개입 비용 λ | 예산 미정(§7.2)이라 λ = 0 | DWA(A) 의 2D 개입 분포가 필요하다 — 바인딩 미구현 (갱신 2026-10-08: 바인딩·2D-DWA 개입 기록은 B5 에 있다 — b_b5_2d.md §4.4. 예산은 아직 정하지 않았다) |
+
+## 2D DWA (b1-b5, 2026-10-08) — 팀 DWA 코어 바인딩과 B5 교차 평가
+
+근거·사전 등록: 노트 `docs/research/rl-navigation/notebook/entries/2026-10-08_0410_b1-b5_2d-crosseval-dwa.md` (사전 등록 커밋 `ade60d3`,
+평가 코드 `669a384`), 결과·재현: [`docs/research/rl-navigation/b_b5_2d.md`](../../docs/research/rl-navigation/b_b5_2d.md)
+(§1 무엇을 쟀나, §2 붙인 방법, §7 2D 의 한계, §8 시험·변이·재현). 아래 「DWA 코어 바인딩 (과제 5)」 의 설계를 이것으로 구현했다.
+
+**기존 기본 동작은 바뀌지 않았다 — 새 파일만 더했다** [git 기록: `git diff --name-status 74d3a13 4b323d7 -- rl/sim2d` 이 모두 A]. `Sim2DEnv`·
+`kernels`·기존 `amr_core_py` (`build.sh`) 는 그대로이고 새 모듈 `amr_dwa2d_py` 는 따로 빌드한다. `crosseval.FixedEpisodeEnv` 는 `Sim2DEnv` 를
+상속해 감싸며, `step_rl` 이 `Sim2DEnv.step` 과 비트 같음을 시험이 확인한다 (120 스텝, 생성기 상태까지).
+
+**불리한 것 먼저** (b_b5_2d.md §0·§7):
+- φ 는 **safety_lite** 다 (정본 아님). 2D-DWA 는 직진 여유 c ∈ [0.20, 0.30) m 목표에서 Gazebo DWA 보다 낮다 (0.47–0.53 대 0.87) —
+  safety_lite 의 D (유효 빔 최솟값) 가 일찍 STOP 한다는 해석은 [추정]. 2D 의 스트레스 RL − DWA 크기를 Gazebo 와 견주지 않는 까닭이다.
+- 정적 세계 이식이다: 입력은 지면 진실 자세·플랜트 속도 (위치추정·EKF 잡음 없음), 지역 코스트맵에 깊이 층 없음. 동적 장애물·트랙·VO/TTC 입력·
+  횡단 게이트·결정 dwell·적재 질량·BT 복구 행동 (회전·대기·후진) 은 이식하지 않았다 — 계약 정체 20 s 에서 끝난다.
+- 2D-DWA 는 경로 위 교착 (출발 교착·중간 정체) 을 보였다 (B5 주 집합 2 048 중 8 + 9). Gazebo 에서도 나는지는 **미측정**.
+- 판정은 계약 엄격 성공 (0.10 m ∧ |v| ≤ 0.05) 에서 끝난다 — DWA 의 yaw 정렬·goal checker (Nav2 성공) 는 재지 않는다.
+
+### 파일
+
+| 파일 | 내용 |
+|---|---|
+| `dwa_binding/dwa2d_py.cpp`, `dwa_binding/build_dwa2d.sh` | pybind11 모듈 `amr_dwa2d_py` — `src/amr_navigation/src/core/{dwa,velocity_obstacle,crossing_gate,crossing_yield,speed_profile,geometry,footprint,grid,scan_denoise}.cpp` 를 **읽기 전용으로 컴파일** (`-O2 -std=c++17 -Wall -Wextra -Werror`). 래퍼 상태 (직전 명령 기억, `no_valid_patience` 예외 틱 → 0 명령), 경로 창 (`PlanWindow::window` 이식, path_horizon 4.0 m), 스캔 기반 rolling 지역 코스트맵 (8 × 8 m · 0.025 m, 게이트 중앙값 → 레이트레이스 지우기 6.0 m · 마킹 5.5 m → 풋프린트 지우기 → 팽창 0.8 m · s 3.0) |
+| `dwa_binding/dwa_golden_main.cpp` | 바인딩을 거치지 않는 독립 실행 파일 (설정을 C++ 에 손으로 옮김) — 골든 대조의 기준 |
+| `amr_sim2d/dwa2d.py` | `load_config()` — 손으로 고르지 않는 배포 설정 읽기: 표 `PARAMS` (래퍼 `dwa_controller.cpp` `configure()` 의 param() 을 옮긴 것) 를 `nav2_params.yaml` `controller_server.DWA` → `config/robot_params.yaml` `limits.*` → 래퍼 기본값 순으로 채우고 필드마다 출처 `파일:행` 을 `sources` 에 남긴다. `module()` (없으면 `build_dwa2d.sh` 로 빌드 뒤 import), `DwaBatch` (env 마다 `Dwa2D` 하나 — `reset`·`update_costmap`·`step`, C++ 스레드 풀) |
+| `amr_sim2d/crosseval.py` | `export_world` (Isaac 기하 npz → 2D 래스터 세계 PGM + YAML, `Sim2DEnv` 가 `cfg.map_yaml` 로 읽음), `start_yaw_isaac` (첫 점 → 0.5 m 앞 점 접선 + 잡음), `FixedEpisodeEnv` (env 마다 고정 에피소드 하나, 끝난 env 는 리셋하지 않음; `step_rl`, `step_dwa` — 결정 주기 0.1 s 안에서 DWA 를 t 와 t + 0.06 s 에 두 번 부르고 각 명령을 다음 서브스텝들의 프로파일러 목표로 0 차 유지 = 20 Hz) |
+| `tools/b5_crosseval.py` | 실행기 — Isaac 평가 집합을 RL (ONNX, `action` = tanh(μ)) 또는 2D-DWA 로, env 마다 첫 에피소드, DR 끔·장애물 없음·safety_lite. 출력 `episodes.npz`·`summary.json`·`registry.json` (`rl/tools/notebook.py register` 초안)·`run.log`. unfinished 는 0 이어야 한다 |
+| `tools/b5_plan_paths.py` | 평가 행의 (시작, 목표, 끝 접선 yaw) 를 팀 A* 코어 + 평활기 (`amr_core_py.plan`, nav2_params AStar 설정) 로 다시 계획 — 계획 지도 = Isaac 0.05 m 점유 격자 + 전역 팽창 |
+| `tools/b5_mapcheck.py` | 사전 점검 — Isaac 평가 집합을 2D 지도에서 그대로 쓸 수 있는가 (좌표계·여유·주/스트레스 분할 일치, 성공률을 보지 않는다) |
+| `tools/b5_run_all.sh` | 본 실행 드라이버 (lane `plan`·`dwa`·`rl`, `cpu_slot.sh` 안, 끝난 run 은 건너뜀) — 경로·이름이 b1-b5 원자료에 묶여 있다 |
+| `tools/b5_analysis.py` | 사전 등록 집계 (Δ = 10 시드 평균 − DWA, 2 원 부트스트랩 시드 × 목표 군집, 방향 규칙; sha256 `e09eadf0…` 결과 뒤 바뀌지 않음) |
+| `tools/b5_supp.py` | 보충 (사전 등록 외) — 직진 여유 구간별 성공, Gazebo 구성 재가중 |
+| `tools/b5_make_dwa_golden.py` | `tests/golden_dwa2d.json` 생성 (코어·배포 설정이 바뀌면 다시 만든다) |
+
+### 명령 (모두 `amr-ai/rl:0.3` 컨테이너 안)
+
+```bash
+bash rl/sim2d/dwa_binding/build_dwa2d.sh       # → dwa_binding/build/amr_dwa2d_py*.so, dwa_binding/build/dwa_golden_main
+# 2D 세계 (Isaac 기하 0.025 m · pad 0 래스터) 는 crosseval.export_world, 지도 점검은 b5_mapcheck.py
+python3 rl/sim2d/tools/b5_mapcheck.py --eval-set rl/isaac/eval_sets/b1_eval_sets_v1.json \
+    --pool <paths_58eaa34ae5_s1.npz> --geom <warehouse_58eaa34ae5.npz> --out <dir>
+# 평가 행 경로 계획 (주 실행 W1 용; 주지 않으면 Isaac 풀 경로 = 보조 W1i)
+python3 rl/sim2d/tools/b5_plan_paths.py --pool <풀 npz> --geom <기하 npz> --world-dir <dir> --threads 16 --out <plans.npz>
+# 교차 평가 한 실행 (DWA 팔 / RL 팔)
+python3 rl/sim2d/tools/b5_crosseval.py --arm dwa --world <W1 yaml> --pool <풀 npz> [--paths-npz <plans.npz>] \
+    --seed 4242 --threads 16 --out <dir> --run-id <id>
+python3 rl/sim2d/tools/b5_crosseval.py --arm rl --policy <B1_ppo10_s<N>/policy_final.onnx> --world <W1 yaml> --pool <풀 npz> \
+    [--paths-npz <plans.npz>] --seed 4242 --threads 8 --out <dir> --run-id <id>
+# 사전 등록 집계 (--world-tag W1 주 / W1i 보조)
+python3 rl/sim2d/tools/b5_analysis.py --runs <eval 디렉터리> --isaac /home/CAPYI_AI/runs/bonus1/b1-ppo10-eval/eval \
+    --pool <풀 npz> --world-tag W1 --out <dir>
+```
+
+- 시험용 선택지: `--rows k` (앞 k 행만), `--pool-rows lo:hi` (집합 대신 풀 행 — 스모크), `--sets` (집합 고르기), `--no-compile`.
+- B5 본 실행은 `tools/b5_run_all.sh plan|dwa|rl` 로 돌렸다 (b_b5_2d.md §8 재현). DWA 330 s/실행 (C++ 16 스레드), RL 62–94 s/실행 —
+  공유 부하 하 예비값 (loadavg 5.4–21.0). 성공·충돌은 sim 지표라 부하와 무관하다 (스모크 64 행이 N 64·1 024 에서 행마다 같은 결말).
+
+```python
+from amr_sim2d import dwa2d
+conf = dwa2d.load_config()          # dict(cfg, wrapper, costmap, footprint, sources) — sources[필드] = '파일:행' 또는 래퍼 기본값
+batch = dwa2d.DwaBatch(n_env, conf, threads=16)
+batch.reset(i, path_xy_or_poses)    # 새 에피소드: 경로 [K,2] 또는 [K,3]
+batch.update_costmap(idx, sensor_pose, robot_pose, ranges)   # 스캔마다 (10 Hz)
+out = batch.step(idx, pose, v, w)   # 제어 틱 → dict(v, w, found, exception, n_valid, …)
+```
+
+### 시험 (B5 에서 더한 것)
+
+- `tests/test_dwa2d.py` 18 개: 설정 표 ↔ 래퍼 원문 정규식 대조 (param() 94 개), YAML 값·왕복, **골든 5 사례** — 바인딩 `compute_raw` 한 걸음 출력 =
+  독립 실행 파일 `dwa_golden_main` 출력 (`%.17g` 비트 일치) + 저장 golden `tests/golden_dwa2d.json`, 래퍼 첫·둘째 걸음, `no_valid_patience` 예외,
+  코스트맵 마킹·지우기·rolling·팽창·마킹 범위·게이트 중앙값, `step_rl` = `Sim2DEnv.step` 비트 대조, `step_dwa` 두 틱 시각, 직선·회전·막힘 주행, 첫 에피소드 규칙.
+- `tests/test_b5_analysis.py` 3 개: 가짜 원자료로 집계·판정 규칙.
+- rl/sim2d 전체 [측정, 평가 커밋 `669a384`]: **116 통과 · 실패 0** (기존 95 + 새 21). 변이 13 개 중 10 잡힘, 남은 3 은 등가 (b_b5_2d.md §8).
 
 ## DWA 코어 바인딩 (과제 5) — 이번에 못 했다. 설계
+
+(갱신 2026-10-08: b1-b5 가 위 「2D DWA (b1-b5)」 로 구현했다. 아래는 1차 물결 당시의 설계 기록이다. 구현과 다른 점 — 새 모듈 `amr_dwa2d_py` 로
+따로 빌드했고 (`amr_core_py` 에 넣지 않음), 컴파일 목록에 `grid`·`scan_denoise` 가 더해졌고, 설정 사상은 param() 94 개, 지역 코스트맵은 배포 설정
+(`nav2_params.yaml` 526 행 `plugins: [obstacle_layer, depth_layer, inflation_layer]` — 정적 층 없음) 에서 깊이 층만 뺀 스캔 기반 rolling 이식이다.
+양보 결정·게이트는 배포 설정에서 꺼져 있다 (yield_decision·yield_gate false).
+DWA 시연 BC·개입 예산 λ 는 여전히 하지 않았다.)
 
 지금 `dwa_binding/` 은 A*·팽창·평활기·safety 스윕 접근 거리만 묶는다. 비교군 A(튜닝된 DWA)를 2D 에서 돌리려면:
 
