@@ -81,7 +81,8 @@
   (정규화 오차 e = (J − d)/d 를 [−1, 1] 로 자름 — 기본값 그대로면 적분이 반복 4 에 상한에 붙는다, 노트 배경). λ = clip(K_p·P + I + K_d·D, 0, 10),
   I ← clip(I + K_i·e, 0, 10). **끝 λ = 0 은 I = 0 을 뜻하지 않는다** — J ≪ d 면 K_p·e ≈ −0.5 가 작은 I 를 지워 λ 가 0 에 잘린다 (d 0.2 시드 2).
 - 비교 기준: b1-ppo10 같은 시드의 `policy_it160.pt` (같은 env-step, COORDINATION §8.3) 를 같은 코드 사본·같은 명령으로 평가 (`pipeline.sh ref`).
-  rsl_rl 의 lr 은 adaptive (KL 기준) 라 전체 반복 수(300 대 160)에 따라 바뀌는 일정이 없다 — 반복 160 시점의 두 학습은 제약 말고는 같은 규칙으로
+  rsl_rl 의 lr 은 adaptive (KL 기준 ×1.5 · ÷1.5, `rsl_rl/algorithms/ppo.py` 259–288 — b1-binfra 가 이미지에서 꺼낸 사본
+  `/home/CAPYI_AI/runs/bonus1/b1-binfra/tmp/src/rsl_rl` 로 확인) 라 전체 반복 수(300 대 160)에 따라 바뀌는 일정이 없다 — 반복 160 시점의 두 학습은 제약 말고는 같은 규칙으로
   갱신된다. 정책 sha256 5/5 가 b1-ppo10 `analysis/artifacts.tsv` 와 같다 [계산].
 - 판정 평가: `policy_final.pt` (반복 160), `eval_unbiased.py --phi canonical --eval_set rl/isaac/eval_sets/b1_eval_sets_v1.json`
   (sha256 `2fc40387…`), held-out 풀 seed 1 (`75b8c66b7ede7d38`), 평가 seed 4242, env 마다 첫 에피소드, DR 끔, 결정론 tanh(μ).
