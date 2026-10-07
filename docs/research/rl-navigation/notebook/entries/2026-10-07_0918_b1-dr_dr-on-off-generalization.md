@@ -150,6 +150,12 @@ drop_0p10 · gain_0p8 · gain_1p2 · accel_0p6 · tm_0p16) 엄격 성공(0.10 m 
   `job_eval.sh` 가 그 평가가 끝나 있으면 `evalon/B1_ppo10_sS/sets/` 로 복사하고 출처(`source.txt`, sha256)를 남기며, 끝나 있지 않으면 사전 등록대로
   직접 돈다. 다시 쓴 평가는 내 실행 목록에 등록하지 않는다 (b1-ppo10-eval 의 실행이다).
 - 대가: DR 켬 팔 E2 의 "같은 사본·같은 실행" 재현 대조는 잃는다. 재현 대조는 H5 (교란 v1, 시드 0) 로만 한다.
+- **출처 (b1-dr 이 10:25 에 덧붙임)**: 위 "변경 2" 절과 커밋 `9a56244`, `job_eval.sh` 의 `reuse_sets_on`, `reg.py` 의 `source.txt` 건너뛰기는
+  **b1-dr 이 쓴 것이 아니다** — 10:15 에 다른 주체(오케스트레이터로 보인다)가 이 브랜치와 원자료 디렉터리에 썼다 (`job_eval.sh` 10:15:41,
+  `reg.py` 10:15:45, 커밋 10:15:58). 내가 다시 확인한 것 [계산]: `src/a2622f0` 과 `b1-ppo10-eval/src/52e5023` 의 `rl/`·`src/`·`config/` 는
+  `diff -rq` 차이 0 건; 재사용 대상 `B1e_ppo10_s0_final_sets` 는 평가 seed 4242 · 집합 4 개 · `max_envs` 5120 (한 라운드) · φ canonical · unfinished 0 ·
+  정책 sha256 `48ec80c2…` = `B1_ppo10_s0/policy_final.pt`. 내 명령과 다른 인자는 `--tag` 뿐이다 (산출 이름). 그래서 이 변경을 받아들인다.
+  드라이버(`driver.py`)·학습 스크립트(`job_train.sh`)는 손대지 않았다 (수정 시각 10:05·09:23).
 
 ## 결과
 (실행 뒤 채운다)
