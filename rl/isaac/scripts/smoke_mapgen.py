@@ -6,7 +6,8 @@
 검사 (모두 통과하면 rc 0):
   R1 레이캐스트: env 의 실제 Isaac 스캔(잡음 전, env._read_scan) = 그 env 타일 사각형에 대한
      CPU 2D 광선 (mapgen.raycast_2d)
-     — 유한 빔 최대 차 ≤ 2e-3 m, 유·무한 일치. 변형 타일에서는 명목 지도 광선과 > 0.05 m 다른 빔이 있어야 한다 (타일 0·먼 사본은 0).
+     — 유한 빔 최대 차 ≤ 2e-3 m, 유·무한 일치. 변형 타일에서는 명목 지도 광선과 > 0.05 m 다른 빔이 있어야 한다
+     (타일 0·먼 사본은 0). LiDAR 원점이 상자 안인 env (R2 용 자세)는 뺀다.
   R2 충돌: 새 상자 중심·옮겨진 랙의 원래 자리에 풋프린트를 두고 한 결정 스텝 (행동 0) → env 의 충돌 판정이 그 env 타일의
      사각형을 따른다 (변형: 새 상자 = 충돌, 옛 랙 자리 = 비충돌 / 명목: 반대). 패치한 충돌 함수가 서브스텝마다 불렸는지도.
   R3 정본 φ: 앞 0.4–0.9 m 에 새 상자가 있는 자세에서 전진 명령 → φ 의 접근 거리 D 가 변형 지도의 직진 여유와 맞고
@@ -167,9 +168,15 @@ def main():
         beam = CT.beam_angles('cpu', torch.float64).numpy()
         r1 = {'lidar_pose_err': float(env.lidar_pose_err), 'per_tile': {}}
         ok1 = float(env.lidar_pose_err) < 1e-3
+        inside = []
         for t in tiles:
             mx, mism, diff_nom = 0.0, 0, 0
             for i in idx[t]:
+                # LiDAR 원점이 상자 안이면 (R2 용 자세) Isaac 은 안쪽 면, CPU 광선은 0 을 낸다 — 대조에서 뺀다
+                if MG.rect_point_distance(world[t], org[i]).min() == 0.0 or \
+                        MG.rect_point_distance(nom_local, org[i] - offs[t]).min() == 0.0:
+                    inside.append(int(i))
+                    continue
                 ang = pose[i, 2] + beam
                 ref = MG.raycast_2d(org[i], ang, world[t], zrs[t], C.LIDAR_RANGE_MAX)
                 nom = MG.raycast_2d(org[i] - offs[t], ang, nom_local, zrs[0], C.LIDAR_RANGE_MAX)
@@ -187,6 +194,7 @@ def main():
                 ok1 &= diff_nom <= 2
             else:
                 ok1 &= diff_nom > 0
+        r1['skipped_origin_inside_box'] = inside
         r1['pass'] = bool(ok1)
         rep['checks']['R1_raycast'] = r1
 
