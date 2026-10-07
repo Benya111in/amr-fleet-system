@@ -324,6 +324,36 @@ def test_bundle_small_build(nominal):
     assert np.array_equal(ob[g != MG.ADDED], nominal['obb']) and (g == MG.ADDED).sum() == 6
 
 
+@need_pool
+def test_bundle_clearance_uses_variant_map(nominal):
+    """
+    재계획 경로의 끝 직진 여유·1 차 모집단 분류는 그 행의 변형 지도 사각형으로 계산한다 (명목 사각형이 아니다).
+
+    리뷰 반영 (2026-10-08): map_bundle 의 여유 계산을 명목 obb 로 바꾼 변이 (R3) 를 기존 시험이 잡지 못했다.
+    """
+    pool = dict(np.load(POOL))
+    doc = ES.load_sets(EVAL_SET)
+    doc_small = dict(doc)
+    doc_small['sets'] = {'main_3_15': doc['sets']['main_3_15'][:24],
+                         'stress_3_15': doc['sets']['stress_3_15'][:16]}
+    suite = {'format': MG.SUITE_FORMAT, 'sets': ['main_3_15', 'stress_3_15'],
+             'maps_per_condition': 2, 'assign_seed': 5, 'tile_spacing_m': [66.0, 46.0],
+             'conditions': [_cond('jitter', name='j', sigma_xy=0.6, sigma_yaw_deg=12.0, clip=3.0),
+                            _cond('scale', name='s', lo=0.75, hi=1.25)]}
+    arr, _s = MB.build_bundle(suite, doc_small, pool, nominal=nominal, workers=1)
+    valid = np.flatnonzero(arr['row_code'] == MG.VALID)
+    assert valid.shape[0] > 0
+    differs = 0
+    for r in valid:
+        pts = MB.row_path(arr, r)
+        c_var = MG.end_clearance(pts, MB.tile_rects(arr, int(arr['row_tile'][r]))[0])
+        assert arr['row_clear'][r] == c_var
+        assert bool(arr['row_main_variant'][r]) == (c_var >= ES.THRESHOLD)
+        differs += int(MG.end_clearance(pts, nominal['obb']) != c_var)
+    # 시험이 명목·변형 사각형을 가를 수 있어야 의미가 있다
+    assert differs > 0
+
+
 def test_goal_assignment_balanced_and_deterministic():
     goals = np.array([5, 3, 9, 3, 11, 5, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30])
     a = MB.goal_assignment(goals, 4, 7)

@@ -143,6 +143,25 @@ def test_primary_population_uses_main_variant_only():
     assert sm['cond']['jitter_0p15']['valid_main']['strict'] == pytest.approx(0.5)
 
 
+def test_matched_nominal_uses_same_rows():
+    """
+    짝 열화의 명목 쪽은 그 조건 1 차 모집단 행과 같은 순번의 명목 행만 평균한다 (짝 없는 명목 평균이 아니다).
+
+    리뷰 반영 (2026-10-08): matched_nominal_strict 를 명목 전체 평균으로 바꾼 변이 (R5) 를 기존 시험이 잡지 못했다.
+    """
+    ev, ep = fake_run(0.99, {c: 1.0 for c in CONDS}, 4)
+    nom = np.flatnonzero((ep['cond_index'] == -1) & (ep['set_index'] == 0))
+    ep['outcome'][nom] = np.where(ep['row_j'][nom] < 100, 0, 3)     # 명목 main 앞 100 행만 성공
+    for ci, front in ((0, True), (1, False)):
+        m = np.flatnonzero((ep['cond_index'] == ci) & (ep['set_index'] == 0))
+        ep['main_variant'][m] = (ep['row_j'][m] < 100) == front
+    sm = MS.seed_metrics(ev, ep)
+    assert sm['nominal']['strict'] == pytest.approx(0.5)
+    assert sm['cond']['jitter_0p15']['matched_nominal_strict'] == 1.0
+    assert sm['cond']['jitter_0p30']['matched_nominal_strict'] == 0.0
+    assert sm['cond']['jitter_0p60']['matched_nominal_strict'] == pytest.approx(0.5)
+
+
 def test_identity_check():
     ev, ep = fake_run(0.99, {c: 0.9 for c in CONDS}, 3)
     ref = ref_of(ep)
