@@ -115,10 +115,13 @@ def main():
     if a.selection:
         with open(a.selection, encoding='utf-8') as f:
             other = json.load(f)
-        theirs = other.get('selected_seed', other.get('seed'))
+        theirs = next((other[k] for k in ('chosen_seed', 'selected_seed', 'seed')
+                       if k in other), None)
+        their_sha = other.get('policy_onnx_sha256')
         res['their_selection_file'] = a.selection
         res['their_selected_seed'] = theirs
-        res['match'] = theirs == seed
+        res['their_onnx_sha256'] = their_sha
+        res['match'] = theirs == seed and their_sha in (None, res['selected_onnx_sha256'])
         rc = 0 if res['match'] else 3
     text = json.dumps(res, ensure_ascii=False, indent=1)
     if a.out:
