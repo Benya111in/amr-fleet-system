@@ -1,6 +1,8 @@
 """단계 C 집계·실행기 상태 도우미 시험 (pytest, numpy 만)."""
 
 import csv
+import gzip
+import json
 import math
 import os
 import sys
@@ -11,6 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import analyze_c as A  # noqa: E402
 import c_state as S  # noqa: E402
+import overshoot_c as OV  # noqa: E402
 
 
 def test_mcnemar_exact_known_values():
@@ -115,3 +118,26 @@ def test_schedule_balance():
     starts = sorted(int(r[4]) for r in rows if r[2].startswith('dwa_'))
     assert starts == list(range(0, 400, 50))
     assert np.all([int(r[5]) == 50 for r in rows])
+
+
+def test_overshoot_classify_and_nav2_end(tmp_path):
+    """사후 지나침 진단: 분류 순서(정체 먼저 → 들어간 적 없음 → 미끄러져 나감)와 Nav2 끝 표본."""
+    def row(sys_ok, strict, note, mind, fin):
+        return {'system_success': sys_ok, 'strict_gt': strict, 'contract_note': note,
+                'min_dist_gt_m': str(mind), 'final_dist_gt_m': str(fin)}
+    ews = 'ended_without_success'
+    assert OV.classify(row('True', 'True', None, 0.01, 0.02)) is None
+    assert OV.classify(row('False', 'False', ews, 0.01, 0.2)) is None
+    assert OV.classify(row('True', 'False', '', 0.05, 0.05)) == 'stall_first'
+    assert OV.classify(row('True', 'False', ews, 0.1001, 0.1001)) == 'never_in'
+    assert OV.classify(row('True', 'False', ews, 0.0048, 0.1354)) == 'slid'
+    assert OV.classify(row('True', 'False', ews, 0.05, 0.09)) == 'other'
+    gt = [[10.0, 1.0, 0.0, 0.0, 0.9, 0.1], [10.5, 0.03, 0.0, 0.0, 0.54, 0.63],
+          [11.0, -0.1, 0.0, 0.0, 0.0, 0.0]]
+    p = tmp_path / 'e.json.gz'
+    with gzip.open(p, 'wt', encoding='utf-8') as fh:
+        json.dump({'episode': {'gt': gt, 't_end': 10.52, 'goal': [0.0, 0.0, 0.0]}}, fh)
+    s = OV.at_nav2_end(str(p))
+    assert math.isclose(s['v'], 0.54) and math.isclose(s['w'], 0.63)
+    assert math.isclose(s['d'], 0.03)
+    assert OV.at_nav2_end(str(tmp_path / 'missing.json.gz')) is None
