@@ -176,7 +176,7 @@
 | D3 | ③ DR | DR 있음 대 없음 각 ≥ 5 시드 · 학습 때 보지 않은 교란 묶음(지연·센서·구동 이득·**지도 변형** 등, 결과 전 고정)에서 일반화 차이를 구간과 함께 | **부분** — (갱신 2026-10-08) 측정 빈칸은 없다: 지도 변형 축까지 쟀다. 남은 것은 명세 ③ 의 "향상" 을 보이지 못한 **결과** 자체이고, 더 재서 메울 칸이 아니라 새 설계 (지도 DR 제 3 팔·시드 확대, §6) 가 필요하다 | [b_dr.md](b_dr.md) §1–§5, 노트 [교란 묶음 v1](notebook/entries/2026-10-06_2354_b1-binfra_perturb-suite.md); (갱신) [b_dr_map.md](b_dr_map.md) §1–§4, 노트 [지도 변형](notebook/entries/2026-10-08_0410_b1-mapgen_dr-map-generalization.md) | 5 대 5, 교란 v1 15 조건(결과 전 고정)·v2 13 조건(보조). P1 Δ +0.0083 [−0.0077, +0.0287], p 0.683 → **가르지 못함**. 스트레스 3–15 m Δ −0.0457 [−0.1168, +0.0250]. ~~지도 변형 축 **미측정**~~ → (갱신 2026-10-08) 지도 변형 축 **측정, 가르지 못함**: 6 조건 × 지도 8 장 (재계획 경로, 결과 전 고정 `9e41a75`) P1map Δ −0.0012 [−0.0034, +0.0011], p 0.365; S1 짝 열화 효과 −0.0013 [−0.0025, −0.0001], p 0.103 → 가르지 못함; 학습 DR 에 지도 축 없음 (두 팔 모두). 명세의 "향상" 은 여전히 **보이지 못함** |
 | D4 | ④ | Isaac → ONNX → C++ Nav2 플러그인(계약 v1.2) → Gazebo 폐루프 · 전이 점검 6 종 · Python/C++ ORT 일치 | **충족** (전이 간극 2 개 남음) | 노트 [A2-2](notebook/entries/2026-10-06_1859_b1-plugin_ort-parity.md)·[A5-1](notebook/entries/2026-10-06_2210_b1-gzbench_simtime-decision.md)·[A5-3](notebook/entries/2026-10-06_2335_b1-gzbench_transfer-checks.md), [c_gazebo.md](c_gazebo.md) §4 | 대표 정책 C++ 대 Python ORT 최대 차 0 (관측 9 745 개 비트 동일), 결정 주기 RL 400 · 인계 400 에피소드 모두 [0.099, 0.101] s, scan→cmd 에피소드 중앙 0.071 · 0.064 s. 6 종 모두 측정. 남은 간극: 플랜트(Gazebo T_m ≈ 0.004 s 가 Isaac DR 0.048–0.112 s 밖), 관측 스캔 나이(Isaac 0, Gazebo 약 0.06–0.08 s) — §3.2 |
 | D5 | ② | Gazebo 정적 · 같은 시작·목표 · RL(D1 최종) 대 팀 DWA · 팔당 ≥ 200 · 지표 목록 · "RL 단독" 과 "RL + 근접 인계" 다른 행 · 2D·Isaac 과 같은 방향인지 | ~~**부분** (2D 방향만 미측정, 나머지 충족)~~ → (갱신 2026-10-08) **충족**. 근거: 빠졌던 것은 "2D 와 같은 방향인지" 의 측정뿐이었고 B5 가 사전 등록 규칙으로 쟀다. 완료 조건은 방향이 같은지 **보고** 하라는 것이지 같아야 한다는 것이 아니다 (완성 계획 §1 "결과가 RL 에 불리해도 완료다"). 주 집합의 "판정 불가" 는 빠진 측정이 아니라 Gazebo 주 결론 구간이 0 을 포함한 결과다. 단 2D 쪽 숫자는 safety_lite·위치추정 없음·이상 플랜트 위의 값이라 크기는 비교하지 않는다 | [c_gazebo.md](c_gazebo.md) §1–§3·§7; (갱신) [b_b5_2d.md](b_b5_2d.md) §0·§3·§5·§6, 노트 [B5](notebook/entries/2026-10-08_0410_b1-b5_2d-crosseval-dwa.md) | 팔당 400 (주 200 + 스트레스 200). 주 결론 −1.0 %p [−3.0, +1.0], McNemar p 0.625 → 차이를 보이지 못함. 스트레스 +12.6 %p [+6.0, +19.6] (기술). 인계 −11.0 %p (스트레스, RL 단독 대비). Isaac 방향 일치. ~~2D **미측정**~~ → (갱신 2026-10-08) 2D (10 시드, 5 120 행): 주 main_3_15 +0.92 %p [+0.41, +1.48] "RL 이 높다" — 단 Isaac 경로 보조 실행은 +0.29 [−0.18, +0.75] 가르지 못함 → 방향 **판정 불가** (Gazebo 구간 0 포함, 점추정 부호 반대); 스트레스 stress_3_30 +45.0 %p [+29.7, +59.0] → Gazebo 와 **같은 방향** (크기는 집합 구성·safety_lite 차이가 섞여 비교하지 않음) |
-| D6 | ④ (기록) | 모든 실행이 실행 목록에 · 모든 실험이 노트 항목에 · 결과 문서 (불리한 것 먼저, 한계 포함) · 과목 형식 요약은 그다음 | **부분** (과목 형식 요약 남음 + ~~리뷰·재확인·합류 점검 실행 미등록~~) — (갱신 2026-10-08) 미등록 21 디렉터리는 모두 등록했다. 남은 것: 과목 형식 요약, 기록이 없어 등록하지 못한 후보 4 묶음 (§7.3.1 끝) | 이 문서 §7.3·§7.3.1, [notebook/index.md](notebook/index.md); (갱신) `notebook/runs/b1-regfill.jsonl` | 실행 목록 556 건 (`python3 rl/tools/notebook.py check --paths` → "556 건, 문제 0" — 등록된 건만 검사한다), 노트 항목 43 개 [계산: `notebook/entries/` 파일 수], 결과 문서 = 이 문서. **"모든 실행" 은 미달**: 단계 A–C 의 리뷰·재확인 디렉터리 18 개와 합류 점검 3 개, 모두 21 개가 실행 목록에 없다 (그 안에 Isaac 실행 12 건 (+ GPU 여유 부족으로 건너뛴 1 건)·Gazebo 세션 4 회 포함 [계산: §7.3.1 표의 합]). 과목 형식 요약은 아직 없다. **(갱신 2026-10-08)** 실행 목록 **701 건** (`check --paths` → "701 건, 문제 0"), 노트 항목 **45 개** [계산: 파일 수]. 21 디렉터리를 `b1-regfill.jsonl` 72 레코드로 등록 (원 과제의 미등록 실행 4 건·B 기반 리뷰 임시 대조 3 건 포함; 원자료에 값이 없는 칸은 `unknown(<이유>)` — 32 건 105 칸). 등록하지 못한 후보 4 묶음 (기록 없음 3 + 탐색 범위 한계 1) 과 과목 형식 요약이 남았다 |
+| D6 | ④ (기록) | 모든 실행이 실행 목록에 · 모든 실험이 노트 항목에 · 결과 문서 (불리한 것 먼저, 한계 포함) · 과목 형식 요약은 그다음 | **부분** (과목 형식 요약 남음 + ~~리뷰·재확인·합류 점검 실행 미등록~~) — (갱신 2026-10-08) 단계 A–C 의 미등록 21 디렉터리는 모두 등록했다. 그러나 같은 종류 (리뷰·재확인 실행 미등록) 가 부분 메우기에서 다시 생겼다. 남은 것: 과목 형식 요약; 기록이 없어 등록하지 못한 후보 4 묶음 (§7.3.1 끝); **부분 메우기의 리뷰·재확인 실행 6 디렉터리 미등록** (b1-b5/review — 2D 평가 13 실행 포함, §2.4 의 seed 777 재현이 여기서 나옴; b1-b5/recheck; b1-mapgen/review 변이 R1–R5 등; b1-mapgen/recheck; b1-regfill/review·recheck); b1-b5 사전 등록 집계 `analysis/W1{,i}{,_supp}` 를 가리키는 레코드 없음 (§7.3.1 끝) | 이 문서 §7.3·§7.3.1, [notebook/index.md](notebook/index.md); (갱신) `notebook/runs/b1-regfill.jsonl`, §7.3.1 끝 「부분 메우기의 리뷰·재확인 실행」 | 실행 목록 556 건 (`python3 rl/tools/notebook.py check --paths` → "556 건, 문제 0" — 등록된 건만 검사한다), 노트 항목 43 개 [계산: `notebook/entries/` 파일 수], 결과 문서 = 이 문서. **"모든 실행" 은 미달**: 단계 A–C 의 리뷰·재확인 디렉터리 18 개와 합류 점검 3 개, 모두 21 개가 실행 목록에 없다 (그 안에 Isaac 실행 12 건 (+ GPU 여유 부족으로 건너뛴 1 건)·Gazebo 세션 4 회 포함 [계산: §7.3.1 표의 합]). 과목 형식 요약은 아직 없다. **(갱신 2026-10-08)** 실행 목록 **701 건** (`check --paths` → "701 건, 문제 0"), 노트 항목 **45 개** [계산: 파일 수]. 21 디렉터리를 `b1-regfill.jsonl` 72 레코드로 등록 (원 과제의 미등록 실행 4 건·B 기반 리뷰 임시 대조 3 건 포함; 원자료에 값이 없는 칸은 `unknown(<이유>)` — 32 건 105 칸). 등록하지 못한 후보 4 묶음 (기록 없음 3 + 탐색 범위 한계 1) 과 과목 형식 요약이 남았다. **"모든 실행" 은 여전히 미달**: 부분 메우기의 리뷰·재확인 실행 6 디렉터리 미등록 (b1-b5/review — 2D 평가 13 실행 포함, §2.4 의 seed 777 재현이 여기서 나옴; b1-b5/recheck; b1-mapgen/review 변이 R1–R5 등; b1-mapgen/recheck; b1-regfill/review·recheck), b1-b5 사전 등록 집계 `analysis/W1{,i}{,_supp}` 를 가리키는 레코드 없음 [계산: 701 건의 `raw_dir` 와 앞부분 일치 대조, 이 갱신에서] |
 
 ### 1.2 명세 줄별
 
@@ -185,7 +185,7 @@
 | ① PPO/SAC 정책 학습 | D1 · D2 | **충족** | Isaac Lab 2.3.2 에서 PPO 10 시드·SAC 5 시드 모두 학습됨. 단 정적 창고 지도 하나, 좁은 목표는 PPO 시드 절반이 < 0.90, SAC 는 ONNX 기준 미달로 배포 경로에 못 올림 |
 | ② DWA 와 정량 비교 | D5 | **충족** (비교 자체) / D5 조건으로는 ~~**부분**~~ → (갱신 2026-10-08) **충족** | 사전 등록 비교를 팔당 400 에피소드로 했다. 결과는 주 집합에서 "차이를 보이지 못함" 이다 — RL 이 이겼다는 뜻이 아니다. ~~2D 방향은 미측정~~ → (갱신 2026-10-08) 2D 방향도 쟀다: 스트레스는 같은 방향, 주 집합은 판정 불가 (§0-12) |
 | ③ DR 적용·일반화 향상 | D3 | **부분** | **적용(학습 DR 5 축)과 비교는 했으나 향상은 보이지 못했다.** 1 차 지표가 가르지 못했고, ~~맵 일반화 축은 재지 않았다~~ → (갱신 2026-10-08) 지도 변형 축도 쟀으나 가르지 못했다 (학습 DR 에 지도 축은 없었다). 측정 빈칸이 아니라 결과로 남은 "부분" 이다 |
-| ④ 파이프라인 전체 경험 | D4 · D6 | **충족** (D6 은 과목 형식 요약 남음 + ~~리뷰·재확인·합류 점검 실행 미등록~~ → (갱신 2026-10-08) 미등록 21 디렉터리 등록 완료, 기록 없는 후보 4 묶음 남음) | 계약 → Isaac 학습 → ONNX → C++ 플러그인 → Gazebo 폐루프를 고리마다 검증 수치와 함께 끝까지 돌렸다 |
+| ④ 파이프라인 전체 경험 | D4 · D6 | **충족** (D6 은 과목 형식 요약 남음 + ~~리뷰·재확인·합류 점검 실행 미등록~~ → (갱신 2026-10-08) 단계 A–C 의 미등록 21 디렉터리 등록 완료. 남은 것: 기록 없는 후보 4 묶음; 부분 메우기의 리뷰·재확인 실행 6 디렉터리 미등록 (b1-b5/review — 2D 평가 13 실행 포함, §2.4 의 seed 777 재현이 여기서 나옴; b1-b5/recheck; b1-mapgen/review 변이 R1–R5 등; b1-mapgen/recheck; b1-regfill/review·recheck); b1-b5 사전 등록 집계 레코드 없음) | 계약 → Isaac 학습 → ONNX → C++ 플러그인 → Gazebo 폐루프를 고리마다 검증 수치와 함께 끝까지 돌렸다 |
 
 ---
 
@@ -268,13 +268,16 @@ A5 스모크를 본 뒤라 맹검이 아니었다 (노트 「이미 본 것」).
 
 | 항목 | 무엇 | 주 수치 | 사전 등록 | 리뷰 | 원천 |
 |---|---|---|---|---|---|
-| B5 2D 교차 평가 (b1-b5) | 팀 DWA 코어를 2D 에 붙인 새 모듈 `amr_dwa2d_py` (배포 설정 94 키, 20 Hz, 스캔 기반 rolling 지역 코스트맵) 대 B1 PPO 10 시드 최종 ONNX. Isaac 평가 집합 5 120 행, 세계 = Isaac 기하 0.025 m 래스터. 주 = 두 팔 같은 팀 A* 경로 (W1), 보조 = Isaac 풀 경로 (W1i). safety φ = safety_lite, DR 끔 | P1 main_3_15 +0.92 %p [+0.41, +1.48] "RL 이 높다" (10/10 시드 양수, 시드 7 McNemar p 6.6e-5); W1i +0.29 [−0.18, +0.75] 가르지 못함. 방향: 주 판정 불가, 스트레스 같은 방향 (stress_3_30 +45.0 [+29.7, +59.0]). 2D − Isaac 스트레스 −6.58 %p (10/10 시드). 충돌 DWA 0/5 120, RL 4/51 200 [측정·계산] | `ade60d3` (집계 스크립트 sha256 고정, 결과 뒤 바뀌지 않음). 실행 전 수정 `ba50060` (첫 본 실행 중단, 결과 없음). 평가 `669a384`. 예측은 학습 풀 스모크를 본 뒤 썼다 (맹검 아님) | fix_needed 차단 2 — 실행 목록 commit·dirty 오기 2 건, 주 집합 2D − Isaac 을 경로 교란 없는 시뮬레이터 차처럼 적은 문구. 재실행 없이 고침. 리뷰의 독립 seed 777 재실행에서 P1 재현 +0.82 %p [+0.26, +1.42] | [b_b5_2d.md](b_b5_2d.md), [노트](notebook/entries/2026-10-08_0410_b1-b5_2d-crosseval-dwa.md), `runs/b1-b5.jsonl` 42 건 |
-| B4 지도 변형 축 (b1-mapgen) | DR 켬 (B1 시드 0–4) 대 DR 끔 (B4 시드 0–4), 지도 변형 6 조건 × 8 장 (지터 0.15·0.30·0.60 m, 크기, 제거, add) — 바깥벽 고정·물체 44 개 이동. 변형 지도에서 같은 계획기·같은 여유 규칙으로 재계획. 1 차 모집단 = 변형 지도에서도 직진 여유 ≥ 0.40 m 인 main_3_15 행 (조건마다 1 882–2 047). Isaac, 정본 φ, 명목 동역학, 3–15 m | P1map Δ −0.0012 [−0.0034, +0.0011], p 0.365 가르지 못함; S1 효과 −0.0013 [−0.0025, −0.0001], p 0.103 가르지 못함; S2 Holm 기각 0/6; S3 충돌률 Δ −0.0001, p 0.897. add 엄격 0.9784 · 0.9834, 충돌 65 · 68 (명목 1 · 10). 명목 행은 10 정책 모두 기존 평가와 배열 27 개 비트 같음 (H3) [측정·계산] | `9e41a75` (본 평가는 그 커밋의 `git archive` 사본에서, 분석 스크립트 sha256 고정, 본 평가 시작 04:12:30 전). 예측 H2 의 jitter_0p60·scale 크기 예측은 **틀렸다** | fix_needed 차단 1 — 짝 열화의 잡음 바닥을 "타일 이동" 으로만 적었다 → 평가 잡음 실현 (시작 yaw·LiDAR 잡음). 판정 불변. 리뷰어가 Isaac 재실행 2 건 (`B4m_review_rerun_add_{on,off}0`) | [b_dr_map.md](b_dr_map.md), [노트](notebook/entries/2026-10-08_0410_b1-mapgen_dr-map-generalization.md), `runs/b1-mapgen.jsonl` 31 건 |
-| 실행 등록 (b1-regfill) | §7.3.1 의 미등록 21 디렉터리를 원자료에서 레코드로. 조사 중 찾은 원 과제의 미등록 실행 4 건 (b1-gzbench 빌드 1, b1-gzc 빌드 2·변이 1) 과 B 기반 리뷰어의 임시 대조 3 건 (probe) 을 더함. agent = 실제 실행 주체 (`<과제>-review` 등) | 72 레코드 (test 34 · probe 19 · eval 13 · gazebo 4 · train 2 [계산: `kind`]). 원자료에 없는 값은 `unknown(<이유>)` — 32 건 105 칸 (`unknown_fields`). 결과가 없던 둘: s4243 P1 0.9391 (seed 4242 0.9383), `rl_e0_6` 엄격 6/6 (§7.3.1 갱신 문단) | 해당 없음 — 등록 작업. 원 실행과의 대조는 `result.regfill_check` 에 [계산] 보충 (사전 등록 외) 으로만 | fix_needed 차단 1 — B1 리뷰의 변이 (검출) 시험을 "결정성 재대조" 로 적은 레코드 → `B1rv_ppo10_aggregate_mutation` (kind test) 으로 다시 씀 (`ba564ad`) | `runs/b1-regfill.jsonl`, 커밋 `41fbf87`·`ba564ad` 메시지 |
+| B5 2D 교차 평가 (b1-b5) | 팀 DWA 코어를 2D 에 붙인 새 모듈 `amr_dwa2d_py` (배포 설정 94 키, 20 Hz, 스캔 기반 rolling 지역 코스트맵) 대 B1 PPO 10 시드 최종 ONNX. Isaac 평가 집합 5 120 행, 세계 = Isaac 기하 0.025 m 래스터. 주 = 두 팔 같은 팀 A* 경로 (W1), 보조 = Isaac 풀 경로 (W1i). safety φ = safety_lite, DR 끔 | P1 main_3_15 +0.92 %p [+0.41, +1.48] "RL 이 높다" (10/10 시드 양수, 시드 7 McNemar p 6.6e-5); W1i +0.29 [−0.18, +0.75] 가르지 못함. 방향: 주 판정 불가, 스트레스 같은 방향 (stress_3_30 +45.0 [+29.7, +59.0]). 2D − Isaac 스트레스 −6.58 %p (10/10 시드). 충돌 DWA 0/5 120, RL 4/51 200 [측정·계산] | `ade60d3` (집계 스크립트 sha256 고정, 결과 뒤 바뀌지 않음). 실행 전 수정 `ba50060` (첫 본 실행 중단, 결과 없음). 평가 `669a384`. 예측은 학습 풀 스모크를 본 뒤 썼다 (맹검 아님) | fix_needed 차단 2 — 실행 목록 commit·dirty 오기 2 건, 주 집합 2D − Isaac 을 경로 교란 없는 시뮬레이터 차처럼 적은 문구. 재실행 없이 고침. 리뷰의 독립 seed 777 재실행에서 P1 재현 +0.82 %p [+0.26, +1.42] (노트 「리뷰 반영」; **실행 목록 미등록** — `b1-b5/review/eval/` 의 2D 평가 13 실행, §7.3.1 끝) | [b_b5_2d.md](b_b5_2d.md), [노트](notebook/entries/2026-10-08_0410_b1-b5_2d-crosseval-dwa.md), `runs/b1-b5.jsonl` 42 건 (사전 등록 집계 `analysis/W1{,i}{,_supp}` 를 가리키는 레코드는 없다) |
+| B4 지도 변형 축 (b1-mapgen) | DR 켬 (B1 시드 0–4) 대 DR 끔 (B4 시드 0–4), 지도 변형 6 조건 × 8 장 (지터 0.15·0.30·0.60 m, 크기, 제거, add) — 바깥벽 고정·물체 44 개 이동. 변형 지도에서 같은 계획기·같은 여유 규칙으로 재계획. 1 차 모집단 = 변형 지도에서도 직진 여유 ≥ 0.40 m 인 main_3_15 행 (조건마다 1 882–2 047). Isaac, 정본 φ, 명목 동역학, 3–15 m | P1map Δ −0.0012 [−0.0034, +0.0011], p 0.365 가르지 못함; S1 효과 −0.0013 [−0.0025, −0.0001], p 0.103 가르지 못함; S2 Holm 기각 0/6; S3 충돌률 Δ −0.0001, p 0.897. add 엄격 0.9784 · 0.9834, 충돌 65 · 68 (명목 1 · 10). 명목 행은 10 정책 모두 기존 평가와 배열 27 개 비트 같음 (H3) [측정·계산] | `9e41a75` (본 평가는 그 커밋의 `git archive` 사본에서, 분석 스크립트 sha256 고정, 본 평가 시작 04:12:30 전). 예측 H2 의 jitter_0p60·scale 크기 예측은 **틀렸다** | fix_needed 차단 1 — 짝 열화의 잡음 바닥을 "타일 이동" 으로만 적었다 → 평가 잡음 실현 (시작 yaw·LiDAR 잡음). 판정 불변. 리뷰어가 Isaac 재실행 2 건 (`B4m_review_rerun_add_{on,off}0`, 등록됨). 리뷰 변이 R1–R5·재계산 (`b1-mapgen/review/`) 과 재확인 `noise_mapgen` 재실행 (`b1-mapgen/recheck/`) 은 실행 목록 미등록 (§7.3.1 끝) | [b_dr_map.md](b_dr_map.md), [노트](notebook/entries/2026-10-08_0410_b1-mapgen_dr-map-generalization.md), `runs/b1-mapgen.jsonl` 31 건 |
+| 실행 등록 (b1-regfill) | §7.3.1 의 미등록 21 디렉터리를 원자료에서 레코드로. 조사 중 찾은 원 과제의 미등록 실행 4 건 (b1-gzbench 빌드 1, b1-gzc 빌드 2·변이 1) 과 B 기반 리뷰어의 임시 대조 3 건 (probe) 을 더함. agent = 실제 실행 주체 (`<과제>-review` 등) | 72 레코드 (test 34 · probe 19 · eval 13 · gazebo 4 · train 2 [계산: `kind`]). 원자료에 없는 값은 `unknown(<이유>)` — 32 건 105 칸 (`unknown_fields`). 결과가 없던 둘: s4243 P1 0.9391 (seed 4242 0.9383), `rl_e0_6` 엄격 6/6 (§7.3.1 갱신 문단) | 해당 없음 — 등록 작업. 원 실행과의 대조는 `result.regfill_check` 에 [계산] 보충 (사전 등록 외) 으로만 | fix_needed 차단 1 — B1 리뷰의 변이 (검출) 시험을 "결정성 재대조" 로 적은 레코드 → `B1rv_ppo10_aggregate_mutation` (kind test) 으로 다시 씀 (`ba564ad`). 리뷰 (`b1-regfill/review/`, `npzcmp.py`) 와 재확인 (`b1-regfill/recheck/`, 레코드 재생성) 은 실행 목록 미등록 (§7.3.1 끝) | `runs/b1-regfill.jsonl`, 커밋 `41fbf87`·`ba564ad` 메시지 |
 
 - 세 과제 모두 기존 파일을 고치지 않았다 — b1-b5 는 `rl/sim2d/` 에, b1-mapgen 은 `rl/isaac/` 에 새 파일만 더했고 (기본 env·`eval_unbiased.py` 무변경
   [git 기록: `git diff --name-status 74d3a13 4b323d7 -- rl/` 이 모두 A]), b1-regfill 은 실행 목록 파일 하나만 썼다.
-- 합류 뒤 `python3 rl/tools/notebook.py check --paths` → "701 건, 문제 0" (이 갱신에서 다시 돌림).
+- 합류 뒤 `python3 rl/tools/notebook.py check --paths` → "701 건, 문제 0" (이 갱신에서 다시 돌림). 이 검사는 등록된 건만 본다.
+- (갱신 2026-10-08 감사 반영) **세 과제의 리뷰·재확인 실행은 실행 목록에 없다** — 부분 메우기의 리뷰·재확인 실행 6 디렉터리 미등록 (b1-b5/review —
+  2D 평가 13 실행 포함, §2.4 의 seed 777 재현이 여기서 나옴; b1-b5/recheck; b1-mapgen/review 변이 R1–R5 등; b1-mapgen/recheck; b1-regfill/review·recheck).
+  단계 D 가 D6 결함으로 짚은 것과 같은 종류다. 표와 대조 방법은 §7.3.1 끝.
 
 ---
 
@@ -454,7 +457,10 @@ A5 스모크를 본 뒤라 맹검이 아니었다 (노트 「이미 본 것」).
     지터·크기·제거의 짝 열화는 평가 잡음 실현 아래라 정밀하게 재려면 행별 잡음 고정이 필요하다. [b_dr_map.md §5.3·§9]
 18. **(갱신 2026-10-08 새 항목) 실행 등록의 빈칸.** 소급 등록한 72 레코드 중 32 건은 시각·load·결과 일부가 `unknown(<이유>)` 이다 (105 칸 —
     리뷰어가 start/end·load·출력을 남기지 않았다). 등록하지 못한 후보 4 묶음이 남았다 (§7.3.1 끝). 이미 등록된 `raw_dir` 안에 숨은 실행은 그 탐색
-    방법으로 찾지 못했을 수 있다.
+    방법으로 찾지 못했을 수 있다. (감사 반영) 그리고 부분 메우기의 리뷰·재확인 실행 6 디렉터리 미등록 (b1-b5/review — 2D 평가 13 실행 포함,
+    §2.4 의 seed 777 재현이 여기서 나옴; b1-b5/recheck; b1-mapgen/review 변이 R1–R5 등; b1-mapgen/recheck; b1-regfill/review·recheck), b1-b5 사전
+    등록 집계 레코드 없음. 단계 D 가 짚은 결함 (리뷰·재확인 실행 미등록) 이 소급 등록 직후의 과제들에서 되풀이됐다 — "실행이 끝날 때마다 등록"
+    규칙을 리뷰어·재확인자가 지키지 않는 한 소급 등록으로는 닫히지 않는다 [추정]. 이 문서가 인용한 seed 777 재현값도 실행 목록에서 찾을 수 없다.
 
 ---
 
@@ -479,7 +485,7 @@ A5 스모크를 본 뒤라 맹검이 아니었다 (노트 「이미 본 것」).
 | P1 | 같은 시간대에 DWA·RL·인계를 한 묶음씩 다시 (인계 팔 부하 혼입 가르기), RTF ≈ 1 시간대 또는 sim 시각 DWA 로 실효 주기 편향 재기 | §5.2-4·5 | c_gazebo.md §5·§8, 노트 C2 「다음」 | Gazebo 독점 시간대 |
 | P1 | 동등성(비열등) 비교가 필요하면 여유(margin)와 표본을 미리 정해 사전 등록 | "같다" 를 말하려면 | c_gazebo.md §8 | — |
 | P1 | 과목 형식 요약 (D6 의 나머지) | 완성 계획 D6 | 완성 계획 §2 | 오케스트레이터 |
-| P1 · **해결** (갱신 2026-10-08, b1-regfill — 21 디렉터리 72 레코드, s4243·`rl_e0_6` 결과도 레코드에 옮김. 남은 것은 아래 새 행) | **리뷰·재확인·합류 점검 실행 등록** (D6 의 나머지) — §7.3.1 의 21 디렉터리를 각 리뷰 id 로 실행 목록에 등록. 그 전에 결과가 기록되지 않은 두 실행 (`b1-dr/review/off4_pv1_s4243` 평가 seed 4243, `b1-gzc/review/rerun/rl_e0_6` RL Gazebo 6 에피소드) 의 결과를 원래 문서 소유자가 집계·기록 | "모든 실행이 실행 목록에" (D6) 미달. s4243 은 B4 재현성의 독립 근거가 될 수 있는데 버려져 있다 | §7.3.1, notebook/README.md | 각 리뷰를 띄운 에이전트 · 오케스트레이터 |
+| P1 · 단계 A–C 분 **해결** (갱신 2026-10-08, b1-regfill — 21 디렉터리 72 레코드, s4243·`rl_e0_6` 결과도 레코드에 옮김. 같은 종류가 부분 메우기에서 다시 생겼다 — 아래 새 행 「실행 등록의 남은 일」) | **리뷰·재확인·합류 점검 실행 등록** (D6 의 나머지) — §7.3.1 의 21 디렉터리를 각 리뷰 id 로 실행 목록에 등록. 그 전에 결과가 기록되지 않은 두 실행 (`b1-dr/review/off4_pv1_s4243` 평가 seed 4243, `b1-gzc/review/rerun/rl_e0_6` RL Gazebo 6 에피소드) 의 결과를 원래 문서 소유자가 집계·기록 | "모든 실행이 실행 목록에" (D6) 미달. s4243 은 B4 재현성의 독립 근거가 될 수 있는데 버려져 있다 | §7.3.1, notebook/README.md | 각 리뷰를 띄운 에이전트 · 오케스트레이터 |
 | P2 · **해결** (갱신 2026-10-08, b1-b5 — §0-12·§2.4) | 2D 방향 — 2D-DWA 평가와 같은 정책들의 2D 교차 평가 (B5) | D5 의 2D 방향 미측정 | c_gazebo.md §7, 완성 계획 §3 | `rl/sim2d` |
 | P2 | 예산 훑기 — d 0.2 를 시드 5–9 로 더 (무제약 10 시드와 같은 수), 걸리는 예산 d ∈ {0.05, 0.1}, 중간 체크포인트의 스트레스 평가 | §0-7 의 크기를 가르려면 | b_sweep.md §15 | `rl/isaac` |
 | P2 | SAC 의 같은 예산 공정 비교 — 하이퍼파라미터 훑기, 체크포인트 여럿, PPO 를 21M 일정으로 따로 학습한 팔 | §0-6 의 범위를 넘으려면 | b_sac.md §13 | `rl/isaac` |
@@ -494,10 +500,10 @@ A5 스모크를 본 뒤라 맹검이 아니었다 (노트 「이미 본 것」).
 | P1 | (갱신 2026-10-08 새 행) **계획 지도와 실제 세계가 어긋나는 조건** — 계획기는 명목 지도, 세계는 변형 (모르는 상자·옮겨진 랙) | 지금 지도 변형 평가는 계획기가 변형을 아는 낙관 조건이다. 실제 운용에 더 가깝다 | b_dr_map.md §9-3, 노트 지도 변형 「다음」 | `rl/isaac` |
 | P1 | (갱신 2026-10-08 새 행) 2D 에 **정본 φ** 를 넣어 B5 의 같은 행을 다시 | "safety_lite 가 일찍 STOP" 해석 [추정] 확인, 2D 스트레스 크기를 Gazebo 와 견줄 수 있게, 2D − Isaac 원인 가르기 | b_b5_2d.md §5·§9 | `rl/sim2d` |
 | P1 | (갱신 2026-10-08 새 행) **경로 출처를 사전 등록 요인으로** 넣은 주 집합 비교 (팀 A* · Isaac 풀 · Gazebo Nav2 기록 경로) | 2D 주 집합 RL − DWA 와 2D − Isaac 둘 다 경로 출처에 민감했다 | b_b5_2d.md §6·§9 | `rl/sim2d` |
+| P1 | (갱신 2026-10-08 새 행; 감사 반영으로 P2 → P1) **실행 등록의 남은 일** — 부분 메우기의 리뷰·재확인 실행 6 디렉터리 미등록 (b1-b5/review — 2D 평가 13 실행 포함, §2.4 의 seed 777 재현이 여기서 나옴; b1-b5/recheck; b1-mapgen/review 변이 R1–R5 등; b1-mapgen/recheck; b1-regfill/review·recheck) 를 각 리뷰 id 로 등록; b1-b5 사전 등록 집계 `analysis/W1{,i}{,_supp}` 를 레코드로 (다른 과제는 집계를 등록했다); 기록 없는 후보 4 묶음 (§7.3.1 끝) 의 등록 여부, `b1-gzc/tmp/{ana_test,c4test,cstate_test}` 합성 실행 등록 결정, s4243 결과 (P1 0.9391) 를 B4 문서에 넣을지, B 기반 리뷰 변이에서 살아남은 R1 (PolicySAC 분산 하한)·R4 (풀 해시 대조) 판단 | D6 "모든 실행이 실행 목록에" 의 남은 것. 6 디렉터리는 단계 D 가 짚은 결함과 같은 종류이고 (위 P1 행), 이 문서가 인용하는 결과 (§2.4 seed 777 재현) 가 그 안에 있다. R1·R4 생존은 어느 노트·문서에도 없던 사실이다 (`B0rv_binfra_mutation`) | `b1-regfill.jsonl`, b1-regfill 보고, §7.3.1 끝 | b1-b5 · b1-mapgen · b1-regfill 리뷰를 띄운 에이전트 · b1-gzc · b1-dr · b1-binfra 소유자, 오케스트레이터 |
 | P2 | (갱신 2026-10-08 새 행) **행별 잡음 고정** — 시작 yaw·LiDAR 잡음을 행 번호 (와 스텝) 로 시드한 난수로. 같은 env 색인 배치만으로는 부족하다 | 지도 변형 짝 열화를 평가 잡음 아래까지 재려면. 다른 Isaac 평가 문서의 "같은 seed 면 비트 재현" 주장도 배치 구성 조건을 달아야 한다 (§5.2-3) | b_dr_map.md §5.3·§11 | `rl/isaac` · 다른 Isaac 평가 문서 소유자 |
 | P2 | (갱신 2026-10-08 새 행) Gazebo 시나리오 v1 400 행을 2D 에서 그대로 (재가중 없이 구성 차 제거), 2D 에 EKF 같은 속도·자세 잡음·관측 스캔 나이·빠른 플랜트를 조건으로, 2D-DWA 의 yaw 정렬·goal checker 판정 | §5.2-16 의 2D 간극을 하나씩 | b_b5_2d.md §9 | `rl/sim2d` |
 | P2 | (갱신 2026-10-08 새 행) 3–30 m 와 동역학 교란을 겹친 지도 변형, Gazebo 지도 변형 | 지도 변형 결과의 범위 | b_dr_map.md §9-6·§9-9 | `rl/isaac`, Gazebo |
-| P2 | (갱신 2026-10-08 새 행) 실행 등록의 남은 일 — 기록 없는 후보 4 묶음 (§7.3.1 끝) 의 등록 여부, `b1-gzc/tmp/{ana_test,c4test,cstate_test}` 합성 실행 등록 결정, s4243 결과 (P1 0.9391) 를 B4 문서에 넣을지, B 기반 리뷰 변이에서 살아남은 R1 (PolicySAC 분산 하한)·R4 (풀 해시 대조) 판단 | D6 "모든 실행" 의 끝손질. R1·R4 생존은 어느 노트·문서에도 없던 사실이다 (`B0rv_binfra_mutation`) | `b1-regfill.jsonl`, b1-regfill 보고 | b1-gzc · b1-dr · b1-binfra 소유자, 오케스트레이터 |
 
 ---
 
@@ -579,7 +585,7 @@ A5 스모크를 본 뒤라 맹검이 아니었다 (노트 「이미 본 것」).
 > - 등록하면서 드러난 사실 (원자료를 옮긴 것): B 기반 리뷰 변이 4 개 중 R1 (PolicySAC 분산 하한)·R4 (풀 해시 대조) 가 살아남았다
 >   (`B0rv_binfra_mutation`) — 어느 노트·문서에도 없던 결과다 (§6 새 행). A1 직후 합류 점검은 colcon ctest 12 중 3 실패로 "실패" 표기
 >   (`A1_integ_A0_f6e578c`). Isaac 재실행 시도 둘 (b1-ppo10·b1-sac 리뷰) 은 슬롯 대기 뒤 취소, b1-ppo10-eval 리뷰 시드 2 는 GPU 여유 부족 rc 3 — 셋 다 "실패" 표기.
-> - 남은 것은 이 절 끝 「등록하지 못한 후보」.
+> - 남은 것은 이 절 끝 「등록하지 못한 후보」 와 (감사 반영) 「부분 메우기의 리뷰·재확인 실행」 — 이 21 디렉터리 뒤에 같은 종류가 다시 생겼다.
 
 notebook/README.md 규칙은 "학습·평가·탐침·Gazebo 실행이 끝날 때마다 (실패한 실행도)" 실행 목록에 쓰라고 한다. 1·2차 물결의 리뷰 실행은
 `b1-backfill.jsonl` 에 등록했지만 (예: `W2b_r7_review_rv_v12_s3`), 단계 A–C 의 리뷰어·재확인 실행과 통합 브랜치 합류 점검은 하나도 등록되지
@@ -626,7 +632,30 @@ Isaac 행 번호는 `/home/CAPYI_AI/logs/isaac_slots.log` 의 것이다 (이 로
 | 3 | `A0_integration/nbtest` | 노트 도구 시험용 저장소 사본, 출력 없음 | `A1_integ_A0_f6e578c` 의 config 에 존재만 |
 | 4 | (탐색 범위) 이미 등록된 `raw_dir` 안에 숨은 추가 실행 | 미등록 탐색은 "등록된 `raw_dir` 와 앞부분이 겹치지 않는 디렉터리" 와 슬롯 로그의 리뷰 id 두 가지만 했다 — 그 안쪽은 잡히지 않는다 | — |
 
-그래서 D6 의 "모든 실행이 실행 목록에" 는 **알려진 실행 기준으로는 채웠고**, 1–3 은 실행이었는지조차 기록으로 확인할 수 없는 후보, 4 는 탐색 방법의 한계다.
+그래서 D6 의 "모든 실행이 실행 목록에" 는 **단계 A–C 의 알려진 실행 기준으로는 채웠다** (감사 반영: 처음에 "알려진 실행 기준으로는 채웠고" 라고
+범위 없이 적었다). 1–3 은 실행이었는지조차 기록으로 확인할 수 없는 후보, 4 는 탐색 방법의 한계다. 부분 메우기 자체의 리뷰·재확인 실행은 채우지 못했다 — 아래.
+
+**부분 메우기의 리뷰·재확인 실행 — 실행 목록에 없음 (6 디렉터리, 갱신 2026-10-08 감사 반영)** [계산: 아래 경로를 `notebook/runs/*.jsonl` 701 건의
+`raw_dir` 와 앞부분 일치로 대조 — `b1-mapgen/review/rerun/` 아래 2 건을 빼고 모두 불일치, 이 갱신에서]. 단계 D 가 D6 결함으로 짚은 것과 같은 종류
+(리뷰·재확인 실행 미등록) 가 다시 생겼다. 넷 (b1-b5·b1-mapgen 의 review·recheck, 파일 mtime 05:17–07:00) 은 b1-regfill 의 마지막 레코드 커밋
+`ba564ad` (04:04) 뒤에 생겨 그 탐색에 걸릴 수 없었고, 둘은 b1-regfill 자신의 리뷰·재확인이다 [계산: mtime·git 기록]. 실행 목록에 있는 두 과제의
+"review" 레코드 (`B5_review_path_source_rl`·`B5_review_signed_rerun`, `B4m_review_mutation`·`B4m_review_tests`) 는 리뷰를 받은 쪽이 고친 뒤 돌린 것이라
+`raw_dir` 가 `tmp/review_fix` 이고 (`B4m_review_noise` 는 `analysis/`), 리뷰어 자신의 실행으로 등록된 것은 `B4m_review_rerun_add_{on,off}0` 둘뿐이다.
+
+| 경로 (`/home/CAPYI_AI/runs/bonus1/` 아래) | 무엇 (디렉터리 내용 기준) | 시뮬레이터 실행 | 결과가 적힌 곳 |
+|---|---|---|---|
+| `b1-b5/review` | B5 리뷰 — 사본 `src`, 기준 시험 `base_tests.log` (21 통과), 변이 RA–RJ (`mutants.py`·`run_mutants.sh`·`mut/*.log`·`mut/review_mutation_result*.json`), 재실행 `rerun.sh`, 재집계·대조 `scripts/` (`recount`·`cmp_rows`·`s777`·`signed`) | **2D 평가 13** (`eval/`, `rerun_driver.log` 05:27–05:47, 모두 rc 0): seed 4242 재현 `dwa_W1_4242`·`rl7_W1_4242`, seed 777 main_3_15 `dwa_W1_777_main`·`rl{0..9}_W1_777_main` | 노트 B5 「리뷰 반영」 이 디렉터리 경로와 함께 인용 (행마다 비트 같음, seed 777 P1 재현 +0.82 %p [+0.26, +1.42]) — 이 문서 §2.4 가 옮겼다 |
+| `b1-b5/recheck` | B5 차단 재확인 — 사본 `src`, `analysis/W1{,i}` 재집계 (`analysis_W1{,i}.log`), `check_b2.{py,out.json}`, `fixer_report.txt` | 없음 (오프라인 재집계) | 경로 인용 없음 |
+| `b1-mapgen/review` | 지도 변형 리뷰 — 사본 `src_head`, 변이 `mut.py`·`mut_R1`–`mut_R5` (사본 다섯), `recount.py`·`recount2.py`, `bundle_check.py`·`clear_check.py`. 그 아래 `rerun/` 만 등록됐다 | Isaac 2 (`rerun/`, `B4m_review_rerun_add_{on,off}0` 로 등록됨). 그 밖은 없음 | 변이 R3·R5 생존은 b_dr_map.md §5 표·노트 「리뷰 반영」 (경로 없이) |
+| `b1-mapgen/recheck` | 지도 변형 차단 재확인 — 사본 `src`, `noise_mapgen.{json,md}` 재실행 (07:00) | 없음 | 경로 인용 없음 |
+| `b1-regfill/review` | 실행 등록 리뷰 — 사본 `src`, `npzcmp.py` (리뷰 재실행 `episodes.npz` 8 쌍 대조) | 없음 | 경로 인용 없음 (리뷰 반영은 `ba564ad` 메시지) |
+| `b1-regfill/recheck` | 실행 등록 차단 재확인 — 사본 `src_ba564ad`, `work/` (`records_v2_rerun/` 레코드 재생성, `diff_mut.py`, `v1.jsonl`, `check_paths.txt`) | 없음 | 경로 인용 없음 |
+
+같은 대조에서 하나 더: **b1-b5 의 사전 등록 집계 `analysis/W1{,i}{,_supp}` (P1 이 나온 곳) 를 `raw_dir` 로 가리키는 레코드가 없다.** 다른 과제는 집계를
+실행 목록에 올렸다 (`B4m_analysis`, `B4_dr_aggregate`, `C_b1gzc_analysis_final` 등). 집계가 등록 대상인지는 노트 규칙 (「실행 목록」: 학습·평가·탐침·
+Gazebo) 이 따로 정하지 않는다 — 다른 과제의 관례로 보면 빠진 것이다 [추정]. 이 갱신은 등록하지 않았다 (새 측정·등록 없이 문구만 고치는 과제).
+
+D6 의 "모든 실행이 실행 목록에" 는 그러므로 **아직 미달**이다. 등록은 §6 「실행 등록의 남은 일」 로 남긴다.
 
 ### 7.4 원자료 디렉터리 (저장소 밖, 커밋하지 않음)
 
@@ -643,11 +672,11 @@ Isaac 행 번호는 `/home/CAPYI_AI/logs/isaac_slots.log` 의 것이다 (이 로
 | `/home/CAPYI_AI/runs/bonus1/b1-sweep/` | B2 — `train/B2_pid_d{0p2,0p5,1p0}_s{0..4}/`, `ref/B2_ref_ppo10_s{0..4}_it160/`, `analysis/final/` |
 | `/home/CAPYI_AI/runs/bonus1/b1-dr/` | B4 — `train/B4_droff_s<N>/`, `evalon/B1_ppo10_s<N>/`, `suites/b1_perturb_suite_v2.json`, `analysis/` (`dr_analysis.*`, `supp_analysis.*`, `figs/levels.{png,svg}`) |
 | `/home/CAPYI_AI/runs/bonus1/b1-gzc/` | C — `c2/batches/<팔>_b<k>/a<n>/` (에피소드 `episodes/*.json.gz`), `c2/sampler.tsv`, `c4/`, `analysis/final_c2.{json,md}`·`overshoot_c2.*`, `ws/` (고정 사본), `driver/` |
-| `/home/CAPYI_AI/runs/bonus1/b1-b5/` (갱신 2026-10-08) | B5 — `eval/B5_{dwa,rl_s<N>}_{W1,W1i}/` (`episodes.npz`·`summary.json`), `plans/plans_eval_v1.{npz,json}` (팀 A* 경로), `world/` (W1 래스터), `mapcheck*/`, `smoke/`, `analysis/W1{,i}{,_supp}/`, `mut/`, `tests/`, `review/` |
-| `/home/CAPYI_AI/runs/bonus1/b1-mapgen/` (갱신 2026-10-08) | B4 지도 축 — `suite/map_bundle_v1.{npz,summary.json}` (sha256 `7f7bf288…`), `eval/mg_{on,off}_s<S>/`, 점검 `eval/{smoke1,smoke2,probe_*}/`, `analysis/` (`mapgen_analysis.*` 사전 등록, `supp_mapgen.json`, `noise_mapgen.*`, `figs/mapgen_conditions.{png,svg}`), `src/<커밋>/` (git archive), `driver.{py,log}`·`job_mg.sh`, `review/rerun/` |
-| `/home/CAPYI_AI/runs/bonus1/b1-regfill/` (갱신 2026-10-08) | 실행 등록 — 생성 스크립트 `build_records.py` (sha256 `a2760c82…`)·`build_records_v2.py` (`baf191ee…`)·`assemble_v2.py`, 레코드 JSON `records/`·`records_v2/`, `b0rv_tmp_rerun/`, `review/`·`recheck/` |
+| `/home/CAPYI_AI/runs/bonus1/b1-b5/` (갱신 2026-10-08) | B5 — `eval/B5_{dwa,rl_s<N>}_{W1,W1i}/` (`episodes.npz`·`summary.json`), `plans/plans_eval_v1.{npz,json}` (팀 A* 경로), `world/` (W1 래스터), `mapcheck*/`, `smoke/`, `analysis/W1{,i}{,_supp}/` (레코드 없음 — §7.3.1 끝), `mut/`, `tests/`, `review/` (리뷰 — 2D 평가 13 실행 포함)·`recheck/` (차단 재확인) — 둘 다 실행 목록에 없음 (감사 반영, §7.3.1 끝) |
+| `/home/CAPYI_AI/runs/bonus1/b1-mapgen/` (갱신 2026-10-08) | B4 지도 축 — `suite/map_bundle_v1.{npz,summary.json}` (sha256 `7f7bf288…`), `eval/mg_{on,off}_s<S>/`, 점검 `eval/{smoke1,smoke2,probe_*}/`, `analysis/` (`mapgen_analysis.*` 사전 등록, `supp_mapgen.json`, `noise_mapgen.*`, `figs/mapgen_conditions.{png,svg}`), `src/<커밋>/` (git archive), `driver.{py,log}`·`job_mg.sh`, `review/` (리뷰 — `rerun/` 의 Isaac 2 건만 등록, 변이 `mut_R1`–`mut_R5`·재계산은 실행 목록에 없음)·`recheck/` (`noise_mapgen` 재실행 — 실행 목록에 없음) (감사 반영, §7.3.1 끝) |
+| `/home/CAPYI_AI/runs/bonus1/b1-regfill/` (갱신 2026-10-08) | 실행 등록 — 생성 스크립트 `build_records.py` (sha256 `a2760c82…`)·`build_records_v2.py` (`baf191ee…`)·`assemble_v2.py`, 레코드 JSON `records/`·`records_v2/`, `b0rv_tmp_rerun/`, `review/`·`recheck/` (실행 목록에 없음 — 감사 반영, §7.3.1 끝) |
 | `/home/CAPYI_AI/runs/bonus1/{A0_integration,A_merge_verify,A_final_verify}/` | 통합 브랜치 합류 점검 (실행 목록에 없음 — §7.3.1; 갱신 2026-10-08: `b1-regfill.jsonl` 에 등록) |
-| `/home/CAPYI_AI/runs/bonus1/b1-*/{review,recheck}/` | 단계 A–C 리뷰어·재확인 실행 18 디렉터리 (실행 목록에 없음 — §7.3.1; 갱신 2026-10-08: `b1-regfill.jsonl` 에 등록). 위 각 행의 `review/` 도 이것이다 |
+| `/home/CAPYI_AI/runs/bonus1/b1-*/{review,recheck}/` | 단계 A–C 리뷰어·재확인 실행 18 디렉터리 (실행 목록에 없음 — §7.3.1; 갱신 2026-10-08: `b1-regfill.jsonl` 에 등록). 위 각 행의 `review/` 도 이것이다. (감사 반영) 이 경로 꼴에 걸리는 부분 메우기의 6 디렉터리 (`b1-b5`·`b1-mapgen`·`b1-regfill` 의 `review`·`recheck`) 는 등록되지 않았다 — §7.3.1 끝 |
 | `/home/CAPYI_AI/runs/{r1-isaac,r2-sim2d,r3-controller,r5-reward,r6-dyn,r7-isaac12}/` | 1·2차 물결 원자료 ([notebook/README.md](notebook/README.md) 「이전 기록」) |
 | `/home/CAPYI_AI/logs/isaac_slots.log` | Isaac 슬롯 획득·대기 기록 (공유 자원 영향의 근거). 10-06 23:24 부터 있다 — A 단계 실행은 이 로그에 없다. 리뷰 Isaac 실행의 유일한 실행 기록인 경우가 많다 (§7.3.1) |
 
@@ -720,3 +749,13 @@ B 단계 명령 모음은 [rl/isaac/README.md](../../../rl/isaac/README.md) 「B
     끝에 등록하지 못한 후보 4 묶음 표.
   - 함께 고친 다른 파일: 완성 계획 §6 (새 항목만 추가), c_gazebo.md §0·§7 (갱신 주석만), rl/isaac/README.md 「지도 변형 평가 (b1-mapgen)」,
     rl/sim2d/README.md 「2D DWA (b1-b5)」, 이 디렉터리 README.md 표 두 줄.
+- 2026-10-08 **감사 반영** (b1-results2, 같은 브랜치). 새 측정·새 등록 없음 — 문구만 고쳤다. 감사 차단 1 건: 위 「부분 메우기 반영」 이 D6 의 남은 것을
+  "과목 형식 요약 + 기록 없는 후보 4 묶음" 으로만 적고 §7.3.1 끝에 "알려진 실행 기준으로는 채웠고" 라고 썼는데, 부분 메우기 자체의 리뷰·재확인 실행
+  6 디렉터리 (b1-b5/review — 2D 평가 13 실행 포함, §2.4 의 seed 777 재현이 여기서 나옴; b1-b5/recheck; b1-mapgen/review 변이 R1–R5 등; b1-mapgen/recheck;
+  b1-regfill/review·recheck) 가 실행 목록에 없었다. 이 문서가 그 결과를 인용하면서 단계 D 가 짚은 것과 같은 종류의 결함을 "해결" 쪽으로 적은 것이다.
+  감사의 대조 (701 건 `raw_dir` 앞부분 일치) 를 이 갱신에서 다시 돌려 감사가 든 6 디렉터리가 모두 미등록임을 확인했다.
+  - §1.1 D6 판정·근거·핵심 수치 칸, §1.2 ④, §2.4 (B5·지도 변형·실행 등록 행의 리뷰 칸, seed 777 문구에 "실행 목록 미등록", 새 글머리),
+    §5.2-18, §6 (실행 등록 행을 "단계 A–C 분 해결" 로 좁힘, 「실행 등록의 남은 일」 을 P2 → P1 로 올리고 6 디렉터리·집계를 더해 P1 행들 끝으로 옮김),
+    §7.3.1 (머리 인용의 남은 것, 끝 문장을 "단계 A–C 의 알려진 실행 기준으로는 채웠다" 로 좁힘, 새 표 「부분 메우기의 리뷰·재확인 실행」),
+    §7.4 (b1-b5·b1-mapgen·b1-regfill 행과 `b1-*/{review,recheck}` 행) 를 같은 말로 고쳤다. 완성 계획 §6 의 부분 메우기 D6 항목도 같은 말로.
+  - 같은 대조에서 더 찾은 것: b1-b5 의 사전 등록 집계 `analysis/W1{,i}{,_supp}` 를 가리키는 레코드가 없다 (다른 과제는 집계를 등록했다) — 남은 목록에 넣었다.

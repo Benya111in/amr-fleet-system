@@ -98,4 +98,7 @@
     2D 의 크기는 집합 구성·safety_lite 차이가 섞여 Gazebo 와 견주지 않는다.
   - D6 **부분** (사유가 바뀜) — 단계 D 가 남긴 미등록 21 디렉터리를 `notebook/runs/b1-regfill.jsonl` 72 레코드로 등록했다 (원자료에 없는 칸은
     `unknown(<이유>)`, 32 건 105 칸). `off4_pv1_s4243`·`rl_e0_6` 의 결과도 레코드에 옮겼다. 실행 목록 701 건 (`check --paths` 문제 0), 노트 항목 45 개.
-    남은 것: 과목 형식 요약, 기록이 없어 등록하지 못한 후보 4 묶음 (`bonus1_results.md` §7.3.1 끝).
+    이것은 단계 A–C 의 알려진 실행 기준이다. 같은 종류 (리뷰·재확인 실행 미등록) 가 부분 메우기에서 다시 생겨 "모든 실행이 실행 목록에" 는 아직 미달이다.
+    남은 것: 과목 형식 요약; 기록이 없어 등록하지 못한 후보 4 묶음 (`bonus1_results.md` §7.3.1 끝); 부분 메우기의 리뷰·재확인 실행 6 디렉터리 미등록
+    (b1-b5/review — 2D 평가 13 실행 포함, `bonus1_results.md` §2.4 의 seed 777 재현이 여기서 나옴; b1-b5/recheck; b1-mapgen/review 변이 R1–R5 등;
+    b1-mapgen/recheck; b1-regfill/review·recheck); b1-b5 사전 등록 집계 `analysis/W1{,i}{,_supp}` 를 가리키는 레코드 없음 (`bonus1_results.md` §7.3.1 끝).
