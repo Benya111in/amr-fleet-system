@@ -5,6 +5,8 @@ torch 만 쓴다 (rsl_rl·Isaac 불필요) — rsl_rl 체크포인트의 state d
 메타데이터(algo·train_steps·라그랑주 사실)는 학습 기록에서 만든다 (onnx_metadata, tests/test_policy_meta.py).
   x = clip((obs − μ)/√(σ² + 1e-8), −10, 10)    (σ² = max(학습 분산, VAR_FLOOR) — 학습과 같은 값)
   mu = actor_mlp(x), action = tanh(mu), log_std = 학습 매개변수 (상태 무관, 배치로 펼침)
+SAC (sac_skrl, 체크포인트 형식 amr_sac_v1) 은 PolicySAC — 같은 입출력, log_std 는 상태 의존 출력.
+load_policy(path) 가 체크포인트 형식으로 둘 중 하나를 고른다 (평가 스크립트는 형식을 몰라도 된다).
 """
 
 import json
@@ -43,6 +45,8 @@ def _mlp_from_state(sd, prefix, activation='elu'):
 class PolicyB(nn.Module):
     """obs [B, 291] → (action [B, 2], mu [B, 2], log_std [B, 2])."""
 
+    kind = 'ppo_rsl_rl'
+
     def __init__(self, mean, var, actor, log_std):
         """정규화 통계·actor·log_std."""
         super().__init__()
@@ -57,6 +61,10 @@ class PolicyB(nn.Module):
         mu = self.actor(x)
         return torch.tanh(mu), mu, self.log_std.expand(obs.shape[0], -1)
 
+    def log_std_summary(self):
+        """기록용 log σ (상태 무관 매개변수)."""
+        return self.log_std.flatten().tolist()
+
     @staticmethod
     def from_rsl_state_dict(sd, activation='elu'):
         """rsl_rl ActorCritic state dict (noise_std_type 'log', 관측 정규화 켬) → PolicyB."""
@@ -65,6 +73,63 @@ class PolicyB(nn.Module):
         return PolicyB(sd['actor_obs_normalizer._mean'].reshape(-1),
                        sd['actor_obs_normalizer._var'].reshape(-1),
                        _mlp_from_state(sd, 'actor', activation), sd['log_std'])
+
+
+class PolicySAC(nn.Module):
+    """SAC 짓눌린 가우시안 정책 — obs [B, 291] → (tanh(μ), μ, log σ(s)) (onnx_io.md 와 같은 이름·모양)."""
+
+    kind = 'sac_skrl'
+
+    def __init__(self, mean, var, trunk, mu_head, log_std_head, log_std_min, log_std_max):
+        """정규화 통계·몸통·두 머리."""
+        super().__init__()
+        self.register_buffer('mean', mean.clone().float().reshape(1, -1))
+        self.register_buffer('var', torch.clamp(var.clone().float(), min=VAR_FLOOR).reshape(1, -1))
+        self.trunk = trunk
+        self.mu_head = mu_head
+        self.log_std_head = log_std_head
+        self.log_std_min = float(log_std_min)
+        self.log_std_max = float(log_std_max)
+
+    def forward(self, obs):
+        """계약 출력 셋."""
+        x = torch.clamp((obs - self.mean) / torch.sqrt(self.var + NORM_EPS), -NORM_CLIP, NORM_CLIP)
+        h = self.trunk(x)
+        mu = self.mu_head(h)
+        log_std = torch.clamp(self.log_std_head(h), self.log_std_min, self.log_std_max)
+        return torch.tanh(mu), mu, log_std
+
+    def log_std_summary(self):
+        """기록용: 상태 의존이라 값이 없다."""
+        return []
+
+    @staticmethod
+    def from_checkpoint(ck):
+        """sac_skrl.export_state 의 dict → PolicySAC."""
+        if ck.get('format') != 'amr_sac_v1':
+            raise ValueError(f'SAC 체크포인트 형식이 아니다: {ck.get("format")!r}')
+        act = {'elu': nn.ELU, 'relu': nn.ReLU, 'tanh': nn.Tanh}[ck['activation']]
+        sizes = [ck['mean'].numel()] + list(ck['hidden'])
+        layers = []
+        for i in range(len(sizes) - 1):
+            layers += [nn.Linear(sizes[i], sizes[i + 1]), act()]
+        trunk = nn.Sequential(*layers)
+        trunk.load_state_dict(ck['trunk'])
+        n_act = ck['mu_head']['weight'].shape[0]
+        mu_head = nn.Linear(sizes[-1], n_act)
+        mu_head.load_state_dict(ck['mu_head'])
+        ls_head = nn.Linear(sizes[-1], n_act)
+        ls_head.load_state_dict(ck['log_std_head'])
+        return PolicySAC(ck['mean'], ck['var'], trunk, mu_head, ls_head, ck['log_std_min'],
+                         ck['log_std_max'])
+
+
+def load_policy(path_or_ck):
+    """체크포인트 (경로 또는 dict) → PolicyB (rsl_rl PPO·PPO-Lagrangian) 또는 PolicySAC."""
+    ck = torch.load(path_or_ck, map_location='cpu') if isinstance(path_or_ck, str) else path_or_ck
+    if ck.get('format') == 'amr_sac_v1':
+        return PolicySAC.from_checkpoint(ck)
+    return PolicyB.from_rsl_state_dict(ck['state_dict'], ck.get('activation', 'elu'))
 
 
 def export_onnx(policy, path, metadata):
@@ -116,11 +181,40 @@ def lagrange_facts(summary, curve_rows):
             'all_zero_from_iteration': zero_from}
 
 
+def pid_facts(summary):
+    """
+    B 단계 PID 라그랑주 학습 (train_ppo.py --constraint) 의 summary.json → lagrange_facts 와 같은 키 (없으면 None).
+
+    final = [마지막 승수], active_at_end = 마지막 승수 > 0. spec 에 비용·예산·이득·상한을 적는다.
+    """
+    p = summary.get('pid_lagrangian')
+    if not p:
+        return None
+    lam = float(p.get('lambda_final') or 0.0)
+    d = float(p['budget_d'])
+    return {'configured': True,
+            'spec': (f"PID cost={p['cost']} d={d:g} Kp={p['kp']:g} Ki={p['ki']:g} Kd={p['kd']:g}"
+                     f" lambda_max={p['lambda_max']:g}"),
+            'd1': d if p['cost'] == 'intervention' else None,
+            'd1_in_contract_sweep': any(abs(d - x) < 1e-12 for x in CONTRACT_D1_SWEEP),
+            'final': [lam], 'active_at_end': lam > 0.0, 'all_zero_from_iteration': None,
+            'pid': True, 'cost': p['cost'], 'budget': d}
+
+
 def describe_algo(kind, summary, facts, bc_info=None):
     """정책 종류(bc·final)와 학습 기록에서 ONNX algo 문자열을 만든다 — 꺼진 라그랑주를 주장하지 않는다."""
     if kind == 'bc':
         n = (bc_info or {}).get('bc_samples', '?')
         return f'BC (expert pure pursuit, {n} samples), no RL fine-tuning'
+    if str(summary.get('algo', '')).startswith('SAC'):
+        return summary['algo'] + ', unconstrained (no cost constraint)'
+    if facts.get('pid'):
+        base = (f'PPO-PIDLagrangian ({RSL_RL} + rl/isaac ppo_lag, cost {facts["cost"]} '
+                f'<= {facts["budget"]:g} undiscounted per episode')
+        if facts['active_at_end']:
+            return base + f', final lambda {facts["final"][0]:g})'
+        return base + (', final lambda 0 = constraint not binding at end, effectively'
+                       ' unconstrained at end)')
     pre = 'BC warm start + ' if summary.get('bc_steps', 0) > 0 else ''
     if not facts['configured']:
         # 승수를 켜지 않은 학습 = 비용 제약 없는 PPO (계약 §7 의 제약을 쓰지 않았다는 사실을 적는다)
@@ -165,6 +259,13 @@ def onnx_metadata(kind, summary, facts, head, contract_version, algo=None, bc_in
         meta['lagrange_final'] = json.dumps(facts['final'])
         z = facts['all_zero_from_iteration']
         meta['lagrange_all_zero_from_iteration'] = '' if z is None else str(z)
-        meta['intervention_budget_d1'] = f'{facts["d1"]:g}'
+        if facts['d1'] is not None:
+            meta['intervention_budget_d1'] = f'{facts["d1"]:g}'
         meta['intervention_budget_in_contract_sweep'] = str(facts['d1_in_contract_sweep']).lower()
+    if facts.get('pid'):
+        meta['constraint'] = f'{facts["cost"]} <= {facts["budget"]:g} (undiscounted episode sum)'
+    if summary.get('dr') is not None:
+        meta['train_dr'] = str(bool(summary['dr'])).lower()
+    if summary.get('safety_filter'):
+        meta['train_safety_filter'] = str(summary['safety_filter'])
     return meta

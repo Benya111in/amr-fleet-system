@@ -17,12 +17,17 @@
 | `amr_isaac/env_math.py` | env 의 순수 함수 — 풋프린트 분리축 충돌 `footprint_hits`, safety_lite 접근 거리 `approach_distance`, 원호 적분 `integrate_pose`, 서브스텝 이동·접촉 `move_and_collide`, 경로 길이 필터 `select_paths_by_length`, 보상 판 `reward_spec_for`, 에피소드 기록 `EpisodeLog`, 정본 φ 결선 `CanonicalPhi` | 아니오 |
 | `amr_isaac/safety_gate_torch.py` | **정본 safety φ** — C++ `amr_perception::SafetyGate` 상태기계 전체의 배치 torch 이식 (A3, 아래 「정본 safety φ」) | 아니오 |
 | `amr_isaac/eval_metrics.py` | 층위 성공 지표·목표 직전 정지 진단·dwell·목표 여유 기하 (평가·분석이 쓴다) | 아니오 |
+| `amr_isaac/eval_sets.py` | B 단계 평가 집합: 끝 접선 자세의 직진 여유(배치), 주(≥ 0.40 m)/스트레스 분할·표본, 목표 군집 부트스트랩 구간 | 아니오 |
+| `amr_isaac/perturb.py` | DR 축 목록(명목값·학습 범위)과 교란 묶음 파일 검증·조건별 값 | 아니오 |
+| `amr_isaac/sac_skrl.py` | SAC (skrl 2.1.0): tanh 짓눌린 가우시안 정책·Q(s, tanh(raw))·계약 정규화·에이전트 조립·내보내기 상태 | 아니오 (skrl) |
+| `amr_isaac/pid_lagrange.py`, `ppo_lag.py` | 제약 PPO: PID 승수·비용 GAE·이익 결합 (순수) / rsl_rl PPO 상속 러너 `PPOPIDLag` (비용 critic) | ppo_lag 은 rsl_rl |
+| `eval_sets/` | **결과 전에 고정한** 평가 집합 `b1_eval_sets_v1.json` 과 교란 묶음 `b1_perturb_suite_v1.json` (바꾸면 v2 로 새 파일) | — |
 | `tools/phi_crosscheck/` | C++ 원본 SafetyGate 와 torch 이식의 교차 시험 (`crosscheck.sh`, `gate_runner.cpp`, `crosscheck.py`) 과 변이 검사 (`mutate.py`), env 안 교차 시험 재생 (`replay_env.{sh,py}` — `record_phi_wiring.py` 기록을 불변식 검사·C++ 재생) 과 결선 변이 (`mutate_wiring.py`) | 아니오 |
 | `amr_isaac/env_cfg.py`, `env.py`, `tasks.py` | `DirectRLEnv` — `AMR-Isaac-Nav-B-v0` (학습), `AMR-Isaac-Nav-B-Eval-v0` (held-out 경로·명목 동역학) | 예 |
 | `amr_isaac/agents/rsl_rl_ppo_cfg.py` | rsl_rl PPO 설정 (γ 0.995, λ 0.97, rollout 64) | 예 |
 | `amr_isaac/expert.py` | BC 예열용 특권 정보 전문가 (경로 순수 추종) | 아니오 |
 | `amr_isaac/policy_export.py` | rsl_rl state dict → 계약형 `PolicyB` → ONNX (`onnx_io.md`) | 아니오 |
-| `scripts/` | `build_assets` · `smoke_env` · `check_golden_in_sim` · `train_ppo` (`--phi`) · `eval_unbiased`(판정용, `--phi`·`--dwell_k`·층위 지표·진단) · `eval_policy`(1차 물결, 편향 있음) · `export_onnx` · `plot_curves` · `gpu_monitor.sh` · `analyze_rejudge`(A3b 분석) · `record_phi_wiring`(정본 φ 결선 기록, A3d) | 일부 |
+| `scripts/` | `build_assets` · `smoke_env` · `check_golden_in_sim` · `train_ppo` (`--phi`·`--dr`·`--constraint` PID) · `train_sac` · `eval_unbiased`(판정용, `--phi`·`--dwell_k`·층위 지표·진단·`--eval_set`·`--perturb`) · `aggregate_seeds`(시드 집계) · `build_eval_sets` · `eval_policy`(1차 물결, 편향 있음) · `export_onnx`(PPO·SAC·PID) · `plot_curves` · `gpu_monitor.sh` · `analyze_rejudge`(A3b 분석) · `record_phi_wiring`(정본 φ 결선 기록, A3d) | 일부 |
 | `tests/` | golden 32 대조(직접·env 캐시 두 길), 기준 구현과 무작위 차분(v1.2.0·v1.1.0), v1.2.0 보상 손 사례(`test_reward_v12.py`), 창고 변환기·경로 풀, env 순수 함수(`test_env_math.py`), ONNX 메타데이터, 정본 φ (`test_safety_gate_torch.py` — 설정 원문 대조·원본 손 사례(해제 거리·지연 보정 포함)·창 통계 순차 기준판·작은 C++ 교차 시험(`AMR_ISAAC_REQUIRE_CPP=1` 이면 필수)·env 결선(명세 게이트 순차 대조·리셋 = 새 게이트)·평가 지표(`nav2_update`)·결선 변이 대상) | 아니오 |
 | `run_isaac.sh` | Isaac 컨테이너 실행기 (`env/verify/verify_isaac.sh` 의 마운트·환경변수). `AMR_AI_ID`(기본 `r7-isaac12`)로 이름 `amr-ai-<id>-<태그>`·산출 루트 `/home/CAPYI_AI/runs/<id>` 를 정하고 컨테이너에 `AMR_ISAAC_RUNS` 로 넘긴다 | — |
 
@@ -209,6 +214,153 @@ rl/isaac/run_isaac.sh tr rl/isaac/scripts/train_ppo.py --phi canonical ... (나�
 **배포 φ(safety_node) = 정본** 이라는 것이다 — "학습과 평가의 φ 가 같아야 한다" 는 한쪽 방향만 뒷받침된다 (r7 정책은 근사로
 학습했는데 정본 평가에서 오히려 좋아졌다). 1 시드라 "정본 φ 아래 학습된다" 의 근거는 아니다 (B1 에서 시드 ≥ 10).
 학습 벽시계 (같은 기준, 공유 부하 하 예비값): 프로세스 시작~끝 A3c 2 709 s 대 r7 1 711–1 963 s, `train_wall_s` 2 694 대 1 695–1 945 s.
+
+## B 단계 실행자용 (b1-binfra, 2026-10-07) — 코드 수정 없이 돌리는 명령
+
+근거·사전 등록: 노트 `docs/research/rl-navigation/notebook/entries/2026-10-06_2353_b1-binfra_eval-sets.md` (평가 집합),
+`…_2354_b1-binfra_perturb-suite.md` (DR 축·교란 묶음), `…_2358_b1-binfra_infra-smokes.md` (스모크). 판정 규칙은 완성 계획 §2·§4·§6 과
+A3c 항목(마지막 반복, 정본 3–15, 평가 seed 4242, 통과 ≥ 0.90)을 따르고, **각자 자기 노트 항목에 사전 등록한 뒤** 돌린다.
+
+**불리한 것 먼저.**
+- 스트레스 집합은 3–15 m 경로 83 개·목표 28 개, 3–30 m 경로 244 개·목표 32 개를 되풀이한 n 512 다 — 이항 구간은 너무 좁다.
+  **목표 군집 부트스트랩 구간**으로 주장한다 (A3c 스모크: Wilson [0.789, 0.855] 대 군집 [0.679, 0.958]).
+- 맵 다양성(계약 §11 의 1 순위)은 학습에도 교란 묶음에도 없다 — D3 는 동역학·센서·지연 축의 일반화만 말한다.
+- SAC 하이퍼파라미터의 대부분은 [설계 선택]이다 (아래 표). PID 이득도 [설계 선택]이다 — 스모크는 λ 가 예산에 반응하는지만 봤다.
+- 공유 GPU 에서 처리량은 부하에 크게 달렸다 (아래 시간은 공유 부하 하 예비값).
+
+### 0. 준비 (실행자마다 한 번)
+
+```bash
+ID=b1-<id>; WT=/home/CAPYI_AI/wt/$ID; R=/home/CAPYI_AI/runs/bonus1/$ID
+C=$(git -C $WT rev-parse --short HEAD); mkdir -p $R/src/$C $R/assets
+git -C $WT archive $C | tar -x -C $R/src/$C          # 실행은 커밋 사본에서 (worktree 수정과 섞이지 않게)
+for f in /home/CAPYI_AI/runs/bonus1/b1-binfra/assets/*; do \cp -f $f $R/assets/; done
+(cd $R/assets && sha256sum -c SHA256SUMS.txt)      # 경로 풀 해시 = b1-ppo10·b1-isaac-phi 와 같다
+# Isaac 실행 공통 (슬롯 4 개 공유, GPU 여유 ≥ 16 GB 확인은 run_isaac.sh 가 한다)
+isaac() { AMR_AI_ID=$ID AMR_RUNS_ROOT=$R EXTRA_DOCKER_ARGS="${EXTRA:-}" \
+          /home/CAPYI_AI/env/isaac_slot.sh $ID $R/src/$C/rl/isaac/run_isaac.sh "$@"; }
+ES=/workspace/amr/rl/isaac/eval_sets                 # 컨테이너 안 경로 (worktree 사본이 /workspace/amr)
+```
+
+다른 실행자의 정책을 평가할 때는 그 runs 디렉터리를 읽기 전용으로 더한다:
+`EXTRA="-v /home/CAPYI_AI/runs/bonus1/b1-ppo10:/home/CAPYI_AI/runs/bonus1/b1-ppo10:ro"`.
+실행마다 `HEAD.txt`(커밋)·시작/끝 시각·loadavg 를 산출 디렉터리에 남기고 `python3 rl/tools/notebook.py register` 로 등록한다.
+
+### 1. 평가 (모든 정책 공통) — 집합 4 개, 한 프로세스
+
+```bash
+isaac ev_s0 rl/isaac/scripts/eval_unbiased.py --policy <run>/policy_final.pt --phi canonical \
+    --eval_set $ES/b1_eval_sets_v1.json --out <run>/eval_sets_final
+```
+- 행 = main_3_15·stress_3_15·main_3_30·stress_3_30 (2 048 + 512 + 2 048 + 512 = 5 120 env, 한 라운드). env 마다 첫 에피소드,
+  경로 고정, DR 끔(명목값), seed 4242, 결정론 tanh(μ). rc 0 = unfinished 0.
+- 결과 `eval.json` 의 `by.<집합>`: 층위 지표(`layered`: 엄격·Nav2 호환·최종 거리 분포·개입), `intervals` (Wilson 95 %·**목표 군집
+  부트스트랩 95 %**·충돌 수·서로 다른 목표/경로), 정지 진단. `episodes.npz` 에 `set_index`·`goal_group` 이 있다.
+- 시간 [측정, 공유 부하 하 예비값 loadavg 27]: A3c 정책 5 120 env, 507 결정 스텝, 330 s + 시작 약 60 s. torch 최대 할당 2.2 GB.
+- PPO·PPO-PID·SAC 정책 모두 같은 명령이다 (`policy_export.load_policy` 가 체크포인트 형식을 본다).
+
+### 2. 교란 묶음 (B4 의 D3 평가)
+
+```bash
+isaac pert_s0 rl/isaac/scripts/eval_unbiased.py --policy <run>/policy_final.pt --phi canonical \
+    --eval_set $ES/b1_eval_sets_v1.json --sets perturb_3_15 --perturb $ES/b1_perturb_suite_v1.json \
+    --out <run>/eval_perturb_final
+```
+- 시간 [측정, A3c, 공유 부하 하 예비값 loadavg 9–15]: 두 라운드 359 s + 469 s, 전체 851 s + 시작 약 60 s, torch 최대 할당 3.6 GB.
+- 15 조건 × 1 024 = 15 360 행을 `--max_envs 8192` 씩 두 라운드로 돈다. 키 = `perturb_3_15|<조건>`. 라운드마다 `dr_snapshot`(실제로 넣은 값의
+  최소·최대)이 기록된다.
+- 묶음 정의와 "학습 때 보지 않은" 규칙: `eval_sets/b1_perturb_suite_v1.json`, `amr_isaac/perturb.py`. 관측 지연은 정책 관측의 스캔만 늦춘다.
+
+### 3. 학습 명령 (모두 정본 φ, 계약·보상 v1.2.0, 3–15 m 학습 경로, 경로 풀 전체 = 좁은 목표 포함)
+
+예산은 COORDINATION §8.3 (2026-10-07 01:15) 이 정한다: **B2·B3 는 160 반복 = 20 971 520 env-step** 이고 비교 기준은 b1-ppo10 각 시드의
+`policy_it160.pt` (같은 스텝), **B4 의 DR 끔은 300 반복 = 39.3M** (DR 켬 팔 = b1-ppo10 의 최종 정책). GPU 가 정본 φ run 하나로 거의 포화라 동시
+실행은 총 처리량을 늘리지 않는다 [측정, §8.3: 혼자 약 14 600, 3 개 동시 각 약 4 050 env-step/s].
+이 브랜치의 env 변경(평가 전용 경로·교란·관측 지연·지연 버퍼 확장)은 학습 동작을 바꾸지 않는다 — `f007e2e`(b1-ppo10 코드) 1 회와 이 브랜치
+코드 2 회의 3 반복 학습(512 env, 시드 0)이 정책 매개변수까지 **비트 단위로 같다** [측정, 노트 infra-smokes 항목 6, `B0_equiv_*`]. 그래서 B4 의
+DR 켬 팔로 b1-ppo10 정책을 그대로 쓸 수 있다.
+
+```bash
+# B1 PPO (지금 코드 그대로 — b1-ppo10 의 명령과 같다)
+isaac ppo_s$S rl/isaac/scripts/train_ppo.py --num_envs 2048 --iterations 300 --run B1_ppo_s$S --seed $S \
+    --reward 1.2.0 --path_len 3:15 --phi canonical --save_at_env_steps 20e6 --root $R/train
+# B2 제약 PPO (PID 라그랑주, 개입 예산 d ∈ {0.2, 0.5, 1.0}) — 이득은 기본값 그대로 (바꾸면 사전 등록)
+isaac pid_d${D}_s$S rl/isaac/scripts/train_ppo.py --num_envs 2048 --iterations 160 --run B2_pid_d${D}_s$S \
+    --seed $S --reward 1.2.0 --path_len 3:15 --phi canonical --constraint intervention --cost_budget $D \
+    --pid 0.5,0.05,0.1 --lambda_max 10 --pid_d_delay 5 --pid_ema 0.0,0.5 --root $R/train
+#    선택지 (기본 꺼짐, 쓰면 사전 등록에 적는다): --pid_err_clip=-1,1 (음수로 시작하는 값은 반드시 '=' 꼴 — 띄어 쓰면
+#    argparse 가 옵션으로 읽어 실패한다), --constraint_start N (처음 N 반복 λ = 0). 근거는 아래 「8. 스모크 요약」.
+# B3 SAC (env-step = PPO it160 과 같은 저울 20 971 520, §8.3)
+isaac sac_s$S rl/isaac/scripts/train_sac.py --num_envs 1024 --env_steps 20971520 --run B3_sac_s$S --seed $S \
+    --phi canonical --path_len 3:15 --dr on --save_at_env_steps 10e6 --root $R/train
+# B4 DR 없음 (DR 있음 팔 = b1-ppo10 의 같은 시드 — 나머지 인자는 B1 과 같다)
+isaac droff_s$S rl/isaac/scripts/train_ppo.py --num_envs 2048 --iterations 300 --run B4_droff_s$S --seed $S \
+    --reward 1.2.0 --path_len 3:15 --phi canonical --dr off --save_at_env_steps 20e6 --root $R/train
+```
+산출 `<root>/<run>/`: `curve.jsonl` (chunk 마다 롤아웃 결과율·비용·처리량), `summary.json`, `policy_final.pt`, `dr_snapshot.json`
+(첫 리셋 뒤 env 별 DR 값 — `--dr off` 면 모두 명목값), PID 는 `lagrange_history.jsonl` (반복마다 J·λ·P·I·D)·`cost_critic.pt`,
+SAC 는 `agent_final.pt` (critic·target·최적화기·α).
+
+### 4. ONNX (amr-ai/rl:0.3, CPU)
+
+```bash
+docker run --rm -v $R/src/$C:/ws:ro -v $R:$R -w /ws amr-ai/rl:0.3 python3 rl/isaac/scripts/export_onnx.py \
+    --run <run> --obs_batch <run>/eval_sets_final/obs_batch.npz
+```
+입출력 = onnx_io.md (obs [B,291] → action·mu·log_std [B,2]), opset 17. 메타데이터 `algo` 는 학습 기록에서 만든다: SAC 는
+"SAC (skrl 2.1.0, …), unconstrained", PID 는 "PPO-PIDLagrangian (…, cost intervention <= d …, final lambda …)" 와 `constraint`.
+끝 λ 가 0 이면 "constraint not binding at end, effectively unconstrained at end" 를 붙인다 (`algo_claim_consistent`).
+
+### 5. 시드 집계 (amr-ai/rl:0.3)
+
+```bash
+docker run --rm -v $R/src/$C:/ws:ro -v /home/CAPYI_AI/runs/bonus1:/home/CAPYI_AI/runs/bonus1 -w /ws amr-ai/rl:0.3 \
+    python3 rl/isaac/scripts/aggregate_seeds.py --arm "on=<DR 켬 정책들의 eval_perturb_final/eval.json glob>" \
+    --arm "off=$R/train/B4_droff_s*/eval_perturb_final/eval.json" --out $R/analysis/agg.json --md $R/analysis/agg.md
+```
+키(집합 또는 집합|조건)마다 시드별 엄격 성공, 평균·IQM 과 시드 부트스트랩 95 % 구간 (`amr_rl_eval.aggregate`), 실패 시드(< 0.90) 수와
+Wilson 95 % (`amr_rl_eval.binomial`), 팔이 둘이면 평균 차 구간. 교란이면 `unseen_single_axis` (한 축 unseen 12 조건 평균).
+평가 조건(풀 해시·평가 seed·집합·조건·φ)이 섞이면 rc 1.
+
+### 6. SAC 하이퍼파라미터 (`amr_isaac/sac_skrl.py` SAC_DEFAULTS)
+
+| 값 | 근거 |
+|---|---|
+| γ 0.995, τ 0.005, 목표 엔트로피 −2 (−dim A) | 계약 §9 (고정) |
+| lr 3e-4 (정책·Q·α 같음), 버퍼 10⁶ 전이, 쌍 Q + 목표망, 자동 엔트로피 | Haarnoja et al. 2018 (SAC 응용편) 표 1 [문서주장 — 원문 이 세션에서 재확인 안 함]; skrl 기본 lr 은 1e-3 |
+| tanh 짓눌린 가우시안 + log π 보정, Q(s, tanh(raw)), log σ ∈ [−5, 2] | Haarnoja 2018 부록 C (보정식); 범위는 [설계 선택] |
+| MLP 512-256-128 ELU (정책·Q 모두) | PPO 와 같은 용량 [설계 선택] |
+| 1024 env, 배치 8 192, env 스텝당 갱신 4 (재생 비율 32), learning_starts 50 env 스텝 | 대규모 병렬 off-policy 의 큰 배치 관행 [설계 선택 — 수치 근거 없음] |
+| α₀ 0.05 | 스텝 보상(시간 비용 0.02)과 같은 자릿수 [설계 선택]; skrl 기본 0.2 |
+| 관측 정규화 = 계약식, 롤아웃 관측으로만 갱신 | onnx_io.md (PPO 와 같은 식) |
+| 잘림 전이 = 현재 관측으로 bootstrap | Isaac 자동 리셋이 마지막 관측을 주지 않아서 (rsl_rl 의 시간 초과 처리와 같은 근사) |
+
+### 7. 시험
+
+```bash
+docker run --rm -v $WT:/ws -v /home/CAPYI_AI/runs/bonus1/b1-binfra:/home/CAPYI_AI/runs/bonus1/b1-binfra:ro \
+    -w /ws/rl/isaac amr-ai/rl:0.3 python3 -m pytest -q tests          # rsl_rl 이 필요한 test_ppo_lag 는 건너뜀
+docker run --rm -v $WT:/workspace/amr --entrypoint bash amr-ai/isaaclab:2.3.2 -lc \
+    'cd /workspace/isaaclab && ./isaaclab.sh -p -m pytest -q /workspace/amr/rl/isaac/tests/test_ppo_lag.py'
+```
+- 시험 파일 머리에서 `pytest.importorskip` 를 쓰지 않는다 — amr-ai/rl:0.3 의 pytest 에서 (원인 미확인) 함께 모은 **다른 파일의 시험까지
+  전부 건너뛰었다** (`1 skipped`). 모듈 수준 건너뛰기는 `pytestmark = pytest.mark.skipif(...)` 로.
+- 변이 검사: `tools/mutate_binfra.py` (대조 사본 통과가 먼저, cpu 29 · isaac 5 변이 — cpu 28 잡힘, 남은 E3 은 동치).
+- SAC 스크립트는 `tests/test_train_sac_dry.py` 가 가짜 env 로 CPU 에서 끝까지 돈다 (GPU 슬롯을 쓰기 전에 스크립트 결함을 잡는다).
+
+### 8. 스모크 요약 (노트 `…_2358_b1-binfra_infra-smokes.md`, 1 시드·짧은 예산 — 성능 주장이 아니다)
+
+| 기능 | 결과 [측정, 공유 부하 하 예비값] |
+|---|---|
+| DR 끔 | `dr_snapshot.json` 모든 축 = 명목값 (통과) |
+| PID λ 반응 (40 반복) | d 0.2: λ 반복 4 에 상한 10, 끝 9.15, 롤아웃 성공 0.9 % / d 200: λ 0 그대로, 96.4 % — **작은 예산에서 적분 포화** (아래 선택지) |
+| 학습 env 동치 | 옛 코드 `f007e2e` = 이 브랜치 코드 (3 반복 정책 비트 동일) |
+| SAC (10M) | 롤아웃 90 % 를 2.03M 에 넘음 (PPO 5.24M), 마지막 5 chunk 0.994 — 그러나 정체 붕괴가 주기적으로 온다 (2.4M 뒤 chunk 26/117 이 < 0.9). 결정론 main_3_15 0.941 (목표 0.107 m 앞 "정책 정지" 116/117) |
+| ONNX | PID 둘 fails 0. SAC 는 입출력 통과, **ORT 대 torch 2–3e-5 로 기존 1e-5 기준 미달** (중간값이 커서 float32 누적 오차 — 기준은 그대로 두었다) |
+| 집합·교란 평가 | 배선 규칙 통과. 교란 묶음은 A3c 에게 대부분 천장 (12 단일 축 중 9 개 ≥ 0.990), 떨어진 것은 구동 이득·가속 한계 |
+
+PID 선택지 (기본 꺼짐, Isaac 미측정): `--pid_err_clip=-1,1` — 정규화 오차가 아래로 −1 에 막히고 위로는 수백까지 가서 생기는 비대칭 적분 포화를 막는다
+(1차 물결 쌍대 상승은 [−1, 5] 로 잘랐다). `--constraint_start N` — 처음 N 반복은 λ = 0.
 
 ## 전이 한 번 (Δt = 0.1 s = 물리 0.02 s × 5)
 

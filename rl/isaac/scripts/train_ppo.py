@@ -9,6 +9,14 @@ rsl_rl PPO 학습 (비교군 B) — 학습 곡선 JSONL·체크포인트·요약
         --run v12_s0 --seed 0 --reward 1.2.0 --path_len 3:15 --save_at_env_steps 20e6
 --lagrange 를 주지 않으면 라그랑주 승수는 0 그대로다 = 제약 없는 PPO (summary.json 의 constraint 에 적는다).
 --phi canonical 이면 전이 안 safety φ 가 정본 SafetyGate 이식이다 (A3, 기본 lite = 1·2차 물결 근사).
+--dr off 면 DR 을 끄고 명목값으로 학습한다 (B4; --no_dr 와 같다). 실제 값은 dr_snapshot.json 에 남긴다.
+
+제약 PPO (B2, PID Lagrangian — amr_isaac/ppo_lag.py, pid_lagrange.py):
+    ... train_ppo.py ... --constraint intervention --cost_budget 0.5 --pid 0.5,0.05,0.1 \
+        --lambda_max 10
+  별도 비용 critic, 비용 = 계약 §7.1 개입(보정 크기)의 비할인 에피소드 합 J, 승수 갱신 e = (J − d)/d,
+  이익 (std(A_r) − λ·center(A_c))/(1 + λ). 반복마다의 (J, λ, P, I, D) 는 lagrange_history.jsonl 에 남긴다.
+  --lagrange (1차 물결의 보상 벌점형 쌍대 상승) 와 함께 쓸 수 없다.
 
 산출: $AMR_ISAAC_RUNS/train/<run>/ — curve.jsonl (chunk 마다: 반복, env-step, 처리량,
 에피소드 결과율, 평균 반환, 비용 합, GPU 메모리), model_*.pt (rsl_rl), summary.json, HEAD.txt 는
@@ -29,7 +37,20 @@ ap.add_argument('--iterations', type=int, default=300)
 ap.add_argument('--chunk', type=int, default=10)
 ap.add_argument('--seed', type=int, default=0)
 ap.add_argument('--run', default='ppo_b_s0')
-ap.add_argument('--no_dr', action='store_true')
+ap.add_argument('--no_dr', action='store_true', help='--dr off 와 같다')
+ap.add_argument('--dr', default='on', choices=('on', 'off'), help='DR (off = 명목값 고정)')
+ap.add_argument('--constraint', default='', help="PID 라그랑주 제약 비용 채널 (예: 'intervention', 빈 값 = 끔)")
+ap.add_argument('--cost_budget', type=float, default=0.5, help='예산 d (비할인 에피소드 합)')
+ap.add_argument('--pid', default='0.5,0.05,0.1', help="'Kp,Ki,Kd' (정규화 오차 (J − d)/d 기준)")
+ap.add_argument('--lambda_max', type=float, default=10.0)
+ap.add_argument('--lambda_init', type=float, default=0.0)
+ap.add_argument('--pid_d_delay', type=int, default=5, help='미분항 지연 (반복)')
+ap.add_argument('--pid_ema', default='0.0,0.5', help="'α_p,α_d' 비례항·미분항 EMA")
+ap.add_argument('--cost_lr', type=float, default=3e-4)
+ap.add_argument('--pid_err_clip', default='',
+                help="'LO,HI' 정규화 오차 자르기 (빈 값 = 안 자름) — 적분 포화 완화, pid_lagrange 머리말")
+ap.add_argument('--constraint_start', type=int, default=0,
+                help='처음 N 반복은 λ = 0 (PID 상태 갱신 안 함, 비용 critic 은 배운다)')
 ap.add_argument('--vcap_curriculum', default='',
                 help="v_cap 커리큘럼 'LO:HI0:N0:N1:P1' — 반복 N0 까지 v_cap ~ U[LO, HI0], "
                      "N1 까지 상한을 명목값(1.0)으로·명목 비율을 P1 로 선형, 빈 값 = 끔")
@@ -164,8 +185,12 @@ def main():
     env_cfg.phi_cloud_mode = args.phi_cloud
     if args.path_len:
         env_cfg.path_len_min, env_cfg.path_len_max = (float(x) for x in args.path_len.split(':'))
-    if args.no_dr:
+    if args.no_dr or args.dr == 'off':
         env_cfg.dr.enable = False
+    if args.constraint and args.lagrange:
+        raise ValueError('--constraint (PID) 와 --lagrange (보상 벌점형) 는 함께 쓸 수 없다')
+    if args.constraint and args.constraint not in C.COST_NAMES:
+        raise ValueError(f'--constraint {args.constraint!r} (가능: {C.COST_NAMES})')
     agent = AmrNavPPORunnerCfg()
     agent.seed = args.seed
     agent.max_iterations = args.iterations
@@ -180,9 +205,44 @@ def main():
         agent.algorithm.clip_param = args.clip
     t0 = time.time()
     env = AmrNavEnv(env_cfg)
-    venv = RslRlVecEnvWrapper(env, clip_actions=agent.clip_actions)
+    venv = RslRlVecEnvWrapper(env, clip_actions=agent.clip_actions)    # 여기서 env.reset()
+    with open(os.path.join(out, 'dr_snapshot.json'), 'w') as f:
+        json.dump({'dr': env_cfg.dr.enable, 'after_first_reset': env.dr_snapshot()}, f, indent=1)
     runner = OnPolicyRunner(venv, agent.to_dict(), log_dir=out, device=agent.device)
     swap_normalizers(runner.alg.policy)
+    pid_cfg = None
+    if args.constraint:
+        from amr_isaac.pid_lagrange import PIDLagrangian
+        from amr_isaac.ppo_lag import PPOPIDLag
+        ch = list(C.COST_NAMES).index(args.constraint)
+        kp, ki, kd = (float(x) for x in args.pid.split(','))
+        ema_p, ema_d = (float(x) for x in args.pid_ema.split(','))
+        clip = tuple(float(x) for x in args.pid_err_clip.split(',')) if args.pid_err_clip \
+            else None
+        pid = PIDLagrangian(kp, ki, kd, args.cost_budget, lambda_max=args.lambda_max,
+                            lambda_init=args.lambda_init, d_delay=args.pid_d_delay,
+                            ema_p=ema_p, ema_d=ema_d, err_clip=clip,
+                            start_iter=args.constraint_start)
+        alg_kw = dict(runner.alg_cfg)
+        alg_kw.pop('class_name', None)
+        alg_kw.pop('multi_gpu_cfg', None)
+        new = PPOPIDLag(runner.alg.policy, cost_fn=lambda: env.last_out.cost[:, ch],
+                        pid=pid, cost_hidden=tuple(agent.policy.critic_hidden_dims),
+                        activation=agent.policy.activation, cost_lr=args.cost_lr,
+                        cost_seed=args.seed, device=agent.device, multi_gpu_cfg=None, **alg_kw)
+        new.init_storage('rl', env.num_envs, agent.num_steps_per_env, venv.get_observations(),
+                         [venv.num_actions])
+        runner.alg = new
+        pid_cfg = {'cost': args.constraint, 'channel': ch, 'budget_d': args.cost_budget,
+                   'kp': kp, 'ki': ki, 'kd': kd, 'lambda_max': args.lambda_max,
+                   'lambda_init': args.lambda_init, 'd_delay': args.pid_d_delay,
+                   'ema_p': ema_p, 'ema_d': ema_d, 'cost_lr': args.cost_lr,
+                   'err_clip': clip, 'constraint_start': args.constraint_start,
+                   'objective': '(std(A_r) - lambda*center(A_c))/(1+lambda)',
+                   'J': 'mean undiscounted episode sum of the cost over episodes finished in the '
+                        'iteration rollout'}
+        lag_hist = open(os.path.join(out, 'lagrange_history.jsonl'), 'w')
+        print('PID_LAGRANGE ' + json.dumps(pid_cfg), flush=True)
     pol = runner.alg.policy
     if args.init_std is not None:
         with torch.no_grad():
@@ -237,6 +297,7 @@ def main():
             env.vcap_hi = vc[1] + (env_cfg.v_cap - vc[1]) * f
             env.vcap_p_nominal = vc[4] * f
         tc = time.time()
+        hist0 = len(runner.alg.history) if pid_cfg else 0
         runner.learn(num_learning_iterations=n, init_at_random_ep_len=False)
         torch.cuda.synchronize()
         dt = time.time() - tc
@@ -265,11 +326,18 @@ def main():
             'lr': runner.alg.learning_rate,
             'curriculum_lmax': env.curriculum_lmax,
             'lagrange': [round(float(x), 5) for x in env.lagrange.tolist()],
+            'pid_lambda': runner.alg.multiplier if pid_cfg else None,
+            'pid_J_last': (runner.alg.history[-1]['J'] if pid_cfg and runner.alg.history
+                           else None),
             'vcap': [env.vcap_lo, env.vcap_hi, env.vcap_p_nominal],
             'torch_max_alloc_MiB': gpu_mem_mib()[0], 'torch_reserved_MiB': gpu_mem_mib()[1],
         }
         curve.write(json.dumps(rec) + '\n')
         curve.flush()
+        if pid_cfg:
+            for j, h in enumerate(runner.alg.history[hist0:]):
+                lag_hist.write(json.dumps({'iteration': it - n + j + 1, **h}) + '\n')
+            lag_hist.flush()
         print('CURVE ' + json.dumps(rec), flush=True)
         if args.save_at_env_steps > 0 and not ckpts and \
                 it * steps_per_iter >= args.save_at_env_steps:
@@ -291,16 +359,26 @@ def main():
         mu_rsl = runner.alg.policy.act_inference(obs).cpu()
         mu_pb = pb(obs['policy'].cpu())[1]
     diff = float((mu_rsl - mu_pb).abs().max())
+    if pid_cfg:
+        hist = runner.alg.history
+        js = [h['J'] for h in hist if h['J'] is not None]
+        pid_cfg.update({'lambda_final': runner.alg.multiplier,
+                        'lambda_max_seen': max([h['lambda'] for h in hist] + [0.0]),
+                        'J_last10_mean': (sum(js[-10:]) / len(js[-10:])) if js else None,
+                        'pid_state': runner.alg.pid.state_dict()})
+        torch.save(runner.alg.cost_critic.state_dict(), os.path.join(out, 'cost_critic.pt'))
     summary = {'run': args.run, 'iterations': it, 'num_envs': args.num_envs,
                'contract_version': C.CONTRACT_VERSION, 'reward_version': args.reward,
                'reward_spec': str(env.reward_spec), 'path_len': args.path_len,
                'pool_paths': env.pool_size,
                'constraint': ('PPO-Lagrangian ' + args.lagrange) if args.lagrange else
-               'none (unconstrained PPO, lagrange multipliers 0)', 'checkpoints': ckpts,
+               (f'PPO-PIDLagrangian {args.constraint} <= {args.cost_budget:g}' if pid_cfg else
+                'none (unconstrained PPO, lagrange multipliers 0)'), 'checkpoints': ckpts,
+               'pid_lagrangian': pid_cfg,
                'env_steps': it * steps_per_iter, 'setup_s': round(setup_s, 1),
                'train_wall_s': round(time.time() - t_train, 1),
                'policy_vs_rsl_mu_max_abs_diff': diff, 'seed': args.seed,
-               'dr': not args.no_dr, 'curriculum': args.curriculum,
+               'dr': env_cfg.dr.enable, 'curriculum': args.curriculum,
                'safety_filter': args.phi,
                'phi_cloud_mode': args.phi_cloud if args.phi == 'canonical' else None,
                'vcap_curriculum': args.vcap_curriculum, 'lagrange': args.lagrange,
