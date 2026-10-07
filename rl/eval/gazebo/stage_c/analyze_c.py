@@ -324,7 +324,9 @@ def timing(arm_rows):
             e['rtf_tercile'] = terc
         if arm != 'dwa':
             dp = np.array([num(r['decision_period_mean_s']) for r in rs])
-            e['decision_period_out_of_band'] = int(np.sum((dp < 0.099) | (dp > 0.101)))
+            fin = np.isfinite(dp)
+            e['decision_period_out_of_band'] = int(np.sum(fin & ((dp < 0.099) | (dp > 0.101))))
+            e['decision_period_missing'] = int(np.sum(~fin))
         out[arm] = e
     return out
 
