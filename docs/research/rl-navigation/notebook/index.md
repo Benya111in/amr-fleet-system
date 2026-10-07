@@ -43,8 +43,9 @@
 | 2026-10-06 23:54 | b1-binfra | DR 축 목록·DR 끄기·학습 때 보지 않은 교란 평가 묶음 v1 (결과 전 고정) | [entries/2026-10-06_2354_b1-binfra_perturb-suite.md](entries/2026-10-06_2354_b1-binfra_perturb-suite.md) |
 | 2026-10-06 23:58 | b1-binfra | B 단계 기반 스모크 — DR 끔 학습, PID 라그랑주 λ 반응, SAC 학습 신호, ONNX | [entries/2026-10-06_2358_b1-binfra_infra-smokes.md](entries/2026-10-06_2358_b1-binfra_infra-smokes.md) |
 | 2026-10-07 01:18 | b1-gzbench | A5-5 리뷰 반영 — strict_est 지표 결함 수정·재계산과 독점 시간대 재측정 | [entries/2026-10-07_0118_b1-gzbench_review-fix.md](entries/2026-10-07_0118_b1-gzbench_review-fix.md) |
+| 2026-10-07 09:15 | b1-ppo10-eval | B1 PPO 10 시드의 주·스트레스 집합 평가와 C 단계 대표 정책 선택 | [entries/2026-10-07_0915_b1-ppo10-eval_ppo10-sets-eval.md](entries/2026-10-07_0915_b1-ppo10-eval_ppo10-sets-eval.md) |
 
-## 실행 목록 요약 (384 건, 원본 `runs/<에이전트>.jsonl`)
+## 실행 목록 요약 (397 건, 원본 `runs/<에이전트>.jsonl`)
 
 | run_id | 단계 | 종류 | 시뮬 | 커밋 | 시드 | 핵심 결과 | 표기 |
 |---|---|---|---|---|---|---|---|
@@ -391,6 +392,19 @@
 | A2_b1plugin_final_clean | A2 | test | offline | c57067b | 0 | rl03_build_rc=0, rl03_warnings=0, rl03_tests=723, rl03_failures=0 | [측정] |
 | A2_b1plugin_review_reanalysis | A2 | probe | offline | 0ce5fa4 | 0 | run2_odom_vs_gt_m=[0.003, 0.039, 0.039, 0.039, 0.038], run2_map_minus_gt_dx_m=[-18.073, -18.039, -18.039, -18.034, -18.043], odom_yaw_minus_gt_rad_range=[-1.61, -1.529], odom_yaw_samples=3625 | [계산] |
 | A2_b1plugin_review_fix_clean | A2 | test | offline | 12d91c7 | 0 | build_rc=0, warnings=0, tests=723, failures=0 | [측정] |
+| B1e_ppo10_s0_final_sets | B1 | eval | isaac | 52e5023 | 0 | rc=rc=0, unfinished=0, wall_s=381.2, torch_max_alloc_MiB=2158.9 | [측정] |
+| B1e_ppo10_s2_final_sets | B1 | eval | isaac | 52e5023 | 2 | rc=rc=0, unfinished=0, wall_s=396.0, torch_max_alloc_MiB=2070.4 | [측정] |
+| B1e_ppo10_s4_final_sets | B1 | eval | isaac | 52e5023 | 4 | rc=rc=0, unfinished=0, wall_s=521.1, torch_max_alloc_MiB=2159.0 | [측정] |
+| B1e_ppo10_s6_final_sets | B1 | eval | isaac | 52e5023 | 6 | rc=rc=0, unfinished=0, wall_s=441.9, torch_max_alloc_MiB=2159.8 | [측정] |
+| B1e_ppo10_s8_final_sets | B1 | eval | isaac | 52e5023 | 8 | rc=rc=0, unfinished=0, wall_s=608.9, torch_max_alloc_MiB=2159.8 | [측정] |
+| B1e_ppo10_s1_final_sets | B1 | eval | isaac | 52e5023 | 1 | rc=rc=0, unfinished=0, wall_s=493.0, torch_max_alloc_MiB=2159.5 | [측정] |
+| B1e_ppo10_s3_final_sets | B1 | eval | isaac | 52e5023 | 3 | rc=rc=0, unfinished=0, wall_s=581.6, torch_max_alloc_MiB=2159.5 | [측정] |
+| B1e_ppo10_s5_final_sets | B1 | eval | isaac | 52e5023 | 5 | rc=rc=0, unfinished=0, wall_s=492.0, torch_max_alloc_MiB=2159.8 | [측정] |
+| B1e_ppo10_s7_final_sets | B1 | eval | isaac | 52e5023 | 7 | rc=rc=0, unfinished=0, wall_s=519.5, torch_max_alloc_MiB=2159.8 | [측정] |
+| B1e_ppo10_s9_final_sets | B1 | eval | isaac | 52e5023 | 9 | rc=rc=0, unfinished=0, wall_s=416.5, torch_max_alloc_MiB=2158.9 | [측정] |
+| B1e_ppo10_aggregate | B1 | probe | offline | 52e5023 | [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] | main_3_15={'failed_seeds': 0, 'failed_seed_wilson95': [0.0, 0.27753], 'strict_iqm': 0.99699, 'strict_iqm_boot95': [0.99495, 0.99862], 'strict_mean': 0.99668, 'strict_range': [0.99072, 1.0], 'pooled_collisions': 10}, stress_3_15={'failed_seeds': 5, 'failed_seed_wilson95': [0.23659, 0.76341], 'strict_iqm': 0.88997, 'strict_iqm_boot95': [0.84505, 0.93425], 'strict_mean': 0.88945, 'strict_range': [0.77734, 0.99023], 'pooled_collisions': 7}, main_3_30={'failed_seeds': 0, 'failed_seed_wilson95': [0.0, 0.27753], 'strict_iqm': 0.99479, 'strict_iqm_boot95': [0.99235, 0.99658], 'strict_mean': 0.99438, 'strict_range': [0.98828, 0.99805], 'pooled_collisions': 33}, stress_3_30={'failed_seeds': 4, 'failed_seed_wilson95': [0.16818, 0.68733], 'strict_iqm': 0.91081, 'strict_iqm_boot95': [0.88184, 0.9388], 'strict_mean': 0.91035, 'strict_range': [0.83984, 0.98242], 'pooled_collisions': 15} | [계산] |
+| B1e_ppo10_select | B1 | probe | offline | 52e5023 | 7 | chosen_seed=7, medians={'main_3_15': 2041.5, 'stress_3_15': 454.5, 'main_3_30': 2037.5}, distance={'0': [4.5, 32.5, 8.5], '1': [6.5, 8.5, 6.5], '2': [1.5, 19.5, 1.5], '3': [4.5, 38.5, 3.5], '4': [2.5, 56.5, 1.5], '5': [12.5, 23.5, 13.5], '6': [2.5, 52.5, 1.5], '7': [1.5, 10.5, 3.5], '8': [5.5, 8.5, 6.5], '9': [2.5, 21.5, 2.5]}, order=[7, 2, 9, 6, 4, 0, 3, 8, 1, 5] | [계산] |
+| B1e_ppo10_review_fix | B1 | probe | offline | 52e5023 | [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] | key1_tied_seeds=[2, 7], main15_mid_two=[2040, 2043], random_even_tie_rate=1.0, stress15_median=454.5 | [계산] |
 | B1_ppo10_s0 | B1 | train | isaac | f007e2e | 0 | env_steps=39321600, iterations=300, train_wall_s=7678.6, rollout_success_ge_0.1_at=2621440 | [측정] |
 | B1_ppo10_s0_final_canonical_3-15 | B1 | eval | isaac | f007e2e | 0 | n=2048, unfinished=0, strict_success=0.99365234375, strict_count=2035 | [측정] |
 | B1_ppo10_s0_final_canonical_3-30 | B1 | eval | isaac | f007e2e | 0 | n=2048, unfinished=0, strict_success=0.98828125, strict_count=2024 | [측정] |
