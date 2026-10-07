@@ -8,6 +8,7 @@
   - 설계·점검 (결과 전, 이미 등록): `B4m_replan_probe`, `B4m_bundle_draft1`, `B4m_bundle_draft2`, `B4m_bundle_v1`, `B4m_smoke1`(실패),
     `B4m_smoke2`, `B4m_probe_p0_on0`, `B4m_probe_far_on0`, `B4m_probe_zero_pipe`
   - 본 평가: `B4m_mg_on_s{0..4}` (DR 켬), `B4m_mg_off_s{0..4}` (DR 끔), 집계 `B4m_analysis`
+  - (결과 뒤 추가) 중간 점검·시험·보충: `B4m_analysis_dry_zero`, `B4m_analysis_partial_s0`, `B4m_supp_partial_s01`, `B4m_supp`, `B4m_explore_add`
 - 원자료: `/home/CAPYI_AI/runs/bonus1/b1-mapgen/` (`suite/` bundle, `eval/<실행>/`, `analysis/`, `driver.{py,log}`, `job_mg.sh`, `pipeline.log`)
 
 ## 질문

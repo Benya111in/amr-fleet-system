@@ -3,7 +3,7 @@
 - 에이전트 b1-mapgen · 2026-10-08 · 브랜치 `feature/b1-mapgen` (분기점 `feature/bonus1-rl` `74d3a13`) · 평가·env 코드 `c774abc` (+ 스모크 점검 수정
   `66b6983`), 사전 등록 분석 `bcb7040`, **사전 등록 커밋 `9e41a75`** (본 평가는 이 커밋의 `git archive` 사본에서 돌았다). 기존 파일은 고치지 않았다.
 - 사전 등록: 노트 항목 [`notebook/entries/2026-10-08_0410_b1-mapgen_dr-map-generalization.md`](notebook/entries/2026-10-08_0410_b1-mapgen_dr-map-generalization.md)
-  (질문·H1–H5·판정 규칙·정책 sha256·bundle sha256·분석 스크립트 sha256 — 모두 본 평가 시작 04:12:30 전에 커밋). 실행 목록 `notebook/runs/b1-mapgen.jsonl` (22 건).
+  (질문·H1–H5·판정 규칙·정책 sha256·bundle sha256·분석 스크립트 sha256 — 모두 본 평가 시작 04:12:30 전에 커밋). 실행 목록 `notebook/runs/b1-mapgen.jsonl` (25 건: 설계·점검 9, 본 평가 10, 집계·보충·시험 6).
 - 원자료 `/home/CAPYI_AI/runs/bonus1/b1-mapgen/` — 지도 묶음 `suite/map_bundle_v1.{npz,summary.json}`, 평가 `eval/mg_{on,off}_s<S>/`
   (`eval.json`·`episodes.npz`·`eval.log`·`gpu_mem.csv`·`start/end.txt`·`HEAD.txt`), 점검 `eval/{smoke1,smoke2,probe_*}/`, 집계 `analysis/`
   (`mapgen_analysis.{json,md}` 사전 등록, `supp_mapgen.json` 보충, 그림 `figs/mapgen_conditions.{png,svg}`), 실행 `driver.{py,log}`·`job_mg.sh`·`pipeline.log`.
