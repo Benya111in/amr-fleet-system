@@ -79,8 +79,8 @@ def sha256(path):
 def build_rows(a):
     sys.path.insert(0, os.path.join(RL, 'isaac'))
     from amr_isaac import eval_sets as ES
-    z = np.load(a.pool)
-    pts, offs, length = z['pts'], z['offs'], z['length']
+    with np.load(a.pool) as z:
+        pts, offs, length = z['pts'], z['offs'], z['length']
     if a.pool_rows:
         lo, hi = (int(x) for x in a.pool_rows.split(':'))
         rows = [('pool', i) for i in range(lo, hi)]
@@ -95,15 +95,18 @@ def build_rows(a):
     if not a.paths_npz:
         paths = [np.asarray(pts[offs[p]:offs[p + 1]], dtype=np.float64) for _, p in rows]
         return rows, paths, digest
-    q = np.load(a.paths_npz)
-    o = np.concatenate([[0], np.cumsum(q['n_pts'])])
-    key = {(str(s), int(p)): i for i, (s, p) in enumerate(zip(q['set'], q['pid']))}
+    # NpzFile 은 키를 읽을 때마다 압축을 푼다 — 배열을 한 번만 꺼낸다
+    with np.load(a.paths_npz) as q:
+        flat, status, n_pts = q['flat'], q['status'], q['n_pts']
+        qset, qpid = q['set'], q['pid']
+    o = np.concatenate([[0], np.cumsum(n_pts)])
+    key = {(str(s), int(p)): i for i, (s, p) in enumerate(zip(qset, qpid))}
     paths = []
     for s, p in rows:
         i = key[(s, p)]
-        if q['status'][i] != 'success':
+        if status[i] != 'success':
             raise RuntimeError(f'계획 실패 행 ({s}, {p}) — 사전 등록: 계획 실패 행은 없어야 한다')
-        paths.append(np.asarray(q['flat'][o[i]:o[i + 1]], dtype=np.float64))
+        paths.append(np.asarray(flat[o[i]:o[i + 1]], dtype=np.float64))
     return rows, paths, digest
 
 
