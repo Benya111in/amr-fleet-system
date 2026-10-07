@@ -36,11 +36,15 @@
 | 2026-10-06 21:29 | b1-isaac-phi | A3d 정본 φ env 결선의 env 안 교차 시험과 결선 변이 검사 (리뷰 권고 반영) | [entries/2026-10-06_2129_b1-isaac-phi_env-wiring-check.md](entries/2026-10-06_2129_b1-isaac-phi_env-wiring-check.md) |
 | 2026-10-06 22:10 | b1-gzbench | A5-1 플러그인 결정 주기를 sim 시각 기준으로 — 고치기와 RTF 별 확인 | [entries/2026-10-06_2210_b1-gzbench_simtime-decision.md](entries/2026-10-06_2210_b1-gzbench_simtime-decision.md) |
 | 2026-10-06 22:49 | b1-gzbench | A5-2 Gazebo 다회 에피소드 하네스·시나리오 집합 v1·에피소드 지표 정의 | [entries/2026-10-06_2249_b1-gzbench_harness-scenarios.md](entries/2026-10-06_2249_b1-gzbench_harness-scenarios.md) |
+| 2026-10-06 23:22 | b1-ppo10 | B1 정본 φ 순수 PPO 10 시드 학습 (D1, 코드 수정 없음) | [entries/2026-10-06_2322_b1-ppo10_ppo-10seeds-canonical.md](entries/2026-10-06_2322_b1-ppo10_ppo-10seeds-canonical.md) |
 | 2026-10-06 23:35 | b1-gzbench | A5-4 하네스 스모크 — DWA 20 · RL(v12_s1) 20, 에피소드당 벽시계·RTF 와 단계 C 소요 추정 | [entries/2026-10-06_2335_b1-gzbench_smoke-dwa-rl.md](entries/2026-10-06_2335_b1-gzbench_smoke-dwa-rl.md) |
 | 2026-10-06 23:35 | b1-gzbench | A5-3 Gazebo 전이 점검 6 종 — Isaac·2D 계약 값과 대조 | [entries/2026-10-06_2335_b1-gzbench_transfer-checks.md](entries/2026-10-06_2335_b1-gzbench_transfer-checks.md) |
+| 2026-10-06 23:53 | b1-binfra | B 단계 평가 집합 정의 — 주 집합(직진 여유 ≥ 0.40 m)과 좁은 목표 스트레스 집합 | [entries/2026-10-06_2353_b1-binfra_eval-sets.md](entries/2026-10-06_2353_b1-binfra_eval-sets.md) |
+| 2026-10-06 23:54 | b1-binfra | DR 축 목록·DR 끄기·학습 때 보지 않은 교란 평가 묶음 v1 (결과 전 고정) | [entries/2026-10-06_2354_b1-binfra_perturb-suite.md](entries/2026-10-06_2354_b1-binfra_perturb-suite.md) |
+| 2026-10-06 23:58 | b1-binfra | B 단계 기반 스모크 — DR 끔 학습, PID 라그랑주 λ 반응, SAC 학습 신호, ONNX | [entries/2026-10-06_2358_b1-binfra_infra-smokes.md](entries/2026-10-06_2358_b1-binfra_infra-smokes.md) |
 | 2026-10-07 01:18 | b1-gzbench | A5-5 리뷰 반영 — strict_est 지표 결함 수정·재계산과 독점 시간대 재측정 | [entries/2026-10-07_0118_b1-gzbench_review-fix.md](entries/2026-10-07_0118_b1-gzbench_review-fix.md) |
 
-## 실행 목록 요약 (316 건, 원본 `runs/<에이전트>.jsonl`)
+## 실행 목록 요약 (384 건, 원본 `runs/<에이전트>.jsonl`)
 
 | run_id | 단계 | 종류 | 시뮬 | 커밋 | 시드 | 핵심 결과 | 표기 |
 |---|---|---|---|---|---|---|---|
@@ -235,6 +239,33 @@
 | W2b_r7_mut_isaac_M5a_bbdbe2f | W2b | test | isaac | bbdbe2f | n/a (결정적) | caught=True, decision_fails=0, step_fails=6, n_decision=17 | [측정] |
 | W2b_r7_mut_isaac_M5c_bbdbe2f | W2b | test | isaac | bbdbe2f | n/a (결정적) | caught=True, decision_fails=0, step_fails=12, n_decision=17 | [측정] |
 | W2b_r7_review_mutation_ab8b16f | W2b | test | offline | ab8b16f | n/a (결정적) | mutants=12, caught=11, survived=['R11 env_math 판 일치 가드 제거 (지금 상수로는 닿을 수 없는 방어 가드)'] | [측정] |
+| B0_smoke_sets_A3c | B0 | eval | isaac | 1cc4887 | 4242 | main_3_15={'n': 2048, 'strict': 0.99463, 'strict_wilson95': [0.9904, 0.997], 'strict_goal_cluster95': [0.9898, 0.9985], 'nav2': 0.99658, 'collisions': 0, 'stall': 0.0054, 'intervention_per_ep': 1.496, 'distinct_goals': 501}, stress_3_15={'n': 512, 'strict': 0.82422, 'strict_wilson95': [0.7889, 0.8547], 'strict_goal_cluster95': [0.6789, 0.9581], 'nav2': 0.99805, 'collisions': 1, 'stall': 0.1738, 'intervention_per_ep': 25.049, 'distinct_goals': 28}, main_3_30={'n': 2048, 'strict': 0.99072, 'strict_wilson95': [0.9856, 0.9941], 'strict_goal_cluster95': [0.9829, 0.9966], 'nav2': 0.99268, 'collisions': 2, 'stall': 0.0083, 'intervention_per_ep': 2.258, 'distinct_goals': 501}, stress_3_30={'n': 512, 'strict': 0.86328, 'strict_wilson95': [0.8308, 0.8903], 'strict_goal_cluster95': [0.7681, 0.9545], 'nav2': 0.98633, 'collisions': 0, 'stall': 0.1367, 'intervention_per_ep': 24.785, 'distinct_goals': 32} | [측정] |
+| B0_a3c_reclass | B0 | probe | offline | 42e75f1 | 4242 | A3c_final_canonical_3-15={'main': {'success': 1981, 'n': 1984, 'wilson95': [0.9956, 0.9995]}, 'stress': {'success': 54, 'n': 64, 'wilson95': [0.7357, 0.9129]}, 'lt_0p30': {'success': 37, 'n': 47, 'wilson95': [0.651, 0.8801]}}, A3c_final_canonical_3-30={'main': {'success': 1969, 'n': 1982, 'wilson95': [0.9888, 0.9962]}, 'stress': {'success': 55, 'n': 66, 'wilson95': [0.7257, 0.9043]}, 'lt_0p30': {'success': 40, 'n': 51, 'wilson95': [0.6537, 0.8751]}} | [계산] |
+| B0_eval_sets_check | B0 | probe | offline | aa07062 | 20261006 | check_same=True, pool_digest=75b8c66b7ede7d38, sets=5 | [계산] |
+| B0_smoke_perturb_A3c | B0 | eval | isaac | 1cc4887 | 4242 | rc=1, round1_rows=8192, round1_steps=360, round1_wall_s=381.3 | 실패 |
+| B0_smoke_dr_off | B0 | train | isaac | 1cc4887 | 0 | dr_snapshot_all_nominal=True, values={'plant_time_constant_s': 0.08, 'plant_delay_s': 0.04, 'accel_limit_scale': 1.0, 'lidar_sigma_m': 0.03, 'beam_dropout_p': 0.0, 'drive_gain': 1.0, 'obs_scan_delay_s': 0.0}, summary_dr=False, env_steps=65536 | [측정] |
+| B0_pytest_cpu_isaac | B0 | test | offline | 1cc4887 | 0 | cpu=198 passed, 3 skipped (test_ppo_lag: rsl_rl 없음), isaac=18 passed, 1 skipped (onnxruntime 없음) | [측정] |
+| B0_mutation_r1 | B0 | test | offline | 4d22f79 | 0 | valid=False, reason=no control run; SDF missing in copy; isaac summary unparsed, reported_cpu=26/27, reported_isaac=5/5 | 실패 |
+| B0_mutation_r2_cpu | B0 | test | offline | aa07062 | 0 | control=54 passed, 2 warnings in 110.11s (0:01:50), caught=26, mutants=27, survived=['E3 앞 변 조건 x ≥ 0'] | [측정] |
+| B0_mutation_r3_isaac | B0 | test | offline | aa07062 | 0 | control=5 passed in 18.74s, caught=5, mutants=5, summaries={'G1': '1 failed in 3.41s', 'G2': '1 failed, 3 passed in 8.66s', 'G3': '1 failed, 4 passed in 10.77s', 'G4': '1 failed, 1 passed in 6.61s', 'G5': '1 failed in 3.48s'} | [측정] |
+| B0_smoke_pid_d0p2 | B0 | train | isaac | 1cc4887 | 0 | budget_d=0.2, iterations=40, lambda_positive_iters=37, first_positive_iter=4 | [측정] |
+| B0_smoke_pid_d200 | B0 | train | isaac | 1cc4887 | 0 | budget_d=200.0, iterations=40, lambda_positive_iters=0, first_positive_iter=None | [측정] |
+| B0_smoke_sac_s0_fail1 | B0 | train | isaac | 1cc4887 | 0 | rc=1, env_steps=0, error=AttributeError: module 'amr_rl_contract.constants' has no attribute 'OBS_DIM' | 실패 |
+| B0_smoke_sac_s0_eval_fail1 | B0 | eval | isaac | 1cc4887 | 4242 | rc=1, cause=policy file missing (training failed) | 실패 |
+| B0_onnx_pid_d0p2 | B0 | test | offline | 8b0a9ab | 0 | fails=[], algo=PPO-PIDLagrangian (rsl_rl 3.1.2 + rl/isaac ppo_lag, cost intervention <= 0.2 undiscounted per episode, final lambda 9.14595), constraint=intervention <= 0.2 (undiscounted episode sum), lagrange_final=[9.14594730682824] | [측정] |
+| B0_onnx_pid_d200 | B0 | test | offline | 8b0a9ab | 0 | fails=[], algo=PPO-PIDLagrangian (rsl_rl 3.1.2 + rl/isaac ppo_lag, cost intervention <= 200 undiscounted per episode, final lambda 0 = constraint not binding at end, effectively unconstrained at end), constraint=intervention <= 200 (undiscounted episode sum), lagrange_final=[0.0] | [측정] |
+| B0_mutation_r4_cpu | B0 | test | offline | fc26b7f | 0 | control=56 passed, 2 warnings in 25.65s, caught=27, mutants=29, not_applied=['L4 오차 정규화 없음'] | [측정] |
+| B0_mutation_r5_cpu | B0 | test | offline | fcbc804 | 0 | control=56 passed, 2 warnings in 33.90s, caught=28, mutants=29, survived=['E3 앞 변 조건 x ≥ 0'] | [측정] |
+| B0_smoke_perturb_A3c_r2 | B0 | eval | isaac | aa07062 | 4242 | unfinished=0, rounds=[{'rows': 8192, 'pad': 0, 'steps': 360, 'wall_s': 358.8}, {'rows': 7168, 'pad': 1024, 'steps': 478, 'wall_s': 468.7}], torch_max_alloc_MiB=3629.8, strict={'nominal': 0.9961, 'delay_0p12': 0.9951, 'delay_0p16': 0.9902, 'obslat_0p1': 0.9961, 'obslat_0p2': 0.9971, 'sigma_0p09': 0.9951, 'sigma_0p12': 0.9961, 'drop_0p05': 0.9961, 'drop_0p10': 0.9951, 'gain_0p8': 0.8623, 'gain_1p2': 0.9775, 'accel_0p6': 0.9658, 'tm_0p16': 0.9951, 'combo': 0.9961, 'dr_edge': 0.9961} | [측정] |
+| B0_perturb_check | B0 | probe | offline | aa07062 | 4242 | pass=True, sets_main_first1024_success=1019, nominal_success=1020 | [계산] |
+| B0_equiv_f007e2e | B0 | train | isaac | f007e2e | 0 | iterations=3, env_steps=98304, mean_return=-24.540633946515545, episodes=1 | [측정] |
+| B0_equiv_aa07062_a | B0 | train | isaac | aa07062 | 0 | iterations=3, env_steps=98304, mean_return=-24.540633946515545, episodes=1 | [측정] |
+| B0_equiv_aa07062_b | B0 | train | isaac | aa07062 | 0 | iterations=3, env_steps=98304, mean_return=-24.540633946515545, episodes=1 | [측정] |
+| B0_equiv_compare | B0 | probe | offline | fef24b0 | 0 | new_vs_new_bitwise=True, old_vs_new_bitwise=True, max_abs_param_diff=0.0 | [계산] |
+| B0_pytest_final | B0 | test | offline | 8b0a9ab | 0 | cpu=202 passed, 5 skipped (test_ppo_lag: rsl_rl 없음), isaac=24 passed, 1 skipped (onnxruntime 없음), lint=pep257 0, flake8 0 | [측정] |
+| B0_smoke_sac_s0 | B0 | train | isaac | 8b0a9ab | 0 | env_steps=10000384, train_wall_s=4004.5, signal_last5_success_mean=0.9944, signal_pass=True | [측정] |
+| B0_smoke_sac_s0_eval | B0 | eval | isaac | 8b0a9ab | 4242 | unfinished=0, wall_s=391.8, policy_kind=sac_skrl, main_3_15={'strict': 0.9409, 'strict_wilson95': [0.9299, 0.9503], 'strict_goal_cluster95': [0.9295, 0.9516], 'nav2': 0.998, 'collisions': 1, 'stall': 0.0586, 'fail_final_dist_median': 0.1067, 'near_fail_class': {'phi_blocked': 0, 'policy_stopped': 116, 'mixed': 1}} | [측정] |
+| B0_onnx_sac | B0 | test | offline | 8b0a9ab | 0 | rc=1, fails=['ort_vs_torch_random_normal', 'ort_vs_torch_env_obs'], algo=SAC (skrl 2.1.0, squashed Gaussian, twin Q, auto entropy), unconstrained (no cost constraint), constraint=none | [측정] |
 | A5_b1gzbench_simtime_t1 | A5 | test | offline | e461e74 | 0 | build_rc=0, warnings=0, tests=248, failures=42 | 실패 |
 | A5_b1gzbench_simtime_t2 | A5 | test | offline | e461e74 | 0 | build_rc=0, warnings=0, tests=221, failures=2 | 실패 |
 | A5_b1gzbench_simtime_t3 | A5 | test | offline | e461e74 | 0 | build_rc=0, warnings=0, tests=221, failures=0 | [측정] |
@@ -360,3 +391,44 @@
 | A2_b1plugin_final_clean | A2 | test | offline | c57067b | 0 | rl03_build_rc=0, rl03_warnings=0, rl03_tests=723, rl03_failures=0 | [측정] |
 | A2_b1plugin_review_reanalysis | A2 | probe | offline | 0ce5fa4 | 0 | run2_odom_vs_gt_m=[0.003, 0.039, 0.039, 0.039, 0.038], run2_map_minus_gt_dx_m=[-18.073, -18.039, -18.039, -18.034, -18.043], odom_yaw_minus_gt_rad_range=[-1.61, -1.529], odom_yaw_samples=3625 | [계산] |
 | A2_b1plugin_review_fix_clean | A2 | test | offline | 12d91c7 | 0 | build_rc=0, warnings=0, tests=723, failures=0 | [측정] |
+| B1_ppo10_s0 | B1 | train | isaac | f007e2e | 0 | env_steps=39321600, iterations=300, train_wall_s=7678.6, rollout_success_ge_0.1_at=2621440 | [측정] |
+| B1_ppo10_s0_final_canonical_3-15 | B1 | eval | isaac | f007e2e | 0 | n=2048, unfinished=0, strict_success=0.99365234375, strict_count=2035 | [측정] |
+| B1_ppo10_s0_final_canonical_3-30 | B1 | eval | isaac | f007e2e | 0 | n=2048, unfinished=0, strict_success=0.98828125, strict_count=2024 | [측정] |
+| B1_ppo10_s0_onnx | B1 | test | offline | f007e2e | 0 | fails=[], onnx=/home/CAPYI_AI/runs/bonus1/b1-ppo10/train/B1_ppo10_s0/policy_final.onnx, opset=[17], ort_vs_torch_max=4.291534423828125e-06 | [측정] |
+| B1_ppo10_s1 | B1 | train | isaac | f007e2e | 1 | env_steps=39321600, iterations=300, train_wall_s=7660.9, rollout_success_ge_0.1_at=2621440 | [측정] |
+| B1_ppo10_s1_final_canonical_3-15 | B1 | eval | isaac | f007e2e | 1 | n=2048, unfinished=0, strict_success=0.99609375, strict_count=2040 | [측정] |
+| B1_ppo10_s1_final_canonical_3-30 | B1 | eval | isaac | f007e2e | 1 | n=2048, unfinished=0, strict_success=0.99658203125, strict_count=2041 | [측정] |
+| B1_ppo10_s1_onnx | B1 | test | offline | f007e2e | 1 | fails=[], onnx=/home/CAPYI_AI/runs/bonus1/b1-ppo10/train/B1_ppo10_s1/policy_final.onnx, opset=[17], ort_vs_torch_max=4.291534423828125e-06 | [측정] |
+| B1_ppo10_s2 | B1 | train | isaac | f007e2e | 2 | env_steps=39321600, iterations=300, train_wall_s=7560.5, rollout_success_ge_0.1_at=2621440 | [측정] |
+| B1_ppo10_s2_final_canonical_3-15 | B1 | eval | isaac | f007e2e | 2 | n=2048, unfinished=0, strict_success=0.99658203125, strict_count=2041 | [측정] |
+| B1_ppo10_s2_final_canonical_3-30 | B1 | eval | isaac | f007e2e | 2 | n=2048, unfinished=0, strict_success=0.9912109375, strict_count=2030 | [측정] |
+| B1_ppo10_s2_onnx | B1 | test | offline | f007e2e | 2 | fails=[], onnx=/home/CAPYI_AI/runs/bonus1/b1-ppo10/train/B1_ppo10_s2/policy_final.onnx, opset=[17], ort_vs_torch_max=1.9073486328125e-06 | [측정] |
+| B1_ppo10_s3 | B1 | train | isaac | f007e2e | 3 | env_steps=39321600, iterations=300, train_wall_s=7389.4, rollout_success_ge_0.1_at=5242880 | [측정] |
+| B1_ppo10_s3_final_canonical_3-15 | B1 | eval | isaac | f007e2e | 3 | n=2048, unfinished=0, strict_success=0.99658203125, strict_count=2041 | [측정] |
+| B1_ppo10_s3_final_canonical_3-30 | B1 | eval | isaac | f007e2e | 3 | n=2048, unfinished=0, strict_success=0.9951171875, strict_count=2038 | [측정] |
+| B1_ppo10_s3_onnx | B1 | test | offline | f007e2e | 3 | fails=[], onnx=/home/CAPYI_AI/runs/bonus1/b1-ppo10/train/B1_ppo10_s3/policy_final.onnx, opset=[17], ort_vs_torch_max=2.384185791015625e-06 | [측정] |
+| B1_ppo10_s4 | B1 | train | isaac | f007e2e | 4 | env_steps=39321600, iterations=300, train_wall_s=7333.0, rollout_success_ge_0.1_at=2621440 | [측정] |
+| B1_ppo10_s4_final_canonical_3-15 | B1 | eval | isaac | f007e2e | 4 | n=2048, unfinished=0, strict_success=0.98779296875, strict_count=2023 | [측정] |
+| B1_ppo10_s4_final_canonical_3-30 | B1 | eval | isaac | f007e2e | 4 | n=2048, unfinished=0, strict_success=0.990234375, strict_count=2028 | [측정] |
+| B1_ppo10_s4_onnx | B1 | test | offline | f007e2e | 4 | fails=[], onnx=/home/CAPYI_AI/runs/bonus1/b1-ppo10/train/B1_ppo10_s4/policy_final.onnx, opset=[17], ort_vs_torch_max=4.76837158203125e-06 | [측정] |
+| B1_ppo10_s5 | B1 | train | isaac | f007e2e | 5 | env_steps=39321600, iterations=300, train_wall_s=7310.6, rollout_success_ge_0.1_at=2621440 | [측정] |
+| B1_ppo10_s5_final_canonical_3-15 | B1 | eval | isaac | f007e2e | 5 | n=2048, unfinished=0, strict_success=0.98291015625, strict_count=2013 | [측정] |
+| B1_ppo10_s5_final_canonical_3-30 | B1 | eval | isaac | f007e2e | 5 | n=2048, unfinished=0, strict_success=0.98876953125, strict_count=2025 | [측정] |
+| B1_ppo10_s5_onnx | B1 | test | offline | f007e2e | 5 | fails=[], onnx=/home/CAPYI_AI/runs/bonus1/b1-ppo10/train/B1_ppo10_s5/policy_final.onnx, opset=[17], ort_vs_torch_max=2.384185791015625e-06 | [측정] |
+| B1_ppo10_s6 | B1 | train | isaac | f007e2e | 6 | env_steps=39321600, iterations=300, train_wall_s=7476.6, rollout_success_ge_0.1_at=2621440 | [측정] |
+| B1_ppo10_s6_final_canonical_3-15 | B1 | eval | isaac | f007e2e | 6 | n=2048, unfinished=0, strict_success=0.99658203125, strict_count=2041 | [측정] |
+| B1_ppo10_s6_final_canonical_3-30 | B1 | eval | isaac | f007e2e | 6 | n=2048, unfinished=0, strict_success=0.99365234375, strict_count=2035 | [측정] |
+| B1_ppo10_s6_onnx | B1 | test | offline | f007e2e | 6 | fails=[], onnx=/home/CAPYI_AI/runs/bonus1/b1-ppo10/train/B1_ppo10_s6/policy_final.onnx, opset=[17], ort_vs_torch_max=3.337860107421875e-06 | [측정] |
+| B1_ppo10_s7 | B1 | train | isaac | f007e2e | 7 | env_steps=39321600, iterations=300, train_wall_s=7461.7, rollout_success_ge_0.1_at=3932160 | [측정] |
+| B1_ppo10_s7_final_canonical_3-15 | B1 | eval | isaac | f007e2e | 7 | n=2048, unfinished=0, strict_success=0.99169921875, strict_count=2031 | [측정] |
+| B1_ppo10_s7_final_canonical_3-30 | B1 | eval | isaac | f007e2e | 7 | n=2048, unfinished=0, strict_success=0.99365234375, strict_count=2035 | [측정] |
+| B1_ppo10_s7_onnx | B1 | test | offline | f007e2e | 7 | fails=[], onnx=/home/CAPYI_AI/runs/bonus1/b1-ppo10/train/B1_ppo10_s7/policy_final.onnx, opset=[17], ort_vs_torch_max=1.9073486328125e-06 | [측정] |
+| B1_ppo10_s8 | B1 | train | isaac | f007e2e | 8 | env_steps=39321600, iterations=300, train_wall_s=7468.0, rollout_success_ge_0.1_at=2621440 | [측정] |
+| B1_ppo10_s8_final_canonical_3-15 | B1 | eval | isaac | f007e2e | 8 | n=2048, unfinished=0, strict_success=0.99462890625, strict_count=2037 | [측정] |
+| B1_ppo10_s8_final_canonical_3-30 | B1 | eval | isaac | f007e2e | 8 | n=2048, unfinished=0, strict_success=0.994140625, strict_count=2036 | [측정] |
+| B1_ppo10_s8_onnx | B1 | test | offline | f007e2e | 8 | fails=[], onnx=/home/CAPYI_AI/runs/bonus1/b1-ppo10/train/B1_ppo10_s8/policy_final.onnx, opset=[17], ort_vs_torch_max=2.86102294921875e-06 | [측정] |
+| B1_ppo10_s9 | B1 | train | isaac | f007e2e | 9 | env_steps=39321600, iterations=300, train_wall_s=7860.8, rollout_success_ge_0.1_at=2621440 | [측정] |
+| B1_ppo10_s9_final_canonical_3-15 | B1 | eval | isaac | f007e2e | 9 | n=2048, unfinished=0, strict_success=0.994140625, strict_count=2036 | [측정] |
+| B1_ppo10_s9_final_canonical_3-30 | B1 | eval | isaac | f007e2e | 9 | n=2048, unfinished=0, strict_success=0.9921875, strict_count=2032 | [측정] |
+| B1_ppo10_s9_onnx | B1 | test | offline | f007e2e | 9 | fails=[], onnx=/home/CAPYI_AI/runs/bonus1/b1-ppo10/train/B1_ppo10_s9/policy_final.onnx, opset=[17], ort_vs_torch_max=4.291534423828125e-06 | [측정] |
+| B1_ppo10_aggregate | B1 | probe | offline | f007e2e | [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] | n_seeds=10, failing_seeds_3-15=0, failing_seed_wilson95_3-15=[0.0, 0.27753], strict_iqm_3-15=0.99447 | [계산] |
