@@ -97,6 +97,14 @@ def test_boot_and_perm_match_reference():
     assert MS.min_perm_p(5, 5) == pytest.approx(2 / 252)
 
 
+def test_verdict_rule():
+    assert MS.verdict(0.01, [0.001, 0.02], 0.04) == 'up'
+    assert MS.verdict(0.01, [-0.001, 0.02], 0.01) == 'undetermined'     # 구간이 0 포함
+    assert MS.verdict(0.01, [0.001, 0.02], 0.06) == 'undetermined'      # p > 0.05
+    assert MS.verdict(-0.01, [-0.02, -0.001], 0.05) == 'down'
+    assert MS.verdict(-0.01, [-0.02, 0.001], 0.01) == 'undetermined'
+
+
 def test_strong_effect_is_detected_and_holm_possible():
     on, off = arms(1.0, 0.80)
     res = MS.analyze(on, off)

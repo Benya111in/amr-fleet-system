@@ -122,6 +122,16 @@ def test_jitter_is_rigid_and_walls_fixed(nominal, groups):
         assert np.allclose(d0, d1, atol=1e-9)
         dyaw = v['obb'][m, 4] - nominal['obb'][m, 4]
         assert np.allclose(dyaw, dyaw[0], atol=1e-12)
+    # 물체의 yaw 는 그 물체의 회전만큼 돈다 (apply_jitter 의 moves 와 같다)
+    obb2, moves = MG.apply_jitter(nominal['obb'], gid, anchor, np.random.default_rng([5, 1]),
+                                  0.6, math.radians(12.0))
+    for g in range(anchor.shape[0]):
+        m = gid == g
+        assert np.allclose(obb2[m, 4] - nominal['obb'][m, 4], moves[g, 2], atol=1e-12)
+        rel0 = nominal['obb'][m, :2] - anchor[g]
+        c, s_ = math.cos(moves[g, 2]), math.sin(moves[g, 2])
+        exp = anchor[g] + rel0 @ np.array([[c, s_], [-s_, c]]) + moves[g, :2]
+        assert np.allclose(obb2[m, :2], exp, atol=1e-12)
     # 자르기: 이동 ≤ 3σ (축마다)
     shift = v['obb'][~fixed, :2] - nominal['obb'][~fixed, :2]
     assert np.abs(shift).max() < 3 * 0.6 + 2.5        # 회전 지렛대(랙 반대각 ≤ 1.2 m) 포함 여유
@@ -156,7 +166,7 @@ def test_remove_drops_whole_objects(nominal, groups):
 def test_add_respects_overlap_and_keepout(nominal, groups):
     gid, _n, anchor = groups
     path = np.stack([np.linspace(-20.0, -5.0, 301), np.full(301, 6.0)], 1)   # 랙 열 A·B 사이 통로
-    keep = np.array([path[0], path[-1]])
+    keep = np.array([path[0], path[-1], path[150]])     # 가운데 점: 상자가 놓이는 구간 안의 금지 점
     cond = _cond('add', n=10, half_lo=0.15, half_hi=0.45, arc_lo=0.3, arc_hi=0.7,
                  lateral_sigma=0.25, keepout_m=1.0, height=1.0)
     v = MG.make_variant(nominal, gid, anchor, cond, 0, host_paths=[path], keep_pts=keep)
@@ -312,3 +322,13 @@ def test_bundle_small_build(nominal):
     t_add = int(np.flatnonzero(arr['tile_cond'] == 1)[0])
     ob, _z, g = MB.tile_rects(arr, t_add)
     assert np.array_equal(ob[g != MG.ADDED], nominal['obb']) and (g == MG.ADDED).sum() == 6
+
+
+def test_goal_assignment_balanced_and_deterministic():
+    goals = np.array([5, 3, 9, 3, 11, 5, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30])
+    a = MB.goal_assignment(goals, 4, 7)
+    assert set(a) == set(np.unique(goals).tolist())
+    cnt = np.bincount(list(a.values()), minlength=4)
+    assert cnt.max() - cnt.min() <= 1 and cnt.min() >= 1
+    assert a == MB.goal_assignment(goals, 4, 7)
+    assert a != MB.goal_assignment(goals, 4, 8)

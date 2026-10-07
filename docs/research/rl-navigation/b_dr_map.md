@@ -3,7 +3,7 @@
 - 에이전트 b1-mapgen · 2026-10-08 · 브랜치 `feature/b1-mapgen` (분기점 `feature/bonus1-rl` `74d3a13`) · 평가·env 코드 `c774abc` (+ 스모크 점검 수정
   `66b6983`), 사전 등록 분석 `bcb7040`, **사전 등록 커밋 `9e41a75`** (본 평가는 이 커밋의 `git archive` 사본에서 돌았다). 기존 파일은 고치지 않았다.
 - 사전 등록: 노트 항목 [`notebook/entries/2026-10-08_0410_b1-mapgen_dr-map-generalization.md`](notebook/entries/2026-10-08_0410_b1-mapgen_dr-map-generalization.md)
-  (질문·H1–H5·판정 규칙·정책 sha256·bundle sha256·분석 스크립트 sha256 — 모두 본 평가 시작 04:12:30 전에 커밋). 실행 목록 `notebook/runs/b1-mapgen.jsonl` (25 건: 설계·점검 9, 본 평가 10, 집계·보충·시험 6).
+  (질문·H1–H5·판정 규칙·정책 sha256·bundle sha256·분석 스크립트 sha256 — 모두 본 평가 시작 04:12:30 전에 커밋). 실행 목록 `notebook/runs/b1-mapgen.jsonl` (26 건: 설계·점검 9, 본 평가 10, 집계·보충·시험·변이 7).
 - 원자료 `/home/CAPYI_AI/runs/bonus1/b1-mapgen/` — 지도 묶음 `suite/map_bundle_v1.{npz,summary.json}`, 평가 `eval/mg_{on,off}_s<S>/`
   (`eval.json`·`episodes.npz`·`eval.log`·`gpu_mem.csv`·`start/end.txt`·`HEAD.txt`), 점검 `eval/{smoke1,smoke2,probe_*}/`, 집계 `analysis/`
   (`mapgen_analysis.{json,md}` 사전 등록, `supp_mapgen.json` 보충, 그림 `figs/mapgen_conditions.{png,svg}`), 실행 `driver.{py,log}`·`job_mg.sh`·`pipeline.log`.
@@ -182,6 +182,7 @@ IQM 켬 0.9946 [0.9930, 0.9973] · 끔 0.9959 [0.9945, 0.9980]. 실패 시드 (<
 | 명목 지도의 먼 사본 (264 m 이동) | `B4m_probe_far_on0` | 결말 5 120 중 3 개 다름 (main_3_15 1/2048, stress_3_15 1/512, main_3_30 0, stress_3_30 1/512) — float32 레이캐스트 이동 잡음 |
 | 변형 행이 재계획 경로를 쓴다 | `B4m_probe_zero_pipe` (행동 0) | env 경로 길이 = 재계획 길이 (최대 차 4e-14), 타일·풀 번호·재분류가 bundle 과 같음 |
 | 첫 스모크 | `B4m_smoke1` | R1 실패 — 점검 방법 결함 (R2 용으로 상자 안에 둔 env 의 LiDAR 원점이 상자 안). `66b6983` 에서 그 env 를 빼고 다시 (smoke2) |
+| CPU 시험·변이 (결과 뒤, 시험만) | `B4m_mutation` | 새 시험 30 개 포함 `rl/isaac/tests` 232 통과 · 5 건너뜀. 변이 16 개 중 15 개를 잡았고, 살아남은 M12 (add 의 시작·목표 금지 거리 끔) 는 시험의 금지 점이 상자 구간 밖이었던 탓 — 시험을 고친 뒤 잡힘 (16/16). Isaac 쪽 (`env_mapgen.py` 의 메시·충돌 바꿔 끼우기) 은 CPU 변이 밖이고 스모크 R1–R4·P0 비트 대조로만 확인 |
 
 ## 6. 실패 꼴 — add [계산, 보충 — `analysis/supp_mapgen.json` 「failure_modes」]
 
@@ -270,7 +271,7 @@ docker run --rm --network none -v $SRC:/ws:ro -v $B:$B:ro -v $R/analysis:$R/anal
 docker run --rm --network none -v <이 문서 커밋 사본>:/ws:ro -v $B:$B:ro -v $R/analysis:$R/analysis \
   -v /usr/share/fonts/google-noto-cjk:/fonts:ro -w /ws amr-ai/rl:0.3 \
   python3 rl/isaac/scripts/supp_mapgen.py --out $R/analysis/supp_mapgen.json --fig $R/analysis/figs/mapgen_conditions
-# 시험 (CPU) — 새 시험 28 개 포함 230 통과 · 5 건너뜀
+# 시험 (CPU) — 새 시험 30 개 포함 232 통과 · 5 건너뜀; 변이 검사 $R/tmp/mut/mutate_mapgen.py (16/16)
 docker run --rm --network none -e AMR_ISAAC_RUNS=$R -v <worktree>:/ws:ro -v $R:$R:ro -w /ws/rl/isaac amr-ai/rl:0.3 python3 -m pytest -q tests
 ```
 

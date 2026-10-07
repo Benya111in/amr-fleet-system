@@ -8,7 +8,8 @@
   - 설계·점검 (결과 전, 이미 등록): `B4m_replan_probe`, `B4m_bundle_draft1`, `B4m_bundle_draft2`, `B4m_bundle_v1`, `B4m_smoke1`(실패),
     `B4m_smoke2`, `B4m_probe_p0_on0`, `B4m_probe_far_on0`, `B4m_probe_zero_pipe`
   - 본 평가: `B4m_mg_on_s{0..4}` (DR 켬), `B4m_mg_off_s{0..4}` (DR 끔), 집계 `B4m_analysis`
-  - (결과 뒤 추가) 중간 점검·시험·보충: `B4m_analysis_dry_zero`, `B4m_analysis_partial_s0`, `B4m_supp_partial_s01`, `B4m_supp`, `B4m_explore_add`
+  - (결과 뒤 추가) 중간 점검·시험·보충: `B4m_analysis_dry_zero`, `B4m_analysis_partial_s0`, `B4m_supp_partial_s01`, `B4m_supp`, `B4m_explore_add`,
+    `B4m_mutation`
 - 원자료: `/home/CAPYI_AI/runs/bonus1/b1-mapgen/` (`suite/` bundle, `eval/<실행>/`, `analysis/`, `driver.{py,log}`, `job_mg.sh`, `pipeline.log`)
 
 ## 질문
@@ -166,6 +167,9 @@
 jitter_0p30 +0.01/−0.02, jitter_0p60 −0.02/−0.09, scale +0.10/0.00, remove −0.01/−0.05, **add +1.93/+1.42 %p**; add Δ 의 목표 군집 구간 시드 고정
 [−0.0075, −0.0025] · 두 단계 [−0.0162, +0.0061]; add 실패 켬 221 · 끔 170 중 목표 앞 14 · 14, 나머지는 장애물 0.8 m 안 정체·충돌 (차는 정체 142 대 87),
 충돌 끝 풋프린트가 새 상자와 겹침 37 · 31; add 지도 8 장 중 한 장 (타일 42) 이 켬 0.942 · 끔 0.963 으로 가장 낮다.
+
+**시험·변이 (결과 뒤, 시험만 — 평가와 무관)** [계산, `B4m_mutation`]: 새 시험 2 개 (판정 규칙, 목표→지도 배정) 를 더해 `rl/isaac/tests` 232 통과 · 5 건너뜀.
+변이 16 개 중 첫 회 15 개를 잡음 — 살아남은 M12 (add 의 시작·목표 금지 거리 끔) 는 시험의 금지 점이 상자 구간 밖이었다. 금지 점을 구간 가운데에 더한 뒤 16/16.
 
 **예측 대조**: H1 맞음. H2 — jitter_0p15·0p30·remove·add (가장 큼) 맞음, **jitter_0p60 1–3 %p · scale 0.5–2 %p 하락 틀림** (둘 다 ≈ 0), 둘째 큰 조건 틀림.
 H3 맞음 (10/10). H4 — add 충돌 증가 맞음, jitter_0p60 은 팔마다 다름 (켬 1 → 6, 끔 10 → 4), 두 팔 차 가르지 못함 맞음. H5 맞음 (판정 없음).
