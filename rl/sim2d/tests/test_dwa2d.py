@@ -522,3 +522,23 @@ def test_fixed_env_keeps_first_episode_only(tmp_path):
     env2.step_rl(u)
     g1 = env2.gen.get_state()
     assert torch.equal(g0, g1)                                # 리셋 난수를 더 뽑지 않았다
+
+
+def test_costmap_marking_range(m, conf):
+    """마킹은 센서에서 obstacle_max_range (5.5 m) 안의 끝점만 — 창 안이어도 그 밖은 찍지 않는다."""
+    cm = dict(conf['costmap'], denoise=False)
+    d = m.Dwa2D(conf['cfg'], cm, conf['footprint'], 4.0, 10, True)
+    d.reset(dwa2d.path_poses(np.stack([np.arange(0, 3, 0.05), np.zeros(60)], 1)))
+    sx, sy = -3.5, -3.5                 # 창 [−7.5, 0.5]², 벽 y = 0.4 (센서에서 3.9 m)
+    r, _ = _wall_scan(0.4 - sy)
+    d.update_costmap(sx, sy, 0.0, sx, sy, 0.0, r, -math.pi, math.radians(0.5), 0.1, 25.0)
+    ob = d.obstacle_grid()
+    ox, oy = d.costmap_origin()
+    ys, xs = np.nonzero(ob == 254)
+    wx, wy = ox + (xs + 0.5) * 0.025, oy + (ys + 0.5) * 0.025
+    dist = np.hypot(wx - sx, wy - sy)
+    assert len(xs) > 100 and dist.max() < 5.5 + 0.03
+    # 창 안 벽 위에서 5.5 m 밖인 곳 (|x − sx| > √(5.5² − 3.9²) = 3.88) 은 찍히지 않았다
+    far = np.abs(wx - sx) > 3.92
+    assert not np.any(far)
+    assert np.any(np.abs(wx - sx) > 3.7)                        # 경계 가까이까지는 찍혔다
