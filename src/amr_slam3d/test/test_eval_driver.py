@@ -144,3 +144,23 @@ def test_snapshot_head_is_used_when_present(tmp_path):
     (tmp_path / 'SNAPSHOT_HEAD').write_text('abc123\n')
     head, st = drv.wt_head(str(tmp_path))
     assert head == 'abc123' and st.startswith('snapshot')
+
+
+def test_job_wt_override_reaches_docker_mount(tmp_path, monkeypatch):
+    calls = {}
+
+    class P:
+        pid = 1
+
+    def fake_popen(cmd, stdout=None, stderr=None):
+        calls['cmd'] = cmd
+        return P()
+    monkeypatch.setattr(drv.subprocess, 'Popen', fake_popen)
+    snap = tmp_path / 'snap'
+    snap.mkdir()
+    (snap / 'SNAPSHOT_HEAD').write_text('deadbeef\n')
+    j = dict(drv.job('e3', 's3_aisle_a1', 'slam_toolbox', 0, 1, 46), wt=str(snap))
+    p, fh = drv.start_job(str(tmp_path / 'root'), '/other', j)
+    fh.close()
+    assert f'{snap}:/ros2_ws:ro' in calls['cmd']
+    assert (tmp_path / 'root' / j['id'] / 'HEAD.txt').read_text().strip() == 'deadbeef'

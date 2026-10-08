@@ -256,7 +256,8 @@ def wt_head(wt):
 
 
 def start_job(root, wt, j):
-    """출력 디렉터리에 HEAD·status·job.json 을 쓰고 컨테이너를 띄운다 (Popen)."""
+    """출력 디렉터리에 HEAD·status·job.json 을 쓰고 컨테이너를 띄운다 (Popen). 작업에 wt 가 있으면 그 사본."""
+    wt = j.get('wt') or wt
     o = out_dir(root, j)
     os.makedirs(o, exist_ok=True)
     head, st = wt_head(wt)
