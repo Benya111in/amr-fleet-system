@@ -28,7 +28,10 @@ LINK = 'src/amr_behavior/include/amr_behavior/bt_nodes/zone_agent_link.hpp'
 DIST = 'src/amr_behavior/behavior_trees/task_executor_distributed.xml'
 YDIST = 'src/amr_behavior/behavior_trees/subtrees/yield_distributed.xml'
 
-PY_FLEET = 'cd {d}/src/amr_fleet && PYTHONPATH={d}/src/amr_fleet python3 -m pytest -q -x -p no:cacheprovider {t}'
+# PYTHONPATH 는 덧붙인다 — 덮어쓰면 rclpy · amr_msgs 를 못 찾아 노드 시험이 건너뛰어진다 (W-mut 1 회차의 M-HB 가
+# 그렇게 공허하게 SURVIVED — 결과 뒤 변경, 노트에 적음). 시험이 하나도 통과 · 실패하지 않으면 INVALID 로 본다.
+PY_FLEET = ('cd {d}/src/amr_fleet && PYTHONPATH={d}/src/amr_fleet:$PYTHONPATH '
+            'python3 -m pytest -q -x -p no:cacheprovider {t}')
 PY_BEH = 'cd {d}/src/amr_behavior && python3 -m pytest -q -x -p no:cacheprovider {t}'
 GTEST = 'cd {d}/ws/build/amr_behavior && ctest --output-on-failure -R "^{t}$"'
 
@@ -149,8 +152,12 @@ def main():
         dom = os.environ.get('MW_DOMAIN', '59')
         trc = sh(f'{env} && export ROS_LOCALHOST_ONLY=1 ROS_DOMAIN_ID={dom} OUT_DIR={a.out} '
                  f'&& {tmpl.format(d=d, t=tests)}', log, timeout=5400)
+        tail = open(log, encoding='utf-8', errors='replace').read()[-3000:]
+        ran = any(w in tail for w in ('passed', 'failed', 'Passed', 'Failed', 'error'))
         entry.update(test_rc=trc, wall_s=round(time.time() - t0, 1),
-                     verdict='KILLED' if trc != 0 else 'SURVIVED')
+                     verdict=('KILLED' if trc != 0 else 'SURVIVED') if ran else 'INVALID')
+        if not ran:
+            entry['why'] = '시험이 돌지 않았다 (모두 건너뜀 · 수집 0)'
         results['mutations'].append(entry)
         shutil.rmtree(d, ignore_errors=True)
         json.dump(results, open(os.path.join(a.out, 'results.json'), 'w'), indent=1,
