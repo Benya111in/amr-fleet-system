@@ -87,7 +87,6 @@ def summary(d):
 
 def cmd_registry(ns) -> int:
     d = os.path.abspath(ns.dir)
-    env = _env(os.path.join(d, 'env.txt'))
     head = open(os.path.join(d, 'HEAD.txt'), encoding='utf-8').read().strip()
     status = open(os.path.join(d, 'status.txt'), encoding='utf-8').read().strip() \
         if os.path.exists(os.path.join(d, 'status.txt')) else ''
@@ -99,10 +98,17 @@ def cmd_registry(ns) -> int:
     res['rc'] = ns.rc
     res['attempt'] = ns.attempt
     ok = ns.rc == 0 and res.get('gate_pass') is True
+    text = open(os.path.join(d, 'env.txt'), encoding='utf-8', errors='replace').read() \
+        if os.path.exists(os.path.join(d, 'env.txt')) else ''
+    m_route = re.search(r'route=(\S+)', text)
+    m_var = re.search(r'variant=(\S+)', text)
+    m_rtf = re.search(r'^rtf_target: (\S+)', text, re.M)
+    route = os.path.splitext(os.path.basename(m_route.group(1)))[0] if m_route else '?'
     rec = {'run_id': ns.run_id, 'stage': 'G', 'agent': 'b2-rec', 'kind': 'gazebo', 'sim': 'gazebo',
            'commit': head[:7], 'dirty': bool(status),
-           'config': f'scenario={ns.scenario} attempt={ns.attempt} '
-                     f"route={os.path.basename(env.get('route', {}).get('value', '?'))} "
+           'config': f'scenario={ns.scenario} attempt={ns.attempt} route={route} '
+                     f"world={m_var.group(1) if m_var else '?'} "
+                     f"rtf_target={m_rtf.group(1) if m_rtf else '?'} "
                      f'(record_bag.sh, 원시 IMU 만, 공백 검사 recgate)',
            'seed': ns.seed, 'started': started,
            'ended': dt.datetime.now().astimezone().isoformat(timespec='seconds'),
