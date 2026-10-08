@@ -315,3 +315,27 @@ def unmet(reqs: Sequence[Tuple[str, str]], infos: Dict[str, str],
         if PLAYER_NODE not in parsed.get(topic, {}).get('publishers', []):
             miss.append(f'{topic} → {PLAYER_NODE}')
     return miss
+
+
+# ---- 녹화 기록기 구독 QoS (b2-rec 시운전 1 회차 뒤) ------------------------------------------
+#: 기록기 구독 깊이 — 기본 10 이면 1 kHz /clock 은 기록기 실행기가 10 ms 만 밀려도 표본을 잃는다
+#: (시운전 1 회차 sim 81 s 에 /clock 2 ms 간격 누락 5 회, joint_states 30 개 부족 [측정 dryrun/rec/dry_s6wall_a1]).
+#: 발행자는 모두 reliable·volatile (같은 bag metadata.yaml) 이라 구독도 그것에 맞춘다 — 다르게 주면 짝이 안 맞아
+#: 아무것도 기록되지 않는다.
+#: /tf_static 은 transient_local 이라 덮어쓰지 않는다 (기록기가 발행자에 맞춘다).
+RECORD_QOS_DEPTH: Dict[str, int] = {
+    '/clock': 1000, '/tf': 1000, f'{_R}/joint_states': 1000, f'{_R}/imu/data_raw': 1000,
+    f'{_R}/imu/data': 1000, f'{_R}/odometry/filtered': 500, f'{_R}/wheel_odom': 500,
+    f'{_R}/ground_truth/odom': 500, f'{_R}/cmd_vel': 200, f'{_R}/scan': 100, SCAN: 100,
+    f'{_R}/lidar3d/points_raw': 50, CLOUD: 50,
+}
+
+
+def record_qos_yaml() -> str:
+    """`ros2 bag record --qos-profile-overrides-path` 파일 본문 (RECORD_QOS_DEPTH 에 있는 기록 토픽)."""
+    out = []
+    for t in RECORD_TOPICS:
+        if t in RECORD_QOS_DEPTH:
+            out.append(f'{t}:\n  history: keep_last\n  depth: {RECORD_QOS_DEPTH[t]}\n'
+                       '  reliability: reliable\n  durability: volatile\n')
+    return ''.join(out)

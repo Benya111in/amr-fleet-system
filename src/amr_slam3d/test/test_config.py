@@ -378,3 +378,14 @@ def test_every_row_has_ready_requirements_on_played_topics():
     assert (rows.CLOUD, 'lio_sam_imageProjection') in lio
     noimu = rows.ready_requirements(rows.row('rtabmap3d_noimu'))
     assert not any('/imu/' in t for t, _ in noimu)
+
+
+def test_record_qos_overrides_cover_all_volatile_record_topics():
+    """기록기 구독 깊이: /tf_static(transient_local) 을 뺀 모든 기록 토픽, reliable·volatile, 고빈도는 ≥ 1000."""
+    q = yaml.safe_load(rows.record_qos_yaml())
+    assert set(q) == set(rows.RECORD_TOPICS) - {'/tf_static'}
+    for t, p in q.items():
+        assert p == {'history': 'keep_last', 'depth': rows.RECORD_QOS_DEPTH[t],
+                     'reliability': 'reliable', 'durability': 'volatile'}, t
+    for t in ('/clock', '/tf', '/amr_01/imu/data_raw', '/amr_01/imu/data', '/amr_01/joint_states'):
+        assert q[t]['depth'] >= 1000

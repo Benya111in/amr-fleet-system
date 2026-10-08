@@ -152,6 +152,31 @@
 - 리뷰 N4 의 (0, −5.0)·(0, −4.4) 는 요청 지점에서 입구 반대쪽이라 후보가 아니었다 — 값은 61 (−5.5 보다 구속이 더 남는다).
 - 3D 16 채널은 모든 queue 정지점에서 7 902–7 927 (열림 대비 −0.3 % 이내), wall 에서도 7 927 — 단일 스캔 완전 대응 하한이다.
 
+### 시운전 1 회차 (`B2rec-dry_s6wall_a1`, 실제 녹화 전 — P 집합 밖) [측정]
+
+원자료 `/home/CAPYI_AI/runs/b24/b2-rec/dryrun/rec/dry_s6wall_a1/` (HEAD `898d067`, 16:23–16:25 KST — b4-s12 의 exclusive 가
+16:22:54 에 끝나 바로 시작, loadavg 1 분값 14.4 → 11.0, 다른 사용자 프로세스(openroad·dgcom 등) 동시 실행).
+
+- 프로토콜 기계 부분은 모두 됐다: 스택 기동 17 s, 주행기 ready 13 s 뒤, 기록기 14/14 구독 즉시, go → **출발 sim 60.14 s**
+  ([60, 60.5] 안), 처음 정지 46.4 s·끝 정지 5.0 s, 기록기 SIGINT 깨끗한 종료(metadata.yaml), 통로 안 스폰·후진 완주.
+- **공백 검사 실패**: `/clock` 1 ms 틱 누락 9 (2 ms ×5, 4·6·10·13 ms), EKF 간격 초과 5 (33·34·35·38·54 ms), `imu/data` 1 (15 ms,
+  sim 34.15 s). 점군·`imu/data_raw` 0. 실제 RTF 0.85 (sim 81.3 s / 벽 95.5 s). 큰 것들은 sim 34.1–34.4 s 한 곳에 몰렸다
+  (순간 정체), 2 ms 짜리는 흩어져 있다.
+- 원인 진단 [측정 + 추론]: (1) 기록 bag 의 `joint_states`(1 kHz) 가 `/clock` 보다 30 개 적다 — 기록기 구독 깊이 기본 10 은 1 kHz
+  토픽을 10 ms 지연에도 잃는다 → 2 ms 틱 누락은 기록기 쪽일 가능성이 크다. (2) `imu/data` 의 15 ms 공백은 `imu_filter_node` 의
+  입력 구독이 SensorDataQoS(best-effort 깊이 5 = 25 ms) 라 처리 노드 쪽에서 잃은 것이다 (`imu/data_raw` 는 온전). (3) EKF 33–54 ms
+  는 20 ms 격자가 아닌 간격이라 EKF 타이머가 늦게 돈 것이다 (sim 시각 타이머 — 처리 노드가 CPU 를 기다림).
+
+**시운전 뒤 프로토콜 변경 (실제 녹화 전, 공백 검사 규칙은 그대로)** — 사전 등록의 "시운전으로 결함을 찾으면 고치고 다시
+시운전" 에 따른 것:
+1. 생성 월드 사본의 물리 `real_time_factor` 를 1.0 → **0.5** 로 (`RTF_TARGET`, `record_bag.sh`). 물리 스텝·센서 주기·주행은
+   sim 시각이라 데이터는 같고, 처리 노드(EKF·imu_filter·scan_filter·전처리)가 sim 주기마다 쓸 벽시계 여유가 두 배가 된다.
+   녹화 벽시계 시간은 늘어난다 (긴 매핑 약 25 분).
+2. 기록기 구독 QoS 깊이 (`rows.record_qos_yaml`, `--qos-profile-overrides-path`): `/clock`·`/tf`·IMU 둘·`joint_states` 1000,
+   odom 셋 500, `cmd_vel` 200, 스캔 둘 100, 점군 둘 50. reliable·volatile (발행자와 같음 — 시운전 bag metadata.yaml).
+3. 시운전 2 회차를 같은 조합(`s6_inside` + `s6-wall`)으로 다시 돈다. 통과하면 본 녹화를 시작하고, 실패하면 원인을 더 본 뒤
+   이 항목에 적는다 (본 녹화의 시도 3 회 상한·규칙은 그대로).
+
 ## 해석
 
 (녹화 뒤 채운다)

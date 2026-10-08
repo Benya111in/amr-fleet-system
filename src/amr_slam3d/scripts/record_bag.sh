@@ -5,14 +5,19 @@
 #   record_bag.sh <출력 디렉터리> <route.yaml> <월드 변형: s1 | s6-open | s6-queue | s6-wall> [spawn.yaml | -]
 #
 # 프로토콜 (replay.md §9-1·2·3·5, 사전 등록 docs/research/slam3d/notebook/entries/*_b2-rec_*):
-#  1) 월드: gen_warehouse_world.py --variant <V> → <출력>/world/warehouse.sdf (기본 월드 출력은 바이트 동일)
+#  1) 월드: gen_warehouse_world.py --variant <V> → <출력>/world/warehouse.sdf (기본 월드 출력은 바이트 동일).
+#     생성된 사본의 물리 real_time_factor 를 RTF_TARGET (기본 0.5) 으로 낮춘다 — 시운전 1 회차(sim 81 s, 실제 RTF 0.85)에서
+#     EKF 타이머 지연(33–54 ms)·imu_filter 입력 버림(15 ms)·/clock 틱 누락이 공백 검사를 실패시켰다. 시뮬 시각이 벽시계보다
+#     느리게 가면 처리 노드가 sim 주기마다 쓸 벽시계 여유가 늘어난다 (물리 스텝·센서 주기·주행은 sim 시각 기준이라 그대로)
 #  2) multi_robot.launch.py: amr_01(3D) 1 대, localization mode odom (휠·imu_filter·scan_filter·odom EKF),
 #     Nav2·perception·behavior·fleet 없음. **madgwick 은 띄우지 않는다** — 원시 IMU(imu/data_raw·imu/data)만 기록하고
 #     madgwick 은 녹화 뒤 madg_lockstep.py 로 파생한다 (기록 때 madgwick 이 입력을 잃었다 — replay.md §1.2)
 #  3) route_driver 를 **기록 전에** 띄운다 (0 명령). sim 10 s 동안 정지한 뒤 ready 파일 — 이 노드의 기동 부하가 bag 에
 #     들어가지 않게 (파일럿의 sim 9.48 s 정체는 route_driver 기동과 겹쳤다 — replay.md §7)
-#  4) ready 뒤 ros2 bag record (mcap, rows.RECORD_TOPICS). 기록기 로그에서 모든 토픽의 "Subscribed to topic" 을 확인하고
-#     3 s(벽시계) 뒤 go 파일. 기록 중에는 새 프로세스를 띄우지 않는다 (파일 검사만)
+#  4) ready 뒤 ros2 bag record (mcap, rows.RECORD_TOPICS). 기록기 구독 QoS 를 깊게 (record_qos.yaml: 고빈도 토픽 keep_last
+#     1000 — 기본 깊이 10 이면 1 kHz /clock 은 기록기 실행기가 10 ms 만 밀려도 잃는다. 발행자는 모두 reliable·volatile
+#     [측정: 시운전 bag metadata.yaml]). 기록기 로그에서 모든 토픽의 "Subscribed to topic" 을 확인하고 3 s(벽시계) 뒤 go 파일.
+#     기록 중에는 새 프로세스를 띄우지 않는다 (파일 검사만)
 #  5) 주행기: go 부터 hold_start_s (route.yaml, S6 은 depart_at_s 까지) 정지 → 경로 → hold_end_s 정지 → done 파일
 #  6) done → 기록기 SIGINT (metadata.yaml 이 생겼는지 확인) → quit 파일 → 주행기 종료 → 런치·Gazebo 정리
 #  7) 사후: bag info, stats(토픽별 수·sim 주기), gate(공백 검사 — 통과 못 하면 종료 코드 3), gt.tum, 스폰 파일 사본
@@ -89,7 +94,16 @@ wait_file() {        # $1 파일, $2 상한 [s], $3 감시할 PID (죽으면 실
 mkdir -p "$OUT/world"
 python3 /ros2_ws/src/amr_simulation/worlds/gen_warehouse_world.py --variant "$VARIANT" \
   "$OUT/world/warehouse.sdf" > "$OUT/world.log" 2>&1
-sha256sum "$OUT/world/warehouse.sdf" >> "$OUT/world.log"
+echo "generated: $(sha256sum < "$OUT/world/warehouse.sdf")" >> "$OUT/world.log"
+RTF_TARGET=${RTF_TARGET:-0.5}
+sed -i "s#<real_time_factor>1.0</real_time_factor>#<real_time_factor>$RTF_TARGET</real_time_factor>#" \
+  "$OUT/world/warehouse.sdf"
+if [ "$(grep -c "<real_time_factor>$RTF_TARGET</real_time_factor>" "$OUT/world/warehouse.sdf")" != 1 ]; then
+  echo "real_time_factor 를 $RTF_TARGET 로 못 바꿨다" >&2
+  exit 7
+fi
+echo "rtf_target: $RTF_TARGET" >> "$OUT/env.txt"
+echo "used (rtf_target $RTF_TARGET): $(sha256sum < "$OUT/world/warehouse.sdf")" >> "$OUT/world.log"
 
 stamp launch_start
 "${SIGDFL[@]}" ros2 launch amr_bringup multi_robot.launch.py robots_file:="$ROBOTS" num_robots:=1 \
@@ -117,8 +131,12 @@ stamp driver_ready
 TOPICS=$(python3 -c "from amr_slam3d.rows import RECORD_TOPICS; print(' '.join(RECORD_TOPICS))")
 NT=$(echo "$TOPICS" | wc -w)
 echo "record: $TOPICS" >> "$OUT/env.txt"
+QOS="$OUT/record_qos.yaml"
 # shellcheck disable=SC2086
-"${SIGDFL[@]}" ros2 bag record -s mcap -o "$OUT/bag" $TOPICS > "$OUT/record.log" 2>&1 &
+python3 -c "from amr_slam3d import rows; import sys; sys.stdout.write(rows.record_qos_yaml())" > "$QOS"
+# shellcheck disable=SC2086
+"${SIGDFL[@]}" ros2 bag record -s mcap -o "$OUT/bag" --qos-profile-overrides-path "$QOS" $TOPICS \
+  > "$OUT/record.log" 2>&1 &
 REC=$!
 PIDS+=("$REC")
 stamp record_start
