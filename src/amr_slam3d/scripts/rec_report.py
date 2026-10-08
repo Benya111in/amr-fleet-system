@@ -116,6 +116,13 @@ def cmd_registry(ns) -> int:
     return 0
 
 
+def _first(path):
+    """파일 첫 줄의 앞 세 낱말 (loadavg 1·5·15 분) — 없으면 '—'."""
+    if not os.path.exists(path):
+        return '—'
+    return ' '.join(open(path, encoding='utf-8').read().split()[:3])
+
+
 def _fmt(v, nd=3):
     if v is None:
         return '—'
@@ -159,7 +166,22 @@ def cmd_table(ns) -> int:
             topic_lines.append(f"| `/tf` 안 EKF odom→base_footprint | {g['n']} | "
                                f"{_fmt((g['n'] - 1) / (g['last_s'] - g['first_s']))} | "
                                f"{_fmt(g['dt_max_s'])} | {g['n_gap']} | — |")
-    text = '\n'.join(lines + topic_lines) + '\n'
+    att = ['\n**모든 시도** (실패 포함, 시도 디렉터리 순)\n',
+           '| 시도 | rc | 공백 검사 | 실패 사유 (처음 2) | RTF | loadavg 시작 → 끝 |',
+           '|---|---|---|---|---|---|']
+    rec = os.path.join(root, 'rec')
+    for tag in sorted(os.listdir(rec)) if os.path.isdir(rec) else []:
+        d = os.path.join(rec, tag)
+        s = summary(d)
+        rc = open(os.path.join(d, 'rc.txt')).read().strip() \
+            if os.path.exists(os.path.join(d, 'rc.txt')) else '(끊김)'
+        why = '; '.join(s.get('gate_reasons', [])[:2]).replace('|', '/')
+        l0 = _first(os.path.join(d, 'loadavg_start.txt'))
+        l1 = _first(os.path.join(d, 'loadavg_end.txt'))
+        verdict = {True: '통과', False: '실패', None: '—'}[s.get('gate_pass')]
+        att.append(f"| `{tag}` | {rc} | {verdict} | {why or '—'} | {_fmt(s.get('rtf'))} | "
+                   f'{l0} → {l1} |')
+    text = '\n'.join(lines + topic_lines + att) + '\n'
     with open(ns.out, 'w', encoding='utf-8') as f:
         f.write(text)
     print(text)
