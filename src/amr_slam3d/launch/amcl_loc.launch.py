@@ -7,8 +7,8 @@
 chain:=deploy (기본, E3(b) 의 2D 행): 배포 `localization.launch.py mode:=localization` 의 위치추정 부분을
 같은 파라미터로 띄운다 — 루트 map_server + lifecycle 관리자, amcl_map_adapter (반 셀 보정 map_amcl),
 nav2_amcl (amcl.yaml, `tf_broadcast: false` 그대로), ekf_filter_node_map (config/ekf.yaml —
-휠 odom·IMU·amcl_pose·scan_match_pose 융합, **map → odom 발행자**), scan_matcher_node, kidnap_monitor_node
-(LOST·복구 — 회전 명령 없음). 파라미터 조립은 배포 런치의 `shared_parameters` 를 그대로 불러 쓴다.
+휠 odom·IMU·amcl_pose·scan_match_pose 융합, **map → odom 발행자**), scan_matcher_node,
+kidnap_monitor_node (LOST·복구 — 회전 명령 없음). 파라미터 조립은 배포 런치의 `shared_parameters` 를 그대로 불러 쓴다.
 배포와 다른 것: 전처리 노드(휠·IMU 필터·스캔 필터·odom EKF)는 띄우지 않는다 — 그 출력(`scan_filtered`, `wheel_odom`,
 `imu/data`, `odometry/filtered`, EKF `odom → base_footprint` TF)은 bag 에서 튼다 (같은 녹화 = 같은 입력).
 chain:=amcl: AMCL 만 (`tf_broadcast: true`) — 보조 진단용.
