@@ -147,6 +147,7 @@ class Driver:
             server(1, {'scheduled': None})
         pending = sorted(arm['faults'], key=lambda f: f[0])
         ps_done = False
+        over_since = None
         last_change = time.time()
         last_mtime = None
         aborted = None
@@ -198,6 +199,15 @@ class Driver:
                 aborted = f'clock.json 이 {stall:.0f} s 동안 바뀌지 않음 (기록기 정지로 봄)'
             if time.time() - t_wall0 > self.a.arm_timeout_s and not aborted:
                 aborted = f'갈래 상한 {self.a.arm_timeout_s:.0f} s 초과'
+            l5 = os.getloadavg()[1]
+            if l5 > self.a.load_abort:
+                over_since = over_since or time.time()
+                if time.time() - over_since >= self.a.load_abort_s and not aborted:
+                    aborted = (f'부하 중단: loadavg(5 분) > {self.a.load_abort:g} 가 '
+                               f'{self.a.load_abort_s:.0f} s 이어짐 (지금 {load3()})')
+                    result['load_abort'] = True
+            else:
+                over_since = None
             if aborted:
                 with open(os.path.join(d, 'ABORTED.txt'), 'w', encoding='utf-8') as f:
                     f.write(f'중단(감시): {aborted} — {now_iso()}\n')
@@ -334,6 +344,14 @@ class Driver:
             + (' 동시' if self.a.concurrent else ' 차례로'))
         threads = []
         for j, i in enumerate(order):
+            if not self.a.concurrent and j == 1 and results[order[0]].get('load_abort'):
+                self.log(f'{key}: 첫 갈래가 부하 중단 — 둘째 갈래를 띄우지 않는다')
+                results[i].update({'rc': 'skipped', 'load_abort': True})
+                os.makedirs(os.path.join(self.raw, tags[i]), exist_ok=True)
+                with open(os.path.join(self.raw, tags[i], 'ABORTED.txt'), 'w',
+                          encoding='utf-8') as f:
+                    f.write(f'띄우지 않음: 첫 갈래 부하 중단 — {now_iso()}\n')
+                break
             th = threading.Thread(target=self.run_arm, args=(exp, k, i, tags[i], doms[j],
                                                              results[i]))
             th.start()
@@ -346,6 +364,9 @@ class Driver:
             th.join()
         valid = [self.analyze(exp, k, tags[i], results[i], e['arms'][i]['label'],
                               e['arms'][i]['mode']) for i in (0, 1)]
+        if any(results[i].get('load_abort') for i in (0, 1)):
+            self.log(f'{key} 부하 중단 — 짝 무효, 연속 실패 수에 넣지 않고 다시 돈다')
+            return 'load'
         self.log(f'{key} 끝: 유효 {valid} rc {[results[i].get("rc") for i in (0, 1)]}')
         if all(valid):
             with open(os.path.join(self.raw, 'pairs', key + '.done'), 'w', encoding='utf-8') as f:
@@ -380,6 +401,8 @@ class Driver:
                 if r == 'stop':
                     self.log('STOP 파일 — 멈춤')
                     return 1
+                if r == 'load':
+                    continue                    # 환경(다른 사용자 부하) 탓 — 시작 조건을 다시 기다린다
                 fails += 1
                 if fails >= 3:
                     self.log(f'{exp}_p{k}: 무효 3 번 연속 — 이 실험을 멈추고 진단 (재시도 안 함)')
@@ -407,8 +430,12 @@ def main(argv=None):
     ap.add_argument('--ps-after-s', type=float, default=420.0,
                     help='갈래 시작 뒤 이만큼(벽시계) 지나 스택 컨테이너 프로세스 표를 남긴다')
     ap.add_argument('--arm-timeout-s', type=float, default=4 * 3600.0)
-    ap.add_argument('--load-max', type=float, default=8.0)
-    ap.add_argument('--load-wait-max-s', type=float, default=1800.0)
+    ap.add_argument('--load-max', type=float, default=30.0,
+                    help='짝 시작 조건 loadavg(1 분) < 이 값 두 번 연속 (사전 등록 8 → 결과 뒤 30, 노트 01:50)')
+    ap.add_argument('--load-wait-max-s', type=float, default=10800.0)
+    ap.add_argument('--load-abort', type=float, default=120.0,
+                    help='갈래 중 loadavg(5 분)가 이 값을 load-abort-s 동안 넘으면 갈래 중단 · 짝 다시')
+    ap.add_argument('--load-abort-s', type=float, default=600.0)
     a = ap.parse_args(argv)
     return Driver(a).run()
 

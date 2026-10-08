@@ -189,8 +189,8 @@ def main(argv=None):
     ap.add_argument('--repo', default='/home/CAPYI_AI/wt/b4-p5')
     ap.add_argument('--order', default=','.join(p5_plan.ORDER))
     ap.add_argument('--skip-pilot', action='store_true', help='파일럿이 이미 끝났을 때 (재개)')
-    ap.add_argument('--load-wait-max-s', type=float, default=300.0,
-                    help='짝 시작 전 loadavg < 8 을 기다리는 상한 [s] — 넘으면 그대로 시작하고 기록')
+    ap.add_argument('--load-wait-max-s', type=float, default=10800.0,
+                    help='짝 시작 전 loadavg(1 분) < 30 을 기다리는 상한 [s] — 넘으면 그대로 시작하고 기록')
     a = ap.parse_args(argv)
     if a.cmd == 'decide':
         print(json.dumps(decide(a.raw), ensure_ascii=False, indent=1, default=str))
