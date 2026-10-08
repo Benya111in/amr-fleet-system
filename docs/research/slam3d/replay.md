@@ -266,3 +266,10 @@ guess 없음 → 9.6 s 처리 (`tmp/waittest*.sh`). 그래서 원인은 그 장�
 | 9 | 행: `rtabmap3d_noimu`·`rtabmap2d_noimu`·`slam_toolbox`·`liosam_planar`·`liosam_loop_re`(6DoF 참고)·`liosam_oracle`(상한), bag 마다 3 재생 | 이 문서 |
 | 10 | LIO-SAM 원인 1 직접 확인 (R5): z 표류율과 하향 링 바닥 점 수·선회율 상관, 필요하면 `isDegenerate` 디버그 토픽 | §0-4 — 지금 결론은 배제에 의한 것 |
 | 11 | 휠 열화(요인 D)·guess 없음(요인 B) 행 — RTAB-Map·slam_toolbox 의 휠 오라클 이점을 가른다 | §0-8 |
+
+**진행 (b2-rec, 2026-10-08)** — 1–5 는 녹화 전에 고쳤고 6–8 은 녹화했다 ([`recordings.md`](recordings.md) §1·§3): 원시 IMU 만 기록(파생은
+`madg_lockstep`), 기록 직후 공백 검사(`recgate`, 실패 bag 재기록 — 14 시도에 bag 8), 기록 전 sim 10 s 정지·bag 처음 ≥ 10 s·끝 ≥ 0.5 s 정지,
+재생 시작을 구독 확인 뒤로(`replay_row.sh` 멈춘 재생 → resume). S1 은 사전 등록 bag 2 개(`s1_seed1`·`s1_seed3`) + 사전 등록 밖 1 개
+(`s1_seed2x` — 사전 등록 `s1_seed2` 3 회 실패), S3 1, S6 열림·대기열·벽 3, 긴 매핑 1 (308.6 m — 322 m 원 경로 파일이 없어 같은 차선으로
+다시 만들었다). 9–11 은 P 단계(다음 물결). 공백 검사 통과 bag 에서도 `rtabmap3d_noimu` 재생 누락이 4 / 1 674 였다 (recordings.md §5 —
+bag 결함이 아니라 재생 쪽, 원인 미확인).
