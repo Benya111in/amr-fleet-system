@@ -13,10 +13,16 @@ from pathlib import Path
 
 import pytest
 
-lu = pytest.importorskip('amr_bringup.launch_utils')
+# 모듈 수준 pytest.importorskip 은 쓰지 않는다 — 이미지의 launch_testing pytest 플러그인 아래에서 그 skip 이
+# 디렉터리 수집 전체를 멈춰 amr_fleet 시험이 '1 skipped' 로 끝난다 (amr_bringup 이 없는 작업공간에서 실측, W-mut2 — 결과 뒤 변경).
+try:
+    import amr_bringup.launch_utils as lu
+except ImportError:
+    lu = None
 LAUNCH = Path(__file__).resolve().parents[2] / 'amr_bringup' / 'launch' / 'multi_robot.launch.py'
 CONFIG = Path(__file__).resolve().parents[2] / 'amr_bringup' / 'config' / 'fleet_spawn.yaml'
-pytestmark = pytest.mark.skipif(not LAUNCH.is_file(), reason='amr_bringup 소스가 없다')
+pytestmark = pytest.mark.skipif(lu is None or not LAUNCH.is_file(),
+                                reason='amr_bringup 이 설치돼 있지 않거나 소스가 없다')
 
 from launch import LaunchContext  # noqa: E402
 from launch.actions import (  # noqa: E402

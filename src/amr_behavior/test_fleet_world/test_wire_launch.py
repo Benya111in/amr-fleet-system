@@ -80,6 +80,8 @@ class TestWire(unittest.TestCase):
                                      and all(obs.state[r].fence_epoch == 3 for r in ROBOTS)),
                         f'NORMAL 이 안 됨: {obs.modes()}')
         obs.spin_for(5.0)                       # 관리자가 robot_state 로 로봇을 찾는다
+        summary['duplicate_nodes'] = obs.duplicates()
+        self.assertEqual(summary['duplicate_nodes'], {}, '격리 실패 — 같은 이름 노드가 둘 이상')
 
         # --- ① 엇갈려 지나는 중앙 작업 + 서버 kill
         for r, (pick, drop) in CROSSING.items():

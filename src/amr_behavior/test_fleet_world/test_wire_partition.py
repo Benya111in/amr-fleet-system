@@ -78,6 +78,8 @@ class TestWirePartition(unittest.TestCase):
     def _run(self, obs, raw, summary):
         self.assertTrue(obs.spin_for(60.0, until=lambda: obs.all_mode(AgentState.MODE_DEGRADED)),
                         f'DEGRADED 안 됨: {obs.modes()}')
+        summary['duplicate_nodes'] = obs.duplicates()
+        self.assertEqual(summary['duplicate_nodes'], {}, '격리 실패 — 같은 이름 노드가 둘 이상')
         evs = H.file_events(raw)
         summary['posted_sim'] = max(e['t'] for e in evs)
         for task_id, pick, drop in TASKS:

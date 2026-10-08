@@ -103,7 +103,9 @@ def processes(raw: pathlib.Path, robots, poses, comm: pathlib.Path, seed: int,
         for kv in agent_params:
             cmd += ['-p', kv]
         out.append(ExecuteProcess(
-            cmd=['bash', '-c', ' '.join(cmd) + f' > {raw}/agent_{r}.log 2>&1'],
+            # exec — 없으면 launch 의 SIGINT/SIGTERM/SIGKILL 이 bash 에만 가고 에이전트는 고아로 남아 다음 실행
+            # (같은 도메인)에 섞인다 (W-launch 판정 실행 1 회차에서 발견 — 결과 뒤 변경, 노트에 적음)
+            cmd=['bash', '-c', 'exec ' + ' '.join(cmd) + f' > {raw}/agent_{r}.log 2>&1'],
             name=f'agent_{r}', output='log', env=env))
         if with_adapters:
             out.append(ExecuteProcess(
@@ -229,6 +231,11 @@ class Observer:
             out[topic] = (sum(1 for e in pubs if e.node_name == 'fleet_agent'),
                           sum(1 for e in subs if e.node_name == 'fleet_agent'))
         return out
+
+    def duplicates(self):
+        """같은 이름 · 이름공간 노드가 둘 이상 — 앞선 실행의 고아 프로세스 등이 섞였다 (격리 실패)."""
+        c = collections.Counter(self.node.get_node_names_and_namespaces())
+        return {f'{ns.rstrip("/")}/{n}': k for (n, ns), k in c.items() if k > 1}
 
     def close(self):
         for p in self.servers.values():
