@@ -115,7 +115,7 @@ def plan_e2():
                 elif row in E2_ROWS_REF:
                     pri = 30 + k
                 else:
-                    pri = 40 + k
+                    pri = 55 + k                        # 오라클(보조)은 E3(b) 뒤, E4 앞 (01:55 순서 조정)
                 jobs.append(job('e2', bag, row, k, pri, domain=45))
     return jobs
 
