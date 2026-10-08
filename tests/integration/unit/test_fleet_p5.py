@@ -1,0 +1,333 @@
+"""
+보너스 4 P5 분석 · 계획 (tests/integration/fleet_p5) — 합성 자료로 판정 규칙을 고정한다 (rclpy 불필요).
+
+분석기가 세는 것: 실제 자세 기준 구역 동시 점유(원판 · 중심 · 도크 고정 지표), 믿은 허가 겹침, 허가 없는 진입,
+픽업 중복, 완료 · makespan, 장애 반응 시각, 낮은 epoch 수용, 도킹 오차, 부호 검정 · A/A 발산.
+"""
+
+import json
+import math
+import os
+from pathlib import Path
+import sys
+
+import pytest
+
+P5 = Path(__file__).resolve().parents[1] / 'fleet_p5'
+if str(P5) not in sys.path:
+    sys.path.insert(0, str(P5))
+import p5_analyze as A  # noqa: E402
+import p5_plan as P  # noqa: E402
+
+REPO = Path(__file__).resolve().parents[3]
+ZONES = """
+frame_id: map
+zones:
+  - id: x_ab_4
+    kind: intersection
+    polygon: [[2.0, 3.5], [4.0, 3.5], [4.0, 8.5], [2.0, 8.5]]
+  - id: dock_a_approach
+    kind: intersection
+    polygon: [[26.8, 16.25], [29.8, 16.25], [29.8, 17.75], [26.8, 17.75]]
+"""
+BEHAVIOR = """
+/**:
+  ros__parameters:
+    docks:
+      ids: [dock_a]
+      dock_a: {staging: [27.78, 17.0, 0.0], standoff: 0.65, marker_id: 2,
+               marker_pose: [29.99, 17.0, 3.14159265]}
+"""
+
+
+def write_run(tmp, gt_rows, events, *, mode='distributed', tasks=None, faults=(), t_base=100.0,
+              t_end=200.0, why='DONE', exp='C1', pair=1, label='distributed'):
+    d = tmp / f'{exp}_{pair}_{label}'
+    d.mkdir(parents=True, exist_ok=True)
+    plan = {'exp': exp, 'pair': pair, 'label': label, 'mode': mode, 'layout': 'new',
+            'robots': ['amr_01', 'amr_02'], 'tasks': tasks or [], 'faults': []}
+    (d / 'meta.json').write_text(json.dumps({'plan': plan, 'zones_text': ZONES,
+                                             'behavior_text': BEHAVIOR}))
+    (d / 'summary.json').write_text(json.dumps({'why': why, 't_base': t_base, 't_end': t_end,
+                                                't_ready': t_base - 10,
+                                                'hold_first': ['amr_01', 'amr_02']}))
+    with open(d / 'events.jsonl', 'w') as f:
+        for e in events:
+            f.write(json.dumps(e) + '\n')
+    with open(d / 'faults.jsonl', 'w') as f:
+        for e in faults:
+            f.write(json.dumps(e) + '\n')
+    with open(d / 'gt.csv', 'w') as f:
+        f.write('t,robot,x,y,yaw,v\n')
+        for row in gt_rows:
+            f.write(','.join(str(v) for v in row) + '\n')
+    return d
+
+
+def track(robot, t0, t1, x0, y0, x1, y1, v=0.5):
+    out, n = [], int(round((t1 - t0) / 0.1))
+    for i in range(n + 1):
+        u = i / n
+        out.append((round(t0 + i * 0.1, 3), robot, x0 + u * (x1 - x0), y0 + u * (y1 - y0), 0.0, v))
+    return out
+
+
+# ---------------------------------------------------------------------- 기하
+def test_disc_and_center_geometry():
+    poly = [[2.0, 3.5], [4.0, 3.5], [4.0, 8.5], [2.0, 8.5]]
+    assert A.inside(poly, 3.0, 6.0) and not A.inside(poly, 1.9, 6.0)
+    assert A.signed_distance(poly, 1.0, 6.0) == pytest.approx(1.0)
+    assert A.signed_distance(poly, 3.0, 6.0) == pytest.approx(-1.0)
+    assert A.disc_overlaps(poly, 1.7, 6.0)            # 0.30 m 밖 — 원판(0.36)은 겹친다
+    assert not A.disc_overlaps(poly, 1.6, 6.0)        # 0.40 m 밖
+
+
+# ---------------------------------------------------------------------- 동시 점유
+def test_two_robots_in_one_zone_at_once_is_one_event(tmp_path):
+    gt = (track('amr_01', 100, 120, 3.0, 4.0, 3.0, 8.0)
+          + track('amr_02', 100, 120, 3.0, 8.0, 3.0, 4.0))
+    d = write_run(tmp_path, gt, [])
+    m = A.run_metrics(str(d))
+    ev = [e for e in m['occupancy_disc'] if e['zone'] == 'x_ab_4']
+    assert len(ev) == 1 and ev[0]['robots'] == ['amr_01', 'amr_02'] and ev[0]['dur'] >= 19.0
+    assert ev[0]['depth_m'] > 0.36
+    assert len([e for e in m['occupancy_center'] if e['zone'] == 'x_ab_4']) == 1
+
+
+def test_one_after_another_is_not_concurrent(tmp_path):
+    gt = (track('amr_01', 100, 110, 3.0, 2.0, 3.0, 10.0)
+          + track('amr_01', 110.1, 130, 10.0, 10.0, 10, 10)
+          + track('amr_02', 100, 112, 3.0, 12.0, 3.0, 12.0)
+          + track('amr_02', 112.1, 125, 3.0, 12.0, 3.0, 1.0))
+    m = A.run_metrics(str(write_run(tmp_path, gt, [])))
+    assert [e for e in m['occupancy_disc'] if e['zone'] == 'x_ab_4'] == []
+    assert m['zone_entries'] >= 2
+
+
+def test_disc_touch_without_center_is_counted_only_by_disc(tmp_path):
+    # 두 로봇이 구역 서쪽 경계 밖 0.2 m (중심은 밖, 원판은 겹침)
+    gt = (track('amr_01', 100, 110, 1.8, 5.0, 1.8, 5.0, 0)
+          + track('amr_02', 100, 110, 1.8, 7.0, 1.8, 7.0, 0))
+    m = A.run_metrics(str(write_run(tmp_path, gt, [])))
+    assert len(m['occupancy_disc']) == 1 and m['occupancy_center'] == []
+
+
+def test_fixed_dock_metric_uses_the_old_big_box(tmp_path):
+    # y 16.1 — 새 상자(16.25..17.75)에서는 중심 밖, 옛 큰 상자(16..18)에서는 중심 안
+    gt = (track('amr_01', 100, 110, 27.0, 16.1, 27.0, 16.1, 0)
+          + track('amr_02', 100, 110, 29.0, 16.1, 29.0, 16.1, 0))
+    m = A.run_metrics(str(write_run(tmp_path, gt, [])))
+    assert [e for e in m['occupancy_center'] if e['zone'] == 'dock_a_approach'] == []
+    assert len([e for e in m['occupancy_dock_fixed_center']
+                if e['zone'] == 'dock_a_approach']) == 1
+
+
+# ---------------------------------------------------------------------- 믿은 허가 · 허가 없는 진입
+def test_held_overlap_and_unauthorized_entry(tmp_path):
+    gt = track('amr_01', 100, 110, 3.0, 2.0, 3.0, 6.0) + track('amr_02', 100, 110, 20, 0, 20, 0, 0)
+    ev = [{'t': 100.0, 'k': 'agent_state', 'r': 'amr_01', 'held': [], 'mode': 0},
+          {'t': 100.0, 'k': 'agent_state', 'r': 'amr_02', 'held': ['zone:x_bc_1'], 'mode': 0},
+          {'t': 105.0, 'k': 'agent_state', 'r': 'amr_01', 'held': ['zone:x_bc_1'], 'mode': 0}]
+    m = A.run_metrics(str(write_run(tmp_path, gt, ev)))
+    assert 'zone:x_bc_1' in m['held_overlaps']
+    assert m['unauth_s'].get('amr_01:x_ab_4', 0) > 1.0
+    assert m['unauth_events'][0]['robot'] == 'amr_01'
+
+
+def test_central_mode_has_no_belief_metrics(tmp_path):
+    gt = track('amr_01', 100, 110, 3.0, 2.0, 3.0, 6.0)
+    m = A.run_metrics(str(write_run(tmp_path, gt, [], mode='central')))
+    assert 'held_overlaps' not in m and m['unauth_s'] == {}
+
+
+# ---------------------------------------------------------------------- 작업 · 픽업
+TASKS = [{'task_id': 'p5c1.00', 'offset_s': 0.0}, {'task_id': 'p5c1.01', 'offset_s': 0.0}]
+
+
+def test_completion_makespan_and_duplicate_pickup(tmp_path):
+    ev = [{'t': 101, 'k': 'task_status', 'r': 'amr_01', 'task_id': 'p5c1.00', 'status': 1},
+          {'t': 102, 'k': 'task_status', 'r': 'amr_02', 'task_id': 'p5c1.00', 'status': 1},
+          {'t': 110, 'k': 'phase', 'r': 'amr_01', 'phase': 'LOADING'},
+          {'t': 111, 'k': 'phase', 'r': 'amr_02', 'phase': 'LOADING'},
+          {'t': 150, 'k': 'task_status', 'r': 'amr_01', 'task_id': 'p5c1.00', 'status': 2},
+          {'t': 160, 'k': 'task_status', 'r': 'amr_02', 'task_id': 'p5c1.00', 'status': 2}]
+    m = A.run_metrics(str(write_run(tmp_path, [], ev, tasks=TASKS)))
+    assert m['completed'] == 1 and m['n_tasks'] == 2 and m['makespan'] == 50.0
+    assert set(m['duplicate_pickups']) == {'p5c1.00'}
+    assert m['completions_dup']['p5c1.00'] and m['pickups'] == 2
+
+
+def test_single_pickup_is_not_a_duplicate(tmp_path):
+    ev = [{'t': 101, 'k': 'task_status', 'r': 'amr_01', 'task_id': 'p5c1.00', 'status': 1},
+          {'t': 110, 'k': 'phase', 'r': 'amr_01', 'phase': 'LOADING'},
+          {'t': 111, 'k': 'task_status', 'r': 'amr_02', 'task_id': 'p5c1.01', 'status': 1},
+          {'t': 120, 'k': 'phase', 'r': 'amr_02', 'phase': 'LOADING'}]
+    m = A.run_metrics(str(write_run(tmp_path, [], ev, tasks=TASKS)))
+    assert m['duplicate_pickups'] == {} and m['completed'] == 0 and m['makespan'] is None
+
+
+# ---------------------------------------------------------------------- 장애 · 펜스
+def test_fault_response_and_low_epoch_acceptance(tmp_path):
+    ev = [{'t': 100, 'k': 'agent_state', 'r': 'amr_01', 'mode': 0, 'fence_epoch': 2, 'held': []},
+          {'t': 121.5, 'k': 'agent_state', 'r': 'amr_01', 'mode': 1, 'fence_epoch': 2, 'held': []},
+          {'t': 125.2, 'k': 'agent_state', 'r': 'amr_01', 'mode': 2, 'fence_epoch': 2, 'held': []},
+          {'t': 130, 'k': 'agent_event', 'r': 'amr_01',
+           'ev': {'event': 'assign_proxy', 'accepted': True, 'epoch': 1, 'task_id': 'x'}},
+          {'t': 131, 'k': 'agent_event', 'r': 'amr_01',
+           'ev': {'event': 'assign_proxy', 'accepted': True, 'epoch': 2, 'task_id': 'y'}},
+          {'t': 132, 'k': 'agent_event', 'r': 'amr_01', 'ev': {'event': 'fence_reject'}}]
+    m = A.run_metrics(str(write_run(tmp_path, [], ev, faults=[{'action': 'kill', 'sim': 120.0}])))
+    r = m['fault_response'][0]['amr_01']
+    assert r == {'hold_new_s': 1.5, 'degraded_s': 5.2}
+    assert [d['task_id'] for d in m['low_epoch_accepted']] == ['x']
+    assert m['fence_rejects'] == 1 and m['assign_proxy'] == 2
+
+
+def test_docking_error_against_marker_and_standoff(tmp_path):
+    # 기대: 마커 (29.99, 17) 법선 −x → 판 면 29.98, standoff 0.65 → (29.33, 17), 방위 0
+    gt = track('amr_01', 100, 120, 29.33 - 0.01, 17.0, 29.33 - 0.01, 17.0, 0)
+    ev = [{'t': 105, 'k': 'phase', 'r': 'amr_01', 'phase': 'DOCKING'},
+          {'t': 115, 'k': 'phase', 'r': 'amr_01', 'phase': 'LOADING'}]
+    m = A.run_metrics(str(write_run(tmp_path, gt, ev)))
+    dk = m['docking']['completed'][0]
+    assert dk['dock'] == 'dock_a' and dk['pos_err_m'] == pytest.approx(0.01, abs=1e-3)
+    assert m['dock_within_2cm_1deg'] == 1 and m['docking']['docking_entries'] == 1
+
+
+def test_invalid_run_is_marked(tmp_path):
+    m = A.run_metrics(str(write_run(tmp_path, [], [], why='READY_TIMEOUT')))
+    assert m['valid'] is False
+
+
+# ---------------------------------------------------------------------- 통계
+def test_sign_test_exact_values():
+    assert A.sign_test([1] * 8)[0] == pytest.approx(2 / 256)
+    assert A.sign_test([1] * 7 + [-1])[0] == pytest.approx(18 / 256)
+    assert A.sign_test([0, 0, 0])[0] == 1.0
+    p, pos, neg, zero = A.sign_test([1, -1, 0, 2])
+    assert (pos, neg, zero) == (2, 1, 1) and p == 1.0
+
+
+def test_decide_never_says_same():
+    c = A.compare([({'pair': 1, 'm': 5}, {'pair': 1, 'm': 5})] * 8, 'm', 'a', 'b')
+    txt = A.decide(c, margin=1.0)
+    assert '가르지 못함' in txt and '같' not in txt
+    c2 = A.compare([({'pair': k, 'm': 3}, {'pair': k, 'm': 5}) for k in range(8)], 'm', 'a', 'b')
+    assert A.decide(c2).startswith('b > a')
+
+
+def test_outage_completions_count_between_kill_and_start():
+    ma = {'pair': 1, 'faults': [{'action': 'kill', 'sim': 160}, {'action': 'start', 'sim': 400}],
+          'tasks': [{'completed_t': 150}, {'completed_t': 200}, {'completed_t': 450}]}
+    mb = {'pair': 1, 'faults': [{'action': 'kill', 'sim': 161}, {'action': 'start', 'sim': 401}],
+          'tasks': [{'completed_t': 170}, {'completed_t': 300}, {'completed_t': 390}]}
+    assert A.outage_completions((ma, mb)) == {'a': 1, 'b': 3, 'pair': 1}
+
+
+def test_divergence_finds_first_split(tmp_path):
+    ga = track('amr_01', 100, 130, 0, 0, 30, 0, 1.0)
+    gb = track('amr_01', 200, 230, 0, 0, 15, 0, 0.5)
+    da = write_run(tmp_path, ga, [], t_base=100, t_end=130, label='a')
+    db = write_run(tmp_path, gb, [], t_base=200, t_end=230, label='b')
+    ma, mb = A.run_metrics(str(da)), A.run_metrics(str(db))
+    dv = A.divergence(ma, mb)
+    assert dv['gt_diverge_s'] == pytest.approx(2.1, abs=0.15)
+
+
+# ---------------------------------------------------------------------- 계획
+def test_schedule_alternates_first_arm_and_domains():
+    s = P.schedule(['AA', 'C1'])
+    assert len(s) == 6 + 8
+    assert [x[2] for x in s[:4]] == [0, 1, 0, 1]
+    assert s[0][3] != s[1][3] and all(21 <= d <= 29 for x in s for d in x[3])
+
+
+def test_plan_tasks_match_the_scenario_12_order_and_docks():
+    plan = P.run_plan('C2', 3, 1, t_start=300.0)
+    docks = [t['pickup_dock'] for t in plan['tasks']][:5]
+    assert docks == ['dock_1', 'dock_a', 'dock_2', 'dock_b', 'dock_1']
+    assert [t['offset_s'] for t in plan['tasks']] == [0.0] * 5 + [90.0] * 3
+    assert plan['faults'] == [[60.0, 'kill', 1], [300.0, 'start', 2]]
+    assert plan['mode'] == 'distributed' and plan['t_start'] == 300.0
+    assert len({t['task_id'] for t in plan['tasks']}) == 8
+    assert not P.check_docks(str(REPO / 'src/amr_behavior/config/behavior.yaml'))
+
+
+def test_comm_models_are_absolute_and_symmetric():
+    m = json.loads(P.comm_yaml('partition_contention'))
+    assert m['partitions'][0]['start_s'] == P.T_START + 40.0
+    assert m['partitions'][0]['groups'] == [['amr_01', 'amr_02']]
+    pairs = {(o['src'], o['dst']) for o in m['outages']}
+    assert pairs == {('amr_01', 'amr_02'), ('amr_02', 'amr_01')}
+    x = json.loads(P.comm_yaml('stress'))['links'][0]
+    assert x['comm_latency_ms'] == [0.0, 1000.0] and x['drop_rate'] == 0.1 and 'burst' in x
+
+
+def test_every_experiment_has_two_arms_and_known_actions():
+    for name, e in P.EXPERIMENTS.items():
+        assert len(e['arms']) == 2, name
+        for a in e['arms']:
+            assert a['mode'] in ('central', 'distributed')
+            assert a['layout'] in ('old', 'new')
+            for off, action, k in a['faults']:
+                assert action in ('kill', 'pause', 'unpause', 'start') and k >= 1
+                assert math.isfinite(off)
+            assert a['comm'] in (None, 'partition_contention', 'stress')
+    assert set(P.ORDER) <= set(P.EXPERIMENTS)
+
+
+def test_old_dock_boxes_match_fd17e49():
+    """고정 지표의 옛 상자 = fd17e49 traffic_zones.yaml (도크 ±1 m)."""
+    for zid, poly in A.OLD_DOCK_BOXES.items():
+        ys = sorted({p[1] for p in poly})
+        assert ys[1] - ys[0] == pytest.approx(2.0), zid
+    new = A.load_zones((REPO / 'src/amr_fleet/config/traffic_zones.yaml').read_text())
+    for zid in A.OLD_DOCK_BOXES:
+        ys = sorted({p[1] for p in new[zid]})
+        assert ys[1] - ys[0] == pytest.approx(1.5), zid
+
+
+def test_registry_has_required_fields(tmp_path):
+    d = write_run(tmp_path, [], [])
+    m = A.run_metrics(str(d))
+    info = {k: 'x' for k in ('run_id', 'stage', 'agent', 'kind', 'sim', 'commit', 'dirty',
+                             'config', 'seed', 'started', 'ended', 'raw_dir', 'label', 'load')}
+    rec = A.registry(m, info)
+    assert isinstance(rec['result'], dict) and rec['result']['n'] == 1
+    assert os.path.basename(str(d))
+
+
+def test_release_inside_commit_failure_and_false_transitions(tmp_path):
+    gt = track('amr_01', 100, 140, 3.0, 6.0, 3.0, 6.0, 0)        # x_ab_4 가운데에 서 있다
+    ev = [{'t': 100, 'k': 'agent_state', 'r': 'amr_01', 'mode': 0, 'held': []},
+          {'t': 105, 'k': 'agent_event', 'r': 'amr_01',
+           'ev': {'event': 'zone_release', 'resources': ['zone:x_ab_4']}},
+          {'t': 110, 'k': 'agent_event', 'r': 'amr_01',
+           'ev': {'event': 'task_commit_request', 'task_id': 'T1'}},
+          {'t': 112, 'k': 'agent_event', 'r': 'amr_01',
+           'ev': {'event': 'held', 'added': ['task:T1'], 'removed': []}},
+          {'t': 115, 'k': 'agent_event', 'r': 'amr_01',
+           'ev': {'event': 'task_commit_request', 'task_id': 'T2'}},
+          {'t': 120, 'k': 'agent_state', 'r': 'amr_01', 'mode': 1, 'held': []}]
+    m = A.run_metrics(str(write_run(tmp_path, gt, ev)))
+    assert m['zone_releases'] == 1 and len(m['release_inside']) == 1
+    assert [c['ok'] for c in m['commits']] == [True, False] and m['commit_failures'] == 1
+    assert m['false_transitions'] == 1
+    kill = [{'action': 'kill', 'sim': 118.0}]
+    m2 = A.run_metrics(str(write_run(tmp_path / 'f', gt, ev, faults=kill)))
+    assert m2['false_transitions'] is None
+
+
+def test_contention_vacuity_and_holm():
+    ev = [{'t': 110, 'k': 'agent_event', 'r': 'amr_01',
+           'ev': {'event': 'task_commit_request', 'task_id': 'T1'}},
+          {'t': 111, 'k': 'agent_event', 'r': 'amr_02',
+           'ev': {'event': 'task_commit_request', 'task_id': 'T1'}},
+          {'t': 112, 'k': 'agent_event', 'r': 'amr_02',
+           'ev': {'event': 'task_commit_request', 'task_id': 'T2'}}]
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        m = A.run_metrics(str(write_run(Path(tmp), [], ev)))
+    assert m['contention_tasks'] == ['T1']
+    h = A.holm({'a': 0.01, 'b': 0.04, 'c': 0.03})
+    assert h == {'a': pytest.approx(0.03), 'c': pytest.approx(0.06), 'b': pytest.approx(0.06)}
