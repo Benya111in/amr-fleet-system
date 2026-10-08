@@ -13,7 +13,7 @@ b2-rec 녹화 끝 조건 (COORDINATION §10.1): ① 명령줄에 '/wt/b2-rec/' �
 수동 진행: <원자료 루트>/GO 파일이 있으면 조건을 건너뛴다 (오케스트레이터 · 감독 에이전트 결정용, 로그에 남긴다).
 
 파일럿 규칙 (사전 등록 항목 「파일럿」): 짝 2 의 두 갈래 RTF 가 모두 ≥ 0.6 × 짝 1 같은 모드 RTF 이고 짝 2 두 갈래가 유효면 동시,
-아니면 차례로. T_START = max(240, 30 의 배수로 올림(1.25 × 파일럿 네 갈래 t_ready 최댓값)).
+아니면 차례로. T_START = max(T_FLOOR, 30 의 배수로 올림(1.25 × 파일럿 네 갈래 t_ready 최댓값)) — T_FLOOR 은 아래 주석.
 점검 (도구 결함 감지 — 지표 값으로 규칙을 바꾸지 않는다): 파일럿 네 갈래 모두 유효, 정답 자세 표본 > 0,
 분산 갈래 에이전트 상태 기록 있음, 완료 작업 ≥ 1, 스택 컨테이너에 관리자 · 교통 관리자가 없음(서버 컨테이너에만).
 하나라도 어긋나면 본 실행을 시작하지 않고 멈춘다 (raw/CAMPAIGN_HALT.txt).
@@ -35,6 +35,9 @@ import p5_plan  # noqa: E402
 B2_WT = '/home/CAPYI_AI/wt/b2-rec'
 B2_DOC = os.path.join(B2_WT, 'docs/research/slam3d/recordings.md')
 PLACEHOLDER = '(녹화 뒤 채운다)'
+# T_START 하한 [sim s]. 사전 등록은 240 이었다 — 파일럿 첫 갈래 준비가 sim 9.4 s 라 240 이면 갈래마다 sim ~230 s(벽시계 ~15 분)를
+# 그냥 기다린다. 결과 뒤 변경 (운영 파라미터 — 지표 · 판정과 무관): 하한 = imu_filter bias_estimation_time 60 s (정지 평균 창).
+T_FLOOR = 60.0
 
 
 def now_iso():
@@ -142,13 +145,13 @@ def decide(raw):
                and rtf[(2, md)] >= 0.6 * rtf[(1, md)] for md in ('central', 'distributed'))
     conc = conc and all((arms[(2, md)][1] or {}).get('valid') for md in ('central', 'distributed'))
     tr = [t for t in ready if t is not None]
-    t_start = max(240.0, 30.0 * math.ceil(1.25 * max(tr) / 30.0)) if tr else None
+    t_start = max(T_FLOOR, 30.0 * math.ceil(1.25 * max(tr) / 30.0)) if tr else None
     if t_start is None:
         problems.append('t_ready 없음 — T_START 를 정할 수 없다')
     basis = {'rtf': {f'{k}/{md}': v for (k, md), v in rtf.items()}, 't_ready': ready,
              'tags': {f'{k}/{md}': tag for (k, md), (tag, _) in arms.items()},
              'rule_concurrent': '짝 2 두 갈래 RTF ≥ 0.6 × 짝 1 같은 모드 RTF, 짝 2 두 갈래 유효',
-             'rule_t_start': 'max(240, ceil30(1.25 × max t_ready))'}
+             'rule_t_start': f'max({T_FLOOR:g}, ceil30(1.25 × max t_ready))'}
     return conc, t_start, problems, basis
 
 

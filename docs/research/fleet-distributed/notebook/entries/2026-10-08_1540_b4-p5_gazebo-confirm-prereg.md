@@ -236,6 +236,17 @@ sim ~300 s. 동시 짝이면 AA · C1 · C3 · F5L 짝당 ≈ 40 분 × 30 = 20 
     `p5_container.sh` `dfd2b54f945b327de41320741d07f4fb232165aa6f35f045cef1562931059134` (환경 덤프 한 줄), `unit/test_fleet_p5.py`
     `f49e9e3c143307f88e1537f2ff763bb3e15de371656bf8c72f2507e5d72ce71f` (29 통과), 형식 도구 `p5_report.py`
     `132d3b3eb299d21a924c7c07722e0732a8d2952faa1bc2846e5a359dc1e3e53f`. 시간 어림 + 1.5 h.
+- **(22:20 결과 뒤 변경 — 운영 파라미터, 파일럿 첫 갈래 진행 중) T_START 하한 240 → 60 s**: 파일럿 첫 갈래(`p5_pilot_p1_central`)가
+  sim 9.4 s(벽시계 약 1 분)에 준비를 마쳤다 [측정, `raw/p5_pilot_p1_central/events.jsonl` ready]. 하한 240 이면 갈래마다 sim ~230 s(RTF 0.25 면
+  벽시계 ~15 분)를 그냥 기다린다 — 본 실행 92 갈래(동시 짝 46)면 약 9–11 h. 하한을 imu_filter `bias_estimation_time` 60 s(정지 평균 창)로
+  낮춘다: T_START = max(60, ceil30(1.25 × 파일럿 t_ready 최댓값)). **이 값은 작업 게시 시각만 정하고 지표 · 판정 규칙과 무관하다** (짝의 두 갈래는
+  같은 T_START). 파일럿 지표(완료 · 안전 등)는 아직 하나도 나오지 않았다 — 준비 시각만 보고 바꿨다.
+- **(같은 때, 결과 전 결함 수정) 통신 모의 절대 시각**: `p5_plan.comm_yaml` 이 실행의 t_start 가 아니라 모듈 기본 T_START(240)로 분할 · 단절
+  시각을 썼다 — `--t-start` 를 바꾸면 P 의 분할이 작업 일정과 어긋났을 것이다. 실행의 t_start 를 받게 고치고 시험으로 고정했다 (P 실행 0 회).
+- 해시 갱신: `p5_plan.py` `11ea9e75f3cf6b77a2e4b28b332de624dc28a2e7a7926ac5c23925b3776fb60d`, `p5_campaign.py`
+  `26455d05e7d61f068c2b8d33ef605f28f5e44aac2d2224e66ef5f76f6dfc515d`, `unit/test_fleet_p5.py` `7150b6a575da0bab5dd4b3822f5a3e0310b9e6daf8593c9fcb5dc38acb704740`
+  (31 통과). 이미 돈 캠페인 프로세스는 옛 규칙을 쥐고 있으므로, 파일럿 짝 2 시작 뒤 STOP 파일로 본 실행 드라이버를 첫 짝 전에 멈추고 새 코드로
+  캠페인을 다시 띄운다 (파일럿 짝은 `.done` 이라 건너뛴다).
 
 ## 결과
 

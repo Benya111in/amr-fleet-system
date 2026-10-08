@@ -256,6 +256,8 @@ def test_plan_tasks_match_the_scenario_12_order_and_docks():
 def test_comm_models_are_absolute_and_symmetric():
     m = json.loads(P.comm_yaml('partition_contention'))
     assert m['partitions'][0]['start_s'] == P.T_START + 40.0
+    m60 = json.loads(P.comm_yaml('partition_contention', 60.0))
+    assert m60['partitions'][0]['start_s'] == 100.0 and m60['outages'][0]['end_s'] == 460.0
     assert m['partitions'][0]['groups'] == [['amr_01', 'amr_02']]
     pairs = {(o['src'], o['dst']) for o in m['outages']}
     assert pairs == {('amr_01', 'amr_02'), ('amr_02', 'amr_01')}
@@ -358,7 +360,15 @@ def test_pilot_rule_concurrent_and_t_start(tmp_path):
         'valid': True, 'rtf': 0.16, 't_ready': 100.0, 'completed': 3, 'mode': 'distributed',
         'distance_m': {'amr_01': 1.0}, 'mode_transitions': [{}], 'stack_has_server': False}))
     conc2, t2, _, _ = C.decide(str(tmp_path))
-    assert conc2 is False and t2 == 240.0          # 0.16 < 0.6 × 0.28, 하한 240
+    assert conc2 is False and t2 == 240.0          # 0.16 < 0.6 × 0.28, 1.25 × 170 → 240
+
+
+def test_pilot_t_start_floor_when_ready_is_early(tmp_path):
+    import p5_campaign as C
+    for k in (1, 2):
+        _pilot_metrics(tmp_path, k, 'central', 'central', 0.3, 9.4)
+        _pilot_metrics(tmp_path, k, 'distributed', 'distributed', 0.3, 12.0)
+    assert C.decide(str(tmp_path))[1] == C.T_FLOOR == 60.0
 
 
 def test_pilot_sanity_problems_halt(tmp_path):
@@ -402,3 +412,11 @@ def test_agent_restart_boot_and_orphan_release(tmp_path):
     assert b['kept_zones'] == ['zone:x_bc_4'] and b['first_release_after_s'] == 2.8
     r = [x for x in m['fault_response'] if x['action'] == 'agent_restart'][0]
     assert r['boot_after_s'] == 3.2
+
+
+def test_written_comm_model_follows_the_run_t_start(tmp_path):
+    plan, comm = tmp_path / 'plan.json', tmp_path / 'comm.yaml'
+    assert P.main(['write', '--exp', 'P', '--pair', '1', '--arm', '0', '--out', str(plan),
+                   '--comm-out', str(comm), '--t-start', '60']) == 0
+    assert json.loads(plan.read_text())['t_start'] == 60.0
+    assert json.loads(comm.read_text())['partitions'][0]['start_s'] == 100.0

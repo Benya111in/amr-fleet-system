@@ -44,9 +44,9 @@ def batch(first: int, last: int, offset_s: float, prefix: str):
     return out
 
 
-def comm_partition_contention():
+def comm_partition_contention(t_start: float = None):
     """P: F5 분할 {amr_01, amr_02} | 나머지+서버 [40, 100) s, K 경합: 01 ↔ 02 단절 [200, 400) s."""
-    t = T_START
+    t = T_START if t_start is None else float(t_start)
     return {'seed': 1, 'links': [IDEAL_LINK],
             'partitions': [{'start_s': t + 40.0, 'end_s': t + 100.0,
                             'groups': [['amr_01', 'amr_02']]}],
@@ -56,7 +56,7 @@ def comm_partition_contention():
                          'dst': 'amr_01'}]}
 
 
-def comm_stress():
+def comm_stress(t_start: float = None):
     """X (보고서 F7): 모든 링크 지연 U(0, 1000) ms · 손실 0.10 · Gilbert–Elliott 버스트 (좋음 50 s / 나쁨 2.5 s)."""
     return {'seed': 1, 'links': [{'src': '*', 'dst': '*', 'comm_latency_ms': [0.0, 1000.0],
                                   'drop_rate': 0.10,
@@ -164,9 +164,9 @@ def run_plan(exp: str, pair: int, arm_index: int, t_start: float = None) -> dict
             'tasks': e['tasks'], 'faults': a['faults'], 'comm': a['comm']}
 
 
-def comm_yaml(name: str) -> str:
-    """통신 모의 설정 → YAML 문자열 (yaml 모듈 없이 — JSON 은 YAML 의 부분집합)."""
-    return json.dumps(COMM_MODELS[name](), indent=1)
+def comm_yaml(name: str, t_start: float = None) -> str:
+    """통신 모의 설정 → YAML 문자열 (JSON 은 YAML 의 부분집합). 절대 시각은 그 실행의 t_start 기준."""
+    return json.dumps(COMM_MODELS[name](t_start), indent=1)
 
 
 def check_docks(behavior_yaml: str) -> list:
@@ -216,7 +216,7 @@ def main(argv=None) -> int:
             print('갈래에 통신 모의가 있는데 --comm-out 이 없다', file=sys.stderr)
             return 2
         with open(args.comm_out, 'w', encoding='utf-8') as f:
-            f.write(comm_yaml(plan['comm']))
+            f.write(comm_yaml(plan['comm'], plan['t_start']))
     return 0
 
 
