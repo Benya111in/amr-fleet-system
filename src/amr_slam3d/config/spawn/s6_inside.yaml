@@ -1,0 +1,13 @@
+# S6 통로 안 스폰 — amr_01(3D) 1 대, 좁은 통로 북쪽 안 (0, −8.6), 남쪽을 향함
+# 생성: scripts/make_routes.py write
+robots:
+- name: amr_01
+  x: 0.0
+  y: -8.6
+  yaw: -1.5708
+  lidar3d: true
+spawn_z: 0.02
+pause_during_spawn: true
+spawn_timeout_s: 120.0
+comm_latency_ms: null
+min_separation_m: 1.0

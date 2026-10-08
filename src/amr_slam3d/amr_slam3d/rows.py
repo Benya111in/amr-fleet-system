@@ -18,7 +18,7 @@ slam_toolbox(동기), LIO-SAM(madgwick 방위, 루프 on/off).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple
+from typing import Dict, List, Sequence, Tuple
 
 ROBOT = 'amr_01'
 
@@ -189,15 +189,21 @@ ROWS: Dict[str, Row] = {
 #: 파생 bag 에만 있는 토픽 (madg_lockstep.py 가 만든다)
 DERIVED_TOPICS: Tuple[str, ...] = (IMU_MADG_RE, IMU_MADG_RE_G001, IMU_ORACLE)
 
-#: 파일럿 bag 에 기록할 토픽 (보고서 4단계: 2D 스캔·3D 점군·원시 IMU·휠·EKF odom·GT odom·TF + 재추정 IMU)
+#: 시나리오 bag 에 기록할 토픽 (보고서 4단계: 2D 스캔·3D 점군·원시 IMU·휠·EKF odom·GT odom·TF).
+#: **madgwick 출력은 기록하지 않는다** (b2-rec, replay.md §9-1): 기록 때 madgwick 이 best-effort 입력을 잃어 필터 상태가
+#: 달라졌다 (replay.md §1.2). madgwick 은 녹화 뒤 madg_lockstep.py 로 imu/data 에서 결정적으로 파생한다
+#: (DERIVED_TOPICS)
 RECORD_TOPICS: Tuple[str, ...] = (
     '/clock', '/tf', '/tf_static',
     f'{_R}/scan', SCAN,
     f'{_R}/lidar3d/points_raw', CLOUD,
-    f'{_R}/imu/data_raw', f'{_R}/imu/data', IMU_MADGWICK,
+    f'{_R}/imu/data_raw', f'{_R}/imu/data',
     f'{_R}/joint_states', f'{_R}/wheel_odom', f'{_R}/odometry/filtered',
     f'{_R}/ground_truth/odom', f'{_R}/cmd_vel',
 )
+#: 파일럿 bag(s3_pilot_a)에만 있는 토픽 — 기록된 madgwick. 이것을 트는 옛 행(rtabmap3d·rtabmap2d·liosam_loop·
+#: liosam_noloop)은 파일럿 bag 재현용이고, 새 bag 에서는 replay_row.sh 의 토픽 사전 검사가 재생 전에 멈춘다
+PILOT_ONLY_TOPICS: Tuple[str, ...] = (IMU_MADGWICK,)
 
 #: SLAM 행에 틀면 안 되는 토픽. ground_truth/odom·imu/data_raw·data_gtorient 는 정답을 담는다.
 #: imu/data 는 방위가 항등(정답 아님)이지만 roll·pitch 0 이 이 평평한 월드의 정답과 같아 평면 사전 노릇을 할 수 있어
@@ -241,3 +247,71 @@ def scan_log(text: str, r: Row) -> Dict[str, Dict[str, int]]:
     if r.log_processed:
         out['processed_log_lines'] = text.count(r.log_processed)
     return out
+
+
+# ---- 재생 시작 전 구독 확인 (b2-rec, replay.md §9-4) ------------------------------------------------
+# 고정 15 s 대기는 부하 때 모자라 LIO-SAM 이 첫 2–3 장을 "Waiting for IMU data" 로 버렸다
+# (replay.md §5·§7, 43 재생 중 4).
+# replay_row.sh 는 `ros2 bag play -p`(멈춤)로 재생기 발행자를 먼저 만들고, 아래 (토픽, 구독 노드) 가 모두
+# `ros2 topic info -v` 에 보이고 재생기(rosbag2_player)가 그 토픽의 발행자로 보일 때 resume 서비스를 부른다.
+PLAYER_NODE = 'rosbag2_player'
+RECORDER_NODE = 'rosbag2_recorder'
+PROBE_NODE = 'slam_probe'
+
+
+def ready_requirements(r: Row) -> Tuple[Tuple[str, str], ...]:
+    """행이 재생 전에 연결돼 있어야 하는 (토픽, 구독 노드 이름) 목록 (노드 이름 = Node name 줄, 네임스페이스 무시)."""
+    imu = next((t for t in r.play_topics if '/imu/' in t), '')
+    req = [(r.input_topic, PROBE_NODE)]
+    if 'rtabmap.launch.py' in r.launch:
+        req += [(r.input_topic, 'icp_odometry'), (r.input_topic, 'rtabmap')]
+        if imu and r.pre_launch:
+            req += [(imu, 'imu_filter_madgwick'), (IMU_MADGWICK, 'icp_odometry')]
+        elif imu:
+            req += [(imu, 'icp_odometry')]
+    elif 'slam_toolbox' in r.launch:
+        req += [(r.input_topic, 'slam_toolbox')]
+    elif 'liosam' in r.launch:
+        req += [(r.input_topic, 'lio_sam_imageProjection'), (imu, 'lio_sam_imageProjection'),
+                (imu, 'lio_sam_imu_preintegration')]
+    else:
+        raise ValueError(f'행 {r.name}: 구독 확인 규칙이 없다')
+    # 처리 출력의 C++ 기록기 (replay_row.sh out_bag) — 첫 출력부터 세려면 재생 전에 붙어 있어야 한다
+    req += [(t, RECORDER_NODE) for t, _, _ in r.processed]
+    return tuple(req)
+
+
+def parse_topic_info(text: str) -> Dict[str, List[str]]:
+    """`ros2 topic info -v` 출력 → {'publishers': [노드 이름], 'subscribers': [노드 이름]} (Humble 형식)."""
+    out: Dict[str, List[str]] = {'publishers': [], 'subscribers': []}
+    name = None
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith('Node name:'):
+            name = line.split(':', 1)[1].strip()
+        elif line.startswith('Endpoint type:') and name is not None:
+            kind = line.split(':', 1)[1].strip()
+            if kind == 'PUBLISHER':
+                out['publishers'].append(name)
+            elif kind == 'SUBSCRIPTION':
+                out['subscribers'].append(name)
+            name = None
+    return out
+
+
+def unmet(reqs: Sequence[Tuple[str, str]], infos: Dict[str, str],
+          player_topics: Sequence[str] = ()) -> List[str]:
+    """
+    아직 안 된 조건 목록 (비면 재생을 시작해도 된다).
+
+    infos = {토픽: ros2 topic info -v 출력}. player_topics 의 토픽은 재생기 발행자도 보여야 한다.
+    """
+    miss = []
+    parsed = {t: parse_topic_info(v) for t, v in infos.items()}
+    for topic, node in reqs:
+        if node not in parsed.get(topic, {}).get('subscribers', []):
+            miss.append(f'{topic} ← {node}')
+    for topic in player_topics:
+        if PLAYER_NODE not in parsed.get(topic, {}).get('publishers', []):
+            miss.append(f'{topic} → {PLAYER_NODE}')
+    return miss

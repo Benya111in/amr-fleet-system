@@ -14,6 +14,8 @@ install(PROGRAMS
   scripts/anchor_tf.py
   scripts/bag_tools.py
   scripts/record_pilot.sh
+  scripts/record_bag.sh
+  scripts/make_routes.py
   scripts/replay_row.sh
   scripts/madg_lockstep.py
   DESTINATION lib/${PROJECT_NAME}

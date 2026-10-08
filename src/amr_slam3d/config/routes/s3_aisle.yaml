@@ -1,0 +1,28 @@
+# S3 좁은 통로 왕복 — (0, −5.5) → 중앙 (0, −10) 15 s 정지 → (0, −14.5) → (0, −5.5) (evaluation.md §6)
+# 생성: scripts/make_routes.py write (손으로 고치지 않는다 — test_route.py 가 대조)
+route:
+  start:
+  - 18.0
+  - -16.0
+  start_yaw: 1.5708
+  hold_start_s: 10.0
+  hold_end_s: 3.0
+  dwell_s: 1.0
+  limits:
+    v_max: 0.5
+    w_max: 0.5
+  waypoints:
+  - - 18.0
+    - -5.5
+  - - 0.0
+    - -5.5
+  - at:
+    - 0.0
+    - -10.0
+    dwell: 15.0
+  - at:
+    - 0.0
+    - -14.5
+    dwell: 2.0
+  - - 0.0
+    - -5.5

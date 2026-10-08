@@ -6,9 +6,13 @@
 #   replay_row.sh <행> <bag 디렉터리> <출력 디렉터리> [재생 배속, 기본 0.5]
 #
 # 순서: anchor_tf(map → slam_map = 스폰 자세; LIO-SAM 은 + LiDAR 장착 자리) → 행 런치 → slam_probe →
-#       ros2 bag play (행의 토픽만 — 기록된 /clock 포함, --clock 은 쓰지 않는다: rows.py 머리말) → 마무리(지도 저장) →
+#       ros2 bag play -p (멈춘 채 발행자만 만든다) → 구독 확인(rows.ready_requirements — `ros2 topic info -v`)
+#       → resume 서비스 (행의 토픽만 — 기록된 /clock 포함, --clock 은 쓰지 않는다: rows.py 머리말) → 마무리(지도 저장) →
 #       probe 종료(probe.json·traj_online.tum·map_world.*) → 로그 판정(log_scan.json) → 처리 누락 판정
 #       (match_*.json: 입력 bag ↔ out_bag, C++ 기록기) → 최적화 궤적·점 지도를 월드로 (traj_final.tum, cloud_world.ply).
+# 스폰 자세: bag 디렉터리에 b2rec_spawn.yaml (record_bag.sh 가 남긴 그 녹화의 robots_file) 이 있으면 그것, 없으면
+# SPAWN_YAML (기본 amr_bringup fleet_spawn_lidar3d.yaml — 파일럿 bag 의 스폰).
+# 구독 확인 상한 READY_TIMEOUT (기본 300 s, 벽시계)을 넘으면 재생하지 않고 종료 코드 4 (빠진 연결은 ready_unmet.txt).
 # 환경: ROS_DOMAIN_ID·ROS_LOCALHOST_ONLY 는 호출자가 준다 (컨테이너마다 격리). 컨테이너 /dev/shm 은 2 GiB 이상
 # (docker --shm-size) — 아래 Fast DDS 프로파일이 참가자마다 16 MB SHM 세그먼트를 잡는다.
 set -eo pipefail
@@ -39,7 +43,9 @@ else
   source /ros2_ws/install/setup.bash
   SCRIPTS=$(ros2 pkg prefix amr_slam3d)/lib/amr_slam3d
 fi
-SPAWN_YAML=/ros2_ws/src/amr_bringup/config/fleet_spawn_lidar3d.yaml
+SPAWN_YAML=${SPAWN_YAML:-/ros2_ws/src/amr_bringup/config/fleet_spawn_lidar3d.yaml}
+if [ -f "$BAG/b2rec_spawn.yaml" ]; then SPAWN_YAML="$BAG/b2rec_spawn.yaml"; fi
+READY_TIMEOUT=${READY_TIMEOUT:-300}
 
 eval "$(python3 - "$ROW" "$SPAWN_YAML" <<'EOF'
 import shlex, sys, yaml
@@ -55,6 +61,8 @@ print(f"PROC_TOPICS={shlex.quote(' '.join(t for t, _, _ in r.processed))}")
 print('PRE_LAUNCH=(' + ' '.join(shlex.quote(p) for p in r.pre_launch) + ')')
 print(f"TAIL_EXEMPT={int(r.tail_exempt)}")
 print(f"ROW_BAG={shlex.quote(r.bag)} ORACLE={int(r.oracle)}")
+print('READY_TOPICS=(' + ' '.join(sorted({shlex.quote(t) for t, _ in rows.ready_requirements(r)}))
+      + ')')
 EOF
 )"
 
@@ -74,7 +82,7 @@ EOF
   echo "FASTRTPS_DEFAULT_PROFILES_FILE=$FASTRTPS_DEFAULT_PROFILES_FILE shm=$(df -h /dev/shm | tail -1)"
   echo "launch: $LAUNCH"
   echo "play_topics: $PLAY_TOPICS"
-  echo "spawn_pose: $POSE anchors: ${ANCHORS[*]} pre_launch: ${PRE_LAUNCH[*]}"
+  echo "spawn_yaml: $SPAWN_YAML spawn_pose: $POSE anchors: ${ANCHORS[*]} pre_launch: ${PRE_LAUNCH[*]}"
   echo "row_bag: $ROW_BAG oracle: $ORACLE tail_exempt: $TAIL_EXEMPT image: ${IMAGE:-} replay_id: ${REPLAY_ID:-}"
   echo "loadavg: $(cat /proc/loadavg)"
 } > "$OUT/env.txt"
@@ -143,8 +151,6 @@ if [ -n "$PROC_TOPICS" ]; then
   REC=$!
   PIDS+=("$REC")
 fi
-sleep 15                              # 노드 기동 (벽시계)
-
 QOS="$OUT/qos_overrides.yaml"
 cat > "$QOS" <<'EOF'
 /tf_static:
@@ -152,10 +158,46 @@ cat > "$QOS" <<'EOF'
   reliability: reliable
   durability: transient_local
 EOF
-echo "play_start_wall: $(date -Iseconds) loadavg: $(cat /proc/loadavg)" >> "$OUT/env.txt"
+# 멈춘 채 띄운다 — 재생기 발행자가 먼저 생기고, 구독이 다 붙은 뒤 resume 한다 (고정 15 s 대기 대신, replay.md §9-4)
 # shellcheck disable=SC2086
-ros2 bag play "$BAG" --rate "$RATE" --disable-keyboard-controls \
-  --qos-profile-overrides-path "$QOS" --topics $PLAY_TOPICS > "$OUT/play.log" 2>&1
+ros2 bag play "$BAG" --rate "$RATE" --disable-keyboard-controls --start-paused \
+  --qos-profile-overrides-path "$QOS" --topics $PLAY_TOPICS > "$OUT/play.log" 2>&1 &
+PLAY=$!
+PIDS+=("$PLAY")
+echo "ready_wait_start_wall: $(date -Iseconds)" >> "$OUT/env.txt"
+READY_OK=0
+t0=$SECONDS
+while [ $((SECONDS - t0)) -lt "$READY_TIMEOUT" ]; do
+  for t in "${READY_TOPICS[@]}"; do
+    ros2 topic info -v "$t" > "$OUT/ready_$(echo "$t" | tr '/' '_').txt" 2>&1 || true
+  done
+  if python3 - "$ROW" "$INPUT" "$OUT" > "$OUT/ready_unmet.txt" 2>&1 <<'EOF'
+import sys
+from pathlib import Path
+from amr_slam3d import rows
+r = rows.row(sys.argv[1])
+reqs = rows.ready_requirements(r)
+infos = {}
+for t in {t for t, _ in reqs}:
+    f = Path(sys.argv[3]) / ('ready_' + t.replace('/', '_') + '.txt')
+    infos[t] = f.read_text(errors='replace') if f.exists() else ''
+miss = rows.unmet(reqs, infos, player_topics=[sys.argv[2]])
+print('\n'.join(miss))
+sys.exit(1 if miss else 0)
+EOF
+  then READY_OK=1; break; fi
+  sleep 2
+done
+echo "ready_ok: $READY_OK after $((SECONDS - t0)) s unmet: $(tr '\n' ';' < "$OUT/ready_unmet.txt")" >> "$OUT/env.txt"
+if [ "$READY_OK" != 1 ]; then
+  echo "구독 확인 실패 (${READY_TIMEOUT} s) — 재생하지 않는다: $(cat "$OUT/ready_unmet.txt")" >&2
+  exit 4
+fi
+sleep 2                                # 그래프 발견 뒤 DDS 짝짓기 여유 (벽시계)
+echo "play_start_wall: $(date -Iseconds) loadavg: $(cat /proc/loadavg)" >> "$OUT/env.txt"
+timeout 60 ros2 service call /rosbag2_player/resume rosbag2_interfaces/srv/Resume '{}' \
+  > "$OUT/resume.log" 2>&1 || echo "resume_call_failed" >> "$OUT/env.txt"
+wait "$PLAY" || true
 echo "play_end_wall: $(date -Iseconds) loadavg: $(cat /proc/loadavg)" >> "$OUT/env.txt"
 sleep "$SETTLE"
 

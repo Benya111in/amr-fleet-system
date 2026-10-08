@@ -5,6 +5,9 @@ madgwick 잠금 단계(lockstep) 재계산 → 파생 bag (보너스 2 재생 �
     madg_lockstep.py --in-bag <원 bag> --out-bag <새 디렉터리> --report derive.json \
         --gain 0.1=/amr_01/imu/data_madgwick_re --gain 0.01=/amr_01/imu/data_madgwick_re_g001
 
+b2-rec 녹화 bag 은 madgwick 을 기록하지 않는다 (rows.RECORD_TOPICS) — 그때는 기록된 출력과의 비교(vs_recorded)를 건너뛰고,
+파생 토픽 QoS 는 imu/data 의 것을 쓴다.
+
 왜: 파일럿 bag 에 기록된 madgwick 출력에는 sim 9.48 s 에 0.14 s 공백이 있다 (입력 imu/data 에는 없다 — rtabmap.md §3).
 IMU 를 쓰는 행이 그 스캔을 버렸다. 재생 중에 madgwick 을 다시 돌리면 공백은 사라지지만 madgwick 입력 구독이 best-effort
 (깊이 5)라 부하에 따라 재생마다 다른 입력을 잃을 수 있고, liosam 이미지에는 madgwick 이 없다.
@@ -318,8 +321,11 @@ def main(argv=None) -> int:
                 p.kill()
             log.close()
     report['n_out'] = len(outs)
+    # 파생 토픽 QoS: 기록된 madgwick 이 있으면 그것 (파일럿 bag), 없으면 입력 imu/data 의 것 (b2-rec 녹화는 madgwick 을
+    # 기록하지 않는다 — rows.RECORD_TOPICS)
     report['bag_counts'] = write_bag(ns.in_bag, ns.out_bag, ns.copy, gains, outs,
-                                     meta.get(RECORDED), ns.oracle_topic, oracle)
+                                     meta.get(RECORDED) or meta.get(IMU_IN), ns.oracle_topic,
+                                     oracle)
     report['analysis'] = analyse(imu, rec, gains, outs, raw_by_key)
     report['ended'] = time.strftime('%Y-%m-%dT%H:%M:%S%z')
     with open(ns.report, 'w', encoding='utf-8') as f:
