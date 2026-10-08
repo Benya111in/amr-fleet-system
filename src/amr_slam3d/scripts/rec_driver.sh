@@ -8,14 +8,18 @@
 # id 마다:
 #   - <루트>/state/<id>.ok (통과한 태그) 또는 <id>.failed 가 있으면 건너뛴다 (끝난 것은 다시 하지 않는다)
 #   - 시도 k = 1..MAX_ATTEMPTS (기본 3, 사전 등록): 태그 <id>_a<k>. 그 디렉터리가 이미 있으면 (끊긴 시도 포함) 다음 k
-#   - 시도 디렉터리에 HEAD.txt·diff_stat.txt·status.txt·started.txt·loadavg_start.txt 를 쓰고 gz_slot.sh 로
-#     docker run … record_bag.sh, 끝나면 rc.txt·loadavg_end.txt, rec_report.py registry → notebook.py register
+#   - gz_slot.sh 로 rec_attempt.sh (슬롯을 얻은 뒤 HEAD.txt·diff_stat.txt·status.txt·started.txt·
+#     loadavg_start.txt 를 쓰고 docker run … record_bag.sh), 끝나면 rc.txt·loadavg_end.txt,
+#     rec_report.py registry → notebook.py register. rc 75 (슬롯 대기 초과)는 시도로 세지 않고 같은 k 를 다시 한다
 #   - rc 0 (공백 검사 통과) 이면 state/<id>.ok ← 태그. 아니면 다음 시도. MAX 회 모두 실패면 state/<id>.failed
 # 로그: <루트>/driver.log. 같은 구동기를 두 개 띄우지 않게 <루트>/driver.lock (flock -n) 을 잡는다.
 # 환경: DOMAIN (기본 47), MAX_ATTEMPTS (3), IMAGE (amr-ai/slam:0.1), AGENT (b2-rec), NB (노트 경로, 저장소 기준)
 set -uo pipefail
 WT=${1:?worktree}; ROOT=${2:?녹화 루트}; PLAN=${3:?계획 파일}
 DOMAIN=${DOMAIN:-47}; MAX=${MAX_ATTEMPTS:-3}; IMAGE=${IMAGE:-amr-ai/slam:0.1}; AGENT=${AGENT:-b2-rec}
+export DOMAIN IMAGE AGENT
+# gz 슬롯 대기 상한 (gz_slot.sh 기본 3 h — 다른 과제의 exclusive 가 길면 75 로 끝나 시도를 낭비한다)
+export GZ_MAX_WAIT=${GZ_MAX_WAIT:-172800}
 NB=${NB:-docs/research/slam3d/notebook}
 CFG=$WT/src/amr_slam3d/config
 mkdir -p "$ROOT/state" "$ROOT/rec"
@@ -34,6 +38,7 @@ while read -r id route variant spawn seed _rest; do
     continue
   fi
   passed=""
+  if [ "${seed:--}" = "-" ]; then seedtxt="n/a (경로 고정)"; else seedtxt="경로 씨드 $seed"; fi
   for k in $(seq 1 "$MAX"); do
     tag="${id}_a${k}"
     d="$ROOT/rec/$tag"
@@ -43,28 +48,23 @@ while read -r id route variant spawn seed _rest; do
       continue
     fi
     mkdir -p "$d"
-    git -C "$WT" rev-parse HEAD > "$d/HEAD.txt"
-    git -C "$WT" diff --stat > "$d/diff_stat.txt"
-    git -C "$WT" status --porcelain -- src > "$d/status.txt"
-    date -Iseconds > "$d/started.txt"
-    load > "$d/loadavg_start.txt"
     sp=-
     [ "$spawn" != "-" ] && sp=/ros2_ws/src/amr_slam3d/config/spawn/$spawn.yaml
-    name="amr-ai-$AGENT-gz"
-    docker rm -f "$name" > /dev/null 2>&1 || true
-    say "START $tag route=$route variant=$variant spawn=$spawn head=$(cut -c1-7 "$d/HEAD.txt") load=$(load)"
-    /home/CAPYI_AI/env/gz_slot.sh "$AGENT" docker run --rm --name "$name" --gpus all --shm-size=8g \
-      -e ROS_DOMAIN_ID="$DOMAIN" -e IGN_PARTITION="b2rec_$tag" -e ROS_LOCALHOST_ONLY=1 \
-      -e GIT_HEAD="$(cat "$d/HEAD.txt")" \
-      -v "$WT":/ros2_ws:ro -v "$d":/out -w /ros2_ws "$IMAGE" \
-      bash -lc "/ros2_ws/src/amr_slam3d/scripts/record_bag.sh /out /ros2_ws/src/amr_slam3d/config/routes/$route.yaml $variant $sp" \
-      > "$d/host.log" 2>&1 < /dev/null
+    say "QUEUE $tag route=$route variant=$variant spawn=$spawn load=$(load) (gz 슬롯 대기)"
+    # 출처(HEAD·diff·loadavg·시작 시각)는 슬롯을 얻은 **뒤** rec_attempt.sh 가 쓴다 (대기 중 커밋이 섞이지 않게)
+    /home/CAPYI_AI/env/gz_slot.sh "$AGENT" bash "$WT/src/amr_slam3d/scripts/rec_attempt.sh" \
+      "$WT" "$d" "$tag" "$route" "$variant" "$sp" > "$d/host.log" 2>&1 < /dev/null
     rc=$?
+    if [ "$rc" = 75 ] && [ ! -f "$d/started.txt" ]; then
+      say "SLOT-TIMEOUT $tag — 시도로 세지 않는다"
+      command rm -rf "$d"
+      continue 2
+    fi
     echo "$rc" > "$d/rc.txt"
     load > "$d/loadavg_end.txt"
     say "END $tag rc=$rc load=$(load)"
     python3 "$WT/src/amr_slam3d/scripts/rec_report.py" registry "$d" --run-id "B2rec-$tag" \
-      --scenario "$id" --attempt "$k" --rc "$rc" --seed "${seed:--}" --out "$d/registry.json" \
+      --scenario "$id" --attempt "$k" --rc "$rc" --seed "$seedtxt" --out "$d/registry.json" \
       >> "$LOG" 2>&1 \
       && python3 "$WT/scripts/notebook.py" --nb "$NB" register --file "$d/registry.json" >> "$LOG" 2>&1 \
       || say "REGISTER-FAIL $tag"
