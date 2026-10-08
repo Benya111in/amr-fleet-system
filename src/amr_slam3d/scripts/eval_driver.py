@@ -265,37 +265,80 @@ def attempts(root, j):
     return sum(1 for n in os.listdir(d) if pat.match(n))
 
 
+def _owner_alive(claim):
+    """잡은 pool 프로세스가 살아 있나 (claim/owner 파일의 pid). 파일이 없으면 None (옛 claim)."""
+    try:
+        with open(os.path.join(claim, 'owner'), encoding='ascii') as f:
+            pid = int(f.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def run_complete(o):
+    """replay_row.sh 가 끝까지 갔나 — 마지막 단계가 env.txt 에 loadavg_end 를 쓴다."""
+    try:
+        with open(os.path.join(o, 'env.txt'), encoding='utf-8', errors='replace') as f:
+            return 'loadavg_end:' in f.read()
+    except OSError:
+        return False
+
+
+def _take(claim):
+    try:
+        os.mkdir(claim)
+    except FileExistsError:
+        return False
+    with open(os.path.join(claim, 'owner'), 'w', encoding='ascii') as f:
+        f.write(f'{os.getpid()} {now()}\n')
+    return True
+
+
 def try_claim(root, j, live):
-    """작업을 잡는다 (True). 이미 끝났거나 다른 일꾼이 잡았으면 False. 낡은 claim 은 정리한다."""
+    """
+    작업을 잡는다 (True). 이미 끝났거나 다른 일꾼이 잡았으면 False. 주인 없는 claim 은 정리한다.
+
+    claim 은 잡은 pool 의 pid 를 `owner` 에 둔다. 컨테이너가 끝났어도 주인 pool 이 살아 있으면 그 pool 이 곧 DONE 을
+    쓰므로 건드리지 않는다 (2026-10-09 01:17 사고: 컨테이너가 끝나고 주인 pool 이 30 s 주기로 거두기 전에 다른 pool 이
+    "낡은 claim" 으로 보고 끝난 출력을 .aborted 로 옮겨 같은 재생을 다시 띄웠다). 주인이 죽었고 컨테이너도 없으면:
+    출력이 끝까지 갔으면(`run_complete`) DONE(rc 0 추정)을 쓰고, 아니면 .aborted 로 옮겨 다시 돈다.
+    """
     o = out_dir(root, j)
     if is_done(root, j):
         return False
     os.makedirs(os.path.dirname(o), exist_ok=True)
     claim = o + '.claim'
-    try:
-        os.mkdir(claim)
+    if _take(claim):
         return True
-    except FileExistsError:
-        pass
-    if cname(j) in live:
+    if cname(j) in live or _owner_alive(claim):
         return False
-    # 낡은 claim: 컨테이너가 없다 — 다른 일꾼이 막 잡고 아직 띄우기 전일 수 있으니 120 s 지난 것만
+    # 주인 없는 claim: 다른 일꾼이 막 잡고 owner 를 쓰기 전일 수 있으니 120 s 지난 것만
     try:
         age = time.time() - os.path.getmtime(claim)
     except OSError:
         return False
     if age < 120:
         return False
+    if run_complete(o):
+        with open(os.path.join(o, 'DONE'), 'w', encoding='utf-8') as f:
+            json.dump({'rc': 0, 'ended': now(), 'load_end': loadavg(),
+                       'inferred': 'replay_row 끝까지 감(loadavg_end), 주인 pool 없음 — rc 추정'}, f,
+                      ensure_ascii=False)
+        shutil.rmtree(claim, ignore_errors=True)
+        log(root, 'driver.log', f'ADOPT {j["id"]} — 끝난 출력, 주인 pool 없음 → DONE (rc 0 추정)')
+        return False
     stamp = dt.datetime.now().strftime('%Y%m%dT%H%M%S')
     if os.path.isdir(o):
         os.rename(o, f'{o}.aborted.{stamp}')
     shutil.rmtree(claim, ignore_errors=True)
     log(root, 'driver.log', f'STALE {j["id"]} — 부분 출력 .aborted.{stamp}')
-    try:
-        os.mkdir(claim)
-        return True
-    except FileExistsError:
-        return False
+    return _take(claim)
 
 
 def wt_head(wt):

@@ -261,3 +261,34 @@ def test_compare_loc_and_abl_run_on_synthetic(tmp_path):
     assert m['ate_rmse_cm']['n_differs'] == 4
     assert m['ate_rmse_cm']['mean_diff'] == pytest.approx(0.5)
     assert m['lat_icp_p50_ms']['mean_diff'] == pytest.approx(-20.0)
+
+
+def test_claim_owner_alive_blocks_stale_and_complete_run_is_adopted(tmp_path):
+    """01:17 사고 회귀: 컨테이너가 끝났어도 주인 pool 이 살아 있으면 낡은 claim 이 아니다."""
+    import os
+    import time
+    root = str(tmp_path)
+    j = drv.job('e2', 's3_aisle_a1', 'slam_toolbox', 0, 1, 45)
+    assert drv.try_claim(root, j, set())
+    claim = drv.out_dir(root, j) + '.claim'
+    old = time.time() - 1000
+    os.utime(claim, (old, old))
+    assert not drv.try_claim(root, j, set())                 # 주인(이 프로세스) 살아 있음
+    with open(os.path.join(claim, 'owner'), 'w') as f:
+        f.write('999999999 x\n')                             # 죽은 pid
+    os.utime(claim, (old, old))
+    o = drv.out_dir(root, j)
+    os.makedirs(o, exist_ok=True)
+    with open(os.path.join(o, 'env.txt'), 'w') as f:
+        f.write('loadavg_end: 1 2 3\n')
+    assert not drv.try_claim(root, j, set())                 # 끝난 출력 → DONE, 다시 돌지 않음
+    assert drv.is_done(root, j) and not os.path.exists(claim)
+    j2 = drv.job('e2', 's3_aisle_a1', 'slam_toolbox', 1, 1, 45)
+    assert drv.try_claim(root, j2, set())
+    c2 = drv.out_dir(root, j2) + '.claim'
+    with open(os.path.join(c2, 'owner'), 'w') as f:
+        f.write('999999999 x\n')
+    os.makedirs(drv.out_dir(root, j2), exist_ok=True)       # 끝나지 않은 출력
+    os.utime(c2, (old, old))
+    assert drv.try_claim(root, j2, set())                    # .aborted 로 옮기고 다시 잡는다
+    assert any('.aborted.' in n for n in os.listdir(os.path.dirname(drv.out_dir(root, j2))))
