@@ -140,3 +140,18 @@ def test_clock_lead_diagnostic():
     assert lead['/amr_01/lidar3d/points']['max_s'] == pytest.approx(0.12)
     assert lead['/amr_01/imu/data']['max_s'] == pytest.approx(0.0)
     assert '/amr_01/imu/data_raw' not in lead
+
+
+def test_sub_microsecond_jitter_at_boundary_is_tolerated():
+    """스탬프에 1 µs 미만 흔들림이 있으면 정확히 1.5 주기인 간격이 0.5 µs 넘칠 수 있다 — 허용 1 µs 안이면 통과."""
+    per = 20 * MS
+    assert recgate.interval_gaps([0, 30 * MS + 500], per)['ok']
+    assert not recgate.interval_gaps([0, 30 * MS + 1_500], per)['ok']
+
+
+def test_evaluate_fails_when_topic_stops_early():
+    s = _clean_series(seconds=30.0, t0=5.0)
+    s['/amr_01/imu/data_raw'] = [v for v in s['/amr_01/imu/data_raw'] if v < 30 * 1_000_000_000]
+    res = recgate.evaluate(s, _gt())
+    assert not res['pass'] and any('덮음' in r for r in res['reasons'])
+    assert res['topics']['/amr_01/imu/data_raw']['n_gap'] == 0
