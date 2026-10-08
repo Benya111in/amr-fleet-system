@@ -176,7 +176,8 @@ def test_fault_response_and_low_epoch_acceptance(tmp_path):
           {'t': 131, 'k': 'agent_event', 'r': 'amr_01',
            'ev': {'event': 'assign_proxy', 'accepted': True, 'epoch': 2, 'task_id': 'y'}},
           {'t': 132, 'k': 'agent_event', 'r': 'amr_01', 'ev': {'event': 'fence_reject'}}]
-    m = A.run_metrics(str(write_run(tmp_path, [], ev, faults=[{'action': 'kill', 'sim': 120.0}])))
+    kill = [{'action': 'kill', 'scheduled': 20.0, 'sim': 120.0}]
+    m = A.run_metrics(str(write_run(tmp_path, [], ev, faults=kill)))
     r = m['fault_response'][0]['amr_01']
     assert r == {'hold_new_s': 1.5, 'degraded_s': 5.2}
     assert [d['task_id'] for d in m['low_epoch_accepted']] == ['x']
@@ -217,9 +218,11 @@ def test_decide_never_says_same():
 
 
 def test_outage_completions_count_between_kill_and_start():
-    ma = {'pair': 1, 'faults': [{'action': 'kill', 'sim': 160}, {'action': 'start', 'sim': 400}],
+    ma = {'pair': 1, 'faults': [{'action': 'kill', 'scheduled': 60, 'sim': 160},
+                                {'action': 'start', 'scheduled': 300, 'sim': 400}],
           'tasks': [{'completed_t': 150}, {'completed_t': 200}, {'completed_t': 450}]}
-    mb = {'pair': 1, 'faults': [{'action': 'kill', 'sim': 161}, {'action': 'start', 'sim': 401}],
+    mb = {'pair': 1, 'faults': [{'action': 'kill', 'scheduled': 60, 'sim': 161},
+                                {'action': 'start', 'scheduled': 300, 'sim': 401}],
           'tasks': [{'completed_t': 170}, {'completed_t': 300}, {'completed_t': 390}]}
     assert A.outage_completions((ma, mb)) == {'a': 1, 'b': 3, 'pair': 1}
 
@@ -318,7 +321,7 @@ def test_release_inside_commit_failure_and_false_transitions(tmp_path):
     assert m['zone_releases'] == 1 and len(m['release_inside']) == 1
     assert [c['ok'] for c in m['commits']] == [True, False] and m['commit_failures'] == 1
     assert m['false_transitions'] == 1
-    kill = [{'action': 'kill', 'sim': 118.0}]
+    kill = [{'action': 'kill', 'scheduled': 18.0, 'sim': 118.0}]
     m2 = A.run_metrics(str(write_run(tmp_path / 'f', gt, ev, faults=kill)))
     assert m2['false_transitions'] is None
 
@@ -405,8 +408,8 @@ def test_agent_restart_boot_and_orphan_release(tmp_path):
                   'kept_tasks': ['task:p5r.01']}},
           {'t': 181.0, 'k': 'agent_event', 'r': 'amr_03',
            'ev': {'event': 'zone_release', 'resources': ['zone:x_bc_4']}}]
-    faults = [{'action': 'agent_kill', 'robot': 'amr_03', 'sim': 160.0},
-              {'action': 'agent_restart', 'robot': 'amr_03', 'sim': 175.0}]
+    faults = [{'action': 'agent_kill', 'robot': 'amr_03', 'scheduled': 60.0, 'sim': 160.0},
+              {'action': 'agent_restart', 'robot': 'amr_03', 'scheduled': 75.0, 'sim': 175.0}]
     m = A.run_metrics(str(write_run(tmp_path, [], ev, faults=faults)))
     b = [x for x in m['boots'] if x['incarnation'] == 2][0]
     assert b['kept_zones'] == ['zone:x_bc_4'] and b['first_release_after_s'] == 2.8
@@ -435,3 +438,34 @@ def test_recorder_readiness_helpers():
     assert R.seed_due(30.0, 0.0, 16.0, 1) is False                   # 간격 20 s 안 됨
     assert R.seed_due(36.5, 0.0, 16.0, 1) is True
     assert R.seed_due(500.0, 0.0, 16.0, R.SEED_MAX) is False         # 상한
+
+
+def test_initial_server_start_is_not_an_injected_fault(tmp_path):
+    gt = track('amr_01', 100, 140, 20, 0, 20, 0, 0)
+    ev = [{'t': 100, 'k': 'agent_state', 'r': 'amr_01', 'mode': 0, 'held': []},
+          {'t': 120, 'k': 'agent_state', 'r': 'amr_01', 'mode': 1, 'held': []}]
+    faults = [{'action': 'start', 'server': 1, 'scheduled': None, 'sim': None}]
+    m = A.run_metrics(str(write_run(tmp_path, gt, ev, faults=faults)))
+    assert m['false_transitions'] == 1
+    more = [{'action': 'kill', 'scheduled': 60, 'sim': 160},
+            {'action': 'start', 'scheduled': 300, 'sim': 400}]
+    ma = {'pair': 1, 'faults': faults + more, 'tasks': [{'completed_t': 200}]}
+    assert A.outage_completions((ma, ma))['a'] == 1
+
+
+def test_gate_stop_before_grant_and_pass_through(tmp_path):
+    # amr_01 은 x_ab_4 서쪽 (1.0, 6) 으로 다가가 sim 105 에 선다 → 108 에 허가 → 들어감
+    gt = (track('amr_01', 100, 105, -2.0, 6.0, 1.0, 6.0, 0.6)
+          + track('amr_01', 105.1, 108, 1.0, 6.0, 1.0, 6.0, 0.0)
+          + track('amr_01', 108.1, 112, 1.0, 6.0, 3.0, 6.0, 0.5))
+    ev = [{'t': 100, 'k': 'agent_state', 'r': 'amr_01', 'mode': 0, 'held': []},
+          {'t': 103, 'k': 'agent_event', 'r': 'amr_01',
+           'ev': {'event': 'gate', 'blocking': ['zone:x_ab_4']}},
+          {'t': 108, 'k': 'agent_state', 'r': 'amr_01', 'mode': 0, 'held': ['zone:x_ab_4']}]
+    m = A.run_metrics(str(write_run(tmp_path, gt, ev)))
+    g = m['gate_stops_before_grant']
+    assert len(g) == 1 and g[0]['held_after_s'] == 5.0 and g[0]['clear_m'] == pytest.approx(0.64)
+    ev2 = ev[:2] + [{'t': 103.5, 'k': 'agent_state', 'r': 'amr_01', 'mode': 0,
+                     'held': ['zone:x_ab_4']}]
+    m2 = A.run_metrics(str(write_run(tmp_path / 'b', gt, ev2)))
+    assert m2['gate_pass_without_stop'] == 1 and m2['gate_stops_before_grant'] == []

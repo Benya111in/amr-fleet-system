@@ -462,8 +462,10 @@ def run_metrics(raw: str) -> dict:
     # 모드 · 펜스 · 장애
     out['mode_transitions'] = trans
     out['faults'] = faults
-    kills = [f for f in faults if f.get('action') in ('kill', 'pause')]
-    starts = [f for f in faults if f.get('action') in ('start', 'unpause')]
+    # 주입한 장애만 (드라이버는 갈래 시작 때 서버 1 기동도 'start'(scheduled None)로 적는다 — 파일럿에서 찾은 분석 결함)
+    injected = [f for f in faults if f.get('scheduled') is not None]
+    kills = [f for f in injected if f.get('action') in ('kill', 'pause')]
+    starts = [f for f in injected if f.get('action') in ('start', 'unpause')]
     out['fault_response'] = []
     for f in kills:
         t = f.get('sim')
@@ -551,6 +553,34 @@ def run_metrics(raw: str) -> dict:
                                'clear_m': round(signed_distance(zones[zid], stop[1], stop[2])
                                                 - BODY_R, 3)})
     out['gate_stops'] = gate_stops
+    # (결과 뒤 보충 — 파일럿에서 위 정의가 허가를 받은 뒤의 정지까지 고르는 것을 봤다) 게이트 사건 뒤, 그 로봇 held 에
+    # zone:Z 가 들어오기 전(최대 30 s)의 첫 정지만 결정점 정지로 센다. 정지 없이 허가를 받으면 '지나감' (사전 요청 효과).
+    held_r = timeline(events, 'agent_state', 'held')
+    gate_stops2, gate_pass = [], 0
+    for e in events:
+        ev = e.get('ev') or {}
+        if e.get('k') != 'agent_event' or ev.get('event') != 'gate' or not ev.get('blocking'):
+            continue
+        r, t0 = e['r'], e['t']
+        zid = str(ev['blocking'][0]).replace('zone:', '')
+        if not zones or zid not in zones:
+            continue
+        t_held = next((t for t, h in held_r.get(r, []) if t >= t0 and f'zone:{zid}' in (h or [])),
+                      None)
+        t_lim = min(t0 + 30.0, t_held if t_held is not None else t0 + 30.0)
+        v = gt.get(r, [])
+        i = bisect.bisect_left([s_[0] for s_ in v], t0)
+        stop = next((s_ for s_ in v[i:] if s_[0] <= t_lim and s_[4] < 0.05), None)
+        if stop is None or stop[0] > t_lim:
+            gate_pass += 1
+            continue
+        gate_stops2.append({'t': round(t0, 2), 'robot': r, 'zone': zid,
+                            'stop_after_s': round(stop[0] - t0, 2),
+                            'held_after_s': None if t_held is None else round(t_held - t0, 2),
+                            'clear_m': round(signed_distance(zones[zid], stop[1], stop[2])
+                                             - BODY_R, 3)})
+    out['gate_stops_before_grant'] = gate_stops2
+    out['gate_pass_without_stop'] = gate_pass
     # 해제 게이트: zone_release 사건 때 정답 원판이 아직 그 구역과 겹치는가 (AMCL 별칭 · 자세 튐 — p3 §8-3)
     rel_inside, rel_n = [], 0
     for e in events:
@@ -603,7 +633,7 @@ def run_metrics(raw: str) -> dict:
         req_by[c['task_id']].add(c['robot'])
     out['contention_tasks'] = sorted(t for t, rs in req_by.items() if len(rs) >= 2)
     # 오탐 전환: 장애 주입이 없는 실행에서 NORMAL 밖으로 간 전환 수 (첫 NORMAL 뒤)
-    out['false_transitions'] = (None if faults or out['mode'] != 'distributed' else sum(
+    out['false_transitions'] = (None if injected or out['mode'] != 'distributed' else sum(
         1 for d in trans if d['t'] >= t_base and d['mode'] != 'NORMAL'))
     # 영속 파일 크기 (p3 §8-9 · 10): store/<로봇>/{zone,task,fence}.json
     sizes = {}
@@ -856,6 +886,7 @@ def outage_completions(pair):
     out = {}
     for key, m in zip(('a', 'b'), pair):
         f = m.get('faults') or []
+        f = [x for x in f if x.get('scheduled') is not None]          # 서버 1 기동 기록 제외
         tk = next((x.get('sim') for x in f if x.get('action') == 'kill'), None)
         ts = next((x.get('sim') for x in f if x.get('action') == 'start'), None)
         if tk is None or ts is None:

@@ -264,6 +264,17 @@ sim ~300 s. 동시 짝이면 AA · C1 · C3 · F5L 짝당 ≈ 40 분 × 30 = 20 
   - 해시: `p5_recorder.py` `71890edc4778ce640d96dc105d6c1dcfcdf5ee9ad23759825747a91551b7cac4`, `p5_analyze.py` `14fc14a8606210b7638c8c58e01119754765fa0df25873eadbfd2c3eff928429`
     (seeds · lifecycle_watchdog 필드만 추가), `p5_campaign.py` `800023fa5c20da4dd8107dbbe76dc11b923cd6ae01dd0682eaa833be210e926c`,
     `unit/test_fleet_p5.py` `cc4badcdafce2ec7962b9923219685fa4bc38b6d78ebdc38f2aa6d847a980591` (컨테이너 32 통과).
+- **(00:40 결과 뒤 변경 — 분석, 파일럿 짝 1 재시도에서 발견, 본 실행 0 회)** 파일럿 짝 1 재시도 [측정, 셈 밖]: 중앙 `…_centralr2`
+  5/5 · makespan 552.1 s (교착 1 · 해소 실패 2 — dock_1_approach 토큰 120 s 대기), 분산 `…_distributedr2` 5/5 · 295.0 s, 두 갈래 모두 원판 동시
+  점유 0 · 도킹 10/10 ≤ 2 cm · 1° · 자세 알림 1 대씩 · lifecycle_watchdog 폴백. RTF 0.242 · 0.168 (load1 58–121, 다른 사용자 openroad 작업 —
+  공유 부하 하 예비값). 메시지 [측정, 분산]: 비컨 9.85 /s (1.85 kB/s), 투표 3.17 /s (0.79 kB/s), 하트비트 2.0 /s.
+  분석 결함 둘 (정의 변경 아님 — 원자료로 다시 계산): (1) 드라이버가 갈래 시작 때 서버 1 기동을 `start`(scheduled 없음)로 적어, 분석이 그것을
+  주입 장애로 보고 오탐 전환을 세지 않았고(None) **C2 장애 구간 완료 수의 '첫 start' 가 서버 1 기동(sim 없음)이 되어 계산이 비었을 것이다** —
+  scheduled 가 있는 것만 주입 장애로 센다. (2) 사전 등록의 결정점 정지 정의("gate 뒤 첫 정지")는 허가를 받은 **뒤**의 정지(도킹 · 적재)까지
+  골랐다 (파일럿 dock_b_approach −1.06 m 등). 원래 정의 값(`gate_stops`)은 그대로 두고 **보충 지표**를 더한다: 그 로봇 held 에 zone:Z 가 들어오기
+  전(최대 30 s) 첫 정지만 결정점 정지(`gate_stops_before_grant`), 정지 없이 허가를 받으면 지나감(`gate_pass_without_stop` — 사전 요청 효과).
+  해시: `p5_analyze.py` `8ad6852b435da4d7362ed83c10785d789f8f908d371639ba181759d4b62400db`, `unit/test_fleet_p5.py`
+  `9e9eb017872934834b868a99b8edfc6e3718d60c45c909fa59d4de5030770465` (34 통과, 가드 변이 12/12 KILLED 다시 확인 `tmp/mut/mut_result_v3.txt`).
 
 ## 결과
 
