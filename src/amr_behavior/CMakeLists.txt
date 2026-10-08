@@ -156,6 +156,11 @@ if(BUILD_TESTING)
   target_link_libraries(test_task_tree amr_behavior_bt)
   target_compile_definitions(test_task_tree PRIVATE ${_src_def})
 
+  # 분산 플릿 모드 트리 (task_executor_distributed.xml, 보너스 4 b4-wire) — 존 노드는 스텁
+  ament_add_gtest(test_task_tree_distributed test/test_task_tree_distributed.cpp TIMEOUT 120)
+  target_link_libraries(test_task_tree_distributed amr_behavior_bt)
+  target_compile_definitions(test_task_tree_distributed PRIVATE ${_src_def})
+
   ament_add_gtest(test_ros_bt_nodes test/test_ros_bt_nodes.cpp TIMEOUT 120)
   target_link_libraries(test_ros_bt_nodes amr_behavior_bt)
 

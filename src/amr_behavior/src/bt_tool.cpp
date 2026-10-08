@@ -27,6 +27,8 @@ int main(int argc, char ** argv)
   auto ctx = std::make_shared<amr_behavior::ExecutorContext>([]() {return 0.0;});
   amr_behavior::registerCoreNodes(factory, ctx);
   amr_behavior::registerRosNodeManifests(factory);
+  // 분산 트리(task_executor_distributed.xml)의 존 노드도 모델에 싣는다
+  amr_behavior::registerFleetAgentNodeManifests(factory);
   try {
     if (mode == "models") {
       std::cout << amr_behavior::treeNodesModelXml(factory) << "\n";

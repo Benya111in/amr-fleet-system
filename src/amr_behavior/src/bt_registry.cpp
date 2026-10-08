@@ -27,6 +27,7 @@
 #include "amr_behavior/bt_nodes/return_pending.hpp"
 #include "amr_behavior/bt_nodes/set_fail_reason.hpp"
 #include "amr_behavior/bt_nodes/task_deadline.hpp"
+#include "amr_behavior/bt_nodes/zone_bt_nodes.hpp"
 #include "amr_behavior/bt_nodes/set_phase.hpp"
 #include "amr_behavior/bt_nodes/simulate_payload.hpp"
 #include "behaviortree_cpp_v3/xml_parsing.h"
@@ -133,6 +134,12 @@ void registerRosNodes(BT::BehaviorTreeFactory & factory, const RosNodeParams & p
   forEachRosNode(RosRegistrar{factory, params});
 }
 
+std::shared_ptr<void> registerFleetAgentNodes(
+  BT::BehaviorTreeFactory & factory, const RosNodeParams & params)
+{
+  return registerZoneNodes(factory, params);
+}
+
 std::vector<std::string> customNodeIds(const BT::BehaviorTreeFactory & factory)
 {
   std::vector<std::string> ids;
@@ -216,6 +223,11 @@ void collectTrees(
 void registerRosNodeManifests(BT::BehaviorTreeFactory & factory)
 {
   forEachRosNode(ManifestRegistrar{factory});
+}
+
+void registerFleetAgentNodeManifests(BT::BehaviorTreeFactory & factory)
+{
+  forEachZoneNode(ManifestRegistrar{factory});
 }
 
 std::string treeNodesModelXml(const BT::BehaviorTreeFactory & factory)

@@ -56,6 +56,20 @@ public:
     publishAt(held, node_->now() - rclcpp::Duration(age), denied);
   }
 
+  /// 경로 게이트 · 서버 상태까지 (ZonePathClear · IsFleetServerAlive 시험)
+  void publishGate(
+    const std::vector<std::string> & held, const std::vector<std::string> & requested,
+    uint8_t server_status = AgentState::SERVER_ALIVE, std::chrono::milliseconds age = 0ms)
+  {
+    AgentState s;
+    s.stamp = node_->now() - rclcpp::Duration(age);
+    s.robot_id = "amr_t";
+    s.held = held;
+    s.requested = requested;
+    s.server_status = server_status;
+    pub_->publish(s);
+  }
+
   void publishAt(
     const std::vector<std::string> & held, const rclcpp::Time & stamp,
     const std::vector<std::string> & denied = {})
@@ -266,6 +280,42 @@ TEST_F(ZoneNodesTest, ZoneGatesSubtreeStopsWithoutPermissionAndPassesWithIt)
   EXPECT_EQ(tickUntilDone(t2, 4s), NodeStatus::SUCCESS);
   EXPECT_EQ(nav_ticks_.load(), 3);
   EXPECT_TRUE(waitFor([this]() {return agent_->sawOp(ZoneCommand::Request::OP_RELEASE);}, 3s));
+}
+
+TEST_F(ZoneNodesTest, PathClearBlocksOnRequestedZonesNotHeldAndOnStaleState)
+{
+  // 분산 TrafficGate 의 구역 게이트 (b4-wire): 에이전트 경로 게이트가 requested 에 실은 구역이
+  // held 가 아니면 FAILURE (움직이지 않는다). 상태가 없거나 오래되면 FAILURE (fail-closed)
+  auto t = tree("<ZonePathClear/>");
+  EXPECT_EQ(t.tickRoot(), NodeStatus::FAILURE);                       // 상태 없음
+  agent_->publishGate({}, {});
+  ASSERT_TRUE(waitFor([&]() {return t.tickRoot() == NodeStatus::SUCCESS;}, 3s));
+  agent_->publishGate({"zone:a"}, {"zone:a", "zone:b"});              // 사슬 일부만
+  ASSERT_TRUE(waitFor([&]() {return t.tickRoot() == NodeStatus::FAILURE;}, 3s));
+  agent_->publishGate({"zone:a", "zone:b", "task:t1"}, {"zone:a", "zone:b"});
+  ASSERT_TRUE(waitFor([&]() {return t.tickRoot() == NodeStatus::SUCCESS;}, 3s));
+  agent_->publishGate({}, {"task:t9"});                               // 작업 잠금은 보지 않는다
+  ASSERT_TRUE(waitFor([&]() {return t.tickRoot() == NodeStatus::SUCCESS;}, 3s));
+  agent_->publishGate({}, {}, AgentState::SERVER_ALIVE, 10s);         // 오래된 상태
+  ASSERT_TRUE(waitFor([&]() {return t.tickRoot() == NodeStatus::FAILURE;}, 3s));
+}
+
+TEST_F(ZoneNodesTest, ServerAliveFollowsTheAgentsHeartbeatView)
+{
+  auto t = tree("<IsFleetServerAlive/>");
+  EXPECT_EQ(t.tickRoot(), NodeStatus::FAILURE);                       // 상태 없음
+  agent_->publishGate({}, {}, AgentState::SERVER_ALIVE);
+  ASSERT_TRUE(waitFor([&]() {return t.tickRoot() == NodeStatus::SUCCESS;}, 3s));
+  for (uint8_t st : {AgentState::SERVER_SUSPECT, AgentState::SERVER_DEAD,
+      AgentState::SERVER_UNKNOWN})
+  {
+    agent_->publishGate({}, {}, st);
+    ASSERT_TRUE(waitFor([&]() {return t.tickRoot() == NodeStatus::FAILURE;}, 3s)) << int(st);
+    agent_->publishGate({}, {}, AgentState::SERVER_ALIVE);
+    ASSERT_TRUE(waitFor([&]() {return t.tickRoot() == NodeStatus::SUCCESS;}, 3s));
+  }
+  agent_->publishGate({}, {}, AgentState::SERVER_ALIVE, 10s);
+  ASSERT_TRUE(waitFor([&]() {return t.tickRoot() == NodeStatus::FAILURE;}, 3s));
 }
 
 TEST_F(ZoneNodesTest, FutureStampBeyondToleranceIsNotFresh)

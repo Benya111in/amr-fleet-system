@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  분산 플릿 모드의 TrafficGate (보너스 4 b4-wire) — task_executor_distributed.xml 이 subtrees/yield.xml 대신 포함한다.
+  로봇을 움직이는 단계(주행 · 도킹 · 복구 동작 · 이탈 · 돌아보기)가 모두 이 게이트를 지난다 (yield.xml 머리말).
+
+  ZonePermission (맨 앞, 매 tick): 에이전트 경로 게이트가 "결정점 안인데 사슬 허가 없음" 이면 RUNNING → 뒤 동작 halt
+    (goal 취소 · 정지). 허가가 오면 다시 시작한다. 에이전트 상태가 없거나 오래되면 막는다 (fail-closed).
+    양보 이동(Yield 의 포켓 주행)도 이 게이트 뒤라 구역 허가 없이 구역에 들어가지 않는다.
+  TrafficHoldCheck: 중앙 traffic/hold 는 서버가 살아 있을 때만 따른다 (IsFleetServerAlive). 분산 모드의 구역 안전은
+    정족수가 지고 hold 는 순서 · 교차 양보 권고다 — latched hold 가 서버 사망 뒤 남아 영영 서지 않게.
+  Yield 는 yield.xml 과 같다 (시험이 두 정의가 같은지 본다).
+-->
+<root>
+  <BehaviorTree ID="TrafficGate">
+    <ReactiveSequence name="DistributedGates">
+      <ReactiveFallback name="ZonePermission">
+        <ZonePathClear/>
+        <KeepRunningUntilFailure name="WaitZonePermission">
+          <Inverter>
+            <ZonePathClear/>
+          </Inverter>
+        </KeepRunningUntilFailure>
+      </ReactiveFallback>
+      <ReactiveFallback name="TrafficHoldCheck">
+        <Inverter>
+          <IsTrafficHold yield_pose="{yield_pose}"/>
+        </Inverter>
+        <Inverter>
+          <IsFleetServerAlive/>
+        </Inverter>
+        <SubTreePlus ID="Yield" yield_pose="{yield_pose}" __autoremap="true"/>
+      </ReactiveFallback>
+    </ReactiveSequence>
+  </BehaviorTree>
+
+  <BehaviorTree ID="Yield">
+    <Sequence name="YieldSteps">
+      <ForceSuccess>
+        <NavigateToPose name="MoveToYieldPose" goal="{yield_pose}" skip_if_empty="true"/>
+      </ForceSuccess>
+      <KeepRunningUntilFailure name="HoldUntilReleased">
+        <IsTrafficHold yield_pose="{yield_pose}"/>
+      </KeepRunningUntilFailure>
+    </Sequence>
+  </BehaviorTree>
+</root>

@@ -140,10 +140,15 @@ void TaskExecutorNode::declareAndLoadParameters()
   }
   ctx_->setRobotId(robot_id_);
 
+  // 분산 플릿 모드 (보너스 4 b4-wire, behavior.launch.py fleet_mode:=distributed): 존 노드
+  // (구역 게이트 · 작업 ID 잠금 · 서버 생존)를 등록하고 분산 트리를 쓴다. 기본 false — 중앙 모드는
+  // 예전 그대로
+  fleet_distributed_ = declare_parameter<bool>("fleet.distributed", false);
   bt_xml_ = declare_parameter<std::string>("bt_xml", "");
   if (bt_xml_.empty()) {
     bt_xml_ = ament_index_cpp::get_package_share_directory("amr_behavior") +
-      "/behavior_trees/task_executor.xml";
+      (fleet_distributed_ ? "/behavior_trees/task_executor_distributed.xml" :
+      "/behavior_trees/task_executor.xml");
   }
   tick_rate_hz_ = declare_parameter<double>("tick_rate_hz", 50.0);
   groot_enabled_ = declare_parameter<bool>("groot.enabled", true);
@@ -452,6 +457,10 @@ void TaskExecutorNode::init()
   ros.wait_for_server_timeout = std::chrono::milliseconds(server_wait_timeout_ms_);
   registerCoreNodes(factory_, ctx_);
   registerRosNodes(factory_, ros);
+  if (fleet_distributed_) {
+    fleet_link_ = registerFleetAgentNodes(factory_, ros);
+    RCLCPP_INFO(get_logger(), "분산 플릿 모드: 존 노드 등록 (fleet_agent/state · zone_command)");
+  }
 
   tree_ = std::make_unique<BT::Tree>(createTaskTree(factory_, bt_xml_, tree_config_));
   RCLCPP_INFO(
