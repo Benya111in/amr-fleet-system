@@ -1,6 +1,6 @@
 // 분산 플릿 존 BT 노드 시험 (보너스 4 P3): 프로세스 안 가짜 에이전트(상태 발행 + 명령 서비스)로
 // AcquireZoneChain · ZoneGuard · ReleaseZones · CommitTaskLock 과 zone_gates.xml 을 본다.
-// 시험 원본을 test/ 가 아니라 src/bt_nodes/zone_* 에 둔 것은 과제 소유 경로 때문이다 (p3.md §7).
+// (P3 에서는 소유 경로 때문에 src/bt_nodes/ 에 있었다 — b4-wire 에서 test/ 로 옮겼다, p3.md §7)
 #include <gtest/gtest.h>
 
 #include <atomic>
