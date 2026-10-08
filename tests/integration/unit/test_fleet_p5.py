@@ -331,3 +331,44 @@ def test_contention_vacuity_and_holm():
     assert m['contention_tasks'] == ['T1']
     h = A.holm({'a': 0.01, 'b': 0.04, 'c': 0.03})
     assert h == {'a': pytest.approx(0.03), 'c': pytest.approx(0.06), 'b': pytest.approx(0.06)}
+
+
+def _pilot_metrics(raw, k, label, mode, rtf, t_ready, valid=True):
+    d = raw / f'p5_pilot_p{k}_{label}'
+    d.mkdir(parents=True)
+    (d / 'metrics.json').write_text(json.dumps({
+        'valid': valid, 'rtf': rtf, 't_ready': t_ready, 'completed': 3, 'mode': mode,
+        'distance_m': {'amr_01': 10.0}, 'mode_transitions': [{'mode': 'NORMAL'}]}))
+
+
+def test_pilot_rule_concurrent_and_t_start(tmp_path):
+    import p5_campaign as C
+    _pilot_metrics(tmp_path, 1, 'central', 'central', 0.30, 150.0)
+    _pilot_metrics(tmp_path, 1, 'distributed', 'distributed', 0.28, 170.0)
+    _pilot_metrics(tmp_path, 2, 'central', 'central', 0.20, 160.0)
+    _pilot_metrics(tmp_path, 2, 'distributed', 'distributed', 0.17, 200.0)
+    conc, t_start, problems, basis = C.decide(str(tmp_path))
+    assert conc is True and problems == []
+    assert t_start == 270.0                         # 1.25 × 200 = 250 → 30 의 배수로 올림 270
+    (tmp_path / 'p5_pilot_p2_distributed' / 'metrics.json').write_text(json.dumps({
+        'valid': True, 'rtf': 0.16, 't_ready': 100.0, 'completed': 3, 'mode': 'distributed',
+        'distance_m': {'amr_01': 1.0}, 'mode_transitions': [{}]}))
+    conc2, t2, _, _ = C.decide(str(tmp_path))
+    assert conc2 is False and t2 == 240.0          # 0.16 < 0.6 × 0.28, 하한 240
+
+
+def test_pilot_sanity_problems_halt(tmp_path):
+    import p5_campaign as C
+    _pilot_metrics(tmp_path, 1, 'central', 'central', 0.30, 150.0, valid=False)
+    conc, t_start, problems, basis = C.decide(str(tmp_path))
+    assert any('무효' in p for p in problems) and any('metrics 없음' in p for p in problems)
+
+
+def test_b2_recordings_doc_condition(tmp_path):
+    import p5_campaign as C
+    f = tmp_path / 'recordings.md'
+    f.write_text('# x\n\n## 0. 먼저 알아야 할 불리한 사실\n\n(녹화 뒤 채운다)\n\n## 1. y\n(녹화 뒤 채운다)\n')
+    assert C.b2_doc_done(str(f)) is False
+    f.write_text('# x\n\n## 0. 먼저 알아야 할 불리한 사실\n\n- 녹화 8 개 중 …\n\n## 1. y\n(녹화 뒤 채운다)\n')
+    assert C.b2_doc_done(str(f)) is True
+    assert C.b2_doc_done(str(tmp_path / 'none.md')) is False
