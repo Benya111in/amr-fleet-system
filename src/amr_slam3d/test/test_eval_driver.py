@@ -172,6 +172,9 @@ def test_plan_e3_e4_shapes_and_dependencies():
     assert len({j['id'] for j in e3}) == len(e3)
     gtdb = [j for j in e3 if j['row'] == 'rtabmap3d_gtdb']
     assert len(gtdb) == 1 and gtdb[0]['bag'] == 'map_long_a1' and not gtdb[0]['requires']
+    # 위치추정·절제 재생은 사전 등록 신호 파일이 있어야 집는다
+    assert all(f'{drv.GO}/e3' in j['requires'] for j in e3 if j['row'] != 'rtabmap3d_gtdb')
+    assert all(j['requires'] == [f'{drv.GO}/e4'] for j in drv.plan_e4())
     for j in e3:
         assert j['wt'] == drv.WS_E3 and j['domain'] == 46 and j['image'] == 'amr-ai/slam:0.1'
         assert rows.row(j['row']).image == j['image']

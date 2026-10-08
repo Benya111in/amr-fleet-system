@@ -122,7 +122,9 @@ def plan_e2():
 
 RUNS = '/home/CAPYI_AI/runs/b24/b2-eval'
 #: E3(b)·E4 재생 사본 (E2 스냅샷과 같은 커밋이어도 따로 둔다 — 지도 선택 뒤 E3(b) 를 바꿔도 E2 를 건드리지 않게)
-WS_E3 = f'{RUNS}/ws_e3'
+WS_E3 = f'{RUNS}/ws_e3b'
+#: 사전 등록 커밋 뒤에만 만드는 신호 파일 — 그 전에는 E3(b)·E4 재생을 집지 않는다
+GO = f'{RUNS}/go'
 MAPS = f'{RUNS}/maps'
 MAP_LONG_SPAWN = '18.0,-16.0,1.5708'
 LOC_BAGS = tuple(b for b in BAGS if b != 'map_long_a1')
@@ -160,7 +162,7 @@ def plan_e3():
         for row, (env, req) in maps.items():
             for bag in LOC_BAGS:
                 j = job('e3', bag, row, k, 45 + k, 46, image=SLAM_IMG, kind='bag', env=env,
-                        requires=req, mounts=mnt)
+                        requires=req + [f'{GO}/e3'], mounts=mnt)
                 j['wt'] = WS_E3
                 jobs.append(j)
     return jobs
@@ -172,7 +174,8 @@ def plan_e4():
     for k in range(2):
         for row in ABL_ROWS:
             for bag in ABL_BAGS:
-                j = job('e4', bag, row, k, 60 + k, 48, image=SLAM_IMG, kind='bag')
+                j = job('e4', bag, row, k, 60 + k, 48, image=SLAM_IMG, kind='bag',
+                        requires=[f'{GO}/e4'])
                 j['wt'] = WS_E3
                 jobs.append(j)
     return jobs
