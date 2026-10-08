@@ -2,7 +2,8 @@
 //
 // COMMIT_TASK 를 보내고 task:<id> 가 held 가 될 때 (과반 ENTER_ACK) SUCCESS. 에이전트가 거부
 // (다른 로봇이 확정 — denied) 하면 FAILURE: 이 로봇은 픽업하지 않는다 (중복 실행 0 의 실행기
-// 쪽 절반). timeout_ms 를 넘겨도 FAILURE. 확정 잠금은 작업이 끝나도 풀지 않는다 (에이전트 몫).
+// 쪽 절반). timeout_ms(노드 시계 = sim, P3 리뷰 §8-14)를 넘겨도 FAILURE. 재요청은 벽시계 1 s 마다.
+// 확정 잠금은 작업이 끝나도 풀지 않는다 (에이전트 몫).
 #ifndef AMR_BEHAVIOR__BT_NODES__ZONE_TASK_COMMIT_HPP_
 #define AMR_BEHAVIOR__BT_NODES__ZONE_TASK_COMMIT_HPP_
 
@@ -28,7 +29,8 @@ public:
   {
     return {
       BT::InputPort<std::string>("task_id", "작업 ID"),
-      BT::InputPort<unsigned>("timeout_ms", 30000, "확정 대기 상한 [ms] (0 = 없음)"),
+      BT::InputPort<unsigned>(
+        "timeout_ms", 30000, "확정 대기 상한 [ms, 노드 시계 = sim] (0 = 없음)"),
     };
   }
 
@@ -42,7 +44,7 @@ public:
     unsigned t = 30000;
     getInput("timeout_ms", t);
     timeout_ = std::chrono::milliseconds(t);
-    start_ = Clock::now();
+    watch_.start(link_->now());
     return check(true);
   }
 
@@ -64,10 +66,15 @@ private:
         resource_.front().c_str());
       return BT::NodeStatus::FAILURE;
     }
-    const auto now = Clock::now();
-    if (timeout_.count() > 0 && now - start_ > timeout_) {
+    if (timeout_.count() > 0 &&
+      watch_.elapsedS(link_->now()) * 1000.0 > static_cast<double>(timeout_.count()))
+    {
+      RCLCPP_WARN(
+        link_->logger(), "[%s] 작업 잠금 확정 시간 초과 (%u ms, sim): %s", name().c_str(),
+        static_cast<unsigned>(timeout_.count()), resource_.front().c_str());
       return BT::NodeStatus::FAILURE;
     }
+    const auto now = Clock::now();
     if (first || now - last_send_ > std::chrono::seconds(1)) {
       // 멱등: 에이전트는 확정 표시만 다시 세운다
       link_->send(ZoneAgentLink::Command::Request::OP_COMMIT_TASK, resource_);
@@ -79,7 +86,7 @@ private:
   ZoneAgentLinkPtr link_;
   std::vector<std::string> resource_;
   std::chrono::milliseconds timeout_{30000};
-  Clock::time_point start_{};
+  SimStopwatch watch_;
   Clock::time_point last_send_{};
 };
 
