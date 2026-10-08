@@ -306,8 +306,9 @@ class Driver:
     def wait_quiet(self, key):
         t0, ok = time.time(), 0
         while True:
-            l1, l5 = os.getloadavg()[:2]
-            ok = ok + 1 if (l1 < self.a.load_max and l5 < self.a.load5_max) else 0
+            l1, l5, l15 = os.getloadavg()
+            ok = ok + 1 if (l1 < self.a.load_max and l5 < self.a.load5_max
+                            and l15 < self.a.load15_max) else 0
             if ok >= 2 or time.time() - t0 > self.a.load_wait_max_s:
                 break
             if os.path.exists(os.path.join(self.raw, 'STOP')):
@@ -318,7 +319,8 @@ class Driver:
         with open(os.path.join(self.raw, 'pairs', f'{key}.start_condition'), 'a',
                   encoding='utf-8') as f:
             f.write(f'{now_iso()} waited {time.time() - t0:.0f} s, load {load3()} (기준 load1 < '
-                    f'{self.a.load_max} · load5 < {self.a.load5_max} 두 번 연속, 상한 '
+                    f'{self.a.load_max} · load5 < {self.a.load5_max} · load15 < '
+                    f'{self.a.load15_max} 두 번 연속, 상한 '
                     f'{self.a.load_wait_max_s:.0f} s)\n'
                     + '\n'.join(top) + '\n--- 컨테이너\n' + cont)
         self.log(f'{key} 시작 조건 (대기 {time.time() - t0:.0f} s, load {load3()})')
@@ -433,7 +435,9 @@ def main(argv=None):
     ap.add_argument('--arm-timeout-s', type=float, default=4 * 3600.0)
     ap.add_argument('--load-max', type=float, default=30.0,
                     help='짝 시작 조건 loadavg(1 분) < 이 값 두 번 연속 (사전 등록 8 → 결과 뒤 30, 노트 01:50)')
-    ap.add_argument('--load5-max', type=float, default=60.0,
+    ap.add_argument('--load15-max', type=float, default=80.0,
+                    help='짝 시작 조건에 loadavg(15 분) < 이 값도 — 다른 사용자 일괄 작업이 멈춘 때만 (노트 03:05)')
+    ap.add_argument('--load5-max', type=float, default=50.0,
                     help='짝 시작 조건에 loadavg(5 분) < 이 값도 (잠깐 내려간 1 분 값에 속지 않게, 노트 02:45)')
     ap.add_argument('--load-wait-max-s', type=float, default=10800.0)
     ap.add_argument('--load-abort', type=float, default=120.0,
