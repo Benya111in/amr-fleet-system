@@ -95,3 +95,31 @@ def test_bad_launch_arguments_are_rejected(arg, value):
 def test_unknown_default_override_is_rejected():
     with pytest.raises(ValueError):
         _load('fleet_manager.launch.py').generate_launch_description(defaults={'robot_idz': 'x'})
+
+
+def _by_exe(nodes, exe):
+    return [n for n in nodes if n.node_executable == exe]
+
+
+def test_central_mode_has_no_heartbeat_or_token_override():
+    nodes = _nodes('fleet_manager.launch.py')
+    manager = _overrides(_by_exe(nodes, 'fleet_manager_node')[0])
+    traffic = _overrides(_by_exe(nodes, 'traffic_manager_node')[0])
+    assert not any(k.startswith('heartbeat.') for k in manager)
+    assert 'zones.tokens' not in traffic and 'epoch_file' not in manager
+
+
+def test_distributed_mode_turns_on_heartbeat_and_hands_zones_to_the_quorum():
+    """분산 모드 (b4-wire): 관리자 하트비트 · 관찰자 기동, 교통 관리자 구역 토큰 끔. 노드 구성은 같다."""
+    nodes = _nodes('fleet_manager.launch.py', fleet_mode='distributed', epoch_file='/v/epoch')
+    assert _executables(nodes) == _executables(_nodes('fleet_manager.launch.py'))
+    manager = _overrides(_by_exe(nodes, 'fleet_manager_node')[0])
+    assert manager['heartbeat.enabled'] is True and manager['heartbeat.observe_s'] == 3.0
+    assert manager['epoch_file'] == '/v/epoch'
+    traffic = _overrides(_by_exe(nodes, 'traffic_manager_node')[0])
+    assert traffic['zones.tokens'] is False
+    m2 = _overrides(_by_exe(_nodes('fleet_manager.launch.py', fleet_mode='distributed',
+                                   heartbeat_observe_s='5.5'), 'fleet_manager_node')[0])
+    assert m2['heartbeat.observe_s'] == 5.5
+    with pytest.raises(ValueError):
+        _nodes('fleet_manager.launch.py', fleet_mode='mesh')

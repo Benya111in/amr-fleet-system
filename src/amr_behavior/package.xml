@@ -32,6 +32,8 @@
   <exec_depend>nav2_behavior_tree</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
+  <!-- behavior.launch.py fleet_mode:=distributed 가 로봇마다 amr_fleet fleet_agent_node 를 함께 띄운다 -->
+  <exec_depend>amr_fleet</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

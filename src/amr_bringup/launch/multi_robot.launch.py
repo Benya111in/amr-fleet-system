@@ -22,6 +22,11 @@
     nav_ttc_bt    navigation use_ttc_bt (기본 auto = TTC 재계획 BT, false = TTC 조건 없는 BT)
     stack_stagger_s  로봇 i 스택 시작 지연 = i × 이 값 [s] (기본 6, 0 = 동시). 5대를 한꺼번에 띄우면
                   Nav2 lifecycle_manager 가 get_state 응답을 못 받아 스택을 내린다 (launch_utils 주석)
+    fleet_mode    central(기본) | distributed — 보너스 4 분산 플릿 (fleet-distributed/p3.md §10).
+                  이 인자 하나로 켠다: fleet_manager.launch.py 가 하트비트 · 관찰자 기동 · 구역 토큰 끔,
+                  behavior.launch.py 가 로봇마다 fleet_agent + 실행기 존 노드 · 분산 트리 · assign_task 리매핑.
+                  두 하위 런치는 이 값을 launch 인자 상속으로 받는다 (launch_utils 가 인자를 따로 넘기지 않는다).
+                  정족수 멤버 = 스폰한 로봇 (fleet_members 로 넘긴다). 기본 central 은 예전과 같다.
 Groot ZMQ 포트는 로봇 i(0부터)마다 1666 + 2i / 1667 + 2i (task_executor_node, 같은 호스트에서 포트 충돌 방지).
 
 로봇 이름 = 네임스페이스 = Gazebo 모델 이름 (amr_01 …), TF 프레임 접두어 '<이름>/' — URDF 링크와 Gazebo 센서
@@ -33,8 +38,10 @@ world_gate.py 참고. 로봇별 통신 지연은 fleet_spawn.yaml 의 comm_laten
 from amr_bringup import fleet_spawn
 from amr_bringup import launch_utils as lu
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, LogInfo, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, LogInfo, OpaqueFunction, SetLaunchConfiguration
 from launch.substitutions import LaunchConfiguration
+
+FLEET_MODES = ('central', 'distributed')
 
 
 def _setup(context):
@@ -47,13 +54,25 @@ def _setup(context):
     except ValueError as exc:
         raise RuntimeError(f'num_robots:={num}: {exc}') from exc
     summary = ', '.join(f'{r.name}({r.x:g}, {r.y:g}, {r.yaw:g})' for r in robots)
-    return ([LogInfo(msg=f'[bringup] {len(robots)}대 (프레임 접두어 <이름>/): {summary}')]
+    mode = LaunchConfiguration('fleet_mode').perform(context).strip().lower() or 'central'
+    if mode not in FLEET_MODES:
+        raise RuntimeError(f'fleet_mode:={mode}: {" | ".join(FLEET_MODES)} 중 하나')
+    fleet = []
+    if mode == 'distributed':
+        if len(robots) < 3:
+            raise RuntimeError(f'fleet_mode:=distributed 는 정족수 투표라 3 대 이상: {len(robots)}')
+        fleet = [SetLaunchConfiguration('fleet_members', ','.join(r.name for r in robots)),
+                 LogInfo(msg=f'[bringup] 분산 플릿 모드: 멤버 {len(robots)} 대 (정족수 '
+                             f'{len(robots) // 2 + 1})')]
+    return (fleet + [LogInfo(msg=f'[bringup] {len(robots)}대 (프레임 접두어 <이름>/): {summary}')]
             + lu.bringup_actions(robots, spawn, opts, prefixed=True))
 
 
 def generate_launch_description() -> LaunchDescription:
     return LaunchDescription(
         [DeclareLaunchArgument('num_robots', default_value='5',
-                               description='동시 운용 대수 (robots_file 앞에서부터)')]
+                               description='동시 운용 대수 (robots_file 앞에서부터)'),
+         DeclareLaunchArgument('fleet_mode', default_value='central',
+                               description='central | distributed (보너스 4 분산 플릿)')]
         + lu.common_arguments()
         + [OpaqueFunction(function=_setup)])

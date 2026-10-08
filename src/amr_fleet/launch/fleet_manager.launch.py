@@ -26,6 +26,14 @@ Fleet Manager + 로봇별 어댑터 런치 (docker-compose `fleet` 서비스가 
   /clock 없이 단독으로 띄우면 노드 시계가 0 에 멈추므로 use_sim_time:=false 를 준다.
 - serve_assign_task: 비우면 auto_complete_after_s > 0 (모의 시험)일 때만 true, 그 외에는 fleet.yaml(false).
   실제 assign_task 서버는 task_executor_node 이므로 통합 실행에서 어댑터가 서버를 띄우지 않는다.
+- fleet_mode (central 기본 | distributed — 보너스 4, fleet-distributed/p3.md §10): distributed 면
+  관리자가 /fleet/heartbeat 를 내고 heartbeat_observe_s 동안 관찰자로 로봇 펜스 epoch 를 모은 뒤 명령한다
+  (heartbeat.enabled · observe_s, epoch_file 은 인자 그대로), 교통 관리자는 구역 토큰을 끈다
+  (zones.tokens false — 구역 허가는 로봇 정족수 투표가 진다. 교차 예측 · 교착 해소는 그대로,
+  실행기는
+  서버가 살아 있을 때만 hold 를 따른다). 로봇 쪽(에이전트 · 실행기 리매핑)은 behavior.launch.py 의 같은 인자가
+  맡는다.
+  상위 런치(multi_robot.launch.py)의 값을 launch 인자 상속으로 받는다.
 """
 
 from launch import LaunchDescription
@@ -37,7 +45,8 @@ import yaml
 
 # 인자 이름 → 값 변환. 빈 문자열이면 fleet.yaml 값을 그대로 쓴다.
 _MANAGER_ARGS = ('allocation_strategy', 'comm_latency_ms', 'simulate_latency', 'seed',
-                 'comm_model_file', 'log_dir')
+                 'comm_model_file', 'log_dir', 'epoch_file')
+FLEET_MODES = ('central', 'distributed')
 _ADAPTER_ARGS = ('comm_latency_ms', 'simulate_latency', 'seed', 'comm_model_file',
                  'auto_complete_after_s', 'serve_assign_task', 'log_dir')
 # generate_launch_description(defaults) 로 기본값을 바꿀 수 있는 인자
@@ -46,7 +55,7 @@ _ARG_NAMES = frozenset({'launch_manager', 'launch_adapters', 'traffic_manager'})
 
 def _typed(name, text):
     """런치 인자 문자열 → 파라미터 값 (YAML 해석, 목록은 실수로 통일)."""
-    if name in ('allocation_strategy', 'log_dir', 'comm_model_file'):
+    if name in ('allocation_strategy', 'log_dir', 'comm_model_file', 'epoch_file'):
         return text
     value = yaml.safe_load(text)
     if name == 'comm_latency_ms':
@@ -75,25 +84,39 @@ def _overrides(context, names):
     return out
 
 
+def fleet_mode(context) -> str:
+    """분산 모드 인자 fleet_mode 값 (상위 런치가 주지 않았으면 central)."""
+    mode = (context.launch_configurations.get('fleet_mode', '') or 'central').strip().lower()
+    if mode not in FLEET_MODES:
+        raise ValueError(f'fleet_mode 는 {" | ".join(FLEET_MODES)}: {mode!r}')
+    return mode
+
+
 def _launch_setup(context):
     robot_ids = [s.strip() for s in LaunchConfiguration('robot_ids').perform(context).split(',')
                  if s.strip()]
+    distributed = fleet_mode(context) == 'distributed'
     params_file = LaunchConfiguration('params_file').perform(context)
     use_sim_time = _typed('use_sim_time', LaunchConfiguration('use_sim_time').perform(context))
     common = {'use_sim_time': bool(use_sim_time)}
 
     actions = []
     if _typed('launch_manager', LaunchConfiguration('launch_manager').perform(context)):
+        manager = dict(common, robot_ids=','.join(robot_ids), **_overrides(context, _MANAGER_ARGS))
+        if distributed:
+            manager['heartbeat.enabled'] = True
+            manager['heartbeat.observe_s'] = float(
+                context.launch_configurations.get('heartbeat_observe_s', '') or 3.0)
         actions.append(Node(
             package='amr_fleet', executable='fleet_manager_node', name='fleet_manager_node',
-            namespace='fleet', output='screen',
-            parameters=[params_file, dict(common, robot_ids=','.join(robot_ids),
-                                          **_overrides(context, _MANAGER_ARGS))]))
+            namespace='fleet', output='screen', parameters=[params_file, manager]))
     if _typed('traffic_manager', LaunchConfiguration('traffic_manager').perform(context)):
         traffic_overrides = dict(common, robot_ids=','.join(robot_ids))
         mode = LaunchConfiguration('traffic_mode').perform(context).strip()
         if mode:
             traffic_overrides['mode'] = mode
+        if distributed:
+            traffic_overrides['zones.tokens'] = False     # 구역 허가는 로봇 정족수 (분산 모드)
         actions.append(Node(
             package='amr_fleet', executable='traffic_manager_node', name='traffic_manager_node',
             namespace='fleet', output='screen',
@@ -161,5 +184,11 @@ def generate_launch_description(defaults=None) -> LaunchDescription:
         DeclareLaunchArgument('traffic_mode', default_value='',
                               description="active | observe ('' = traffic.yaml)"),
         DeclareLaunchArgument('traffic_params_file', default_value=traffic_params),
+        DeclareLaunchArgument('fleet_mode', default_value='central',
+                              description='central | distributed (보너스 4 분산 플릿 — 하트비트 · 토큰 끔)'),
+        DeclareLaunchArgument('heartbeat_observe_s', default_value='3.0',
+                              description='분산 모드 관리자 관찰 시간 [s, sim] (기동 뒤 로봇 epoch 수집)'),
+        DeclareLaunchArgument('epoch_file', default_value='',
+                              description="관리자 epoch 영속 파일 ('' = fleet.yaml — 영속 안 함)"),
     ]
     return LaunchDescription(args + [OpaqueFunction(function=_launch_setup)])
