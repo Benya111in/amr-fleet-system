@@ -246,3 +246,32 @@ s1_seed2_a2 **0.339** (EKF 29, imu/data 2, loadavg 5.2 → 37.7 — 다른 사�
   2 주기, `/clock`·센서는 1.5 주기) — 이번 결과를 보고 정한 것이므로 이번 bag 에는 소급하지 않는다.
 - 미확인으로 남긴 것: H-G2 4 장 누락의 기제, slam_toolbox 메시지 필터 버림 1, s6_open 의 EKF 지연이 둘 다 sim 41–43 s(출발 전
   정지)에 난 것이 우연인지.
+
+## 리뷰 반영 (2026-10-08 23:30, 검증 리뷰 차단 B1)
+
+- **B1 (차단, 인정)**: 실행 목록 `runs/b2-rec.jsonl` 의 `B2rec-s1_seed2x_a1` 줄과 원자료 사본 `rec/s1_seed2x_a1/registry.json` 에
+  사전 등록 밖 표시가 없었다. 이 항목·recordings.md §3.3·replay.md 에는 적었지만, 실행 목록(과 그것으로 만드는 index 의 "표기" 열)만
+  보면 E2 의 "S1 bag ≥ 3" 을 사전 등록 bag 3 개로 셀 수 있었다. 고침: config 앞에 `보충(사전 등록 외) · 결과 뒤 변경 프로토콜:
+  s1_seed2 사전 등록 3 회 실패 뒤 추가 시도 (plan_extra.txt) —`, label 끝에 `· 보충(사전 등록 외) · 결과 뒤 변경 프로토콜`.
+- **같은 기준으로 다시 본 것 (리뷰 지적 밖, 같은 종류의 틈)** — 실행 목록만 읽어도 표기가 보이도록 줄마다 확인했다:
+  1. RTF 0.25·부하 시작 조건(b7cdfc4, 위 "결과 뒤 변경 — 프로토콜")으로 돈 **사전 등록** 시도 7 줄 (`s1_seed3_a2`,
+     `s6_open_a1`–`a3`, `s6_queue_a1`, `s6_wall_a1`, `map_long_a1`): config 끝과 label 에 `결과 뒤 변경 프로토콜`. 사전 등록
+     시나리오·시도 상한 안의 시도라서 "보충" 은 붙이지 않는다.
+  2. `B2rec-derive-s3_aisle_a1`: 파생 도구 `madg_lockstep.py` 를 s3_aisle_a1 파생 실패를 본 뒤 고쳤다(32caa7d) → `결과 뒤
+     변경(파생 도구)`. 이 고침은 파생 bag 8 개 모두에 걸린다 (s1_seed1_a1 은 녹화 도중 커밋된 판, 나머지는 그 뒤 HEAD). 공백 검사
+     판정과는 무관하다 — bag 처음·끝 묶음(≤ 10 개)의 짝 없는 `imu/data` 시각에 오라클 방위 토픽(진단용)을 쓰지 않을 뿐이고,
+     가운데 짝 없음은 계속 오류다.
+  3. `B2rec-s1_seed1_a1`: commit 필드(88de1fa, 녹화 HEAD)와 파생 도구 판(32caa7d)이 다르다 → config 끝에 출처를 적었다
+     [측정: `derive/derive.json` 에 32caa7d 판에만 있는 `oracle_unpaired_head_tail` 키, 파생 파일 16:46 > 커밋 16:41:18].
+     recordings.md §0-4·각주 ² 와 같은 내용이다.
+  4. 손대지 않은 것: 시운전 두 줄의 RTF 1.0 → 0.5·기록기 깊이 변경은 사전 등록의 "시운전으로 결함을 찾으면 고치고 다시
+     시운전" 에 따른 것이라 결과 뒤 변경 표기를 붙이지 않았다. `s1_seed2_a3`·`s1_seed3_a1` 은 바꾸기 전 판(RTF 0.5, env.txt)으로
+     돌았고 config 에 이미 `rtf_target=0.5` 다.
+- **원자료 registry.json 사본 20 개를 실행 목록(정본)에 맞췄다** (`registered` 제외). 위 10 줄 말고도 사본이 정본과 달랐다:
+  facd3c3 가 jsonl 만 고쳐 사본에 남은 `route=?` config 15 개, 시운전 stage `G`(정본 `G-dry`) 2 개, 등록 전에 써 둔 사본의
+  추정 시각 — test-mut 10:33–10:35 (정본 10:27:24–10:27:36), supp-blocker-view 22:00–22:03 (정본 21:57:00–21:57:25); 정본이
+  파일 시각과 맞다 [측정: mtime] — 그리고 ready-probe-pilot 의 dirty (사본 true = 문서만 미커밋, 정본 false = 코드는 a1426ee
+  그대로 [측정: a1426ee..c9b9c03 사이 src 변경 0]). 원본 사본은 `/home/CAPYI_AI/runs/b24/b2-rec/review_fix/orig/`, 고친 도구
+  `review_fix/amend_runlist.py` (두 번 돌려도 같은 결과 — 확인), 바뀐 필드 목록 `review_fix/amend_report.json`. 고친 줄에는
+  `amended` 필드(시각·이유)를 더했다 — 실행 목록은 덧붙이기 전용이라 고친 흔적을 줄 안에 남긴다.
+- 결과 수치·판정·해석은 바뀌지 않는다. `notebook.py check --paths`: 83 건, 문제 0.
