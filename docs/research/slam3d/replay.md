@@ -271,5 +271,5 @@ guess 없음 → 9.6 s 처리 (`tmp/waittest*.sh`). 그래서 원인은 그 장�
 `madg_lockstep`), 기록 직후 공백 검사(`recgate`, 실패 bag 재기록 — 14 시도에 bag 8), 기록 전 sim 10 s 정지·bag 처음 ≥ 10 s·끝 ≥ 0.5 s 정지,
 재생 시작을 구독 확인 뒤로(`replay_row.sh` 멈춘 재생 → resume). S1 은 사전 등록 bag 2 개(`s1_seed1`·`s1_seed3`) + 사전 등록 밖 1 개
 (`s1_seed2x` — 사전 등록 `s1_seed2` 3 회 실패), S3 1, S6 열림·대기열·벽 3, 긴 매핑 1 (308.6 m — 322 m 원 경로 파일이 없어 같은 차선으로
-다시 만들었다). 9–11 은 P 단계(다음 물결). 공백 검사 통과 bag 에서도 `rtabmap3d_noimu` 재생 누락이 4 / 1 674 였다 (recordings.md §5 —
-bag 결함이 아니라 재생 쪽, 원인 미확인).
+다시 만들었다). 9–11 은 P 단계(다음 물결). 공백 검사 통과 bag 에서도 `rtabmap3d_noimu` 재생 누락이 4 / 1 674 였다 — 같은 bag 재실행은
+0 / 1 674 (recordings.md §5 — bag 결함이 아니라 되풀이되지 않는 재생 사건, 기제 미확인).
