@@ -95,6 +95,10 @@ def test_rows_play_recorded_clock_and_never_oracle_topics():
                 # 오라클 행: SLAM 노드가 정답 방위를 직접 받는다 — 상한 참고용으로만 표기 (런치가 oracle:=true 요구)
                 assert 'oracle:=true' in r.launch, r.name
                 continue
+            if t == rows.GT_ODOM and r.gt_builder:
+                # 정답 지도 생성 행 (b2-eval E3(b)): SLAM 행이 아니다 — 정답 자세로 RTAB-Map DB 를 만든다
+                assert 'odom_mode:=gt_tf' in r.launch, r.name
+                continue
             assert t not in r.play_topics, (r.name, t)
         assert '/tf_static' in r.play_topics
         assert r.input_topic in r.play_topics
@@ -106,9 +110,14 @@ def test_oracle_list_covers_known_ground_truth_topics():
              '/amr_01/imu/data_gtorient'}
     assert known <= set(rows.ORACLE_TOPICS)
     for r in rows.ROWS.values():
-        # 정답 자세·원시 정답 방위는 madgwick 변형 행을 포함해 어떤 행도 틀지 않는다
-        assert '/amr_01/ground_truth/odom' not in r.play_topics, r.name
+        # 정답 자세·원시 정답 방위는 madgwick 변형 행을 포함해 어떤 행도 틀지 않는다 — 정답 지도 생성 행만 예외
+        if not r.gt_builder:
+            assert '/amr_01/ground_truth/odom' not in r.play_topics, r.name
         assert '/amr_01/imu/data_raw' not in r.play_topics, r.name
+    # 정답 자세를 트는 행은 정답 지도 생성 행 하나뿐이고, 그 행은 위치추정·매핑 비교 행이 아니다
+    assert [n for n, r in rows.ROWS.items() if '/amr_01/ground_truth/odom' in r.play_topics] == \
+        ['rtabmap3d_gtdb']
+    assert [n for n, r in rows.ROWS.items() if r.gt_builder] == ['rtabmap3d_gtdb']
     # imu/data 를 트는 행은 madgwick 변형 행 하나뿐이다 (madgwick 입력으로만 — rtabmap.md §1.1)
     assert [n for n, r in rows.ROWS.items() if '/amr_01/imu/data' in r.play_topics] == \
         ['rtabmap3d_imulive']
@@ -124,7 +133,8 @@ def test_oracle_list_covers_known_ground_truth_topics():
 def test_liosam_rows_do_not_play_dynamic_tf():
     """LIO-SAM 은 odometryFrame → base_footprint 를 낸다 — EKF /tf 를 같이 틀면 부모가 둘."""
     for name, r in rows.ROWS.items():
-        if name.startswith('liosam_'):
+        if name.startswith('liosam_') or r.gt_builder:
+            # 정답 지도 생성 행도 EKF /tf 를 틀지 않는다 — base_footprint 의 부모는 gt_odom 하나
             assert '/tf' not in r.play_topics, name
         else:
             assert '/tf' in r.play_topics, name     # 휠-EKF guess 가 TF 로 들어온다
@@ -367,7 +377,8 @@ def test_every_row_has_ready_requirements_on_played_topics():
         assert (r.input_topic, rows.PROBE_NODE) in req, name
         assert len([1 for t, n in req if t == r.input_topic and n != rows.PROBE_NODE]) >= 1, name
         for t in topics - {t for t, _, _ in r.processed}:
-            assert t in r.play_topics or t == rows.IMU_MADGWICK, (name, t)
+            assert t in r.play_topics or t == rows.IMU_MADGWICK or t in rows.INTERNAL_TOPICS, \
+                (name, t)
         imu = [t for t in r.play_topics if '/imu/' in t]
         if imu:
             assert any(t == imu[0] for t, _ in req), name
@@ -389,3 +400,92 @@ def test_record_qos_overrides_cover_all_volatile_record_topics():
                      'reliability': 'reliable', 'durability': 'volatile'}, t
     for t in ('/clock', '/tf', '/amr_01/imu/data_raw', '/amr_01/imu/data', '/amr_01/joint_states'):
         assert q[t]['depth'] >= 1000
+
+
+# ---- b2-eval: E3(b) 위치추정·정답 지도·E4 절제 행 ------------------------------------------------------
+def test_localization_rows_and_gt_builder():
+    """위치추정 행은 지도 종류를 갖고, RTAB-Map 위치추정은 initialpose 구독을 기다리며, AMCL 은 지도 토픽을 기다린다."""
+    for n in ('amcl_gt', 'amcl_slam'):
+        r = rows.row(n)
+        assert r.loc_map == 'grid' and not r.initialpose and r.anchors == ()
+        assert r.input_topic == rows.SCAN and r.processed == ()
+        assert (rows.MAP_AMCL, 'amcl') in rows.ready_requirements(r)
+        assert (rows.SCAN, 'amcl') in rows.ready_requirements(r)
+    for n in ('rtabmap3d_loc_gt', 'rtabmap3d_loc_slam'):
+        r = rows.row(n)
+        assert r.loc_map == 'db' and r.initialpose and 'localization:=true' in r.launch
+        assert (rows.INITIALPOSE, 'rtabmap') in rows.ready_requirements(r)
+        assert r.play_topics == rows.row('rtabmap3d_noimu').play_topics
+    g = rows.row('rtabmap3d_gtdb')
+    assert g.gt_builder and g.loc_map == '' and g.processed == ()
+    assert (rows.GT_ODOM, 'gt_odom_tf') in rows.ready_requirements(g)
+    assert not any(r.gt_builder for n, r in rows.ROWS.items() if n != 'rtabmap3d_gtdb')
+
+
+def test_rtabmap_launch_localization_and_gt_modes():
+    mod = _load_launch('rtabmap.launch.py')
+    base = mod.node_setup('3d', 'amr_01', '/c', '/s', '', True, 'slam_map', '/db', 'p', 'i')
+    loc = mod.node_setup('3d', 'amr_01', '/c', '/s', '', True, 'slam_map', '/db', 'p', 'i',
+                         localization=True)
+    assert loc[0] == base[0]                                 # 오도메트리는 매핑과 같다 (구성 B)
+    diff = {k: v for k, v in loc[1][1].items() if base[1][1].get(k) != v}
+    assert diff == mod.LOCALIZATION_PARAMS
+    gt = mod.node_setup('3d', 'amr_01', '/c', '/s', '', True, 'slam_map', '/db', 'p', 'i',
+                        odom_mode='gt_tf')
+    assert gt[1][1]['odom_frame_id'] == 'amr_01/gt_odom'
+    assert gt[1][1]['RGBD/ProximityBySpace'] == 'false'
+    with pytest.raises(RuntimeError):
+        mod.node_setup('3d', 'amr_01', '/c', '/s', '', True, 'm', '/db', 'p', 'i',
+                       localization=True, odom_mode='gt_tf')
+    with pytest.raises(RuntimeError):
+        mod.node_setup('3d', 'amr_01', '/c', '/s', '', True, 'm', '/db', 'p', 'i',
+                       odom_mode='lidar')
+    ex = mod.node_setup('3d', 'amr_01', '/c', '/s', '', True, 'slam_map', '/db', 'p', 'i',
+                        extra_params='/x.yaml')
+    assert ex[0][:2] == ['p', '/x.yaml'] and ex[1][:2] == ['p', '/x.yaml']
+    assert ex[0][2] == base[0][1] and ex[1][2] == base[1][1]
+
+
+def test_amcl_loc_overrides_match_deployment_except_tf_broadcast():
+    """배포 localization.launch.py 가 AMCL 에 주는 값과 같고, 다른 것은 tf_broadcast 하나 (의도적)."""
+    mod = _load_launch('amcl_loc.launch.py')
+    o = mod.amcl_overrides('amr_01', 18.0, -16.0, 1.5708, True)
+    assert o['odom_frame_id'] == 'amr_01/odom' and o['base_frame_id'] == 'amr_01/base_footprint'
+    assert o['global_frame_id'] == 'map' and o['map_topic'] == 'map_amcl'
+    init = (o['initial_pose.x'], o['initial_pose.y'], o['initial_pose.yaw'])
+    assert init == (18.0, -16.0, 1.5708)
+    amcl = yaml.safe_load((REPO / 'src' / 'amr_localization' / 'config' / 'amcl.yaml')
+                          .read_text(encoding='utf-8'))['/**/amcl']['ros__parameters']
+    assert amcl['tf_broadcast'] is False and o['tf_broadcast'] is True
+    assert 'map_topic' not in mod.amcl_overrides('amr_01', 0, 0, 0, False)
+
+
+def test_ablation_rows_change_exactly_one_knob():
+    """E4 절제 행: 기준(rtabmap3d_noimu)과 런치가 extra_params 하나(또는 입력 점군) 만 다르고, 파일은 한 손잡이만."""
+    base = rows.row('rtabmap3d_noimu')
+    knob = {'vox005': {'Icp/VoxelSize', 'scan_voxel_size'},
+            'vox02': {'Icp/VoxelSize', 'scan_voxel_size'},
+            'vox03': {'Icp/VoxelSize', 'scan_voxel_size'},
+            'p2p': {'Icp/PointToPlane'}, 'obs10': {'Grid/MaxObstacleHeight'},
+            'obs20': {'Grid/MaxObstacleHeight'}, 'opt10': {'RGBD/OptimizeMaxError'},
+            'opt30': {'RGBD/OptimizeMaxError'}}
+    basecfg = _yaml('rtabmap.yaml')
+    for k, keys in knob.items():
+        r = rows.row(f'rtabmap3d_abl_{k}')
+        assert r.launch == base.launch + f' extra_params:={rows.ABLATION_DIR}/{k}.yaml'
+        assert r.play_topics == base.play_topics and r.input_topic == base.input_topic
+        data = yaml.safe_load((PKG / 'config' / 'ablation' / f'{k}.yaml').read_text())
+        found = set()
+        for block, body in data.items():
+            for key, v in body['ros__parameters'].items():
+                found.add(key)
+                if '/' in key:
+                    assert isinstance(v, str), (k, key)
+                old = [b['ros__parameters'][key] for b in basecfg.values()
+                       if key in b['ros__parameters']]
+                assert old and str(old[0]) != str(v), (k, key)       # 기준과 실제로 다르다
+        assert found == keys, k
+    raw = rows.row('rtabmap3d_abl_raw')
+    assert raw.input_topic == rows.CLOUD_RAW and rows.CLOUD_RAW in raw.play_topics
+    assert rows.CLOUD not in raw.play_topics
+    assert raw.launch == base.launch + f' cloud_topic:={rows.CLOUD_RAW}'

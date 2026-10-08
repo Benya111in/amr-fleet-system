@@ -1,0 +1,4 @@
+# E4 절제 (b2-eval): 격자 높이 대역 위 끝 Grid/MaxObstacleHeight 0.40 → 2.0 m — 한 손잡이 (지면·높이 대역 분리).
+/**/rtabmap:
+  ros__parameters:
+    Grid/MaxObstacleHeight: '2.0'

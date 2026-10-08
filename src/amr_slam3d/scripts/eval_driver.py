@@ -335,6 +335,8 @@ def cmd_pool(ns):
                 if other > c['load_max']:
                     log(root, 'load_wait.log', f'POOL{ns.worker} wait other={other:.1f} '
                                                f'own={own:.1f} load={loadavg()}')
+                    if not running:
+                        break                           # 빈 슬롯을 쥐고 기다리지 않는다 (놓고 다시 잡는다)
                 else:
                     for j in jobs:
                         if try_claim(root, j, live):
@@ -364,6 +366,10 @@ def worker(ns, i, stop):
             break
         if not any(ready(j) for j in rem) or control(ns.root)['pause']:
             time.sleep(60)
+            continue
+        own, _ = own_cpu_cores()
+        if load1() - own > control(ns.root)['load_max']:
+            time.sleep(30)                             # 부하 규칙: 슬롯을 잡지 않고 기다린다
             continue
         subprocess.run([CPU_SLOT, AGENT, sys.executable, os.path.abspath(__file__), 'pool',
                         '--root', ns.root, '--wt', ns.wt, '--worker', str(i)])

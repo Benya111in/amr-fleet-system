@@ -63,8 +63,34 @@ print(f"TAIL_EXEMPT={int(r.tail_exempt)}")
 print(f"ROW_BAG={shlex.quote(r.bag)} ORACLE={int(r.oracle)}")
 print('READY_TOPICS=(' + ' '.join(sorted({shlex.quote(t) for t, _ in rows.ready_requirements(r)}))
       + ')')
+print(f"LOC_MAP_KIND={shlex.quote(r.loc_map)} INITIALPOSE={int(r.initialpose)} "
+      f"GT_BUILDER={int(r.gt_builder)}")
 EOF
 )"
+
+# ---- 위치추정 행 (b2-eval E3(b)) -----------------------------------------------------------------
+# grid: AMCL 이 읽을 지도 YAML (LOC_MAP) + 초기 자세 = 이 bag 의 스폰 (배포와 같은 정보).
+# db  : RTAB-Map 위치추정 — 지도 DB(LOC_DB)를 출력 디렉터리로 복사해 쓴다 (원본 불변). 지도 프레임 slam_map 은 **지도를 만든
+#       bag 의 스폰**(MAP_SPAWN) 에 고정하고, 이 bag 의 스폰을 그 프레임으로 옮겨 initialpose 로 낸다.
+ANCHOR_POSE=$POSE
+INIT_REL=""
+case "$LOC_MAP_KIND" in
+  grid)
+    [ -n "${LOC_MAP:-}" ] && [ -f "$LOC_MAP" ] || { echo "LOC_MAP 가 없다: ${LOC_MAP:-}" >&2; exit 3; }
+    IFS=',' read -r _x _y _yaw <<< "$POSE"
+    LAUNCH="$LAUNCH map:=$LOC_MAP initial_x:=$_x initial_y:=$_y initial_yaw:=$_yaw"
+    ;;
+  db)
+    [ -n "${LOC_DB:-}" ] && [ -f "$LOC_DB" ] || { echo "LOC_DB 가 없다: ${LOC_DB:-}" >&2; exit 3; }
+    [ -n "${MAP_SPAWN:-}" ] || { echo "MAP_SPAWN 이 없다" >&2; exit 3; }
+    mkdir -p "$OUT"
+    python3 -c "import shutil, sys; shutil.copyfile(sys.argv[1], sys.argv[2])" "$LOC_DB" "$OUT/rtabmap.db"
+    ANCHOR_POSE=$MAP_SPAWN
+    INIT_REL=$(python3 -c "import sys; from amr_slam3d.se2 import compose, inverse, parse_pose; \
+r = compose(inverse(parse_pose(sys.argv[1])), parse_pose(sys.argv[2])); print(','.join(repr(v) for v in r))" \
+      "$MAP_SPAWN" "$POSE")
+    ;;
+esac
 
 # 행이 틀 토픽이 bag 에 다 있는지 재생 전에 본다 (파생 bag 토픽을 원 bag 으로 돌리는 실수 차단)
 python3 - "$ROW" "$BAG/metadata.yaml" <<'EOF' || exit 3
@@ -84,6 +110,7 @@ EOF
   echo "play_topics: $PLAY_TOPICS"
   echo "spawn_yaml: $SPAWN_YAML spawn_pose: $POSE anchors: ${ANCHORS[*]} pre_launch: ${PRE_LAUNCH[*]}"
   echo "row_bag: $ROW_BAG oracle: $ORACLE tail_exempt: $TAIL_EXEMPT image: ${IMAGE:-} replay_id: ${REPLAY_ID:-}"
+  echo "loc_map_kind: ${LOC_MAP_KIND:-} loc_map: ${LOC_MAP:-} loc_db: ${LOC_DB:-} map_spawn: ${MAP_SPAWN:-} anchor_pose: $ANCHOR_POSE init_rel: ${INIT_REL:-} gt_builder: $GT_BUILDER"
   echo "loadavg: $(cat /proc/loadavg)"
 } > "$OUT/env.txt"
 
@@ -119,7 +146,7 @@ for a in "${ANCHORS[@]}"; do
   IFS='|' read -r parent child via <<< "$a"
   args=(--parent "$parent" --child "$child")
   if [ -z "$via" ]; then
-    args+=(--pose "$POSE")
+    args+=(--pose "$ANCHOR_POSE")
   else
     args+=(--pose 0,0,0 --via "${via%%>*}" "${via##*>}")
   fi
@@ -134,6 +161,12 @@ for pl in "${PRE_LAUNCH[@]}"; do
   PIDS+=($!)
   i=$((i + 1))
 done
+
+if [ "$GT_BUILDER" = 1 ]; then
+  # 정답 자세 TF 중계 (rtabmap3d_gtdb 전용 — 정답 지도 생성). cleanup 이 PIDS 로 끈다
+  python3 "$SCRIPTS/gt_odom_tf.py" --pose "$POSE" > "$OUT/gt_odom_tf.log" 2>&1 &
+  PIDS+=($!)
+fi
 
 # LIO-SAM save_map 은 $HOME + destination 을 지우고 다시 만든다 → HOME 을 출력 디렉터리로
 export HOME="$OUT"
@@ -194,6 +227,20 @@ if [ "$READY_OK" != 1 ]; then
   exit 4
 fi
 sleep 2                                # 그래프 발견 뒤 DDS 짝짓기 여유 (벽시계)
+if [ "$INITIALPOSE" = 1 ]; then
+  IFS=',' read -r _ix _iy _iyaw <<< "$INIT_REL"
+  _qz=$(python3 -c "import math,sys; print(math.sin(float(sys.argv[1]) / 2))" "$_iyaw")
+  _qw=$(python3 -c "import math,sys; print(math.cos(float(sys.argv[1]) / 2))" "$_iyaw")
+  if timeout 60 ros2 topic pub -w 1 --once /amr_01/initialpose \
+      geometry_msgs/msg/PoseWithCovarianceStamped \
+      "{header: {frame_id: slam_map}, pose: {pose: {position: {x: $_ix, y: $_iy, z: 0.0}, orientation: {z: $_qz, w: $_qw}}}}" \
+      > "$OUT/initialpose.log" 2>&1; then
+    echo "initialpose: $INIT_REL (slam_map)" >> "$OUT/env.txt"
+  else
+    echo "initialpose_failed" >> "$OUT/env.txt"
+  fi
+  sleep 2
+fi
 echo "play_start_wall: $(date -Iseconds) loadavg: $(cat /proc/loadavg)" >> "$OUT/env.txt"
 timeout 60 ros2 service call /rosbag2_player/resume rosbag2_interfaces/srv/Resume '{}' \
   > "$OUT/resume.log" 2>&1 || echo "resume_call_failed" >> "$OUT/env.txt"
@@ -241,7 +288,8 @@ done
 
 case "$ROW" in
   rtabmap*)
-    if [ -f "$OUT/rtabmap.db" ]; then
+    # 위치추정 행의 DB 는 지도(복사본)다 — 그 자세를 이 재생의 궤적으로 내보내지 않는다
+    if [ -f "$OUT/rtabmap.db" ] && [ "$LOC_MAP_KIND" != db ]; then
       rtabmap-export --poses --poses_format 10 --opt 2 --output_dir "$OUT" --output rtabmap \
         "$OUT/rtabmap.db" > "$OUT/export_poses.log" 2>&1 || true
       rtabmap-info "$OUT/rtabmap.db" > "$OUT/db_info.txt" 2>&1 || true

@@ -23,6 +23,14 @@ TF 트리: map ─(anchor_tf, 스폰 자세)→ slam_map → <robot>/icp_odom �
     map_frame      rtabmap map_frame_id (기본 slam_map). 월드 고정은 anchor_tf 가 map → slam_map 으로 한다
     database_path  RTAB-Map DB (기본 /tmp/rtabmap_<dim>.db). 시작 때 지운다 (-d)
     params_file    기본 share/amr_slam3d/config/rtabmap.yaml
+    extra_params   (b2-eval E4) params_file 뒤에 덧붙일 YAML — 절제 실험의 한 손잡이 (기본 '' = 없음)
+    localization   (b2-eval E3(b)) true = 위치추정 모드: Mem/IncrementalMemory false,
+                   Mem/InitWMWithAllNodes true,
+                   RGBD/StartAtOrigin true, DB 를 지우지 않는다 (-d 없음 — 재생 구동기가 지도 DB 사본을 준다)
+    odom_mode      (b2-eval) icp(기본) = 구성 B. gt_tf = 정답 지도 생성 — icp_odometry 없이 rtabmap 이 TF
+                   <robot>/gt_odom → base_footprint (gt_odom_tf.py 가 ground_truth/odom 에서 낸다)를
+                   오도메트리로 쓰고
+                   근접·루프 검출을 끈다 (그래프 = 정답 자세). **SLAM 행이 아니다** — 위치추정 비교의 정답 지도 전용
     log_level      (기본 info)
 """
 
@@ -55,12 +63,26 @@ def resolve_imu(value: str, robot: str) -> str:
     return v
 
 
+#: 위치추정 모드 덮어쓰기 (rtabmap 노드) — 지도를 늘리지 않고, 시작 자세는 지도 원점(또는 initialpose)
+LOCALIZATION_PARAMS = {'Mem/IncrementalMemory': 'false', 'Mem/InitWMWithAllNodes': 'true',
+                       'RGBD/StartAtOrigin': 'true'}
+#: 정답 지도 생성 덮어쓰기 (rtabmap 노드) — 근접·루프 검출을 끈다 (그래프 = 정답 자세 오도메트리)
+GT_DB_PARAMS = {'RGBD/ProximityBySpace': 'false', 'Kp/MaxFeatures': '-1',
+                'subscribe_odom_info': False}
+ODOM_MODES = ('icp', 'gt_tf')
+
+
 def node_setup(dim: str, robot: str, cloud_topic: str, scan_topic: str, imu_topic: str,
                use_guess: bool, map_frame: str, database_path: str, params_file: str,
-               log_level: str):
+               log_level: str, extra_params: str = '', localization: bool = False,
+               odom_mode: str = 'icp'):
     """두 노드의 (파라미터, 리맵) — 런치와 시험(test_config.py)이 같이 쓴다."""
     if dim not in ('3d', '2d'):
         raise RuntimeError(f'dim:={dim} (3d | 2d)')
+    if odom_mode not in ODOM_MODES:
+        raise RuntimeError(f'odom_mode:={odom_mode} ({" | ".join(ODOM_MODES)})')
+    if odom_mode == 'gt_tf' and localization:
+        raise RuntimeError('odom_mode:=gt_tf 는 지도 생성 전용 — localization 과 같이 쓰지 않는다')
     check_imu_topic(imu_topic)
     prefix = f'{robot}/' if robot else ''
     frames = {'frame_id': f'{prefix}base_footprint'}
@@ -76,7 +98,13 @@ def node_setup(dim: str, robot: str, cloud_topic: str, scan_topic: str, imu_topi
         inputs = [('scan', scan_topic), ('scan_cloud', 'scan_cloud_not_used')]
     remaps = inputs + [('odom', 'icp_odom'), ('imu', imu_topic or 'imu_not_used')]
     args = ['--ros-args', '--log-level', log_level]
-    return ([params_file, odom], [params_file, slam], remaps, args)
+    if localization:
+        slam.update(LOCALIZATION_PARAMS)
+    if odom_mode == 'gt_tf':
+        slam.update(GT_DB_PARAMS)
+        slam['odom_frame_id'] = f'{prefix}gt_odom'
+    files = [params_file] + ([extra_params] if extra_params else [])
+    return (files + [odom], files + [slam], remaps, args)
 
 
 def _setup(context):
@@ -92,19 +120,26 @@ def _setup(context):
     params = arg('params_file') or os.path.join(
         get_package_share_directory('amr_slam3d'), 'config', 'rtabmap.yaml')
     use_guess = arg('use_guess').strip().lower() in ('true', '1', 'yes')
+    localization = arg('localization').strip().lower() in ('true', '1', 'yes')
+    odom_mode = arg('odom_mode').strip().lower()
+    extra = arg('extra_params').strip()
     odom_params, slam_params, remaps, ros_args = node_setup(
-        dim, robot, cloud, scan, imu, use_guess, arg('map_frame'), db, params, arg('log_level'))
-    return [
-        LogInfo(msg=f'[amr_slam3d] rtabmap dim={dim} robot={robot} input='
-                    f'{cloud if dim == "3d" else scan} imu={imu or "(없음)"} guess={use_guess} '
-                    f'db={db}'),
-        Node(package='rtabmap_odom', executable='icp_odometry', name='icp_odometry',
-             namespace=robot, output='screen', parameters=odom_params, remappings=remaps,
-             arguments=ros_args),
-        Node(package='rtabmap_slam', executable='rtabmap', name='rtabmap', namespace=robot,
-             output='screen', parameters=slam_params, remappings=remaps,
-             arguments=['-d'] + ros_args),
-    ]
+        dim, robot, cloud, scan, imu, use_guess, arg('map_frame'), db, params, arg('log_level'),
+        extra, localization, odom_mode)
+    nodes = [LogInfo(msg=f'[amr_slam3d] rtabmap dim={dim} robot={robot} input='
+                         f'{cloud if dim == "3d" else scan} imu={imu or "(없음)"} guess={use_guess} '
+                         f'db={db} localization={localization} odom_mode={odom_mode} '
+                         f'extra={extra or "(없음)"}')]
+    if odom_mode == 'icp':
+        nodes.append(Node(package='rtabmap_odom', executable='icp_odometry', name='icp_odometry',
+                          namespace=robot, output='screen', parameters=odom_params,
+                          remappings=remaps, arguments=ros_args))
+    # 위치추정 모드는 지도 DB 를 지우면 안 된다 (-d = 시작 때 DB 삭제)
+    nodes.append(Node(package='rtabmap_slam', executable='rtabmap', name='rtabmap',
+                      namespace=robot, output='screen', parameters=slam_params,
+                      remappings=remaps,
+                      arguments=([] if localization else ['-d']) + ros_args))
+    return nodes
 
 
 def generate_launch_description() -> LaunchDescription:
@@ -120,6 +155,9 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('map_frame', default_value='slam_map'),
         DeclareLaunchArgument('database_path', default_value=''),
         DeclareLaunchArgument('params_file', default_value=''),
+        DeclareLaunchArgument('extra_params', default_value=''),
+        DeclareLaunchArgument('localization', default_value='false'),
+        DeclareLaunchArgument('odom_mode', default_value='icp', description='icp | gt_tf'),
         DeclareLaunchArgument('log_level', default_value='info'),
         OpaqueFunction(function=_setup),
     ])

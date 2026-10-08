@@ -55,6 +55,14 @@ class Row:
     # 입력의 마지막 n 장은 구조적으로 처리되지 않는다 (LIO-SAM imageProjection 2 장 캐시) → 누락 분모에서 뺀다
     tail_exempt: int = 0
     extra: Dict[str, str] = field(default_factory=dict)
+    # ---- b2-eval (E3(b) 위치추정·E4 절제) ----
+    # 위치추정 지도 종류: '' = 매핑 행, 'grid' = AMCL 이 읽을 map_server YAML (환경 LOC_MAP),
+    # 'db' = RTAB-Map 위치추정 모드가 읽을 DB (환경 LOC_DB — 재생마다 출력 디렉터리로 복사해 쓴다)
+    loc_map: str = ''
+    # 재생 시작 전 initialpose 를 낸다 (bag 스폰을 위치추정 지도 프레임으로 — RTAB-Map 위치추정)
+    initialpose: bool = False
+    # 정답 지도 생성 행: ground_truth/odom 을 틀어 그 자세로 RTAB-Map DB 를 만든다 (SLAM 행이 아니다 — 오라클 입력)
+    gt_builder: bool = False
 
 
 _R = f'/{ROBOT}'
@@ -124,6 +132,48 @@ def _rtabmap(name: str, dim: str, imu: str, bag: str = 'orig') -> Row:
                log_processed=RTABMAP_PROCESSED, bag=bag)
 
 
+GT_ODOM = f'{_R}/ground_truth/odom'
+#: 컨테이너 안에서 만들어지는 토픽 (재생하지 않는다) — 구독 확인 대상이 될 수 있다
+MAP_AMCL = f'{_R}/map_amcl'
+INITIALPOSE = f'{_R}/initialpose'
+INTERNAL_TOPICS: Tuple[str, ...] = (MAP_AMCL, INITIALPOSE)
+#: E4 절제 실험 파라미터 파일 (한 손잡이만) — 작업공간 소스 경로 (재생 컨테이너가 /ros2_ws 로 마운트)
+ABLATION_DIR = '/ros2_ws/src/amr_slam3d/config/ablation'
+CLOUD_RAW = f'{_R}/lidar3d/points_raw'
+AMCL_LAUNCH = 'amr_slam3d amcl_loc.launch.py'
+
+
+def _ablation(name: str, knob: str = '', cloud: str = CLOUD) -> Row:
+    """RTAB-Map 3D (IMU 없음, 휠 guess) 에서 한 손잡이만 바꾼 행 — 파라미터 파일 또는 입력 점군."""
+    base = _rtabmap(name, '3d', '')
+    launch = base.launch + (f' extra_params:={ABLATION_DIR}/{knob}.yaml' if knob else '')
+    if cloud != CLOUD:
+        launch += f' cloud_topic:={cloud}'
+    return Row(name=name, image=base.image, launch=launch,
+               play_topics=CLOCK + TF + (cloud,), input_topic=cloud, input_kind='cloud',
+               map_topic=base.map_topic, processed=base.processed,
+               fatal_patterns=base.fatal_patterns, note_patterns=base.note_patterns,
+               log_processed=base.log_processed, bag='orig')
+
+
+def _amcl(name: str) -> Row:
+    """AMCL 위치추정 (배포 amcl.yaml) — 지도는 재생마다 LOC_MAP 으로 준다. AMCL 의 global frame = map(월드)."""
+    return Row(name=name, image='amr-ai/slam:0.1', launch=AMCL_LAUNCH,
+               play_topics=CLOCK + TF + (SCAN,), input_topic=SCAN, input_kind='scan',
+               anchors=(), fatal_patterns=(), note_patterns=('Message Filter dropping',),
+               loc_map='grid')
+
+
+def _rtabloc(name: str) -> Row:
+    """RTAB-Map 3D 위치추정 모드 (구성 B 오도메트리 + 지도 DB, 증분 끔) — DB 는 재생마다 LOC_DB 로 준다."""
+    base = _rtabmap(name, '3d', '')
+    return Row(name=name, image=base.image, launch=base.launch + ' localization:=true',
+               play_topics=base.play_topics, input_topic=base.input_topic, input_kind='cloud',
+               map_topic=base.map_topic, processed=base.processed,
+               fatal_patterns=base.fatal_patterns, note_patterns=base.note_patterns,
+               log_processed=base.log_processed, loc_map='db', initialpose=True)
+
+
 ROWS: Dict[str, Row] = {
     'rtabmap3d': Row(
         name='rtabmap3d', image='amr-ai/slam:0.1',
@@ -184,6 +234,27 @@ ROWS: Dict[str, Row] = {
     'liosam_planar': _liosam('liosam_planar',
                              'loop:=true rpy_weight:=0.0 z_tol:=0.0 rot_tol:=0.0', IMU_MADG_RE),
     'liosam_oracle': _liosam('liosam_oracle', 'loop:=true', IMU_ORACLE, oracle=True),
+    # ---- b2-eval (2026-10-09): E3(b) 위치추정 모드, 정답 자세 DB, E4 절제 ----
+    'amcl_gt': _amcl('amcl_gt'),
+    'amcl_slam': _amcl('amcl_slam'),
+    'rtabmap3d_loc_gt': _rtabloc('rtabmap3d_loc_gt'),
+    'rtabmap3d_loc_slam': _rtabloc('rtabmap3d_loc_slam'),
+    # 정답 지도(RTAB-Map 표현): 같은 장들을 정답 자세(ground_truth/odom → gt_odom TF)에 놓은 DB. 루프·근접 끔
+    'rtabmap3d_gtdb': Row(
+        name='rtabmap3d_gtdb', image='amr-ai/slam:0.1',
+        launch='amr_slam3d rtabmap.launch.py dim:=3d imu_topic:=none odom_mode:=gt_tf',
+        play_topics=CLOCK + ('/tf_static', CLOUD, GT_ODOM), input_topic=CLOUD,
+        input_kind='cloud', map_topic=f'{_R}/map', fatal_patterns=RTABMAP_FATAL,
+        gt_builder=True),
+    'rtabmap3d_abl_vox005': _ablation('rtabmap3d_abl_vox005', 'vox005'),
+    'rtabmap3d_abl_vox02': _ablation('rtabmap3d_abl_vox02', 'vox02'),
+    'rtabmap3d_abl_vox03': _ablation('rtabmap3d_abl_vox03', 'vox03'),
+    'rtabmap3d_abl_p2p': _ablation('rtabmap3d_abl_p2p', 'p2p'),
+    'rtabmap3d_abl_obs10': _ablation('rtabmap3d_abl_obs10', 'obs10'),
+    'rtabmap3d_abl_obs20': _ablation('rtabmap3d_abl_obs20', 'obs20'),
+    'rtabmap3d_abl_opt10': _ablation('rtabmap3d_abl_opt10', 'opt10'),
+    'rtabmap3d_abl_opt30': _ablation('rtabmap3d_abl_opt30', 'opt30'),
+    'rtabmap3d_abl_raw': _ablation('rtabmap3d_abl_raw', '', CLOUD_RAW),
 }
 
 #: 파생 bag 에만 있는 토픽 (madg_lockstep.py 가 만든다)
@@ -263,7 +334,11 @@ def ready_requirements(r: Row) -> Tuple[Tuple[str, str], ...]:
     """행이 재생 전에 연결돼 있어야 하는 (토픽, 구독 노드 이름) 목록 (노드 이름 = Node name 줄, 네임스페이스 무시)."""
     imu = next((t for t in r.play_topics if '/imu/' in t), '')
     req = [(r.input_topic, PROBE_NODE)]
-    if 'rtabmap.launch.py' in r.launch:
+    if 'odom_mode:=gt_tf' in r.launch:
+        req += [(r.input_topic, 'rtabmap'), (GT_ODOM, 'gt_odom_tf')]
+    elif 'amcl_loc.launch.py' in r.launch:
+        req += [(r.input_topic, 'amcl'), (MAP_AMCL, 'amcl')]
+    elif 'rtabmap.launch.py' in r.launch:
         req += [(r.input_topic, 'icp_odometry'), (r.input_topic, 'rtabmap')]
         if imu and r.pre_launch:
             req += [(imu, 'imu_filter_madgwick'), (IMU_MADGWICK, 'icp_odometry')]
@@ -276,6 +351,8 @@ def ready_requirements(r: Row) -> Tuple[Tuple[str, str], ...]:
                 (imu, 'lio_sam_imu_preintegration')]
     else:
         raise ValueError(f'행 {r.name}: 구독 확인 규칙이 없다')
+    if r.initialpose:
+        req += [(INITIALPOSE, 'rtabmap')]
     # 처리 출력의 C++ 기록기 (replay_row.sh out_bag) — 첫 출력부터 세려면 재생 전에 붙어 있어야 한다
     req += [(t, RECORDER_NODE) for t, _, _ in r.processed]
     return tuple(req)
