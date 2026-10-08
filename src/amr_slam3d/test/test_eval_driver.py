@@ -138,3 +138,9 @@ def test_peval_families_and_feasibility(tmp_path):
     res = json.loads((out / 'compare.json').read_text())
     assert res['rows']['rtabmap3d_noimu']['fail'] == 0
     assert math.isfinite(res['rows']['rtabmap2d_noimu']['metrics']['ate_rmse_cm']['between_sd'])
+
+
+def test_snapshot_head_is_used_when_present(tmp_path):
+    (tmp_path / 'SNAPSHOT_HEAD').write_text('abc123\n')
+    head, st = drv.wt_head(str(tmp_path))
+    assert head == 'abc123' and st.startswith('snapshot')

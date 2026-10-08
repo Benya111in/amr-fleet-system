@@ -4,7 +4,8 @@
 - 코드: 사전 등록 커밋 = 이 항목을 넣은 커밋 (브랜치 `feature/b2-eval`, 분기 `feature/bonus2-slam3d` `3d0a17d`).
   분석·구동 스크립트 sha256 (이 커밋의 파일):
   - `src/amr_slam3d/scripts/peval.py` `6de70f13fa0ff4f33e9b4bfcd3ced05882a712a6f8f15bf563ed4dd141c6d3fa`
-  - `src/amr_slam3d/scripts/eval_driver.py` `83378c18e08575af969b6aa2a2b68faaec48d8ee7dfafa254bcaa0869fe7846c`
+  - `src/amr_slam3d/scripts/eval_driver.py` `7c62fdd939c90deab4a93e867ae4701681c2fc6fb7aa77df21eaee883eae663a` (686d902 판 `83378c18…` 에서 실행 전에 바꿈 — 재생을 git archive
+    스냅샷(`SNAPSHOT_HEAD`)에서 돌리는 기능만 더했다. 결과를 보기 전, 재생 0 건일 때)
   - `src/amr_evaluation/amr_evaluation/slam3d/pstats.py` `58c37a2e1846735eaac447b774443a4df6ee34deb56064bb3df310c52249d048`
   - `src/amr_evaluation/amr_evaluation/slam3d/pmetrics.py` `916666f0a4223e1f121418adb24c111629cc5a30fbe59bcba05831a90ac0d6f0`
 - 관련 실행 id: `B2eval-e2-<bag>-<행>-r<k>` (재생 144), `B2eval-validate-pilot` (분석 도구 검증), `B2eval-test-*`

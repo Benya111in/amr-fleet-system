@@ -237,14 +237,29 @@ def try_claim(root, j, live):
         return False
 
 
-def start_job(root, wt, j):
-    """출력 디렉터리에 HEAD·status·job.json 을 쓰고 컨테이너를 띄운다 (Popen)."""
-    o = out_dir(root, j)
-    os.makedirs(o, exist_ok=True)
+def wt_head(wt):
+    """
+    작업공간의 (HEAD, git status) — 스냅샷(git archive 사본)이면 SNAPSHOT_HEAD 파일.
+
+    재생은 실행 중 바뀌지 않는 사본에서 돈다: bash 는 스크립트를 읽어 가며 실행하므로 작업 중인 worktree 를 마운트하면
+    E3(b)·E4 코드를 고치는 동안 돌던 재생이 바뀐 replay_row.sh·rows.py 를 읽을 수 있다.
+    """
+    snap = os.path.join(wt, 'SNAPSHOT_HEAD')
+    if os.path.isfile(snap):
+        with open(snap, encoding='utf-8') as f:
+            return f.read().strip(), 'snapshot (git archive, 미커밋 변경 없음)\n'
     head = subprocess.run(['git', '-C', wt, 'rev-parse', 'HEAD'], capture_output=True,
                           text=True).stdout.strip()
     st = subprocess.run(['git', '-C', wt, 'status', '--porcelain'], capture_output=True,
                         text=True).stdout
+    return head, st
+
+
+def start_job(root, wt, j):
+    """출력 디렉터리에 HEAD·status·job.json 을 쓰고 컨테이너를 띄운다 (Popen)."""
+    o = out_dir(root, j)
+    os.makedirs(o, exist_ok=True)
+    head, st = wt_head(wt)
     with open(os.path.join(o, 'HEAD.txt'), 'w', encoding='utf-8') as f:
         f.write(head + '\n')
     with open(os.path.join(o, 'status.txt'), 'w', encoding='utf-8') as f:
