@@ -69,21 +69,53 @@ def read_imu(path):
     return imu, rec, meta, raw_by_key
 
 
+#: bag 의 처음·끝에서 짝 imu/data_raw 가 없어도 되는 imu/data 수 (b2-rec 녹화: 기록기가 imu/data 를 imu/data_raw 보다
+#: 먼저 구독하면 첫 imu/data 의 입력 raw 는 기록 전에 나갔다 — s3_aisle_a1 의 sim 11.415 s [측정])
+EDGE_UNPAIRED_MAX = 10
+
+
+def edge_unpaired(paired):
+    """
+    짝 여부 열 → (앞 짝 없음 수, 뒤 짝 없음 수). 가운데에 짝 없는 것이 있거나 끝 묶음이 상한을 넘으면 오류.
+
+    가운데의 짝 없음은 기록 유실이라 오라클 토픽이 imu/data 와 어긋난다 — 조용히 넘기지 않는다.
+    """
+    n = len(paired)
+    head = 0
+    while head < n and not paired[head]:
+        head += 1
+    tail = 0
+    while tail < n - head and not paired[n - 1 - tail]:
+        tail += 1
+    if not all(paired[head:n - tail]):
+        raise RuntimeError('imu/data 가운데에 짝 imu/data_raw 가 없는 표본이 있다 (기록 유실)')
+    if head > EDGE_UNPAIRED_MAX or tail > EDGE_UNPAIRED_MAX:
+        raise RuntimeError(f'bag 끝의 짝 없는 imu/data 가 너무 많다 (앞 {head}, 뒤 {tail})')
+    return head, tail
+
+
 def oracle_messages(imu, raw_by_key):
-    """imu/data 각 메시지에 같은 스탬프 imu/data_raw 의 방위·방위 공분산을 옮긴 원시 바이트 (짝 없으면 오류)."""
+    """
+    imu/data 각 메시지에 같은 스탬프 imu/data_raw 의 방위·방위 공분산을 옮긴 원시 바이트.
+
+    짝 없는 표본은 bag 처음·끝 묶음(EDGE_UNPAIRED_MAX 이하)만 허용하고 None 으로 둔다 (그 시각에는 오라클 토픽을
+    쓰지 않는다). 반환: (목록, (앞, 뒤) 짝 없음 수).
+    """
     from rclpy.serialization import deserialize_message, serialize_message
     from sensor_msgs.msg import Imu
+    keys = [bagstat.cdr_header_key(raw) for _, raw in imu]
+    edges = edge_unpaired([k in raw_by_key for k in keys])
     out = []
-    for _, raw in imu:
-        key = bagstat.cdr_header_key(raw)
+    for key, (_, raw) in zip(keys, imu):
         if key not in raw_by_key:
-            raise RuntimeError(f'imu/data 스탬프 {key} 에 짝 imu/data_raw 가 없다')
+            out.append(None)
+            continue
         m = deserialize_message(raw, Imu)
         g = deserialize_message(raw_by_key[key], Imu)
         m.orientation = g.orientation
         m.orientation_covariance = g.orientation_covariance
         out.append(serialize_message(m))
-    return out
+    return out, edges
 
 
 def start_nodes(gains, params, log_dir):
@@ -181,7 +213,7 @@ def write_bag(in_bag, out_bag, copy, gains, outs, rec_meta, oracle_topic='', ora
             for g, (_, out_topic) in enumerate(gains):
                 w.write(out_topic, outs[k][g], t)
                 counts[out_topic] += 1
-            if oracle_topic:
+            if oracle_topic and oracle[k] is not None:
                 w.write(oracle_topic, oracle[k], t)
                 counts[oracle_topic] += 1
             k += 1
@@ -199,6 +231,11 @@ def analyse(imu, rec, gains, outs, raw_by_key):
     def q_of(m):
         o = m.orientation
         return [o.x, o.y, o.z, o.w]
+    # 짝 imu/data_raw 가 없는 bag 끝 표본은 분석에서 뺀다 (edge_unpaired 가 끝 묶음만 허용한다)
+    pair = [bagstat.cdr_header_key(raw) in raw_by_key for _, raw in imu]
+    n_unpaired = len(pair) - sum(pair)
+    imu = [x for x, ok in zip(imu, pair) if ok]
+    outs = [o for o, ok in zip(outs, pair) if ok]
     ins = [deserialize_message(raw, Imu) for _, raw in imu]
     t_in = np.array([m.header.stamp.sec + 1e-9 * m.header.stamp.nanosec for m in ins])
     q_id = np.array([q_of(m) for m in ins])
@@ -208,7 +245,7 @@ def analyse(imu, rec, gains, outs, raw_by_key):
     turning = np.abs(wz) > 0.1
     ident = np.tile([0.0, 0.0, 0.0, 1.0], (len(q_id), 1))
     gt_yaw = np.degrees(np.unwrap(imustat.quat_to_rpy(q_gt)[:, 2]))
-    rep = {'n_input': len(ins), 'n_turning': int(turning.sum()),
+    rep = {'n_input': len(ins), 'n_unpaired_dropped': n_unpaired, 'n_turning': int(turning.sum()),
            'turning_rule': '|gyro z| > 0.1 rad/s',
            'reference': 'imu/data_raw orientation (Gazebo 정답, 같은 스탬프)',
            'imu_data_orientation_vs_identity_max_deg':
@@ -301,8 +338,9 @@ def main(argv=None) -> int:
               'params': os.path.abspath(ns.params), 'copy': ns.copy,
               'started': time.strftime('%Y-%m-%dT%H:%M:%S%z')}
     imu, rec, meta, raw_by_key = read_imu(ns.in_bag)
-    oracle = oracle_messages(imu, raw_by_key) if ns.oracle_topic else []
+    oracle, edges = oracle_messages(imu, raw_by_key) if ns.oracle_topic else ([], (0, 0))
     report['oracle_topic'] = ns.oracle_topic
+    report['oracle_unpaired_head_tail'] = list(edges)
     procs = start_nodes(gains, ns.params, log_dir)
     try:
         time.sleep(3.0)
