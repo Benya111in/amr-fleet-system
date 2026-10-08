@@ -145,6 +145,26 @@ b2-offline 의 파일럿 재생 12 개(`/home/CAPYI_AI/runs/b24/b2-offline/repla
 누락 1, liosam_planar r1 누락 2, slam_toolbox r2 메시지 필터 1). slam_toolbox 지도 ADNN₀ surface 4.618 / F1 0.746 / IoU 0.548 은
 rtabmap.md §4.3 의 4.62 / 0.746 / 0.548 과 같다. 이 검증은 공개된 결과의 재계산이라 새 정보를 보지 않았다.
 
+## 실행 중 기록 (지표를 보기 전 — 누락·rc·구동기 상태만)
+
+- **재생 사본**: E2 는 `ws_e2` = `ebf0cea` (git archive) 에서 돈다 — 사전 등록 커밋(686d902) 뒤 E3(b)·E4 행·launch 인자를 더했지만
+  E2 행의 동작은 같다 (기본 인자 그대로, 시험 `test_config.py` 전체 통과). 구동기는 그 뒤 두 번 바꿨다 (아래).
+- **00:04–00:30 부하 대기**: 부하 규칙(다른 부하 ≤ 48)에 막혀 재생 0. 다른 사용자 openroad·ruby 등으로 loadavg 66–132.
+  00:11 구동기 수정(부하에 막히면 빈 슬롯을 쥐지 않는다, `ebf0cea`) 뒤 다시 띄웠다. 00:30 첫 재생 8 개 (map_long 6 + 정답 자세 DB + LIO-SAM 1).
+- **01:17 구동기 결함 (결과 무관, 복구함)**: 컨테이너가 끝나고 그 pool 이 30 s 주기로 거두기 전에 다른 pool 이 claim 을 "낡은 것"
+  으로 보고, **끝난 출력**을 `.aborted` 로 옮긴 뒤 같은 재생을 다시 띄웠다 — `map_long` slam_toolbox r0, rtabmap3d_noimu r2,
+  정답 자세 DB r0 3 건. 원래 재생의 pool 은 rc 0 으로 끝났다 (driver.log END rc=0). 복구: 중복 재생 3 개를 `docker stop`
+  (rc 143) 하고 `.dup.<시각>` 으로 남김, 원래 출력(`loadavg_end` 까지 감)을 제자리로 되돌리고 DONE 에 복구 메모. 고친 구동기
+  (`2648ad7` — claim 에 주인 pool pid, 주인이 살아 있으면 건드리지 않고 주인 없이 끝난 출력은 DONE(rc 0 추정))를 01:21 에 다시 띄웠다.
+  옛 pool 을 죽인 01:20–01:3x 사이에는 그 pool 이 띄운 재생 5 개(map_long rtabmap2d r0, s1_seed1 네 행 r0)가 슬롯 밖에서
+  끝까지 돌았다 (슬롯 규칙 위반 — 그 동안 동시 재생 최대 10).
+- **동시 수 규칙 발동 (01:25)**: 처음 끝난 재생 중 처리 스캔 판정 누락 > 0 이 3 개 — map_long `rtabmap3d_noimu` r0·r1·r2
+  (6 956 장 중 10·7·12 장, 모두 sim 70–200 s, 그 구간의 loadavg 85 → 50). 사전 등록 규칙대로 k 4 → **2 / 슬롯** (동시 4).
+  map_long 의 slam_toolbox 3 재생은 메시지 필터 버림 0, liosam_planar r0 은 판정 누락 0.
+- E3(b) 지도 선택 (`peval.py select-maps`, 01:21, 사전 등록 규칙 — ATE 값은 보지 않고 고른 번호만 확인): slam_toolbox **r1**
+  (깨끗한 후보 3 → ATE 중앙값), rtabmap3d_noimu **r1** (깨끗한 후보 0 → 누락이 가장 적은 재생 = 7 장, "실패 재생의 지도").
+  `maps/selection.json`, 지도 sha256 은 `maps/` 아래.
+
 ## 결과
 
 (E2 끝난 뒤 채운다)
