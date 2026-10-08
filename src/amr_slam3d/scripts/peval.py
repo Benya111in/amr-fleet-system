@@ -865,6 +865,44 @@ def cmd_compare_abl(ns):
     return 0
 
 
+# ======================================================================== E3(b) 2D 정답 지도
+def perfect_map(occ01, res01=0.01, res=0.05):
+    """
+    "완전한 지도" (evaluation.md §2): 0.01 m GT 단면의 **면이 지나는** 0.05 m 셀만 점유, 고체 안쪽은 미지, 나머지 자유.
+
+    반환 int16 [행, 열] (−1 미지, 0 자유, 100 점유) — OccupancyGrid 규약, 행 0 = 최하단. 0.01 경계 셀(8 이웃에 비점유)을
+    품은 0.05 셀이 점유다 — 셀 중심이 면에서 ±2.5 cm 안에 고르게 놓여 평균 편향이 없다 (SLAM 지도의 얇은 띠와 같은 모양).
+    채운 단면 래스터를 그대로 주면 배포 scan_matcher 의 "띠 중심선" 면 점이 고체 안쪽으로 밀린다 (파일럿 정지 오차 7 cm).
+    """
+    from amr_evaluation.slam3d import gridmap
+    k = int(round(res / res01))
+    rows, cols = occ01.shape
+    r2, c2 = rows // k, cols // k
+    occ = occ01[:r2 * k, :c2 * k]
+    surf = gridmap.surface(occ)
+    any_surf = surf.reshape(r2, k, c2, k).any(axis=(1, 3))
+    any_occ = occ.reshape(r2, k, c2, k).any(axis=(1, 3))
+    out = np.zeros((r2, c2), dtype=np.int16)
+    out[any_occ] = -1
+    out[any_surf] = 100
+    return out
+
+
+def cmd_perfect_map(ns):
+    """GT 0.01 단면 → 0.05 m 완전한 지도 (map_server 형식) — E3(b) 2D 행의 정답 지도."""
+    from amr_evaluation.slam3d import gridmap
+    from amr_slam3d import grid as ogrid
+    g = gridmap.read_map_yaml(os.path.join(GT_DIR, GT_GRID))
+    data = perfect_map(g.occupied, g.resolution, ns.res)
+    og = ogrid.OccGrid(data, ns.res, (g.origin_x, g.origin_y, 0.0))
+    os.makedirs(ns.out, exist_ok=True)
+    pgm, yml = ogrid.write_map(os.path.join(ns.out, f'perfect_r{ns.res:.3f}'), og,
+                               comment=f'완전한 지도: {GT_DIR}/{GT_GRID} 의 면이 지나는 {ns.res} m 셀')
+    print(json.dumps({'pgm': pgm, 'yaml': yml, 'occupied': int((data == 100).sum()),
+                      'unknown': int((data == -1).sum()), 'free': int((data == 0).sum())}))
+    return 0
+
+
 # ======================================================================== E3(b) 지도 선택
 SELECT = {'sel_slam_toolbox': ('slam_toolbox', ('map_world.yaml', 'map_world.pgm')),
           'sel_rtabmap3d': ('rtabmap3d_noimu', ('rtabmap.db',))}
@@ -960,6 +998,9 @@ def main(argv=None):
     s = sub.add_parser('compare')
     s.add_argument('--replays', nargs='+', required=True)
     s.add_argument('--out', required=True)
+    s = sub.add_parser('perfect-map')
+    s.add_argument('--out', required=True)
+    s.add_argument('--res', type=float, default=0.05)
     s = sub.add_parser('select-maps')
     s.add_argument('--rec', default=REC)
     s.add_argument('--root', required=True)
@@ -974,7 +1015,7 @@ def main(argv=None):
     ns = ap.parse_args(argv)
     return {'cache': cmd_cache, 'replays': cmd_replays, 'compare': cmd_compare,
             'compare-loc': cmd_compare_loc, 'compare-abl': cmd_compare_abl,
-            'select-maps': cmd_select_maps}[ns.cmd](ns)
+            'select-maps': cmd_select_maps, 'perfect-map': cmd_perfect_map}[ns.cmd](ns)
 
 
 if __name__ == '__main__':

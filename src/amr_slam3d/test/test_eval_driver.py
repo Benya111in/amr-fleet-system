@@ -292,3 +292,15 @@ def test_claim_owner_alive_blocks_stale_and_complete_run_is_adopted(tmp_path):
     os.utime(c2, (old, old))
     assert drv.try_claim(root, j2, set())                    # .aborted 로 옮기고 다시 잡는다
     assert any('.aborted.' in n for n in os.listdir(os.path.dirname(drv.out_dir(root, j2))))
+
+
+def test_perfect_map_marks_surface_crossing_cells():
+    import numpy as np
+    occ = np.zeros((40, 40), dtype=bool)
+    occ[5:35, 7:39] = True                          # 0.01 m 고체: 면 x 0.07·0.39, y 0.05·0.35
+    m = peval.perfect_map(occ, 0.01, 0.05)
+    assert m.shape == (8, 8)
+    assert (m[1:7, 1] == 100).all()                 # 왼쪽 면 (x 0.07) 이 지나는 0.05 셀
+    assert (m[1, 1:8] == 100).all()                 # 아래 면 (y 0.05)
+    assert m[3, 0] == 0 and m[0, 3] == 0            # 고체 밖 = 자유
+    assert (m[2:6, 2:7] == -1).all()                # 면이 지나지 않는 고체 안쪽 = 미지

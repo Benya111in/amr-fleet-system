@@ -148,8 +148,10 @@ def plan_e3():
     jobs = [job('e3', 'map_long_a1', 'rtabmap3d_gtdb', 0, 15, 46, image=SLAM_IMG, kind='bag')]
     jobs[0]['wt'] = WS_E3
     maps = {
-        'amcl_gt': ({'LOC_MAP': '/data/map/slice_z0.200_r0.050.yaml'},
-                    [f'{MAPS}/slice_z0.200_r0.050.yaml']),
+        # 2D 정답 지도 = 완전한 지도 (면이 지나는 0.05 셀만 점유 — peval.py perfect-map). 채운 단면 래스터는 배포
+        # scan_matcher 의 면 점을 고체 안으로 밀어 파일럿에서 정지 오차 7 cm 를 냈다 (E3(b) 사전 등록 항목)
+        'amcl_gt': ({'LOC_MAP': '/data/map/perfect_r0.050.yaml'},
+                    [f'{MAPS}/perfect_r0.050.yaml']),
         'amcl_slam': ({'LOC_MAP': '/data/map/sel_slam_toolbox/map_world.yaml'},
                       [f'{MAPS}/sel_slam_toolbox/map_world.yaml']),
         'rtabmap3d_loc_gt': ({'LOC_DB': '/data/map/gtdb/rtabmap.db', 'MAP_SPAWN': MAP_LONG_SPAWN},
