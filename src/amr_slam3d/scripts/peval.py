@@ -431,6 +431,10 @@ def cmd_replays(ns):
                 tr = _read_tum3(os.path.join(d, 'traj_online.tum'))
                 wt.append(tr[0] if tr else None)
         window = window_for(gt2.t, wt)
+        if ns.warmup:
+            # E3(b) 위치추정: 시작 정지 구간의 처음 warmup 초는 평가에서 뺀다 (배포 map EKF 는 첫 amcl_pose 전 원점에
+            # 있다 — 두 사슬에 같은 규칙, 모든 bag 은 처음 ≥ 10 s 정지)
+            window = (window[0] + ns.warmup, window[1])
         windows[bag] = window
         ce = None
         if not ns.no_cloud and any(_row_is3d(r[1]) for r in runs if r[0] == bag):
@@ -992,6 +996,8 @@ def main(argv=None):
     s.add_argument('--window-stage', default=None)
     s.add_argument('--window-rows', nargs='*', default=None)
     s.add_argument('--no-grid', action='store_true')
+    s.add_argument('--warmup', type=float, default=0.0,
+                   help='[s, sim] 창 시작에서 더 뺄 시간 (E3(b) 위치추정 2.0)')
     s.add_argument('--grid-band', action='store_true',
                    help='대역 0.05–2.0 m GT 로도 지도 지표 (_band) — E4 높이 대역 행')
     s.add_argument('--no-cloud', action='store_true')
