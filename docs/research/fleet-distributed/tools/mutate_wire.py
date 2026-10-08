@@ -37,7 +37,8 @@ GTEST = 'cd {d}/ws/build/amr_behavior && ctest --output-on-failure -R "^{t}$"'
 
 W1 = ('cd {d}/src/amr_behavior/test_fleet_world && PYTHONPATH={d}/src/amr_fleet:$PYTHONPATH '
       'TASK_EXECUTOR_EXE=/tmp/mw/base/ws/build/amr_behavior/task_executor_node '
-      'AMR_WIRE_RAW=/tmp/mw/{t}_raw python3 -m pytest -q -x -p no:cacheprovider test_wire_launch.py'
+      'AMR_WIRE_RAW=/tmp/mw/{t}_raw python3 -m pytest -q -x -p no:cacheprovider '
+      'test_wire_launch.py'
       ' ; rc=$? ; cp -r /tmp/mw/{t}_raw $OUT_DIR/ 2>/dev/null ; exit $rc')
 
 # (id, 설명, 파일, [(원문, 치환)], 빌드 필요, 시험 명령 틀, 시험)
@@ -74,7 +75,8 @@ MUTATIONS = [
      True, GTEST, 'test_zone_bt_nodes'),
     ('M-GC', '협상 표 낡은 LOCKED 정리를 하지 않는다', CORE,
      [('        seen = set()\n        for task, bid in list(self.cbaa.table.items()):',
-       '        return\n        seen = set()\n        for task, bid in list(self.cbaa.table.items()):')],
+       '        return\n        seen = set()\n'
+       '        for task, bid in list(self.cbaa.table.items()):')],
      False, PY_FLEET, 'test/test_agent_dispatch.py'),
     ('M-PLAN', '에이전트 노드가 plan 을 경로 게이트에 넣지 않는다 (ROS 결선 — launch W1 이 잡아야)',
      NODE, [('        self.core.set_plan(pts if len(pts) >= 2 else None)',
