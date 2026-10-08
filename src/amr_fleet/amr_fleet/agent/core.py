@@ -9,7 +9,13 @@
 - 모드 상태기 (modes.py), 에포크 펜스 (EpochFence — 하트비트 · 중앙 명령 모두 거른다, 따로 영속 파일).
 - CBAA 협상 (DEGRADED 에서만, 라운드 = sim round_s), 작업 ID 잠금 VoteTaskLock (hold_enter + commit).
 - 복제 WFG (비컨의 out-edge → 같은 Tarjan → 같은 희생자, 진단만 — 해소 동작은 P5).
-- 가짜 실행기 (선택, 시험 · 빠른 계층용).
+- 가짜 실행기 (선택, 시험 · 빠른 계층용). 없으면(실제 실행기) 협상 낙찰을 송신함의 dispatch 로 내고 노드가 실행기
+  assign_task 로 넘긴다 (b4-wire). 실행기가 거부하면 잠정 잠금을 놓고 낙찰을 버린다 (busy 면 나중에 다시 입찰),
+  task_status 로 끝을 받는다. 실행기가 IDLE 이 아니거나 중앙 작업을 하는 동안에는 입찰하지 않는다.
+- 경로 게이트 (선택, b4-wire — agent/path_gate.py): 로봇의 plan · 자세로 구역 사슬을 미리 요청하고, 결정점 안에서
+  허가가 없으면 상태의 requested 에 "지금 허가가 있어야 움직일 수 있는 미보유 구역" 을 싣는다 (BT ZonePathClear 가
+  본다). 지나온 구역은 경로 · 사슬 · 몸체 밖이면 해제 후보로 (몸체 판정은 해제 게이트). 켜면 구역 요청은 게이트가
+  쥔다 — BT 의 명시 ACQUIRE(ZoneMoveTo)와 함께 쓰지 않는다 (게이트가 필요 없는 요청을 취소한다).
 
 입력(메시지 · 시각)을 받으면 보낼 것을 내부 송신함에 쌓고, 호출자(ROS 노드)가 drain() 으로 꺼내 보낸다.
 안전에 관한 규칙은 투표 코어에 있다 — 이 파일은 그 코어를 부르는 순서와 모드별 허용만 정한다.
@@ -21,9 +27,12 @@ import dataclasses
 import math
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
+import numpy as np
+
 from amr_fleet.agent.modes import (
     DEGRADED, MODE_CODES, ModeConfig, ModeMachine, SERVER_CODES,
 )
+from amr_fleet.agent.path_gate import GateDecision, PathGate
 from amr_fleet.agent.sim_exec import SimExecConfig, SimExecutor
 from amr_fleet.agent.task_lock_vote import TASK_PREFIX, task_resource, VoteTaskLock
 from amr_fleet.deadlock import EDGE_TOKEN
@@ -38,7 +47,7 @@ from amr_fleet.distributed.wfg import (
     OutEdge, ProgressConfirmer, ReplicatedWfg, select_victim, WaitInfo,
 )
 from amr_fleet.negotiation.agent import AgentConfig as NegConfig, CbaaAgent
-from amr_fleet.negotiation.bids import StateMessage
+from amr_fleet.negotiation.bids import NO_BID, StateMessage
 
 STATUS_COMPLETED = 2  # amr_msgs/Task.STATUS_*
 STATUS_FAILED = 3
@@ -54,6 +63,10 @@ OP_ACQUIRE = 0       # amr_msgs/srv/ZoneCommand.OP_*
 OP_RELEASE = 1
 OP_CANCEL = 2
 OP_COMMIT_TASK = 3
+
+# 경로 게이트가 경로를 보는 실행기 단계 (amr_behavior executor/phase) — 이 밖(도킹 · 적재 · 대기 · 오류)에서는 plan 이
+# 지난 주행의 것이라 쓰지 않는다. 단계를 아직 모르면(None) 본다 (fail-closed 쪽)
+MOVING_PHASES = frozenset({'MOVING', 'RETURNING', 'RECOVERING'})
 
 GATE_NONE = 'none'          # 해제 요청을 곧바로 RELEASE (몸체 판정 없음 — 시험 · 기하가 없을 때)
 GATE_ZONE_MAP = 'zone_map'  # 위치추정 건강 + 몸체(원판)가 구역 다각형 밖일 때만 RELEASE (판정 불가면 보류)
@@ -81,6 +94,14 @@ class CoreConfig:
     release_margin_m: float = 0.1
     accept_unfenced: bool = True                  # 펜스가 생기기 전에만 epoch 0 명령(옛 구성)을 받는다
     sim_exec: Optional[SimExecConfig] = None      # 가짜 실행기 (None = 실제 실행기가 따로 있다)
+    # 협상 표의 낡은 LOCKED 정리 (b4-wire): CBAA 는 잠정 과반(GRANTED)에서 LOCKED 를 알리고 "잠금은 사실" 이라 남이
+    # 영영 지우지 못한다 — 그 로봇이 픽업 전에 실패해 놓으면 아무도 다시 못 잡는다. 켜면 보유자의 신선한 비컨이
+    # stale_lock_s 동안 이어서 "그 작업을 쫓지도 쥐지도 않음" 이면 내 표에서 지운다 (안전은 작업 ID 잠금이 진다).
+    # 판단에 쓰는 비컨은 그 LOCKED 를 처음 본 뒤 stale_lock_margin_s 넘어 만들어진 것이어야 한다 (비컨 stamp) — 낙찰
+    # 직전에 만든 비컨(현재 작업 없음)이 손실로 오래 남아 있으면 쫓는 중인데도 지우던 거짓 양성 (W-diag B, 결과 뒤 변경)
+    stale_lock_gc: bool = False
+    stale_lock_s: float = 1.0
+    stale_lock_margin_s: float = 0.5              # 로봇 사이 시계 어긋남 여유 (state 의 미래 stamp 허용치와 같은 값)
 
     def __post_init__(self):
         members = tuple(sorted(set(self.members)))
@@ -151,6 +172,7 @@ class Outbox:
     neg: Optional[StateMessage] = None
     events: List[Dict[str, Any]] = dataclasses.field(default_factory=list)
     state_changed: bool = False
+    dispatch: List[str] = dataclasses.field(default_factory=list)   # 실제 실행기로 넘길 협상 낙찰
 
 
 @dataclasses.dataclass
@@ -206,7 +228,8 @@ class FleetAgentCore:
     """로봇 1 대의 에이전트. boot() 로 만든다."""
 
     def __init__(self, cfg: CoreConfig, zone: ZoneAgent, task: ZoneAgent, fence: EpochFence,
-                 now: float, zone_polygons: Optional[Mapping[str, Any]] = None):
+                 now: float, zone_polygons: Optional[Mapping[str, Any]] = None,
+                 path_gate: Optional[PathGate] = None):
         self.cfg = cfg
         self.me = cfg.robot_id
         self.now = float(now)
@@ -221,6 +244,14 @@ class FleetAgentCore:
         self.wfg = ReplicatedWfg(ttl_s=cfg.beacon_ttl_s)
         self.confirmer = ProgressConfirmer()
         self.zone_polygons = dict(zone_polygons or {})   # 'zone:<id>' → 다각형 (zone_map 게이트)
+        self.path_gate = path_gate
+        if path_gate is not None and not self.zone_polygons:
+            self.zone_polygons = path_gate.polygons()
+        self.plan = None                                  # 로봇 전역 경로 (N, 2) map — 경로 게이트 입력
+        self.executor_phase: Optional[str] = None         # amr_behavior executor/phase (None = 모름)
+        self.gate = GateDecision()
+        self._gate_note: tuple = ()
+        self._gate_refused = ''
         self.executor = SimExecutor(cfg.sim_exec) if cfg.sim_exec is not None else None
         # 관측
         self.pose: Optional[Tuple[float, float, float]] = None
@@ -247,6 +278,9 @@ class FleetAgentCore:
         self._wait_since: Optional[float] = None
         self._wait_priority = 0
         self.central_task = ''                        # NORMAL 에서 프록시로 받은 작업
+        self.negotiated = ''                          # 협상 낙찰을 실제 실행기에 넘긴 작업 (가짜 실행기 없을 때)
+        self._stale_since: Dict[Tuple[str, str], float] = {}   # (작업, 보유자) → 낡은 LOCKED 로 처음 본 시각
+        self._stale_cleared: Set[Tuple[str, str]] = set()   # 지운 (작업, 보유자)
         self.low_epoch_rejected = 0
         self.deadlock: Tuple[Tuple[str, ...], str] = ((), '')
         self._out = Outbox()
@@ -257,7 +291,8 @@ class FleetAgentCore:
     @classmethod
     def boot(cls, cfg: CoreConfig, zone_store: Store, task_store: Store, fence_store: Store,
              now: float, inside_zones: Optional[Iterable[str]] = None,
-             zone_polygons: Optional[Mapping[str, Any]] = None) -> 'FleetAgentCore':
+             zone_polygons: Optional[Mapping[str, Any]] = None,
+             path_gate: Optional[PathGate] = None) -> 'FleetAgentCore':
         """
         영속 상태에서 기동한다.
 
@@ -279,7 +314,7 @@ class FleetAgentCore:
         task, tout = ZoneAgent.boot(cfg.robot_id, cfg.task_vote, task_store, now,
                                     inside=keep_tasks)
         fence = EpochFence(fence_store)
-        core = cls(cfg, zone, task, fence, now, zone_polygons)
+        core = cls(cfg, zone, task, fence, now, zone_polygons, path_gate)
         # 재기동 뒤 남은 구역 보유는 BT 가 모른다 → 몸체가 밖으로 나온 것을 확인하면 에이전트가 푼다
         core.orphan_zones = set(zone.authorized())
         core._push(CH_ZONE, zout)
@@ -430,6 +465,9 @@ class FleetAgentCore:
         if status not in (STATUS_COMPLETED, STATUS_FAILED):
             return
         self._terminal[task_id] = self._terminal.get(task_id, 0) + 1
+        if task_id and task_id == self.negotiated:
+            self._negotiated_done(task_id, status)
+            return
         if task_id != self.central_task:
             return
         if not self.lock.is_held(task_id):
@@ -438,6 +476,49 @@ class FleetAgentCore:
             self.done.add(task_id)
         self.central_task = ''
         self._note('central_done', task_id=task_id, status=int(status))
+
+    def _negotiated_done(self, task_id: str, status: int) -> None:
+        """실제 실행기가 협상 작업을 끝냈다 (완료 또는 실패) — 가짜 실행기의 done · failed 와 같은 처리."""
+        held = self.lock.is_held(task_id)
+        if status == STATUS_COMPLETED or held:
+            # 완료 · 픽업 뒤 실패: 끝난 작업 (확정 잠금은 풀지 않는다 — 다시 잡히지 않게)
+            self.done.add(task_id)
+            if self.cbaa is not None:
+                self.cbaa.complete(task_id)
+        else:
+            # 픽업 전 실패 (확정 거부 · 확정 시간 초과 · 주행 실패): 잠정 잠금을 놓는다 — 다른 로봇이 잡을 수 있다
+            self.lock.release(task_id, self.me, 0.0)
+            if self.cbaa is not None:
+                self.cbaa.abort_execution(task_id)
+        self.negotiated = ''
+        self._note('nego_done', task_id=task_id, status=int(status), held=held)
+
+    def on_negotiated_result(self, task_id: str, outcome: str, reason: str = '',
+                             now: Optional[float] = None) -> str:
+        """
+        협상 낙찰을 넘긴 실제 실행기의 응답 (노드가 부른다). 돌려주는 값은 한 일 (사건 이름).
+
+        accepted · timeout(결과 모름 — 실행기가 task_status 로 알린다) → 그대로. rejected · unavailable → 잠정
+        잠금을 놓고 낙찰을 버린다. 거부 사유가 busy 면 그 작업을 막지 않는다 (실행기가 비면 다시 입찰).
+        """
+        if now is not None:
+            self.now = float(now)
+        if task_id != self.negotiated:
+            self._note('nego_result_stale', task_id=task_id, outcome=outcome)
+            return 'nego_result_stale'
+        if outcome in ('accepted', 'timeout'):
+            self._note('nego_' + outcome, task_id=task_id, reason=reason)
+            return 'nego_' + outcome
+        if outcome not in ('rejected', 'unavailable'):
+            raise ValueError(f'모르는 결과 {outcome!r}')
+        self.lock.release(task_id, self.me, 0.0)
+        if self.cbaa is not None:
+            self.cbaa.abort_execution(task_id)
+            if reason.startswith('busy') or outcome == 'unavailable':
+                self.cbaa.blocked.discard(task_id)
+        self.negotiated = ''
+        self._note('nego_rejected', task_id=task_id, outcome=outcome, reason=reason)
+        return 'nego_rejected'
 
     def on_board(self, t: BoardTask) -> None:
         """작업 게시판 게시물 (같은 id 는 처음 것만 — TaskLedger 의 멱등 규칙과 같은 효과)."""
@@ -452,6 +533,18 @@ class FleetAgentCore:
             self.battery = float(battery)
         if self.cbaa is not None:
             self.cbaa.set_localization_healthy(self.loc_healthy, float(self._round or 0))
+
+    def set_plan(self, points: Any) -> None:
+        """로봇 전역 경로 (nav_msgs/Path → (N, 2) map 좌표, None = 없음). 경로 게이트 입력."""
+        if points is None:
+            self.plan = None
+            return
+        arr = np.asarray(points, dtype=float).reshape(-1, 2)
+        self.plan = arr if len(arr) >= 2 else None
+
+    def set_executor_phase(self, phase: Optional[str]) -> None:
+        """실행기 단계 (executor/phase). 움직이는 단계에서만 경로 게이트가 plan 을 본다."""
+        self.executor_phase = None if phase is None else str(phase)
 
     # ------------------------------------------------------------------ 입력: BT 명령 · 중앙 명령
     def command(self, op: int, resources: Sequence[str], priority: int, now: float
@@ -586,11 +679,63 @@ class FleetAgentCore:
                     self._note('task_withdrawn', task_id=dropped, mode=mode)
         self._negotiate()
         self._run_executor()
+        self._path_gate_step()
         self._process_releases()
         self._deadlock()
 
+    # ------------------------------------------------------------------ 경로 게이트
+    def _gate_active(self) -> bool:
+        return self.executor_phase is None or self.executor_phase in MOVING_PHASES
+
+    def _path_gate_step(self) -> None:
+        """경로 게이트 결정 → 사슬 요청 · 필요 없어진 요청 취소 · 지나온 구역 해제 후보 (모듈 설명)."""
+        pg = self.path_gate
+        if pg is None:
+            return
+        held = self.zone.authorized()
+        d = pg.decide(self.pose, self.plan, held, self._gate_active())
+        self.gate = d
+        want = frozenset(d.request) - held
+        if want:
+            if want != self.zone.requested():
+                ok, why = self.command(OP_ACQUIRE, list(d.request), 0, self.now)
+                if not ok and why != self._gate_refused:
+                    self._note('gate_refused', why=why, request=list(d.request))
+                self._gate_refused = '' if ok else why
+        elif self.zone.requested():
+            # 사슬이 필요 없어졌다 (경로가 바뀜 · 도착 · 멈추는 단계) — 진행 중 요청을 놓는다
+            self._push(CH_ZONE, self.zone.cancel(self.now))
+            self._wait_since = None
+            self._note('gate_cancel')
+        rel = held - set(d.request) - set(d.ahead) - set(d.body) - self.pending_release
+        if rel:
+            self.pending_release |= rel
+            self._note('gate_release_request', resources=sorted(rel))
+        key = (d.blocking, d.request)
+        if key != self._gate_note:
+            self._gate_note = key
+            self._note('gate', blocking=list(d.blocking), request=list(d.request),
+                       first_entry_m=d.first_entry_m, held=sorted(held),
+                       pose=None if self.pose is None else [round(v, 3) for v in self.pose])
+
     # ------------------------------------------------------------------ 협상
+    def _executor_free(self) -> bool:
+        """
+        실제 실행기가 새 협상 작업을 받을 수 있나 — 중앙 · 넘긴 협상 작업이 없고 IDLE (모르면 받는다).
+
+        가짜 실행기면 늘 True (P3 그대로 — 바쁜 동안은 CBAA 의 executing 이 입찰을 막는다).
+        """
+        if self.executor is not None:
+            return True
+        if self.central_task or self.negotiated:
+            return False
+        return self.executor_phase in (None, 'IDLE')
+
     def _candidates(self) -> List[str]:
+        if not self._executor_free():
+            # 실행기가 바쁘면 낙찰을 받아도 거부된다 — 입찰하지 않는다 (진행 중 낙찰은 CBAA 가 쥔다)
+            ex = self.cbaa.executing if self.cbaa is not None else None
+            return [ex] if ex else []
         busy = set(self.taken) | set(self.done) | self.peer_pursuing()
         if self.executor is not None and self.executor.task_id:
             busy.discard(self.executor.task_id)
@@ -632,18 +777,67 @@ class FleetAgentCore:
             self.cbaa.set_tasks(cand + ([self.cbaa.executing] if self.cbaa.executing
                                         and self.cbaa.executing not in cand else []))
         self.cbaa.set_costs(self._costs())
+        if self.cfg.stale_lock_gc:
+            self._clear_stale_locks()
         self.cbaa.start_round(float(r))
         self._round = r
         self._out.neg = self.cbaa.make_message(float(r))
+
+    def _clear_stale_locks(self) -> None:
+        """
+        협상 표의 낡은 LOCKED 입찰을 지운다 (CoreConfig.stale_lock_gc 설명). 라운드 시작 때, 입찰 직전에 부른다.
+
+        - 남의 LOCKED: 보유자의 비컨이 신선(받은 뒤 ≤ beacon_ttl_s)하고 그 비컨의 current_task_id 가 그 작업이 아니며
+          held 에 task:<id> 가 없고, 내가 확정(taken)으로 알지 않고, 이 상태가 stale_lock_s 이어졌고, 그 비컨이
+          이 LOCKED 를 처음 본 뒤 stale_lock_margin_s 넘어 만들어졌다 (stamp — LOCKED 는 보유자의 낙찰 뒤에야 오므로
+          그 뒤 비컨에 작업이 없으면 쫓지 않는 것이다). 비컨이 없거나 오래되면 지우지 않는다 (모르면 잠금으로 본다).
+        - 내 LOCKED: 내가 그 작업을 실행하지도 확정하지도 끝내지도 않았다 (픽업 전 실패 · 실행기 거부 뒤).
+        CBAA 병합은 "잠금은 늘 받아들인다" 라 동료의 옛 메시지가 같은 잠금을 되돌려 놓는다 — 한 번 지운 (작업, 보유자)
+        는 기억해 두고 같은 조건이면 기다리지 않고 다시 지운다 (보유자가 다시 그 작업을 쫓으면 잊는다).
+        """
+        seen = set()
+        for task, bid in list(self.cbaa.table.items()):
+            if not bid.locked or bid.winner is None or task in self.taken:
+                continue
+            if bid.winner == self.me:
+                if (self.cbaa.executing != task and self.cbaa.assigned != task
+                        and not self.lock.is_held(task) and task not in self.done):
+                    self.cbaa.table[task] = NO_BID
+                    self._note('stale_lock_cleared', task_id=task, holder=self.me)
+                continue
+            b = self.peers.get(bid.winner)
+            age = self.now - self._peer_seen.get(bid.winner, -math.inf)
+            if b is None or not 0.0 <= age <= self.cfg.beacon_ttl_s:
+                continue
+            key = (task, bid.winner)
+            if b.current_task_id == task or task_resource(task) in b.held:
+                self._stale_cleared.discard(key)
+                continue
+            seen.add(key)
+            since = self._stale_since.setdefault(key, self.now)
+            made_after = b.stamp > since + self.cfg.stale_lock_margin_s
+            if (key in self._stale_cleared
+                    or (made_after and self.now - since >= self.cfg.stale_lock_s)):
+                self.cbaa.table[task] = NO_BID
+                if (task, bid.winner) not in self._stale_cleared:
+                    self._stale_cleared.add((task, bid.winner))
+                    self._note('stale_lock_cleared', task_id=task, holder=bid.winner)
+        for key in set(self._stale_since) - seen:
+            del self._stale_since[key]
 
     def _start_task(self, task_id: str) -> None:
         # 잠정 낙찰이라 taken(확정)에 넣지 않는다 — 실행 중에는 executor/cbaa.executing 이, 실패하면 CBAA 의 blocked ·
         # 잠금 denied 가 다시 입찰을 막는다. 넣으면 실패한 이 작업을 나중에 중앙이 다시 줘도 'task_taken' 으로 거부한다.
         cost = self._costs().get(task_id, 0.0)
         self._note('task_granted', task_id=task_id, travel_s=cost)
-        if self.executor is not None and not self.executor.busy:
-            self._out.events.append(dict(self.executor.start(task_id, cost, self.now),
-                                         robot=self.me))
+        if self.executor is not None:
+            if not self.executor.busy:
+                self._out.events.append(dict(self.executor.start(task_id, cost, self.now),
+                                             robot=self.me))
+            return
+        self.negotiated = task_id
+        self._out.dispatch.append(task_id)
+        self._note('nego_dispatch', task_id=task_id)
 
     def _run_executor(self) -> None:
         ex = self.executor
@@ -721,14 +915,13 @@ class FleetAgentCore:
         self._beacon_seq += 1
         x, y, yaw = self.pose if self.pose is not None else (math.nan, math.nan, math.nan)
         fe = self.fence.max or (0, '')
-        ex = self.executor
-        cur = ex.task_id if ex is not None and ex.task_id else self.central_task
+        cur, picked = self._current_task()
         held = tuple(sorted(self.zone.authorized() | self.task.authorized()))
         edges = self._my_edges()
         b = Beacon(self.me, self.zone.incarnation, self._beacon_seq, self.now,
                    self.zone.max_epoch, int(fe[0]), str(fe[1]), self.modes.mode, status,
-                   server_dead, x, y, yaw, self.battery, self.loc_healthy, cur or '',
-                   bool(ex is not None and ex.picked_up), held, edges, self._wait_priority,
+                   server_dead, x, y, yaw, self.battery, self.loc_healthy, cur,
+                   picked, held, edges, self._wait_priority,
                    self._wait_since if edges else None, None)
         self.suspicion.observe(self.me, self.now, server_dead, b.incarnation, b.seq)
         req = None if b.request_stamp is None else Stamp.coerce(b.request_stamp)
@@ -736,17 +929,29 @@ class FleetAgentCore:
                         self.now)
         return b
 
+    def _current_task(self) -> Tuple[str, bool]:
+        """(지금 작업, 픽업했나). 가짜 실행기면 그 상태, 실제 실행기면 확정 잠금(HELD = 픽업 허가)으로."""
+        ex = self.executor
+        if ex is not None and ex.task_id:
+            return ex.task_id, bool(ex.picked_up)
+        cur = self.negotiated or self.central_task
+        return cur, bool(cur) and self.lock.is_held(cur)
+
     def state(self) -> StateView:
         """지금 상태 (amr_msgs/AgentState)."""
         fe = self.fence.max or (0, '')
         ex = self.executor
         status = self.monitor.status(self.now)
-        cur = ex.task_id if ex is not None and ex.task_id else self.central_task
+        cur, _ = self._current_task()
+        # 경로 게이트를 쓰면 requested = 지금 허가가 있어야 움직일 수 있는 미보유 구역 (BT ZonePathClear 가 본다).
+        # 쓰지 않으면 투표 코어의 진행 중 요청 (P3 의미 — AcquireZoneChain 이 본다)
+        requested = (tuple(sorted(self.gate.blocking)) if self.path_gate is not None
+                     else tuple(sorted(self.zone.requested())))
         return StateView(
             self.me, self.modes.mode, self.modes.reason, status, self.zone.max_epoch,
             int(fe[0]), str(fe[1]),
             tuple(sorted(self.zone.authorized() | self.task.authorized())),
-            tuple(sorted(self.zone.requested())), self.zone.phase(),
+            requested, self.zone.phase(),
             tuple(sorted(self.lock.denied)), cur or '',
             ex.phase if ex is not None else '', self.deadlock[0], self.deadlock[1],
             self.low_epoch_rejected)

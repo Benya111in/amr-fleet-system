@@ -1,0 +1,7 @@
+#!/usr/bin/env python3
+"""ros2 run amr_fleet fleet_agent_node 진입점 (분산 플릿 에이전트, 로봇마다 하나)."""
+
+from amr_fleet.agent.node import main
+
+if __name__ == '__main__':
+    main()

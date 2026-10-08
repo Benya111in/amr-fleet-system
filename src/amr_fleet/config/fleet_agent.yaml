@@ -34,3 +34,7 @@
     proxy_assign_task: false    # true 면 assign_task 프록시 — 실행기 서비스를 executor/assign_task 로 리매핑해야 한다
     executor_service: "executor/assign_task"
     proxy_timeout_s: 3.0
+    path_gate.enabled: false    # 경로 게이트 (b4-wire): plan · 자세로 사슬 사전 요청 · 결정점 정지 · 해제. 분산 모드가 켠다
+    path_gate.prerequest_m: 1.0 # 결정점(요청 거리)보다 이만큼 먼저 요청 — 투표 왕복 동안 서지 않게
+    traffic_params_file: ""     # '' = share/amr_fleet/config/traffic.yaml (요청 거리 · 사슬 간격 · 반경 — 서버와 같은 값)
+    nego.stale_lock_gc: true    # 협상 표의 낡은 LOCKED 정리 (픽업 전 실패한 로봇의 작업을 남이 다시 잡게, p3.md §10.2)

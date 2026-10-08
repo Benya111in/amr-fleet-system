@@ -53,6 +53,13 @@
                                      # 0 = epoch_file 이 있으면 그 값 + 1, 없으면 1
     epoch_file: ""                   # [시작 전용] "" = 영속 안 함. 경로면 시작마다 +1 해 원자적으로 쓴다
     leader_id: ""                    # [시작 전용] "" = 노드 전체 이름 (/fleet/fleet_manager_node)
+    # 분산 모드 하트비트 (heartbeat.py, docs/research/fleet-distributed/p3.md §10). 기본 꺼짐 = 중앙 모드 그대로.
+    # fleet_mode:=distributed 런치가 켠다 (heartbeat.enabled true, observe_s 3.0)
+    heartbeat:
+      enabled: false                 # [시작 전용] /fleet/heartbeat (sim 2 Hz) 를 이 프로세스에서 낸다
+      period_s: 0.5                  # [시작 전용] [s, 노드 시계] 보고서 sim 2 Hz
+      observe_s: 0.0                 # [시작 전용] [s] > 0 이면 기동 뒤 관찰자로 /fleet_p2p/beacon 의 fence_epoch
+                                     # 최댓값을 모아 epoch = max(epoch, 그 값 + 1) 로 명령 시작 (그 전엔 할당 안 함)
     robot_params_path: ""            # [시작 전용] "" = $ROS_WS/config/robot_params.yaml (payload 질량 표)
     scheduler:                       # [시작 전용] 전부
       band_width: 32                 # 우선순위 밴드 폭 (0~255 → 8 밴드), 밴드 안에서 EDF

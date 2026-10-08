@@ -18,6 +18,10 @@
 // SrvC  {global,local}_costmap/clear_entirely_{global,local}_costmap
 // Groot BT::PublisherZMQ (groot.publisher_port / groot.server_port, 다중 로봇은 bringup 이
 //       로봇 i 에 1666 + 2i / 1667 + 2i 를 준다)
+// 분산 플릿 모드 (fleet.distributed, 기본 false): 존 노드를 등록하고
+//       task_executor_distributed.xml 을 쓴다. Sub fleet_agent/state (AgentState, latched),
+//       SrvC fleet_agent/zone_command (ZoneCommand). assign_task 는 behavior.launch.py 가
+//       executor/assign_task 로 리매핑한다 (에이전트 펜스 프록시가 앞에 선다).
 // 트리 tick 은 벽시계 타이머(tick_rate_hz)로 돌고, 서비스·구독·액션 콜백과 같은 단일 스레드
 // 실행기에서 처리된다.
 #ifndef AMR_BEHAVIOR__TASK_EXECUTOR_NODE_HPP_
@@ -77,6 +81,8 @@ private:
   TaskTreeConfig tree_config_;
   std::string robot_id_;
   std::string bt_xml_;
+  bool fleet_distributed_{false};
+  std::shared_ptr<void> fleet_link_;   ///< 분산 모드 에이전트 연결 (존 노드가 함께 쥔다)
   double tick_rate_hz_{50.0};
   bool groot_enabled_{true};
   int groot_publisher_port_{1666};

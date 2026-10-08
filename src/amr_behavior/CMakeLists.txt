@@ -156,6 +156,16 @@ if(BUILD_TESTING)
   target_link_libraries(test_task_tree amr_behavior_bt)
   target_compile_definitions(test_task_tree PRIVATE ${_src_def})
 
+  # 분산 플릿 launch 시험 (보너스 4 b4-wire, test_fleet_world/): 실제 실행기 · 에이전트 · 관리자 5 대 +
+  # 가짜 세계(운동학 Nav2 대역). 가짜 /clock 을 내므로 도메인을 가른다 (56). 오래 걸린다 (합 10 분 안팎)
+  ament_add_pytest_test(amr_behavior_fleet_world test_fleet_world TIMEOUT 2400
+    ENV ROS_DOMAIN_ID=56 "TASK_EXECUTOR_EXE=$<TARGET_FILE:task_executor_node>")
+
+  # 분산 플릿 모드 트리 (task_executor_distributed.xml, 보너스 4 b4-wire) — 존 노드는 스텁
+  ament_add_gtest(test_task_tree_distributed test/test_task_tree_distributed.cpp TIMEOUT 120)
+  target_link_libraries(test_task_tree_distributed amr_behavior_bt)
+  target_compile_definitions(test_task_tree_distributed PRIVATE ${_src_def})
+
   ament_add_gtest(test_ros_bt_nodes test/test_ros_bt_nodes.cpp TIMEOUT 120)
   target_link_libraries(test_ros_bt_nodes amr_behavior_bt)
 
@@ -168,12 +178,14 @@ if(BUILD_TESTING)
   target_link_libraries(test_task_executor_node amr_task_executor)
   target_compile_definitions(test_task_executor_node PRIVATE ${_src_def})
 
-  # 분산 플릿 존 BT 노드 (보너스 4 P3, 헤더 전용 include/amr_behavior/bt_nodes/zone_*). 시험 원본은
-  # 과제 소유 경로라 src/bt_nodes/ 에 있다 (docs/research/fleet-distributed/p3.md §7).
-  ament_add_gtest(test_zone_bt_nodes src/bt_nodes/zone_bt_nodes_test.cpp TIMEOUT 120)
+  # 분산 플릿 존 BT 노드 (보너스 4 P3, 헤더 전용 include/amr_behavior/bt_nodes/zone_*).
+  # sim 시계 시험이 /clock 을 손으로 낸다 — 다른 시험에 섞이지 않게 도메인을 가른다 (b4-wire 배정 51–59)
+  find_package(rosgraph_msgs REQUIRED)
+  ament_add_gtest(test_zone_bt_nodes test/test_zone_bt_nodes.cpp TIMEOUT 120
+    ENV ROS_DOMAIN_ID=53)
   target_include_directories(test_zone_bt_nodes PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/test)
-  ament_target_dependencies(test_zone_bt_nodes ${_bt_deps})
+  ament_target_dependencies(test_zone_bt_nodes ${_bt_deps} rosgraph_msgs)
   target_compile_definitions(test_zone_bt_nodes PRIVATE ${_src_def})
 endif()
 

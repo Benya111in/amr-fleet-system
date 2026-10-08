@@ -17,6 +17,7 @@ install(PROGRAMS
   scripts/fleet_manager_node
   scripts/fleet_adapter_node
   scripts/traffic_manager_node
+  scripts/fleet_agent_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

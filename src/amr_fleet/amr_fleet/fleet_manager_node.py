@@ -18,6 +18,14 @@ fleet_manager_node — 중앙 작업 관리자 (components.md §3.6 / §5.6, 명
 권위자 표식: assign_task 요청과 task_events 마다 (epoch, leader_id, seq) 를 싣는다 (amr_msgs/Task). epoch 는
 파라미터 > epoch_file(시작마다 +1 영속) > 1. 받는 쪽 펜싱은 분산 에이전트(P3) 몫이다.
 
+하트비트 (분산 모드, heartbeat.enabled — 기본 꺼짐: 중앙 모드는 예전과 같다. heartbeat.py, p3.md §7 요청 1):
+- Pub  /fleet/heartbeat (FleetHeartbeat, BEST_EFFORT · KEEP_LAST 1) 를 노드 시계
+  heartbeat.period_s(0.5 s) 마다. 같은 프로세스 · 같은 실행기 — 관리자가 죽거나 콜백이 막히면 멈춘다.
+- Sub  /fleet_p2p/beacon (AgentBeacon) — heartbeat.observe_s > 0 이면 기동 직후 관찰자(ROLE_OBSERVER)로 로봇들이
+  본 최고 fence_epoch 를 모아 epoch = max(위 epoch, 그 값 + 1) 로 ACTIVE 가 된다. 관찰 중에는 할당하지 않는다
+  (작업은 받아 둔다). 올린 epoch 은 epoch_file 이 있으면 거기에 쓴다. seq 는 관찰 → ACTIVE 에서 이어 간다.
+  관찰 중 낸 task_events 는 기본 epoch 을 싣는다 (명령이 아니다 — 로봇은 assign_task · 하트비트만 펜싱한다).
+
 시계: 모든 시각(마감·접수·이벤트 stamp)은 노드 시계다 (use_sim_time 이면 /clock). ISO 마감은 접수 때
 노드 시계로 옮긴다 (task_schema.parse_deadline).
 
@@ -71,11 +79,12 @@ from amr_fleet.allocation import (
     RobotInfo, allocate, available_strategies, create_strategy, select_batch,
 )
 from amr_fleet.comm_emulator import FLEET, from_node_params
+from amr_fleet.heartbeat import ManagerHeartbeat
 from amr_fleet.kpi import STATUS_ERROR, STATUS_ESTOP, STATUS_IDLE, KpiTracker
 from amr_fleet.scheduler import SchedulerConfig, TaskScheduler
 from amr_fleet.task_board import (
     ACCEPT, BOARD_DEPTH, CONFLICT, DUPLICATE, STALE, UPDATE, CommandStamp, TaskLedger,
-    resolve_epoch,
+    resolve_epoch, write_epoch_file,
 )
 from amr_fleet.task_msg import float_to_time, spec_from_msg, spec_to_msg
 from amr_fleet.task_schema import (
@@ -85,7 +94,7 @@ from amr_fleet.task_schema import (
 )
 from amr_fleet.task_state import TaskEvent, TaskLogWriter, TaskRecord, TaskStateMachine
 from amr_fleet.timer_queue import TimerQueue
-from amr_msgs.msg import FleetStatus, RobotState, Task
+from amr_msgs.msg import AgentBeacon, FleetHeartbeat, FleetStatus, RobotState, Task
 from amr_msgs.srv import AssignTask
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult
@@ -109,8 +118,10 @@ STARTUP_ONLY_PARAMS = frozenset({
     'allocation_period_s',
     'status_period_s', 'discovery_period_s', 'throughput_window_s', 'utilization_mode',
     'task_schema_path', 'robot_params_path', 'task_board_depth', 'epoch', 'epoch_file',
-    'leader_id',
+    'leader_id', 'heartbeat.enabled', 'heartbeat.period_s', 'heartbeat.observe_s',
 })
+HB_QOS = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)       # p3.md §2
+BEACON_QOS = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
 _LEDGER_REASONS = {
     CONFLICT: '같은 task_id · 같은 판(version {v}) 인데 내용이 다르다 (소스가 id 를 다시 썼다)',
     STALE: '이미 더 높은 판을 받은 작업의 옛 판(version {v})',
@@ -238,6 +249,15 @@ class FleetManagerNode(Node):
         # 권위자 표식 (epoch, leader_id, seq) — assign_task 요청과 task_events 에 싣는다
         self._command = CommandStamp(resolve_epoch(int(p('epoch')), str(p('epoch_file'))),
                                      str(p('leader_id')) or self.get_fully_qualified_name())
+        # 하트비트 · 관찰자 복귀 (분산 모드). 꺼져 있으면 발행자 · 구독 · 타이머를 만들지 않는다 (중앙 모드 그대로)
+        self._hb: Optional[ManagerHeartbeat] = None
+        self.superseded_warned = False
+        if bool(p('heartbeat.enabled')):
+            self._hb = ManagerHeartbeat(self._command.epoch, float(p('heartbeat.observe_s')))
+            self._pub_hb = self.create_publisher(FleetHeartbeat, '/fleet/heartbeat', HB_QOS)
+            self.create_subscription(AgentBeacon, '/fleet_p2p/beacon', self._on_beacon,
+                                     BEACON_QOS)
+            self.create_timer(float(p('heartbeat.period_s')), self._on_heartbeat_timer)
 
         self._robots: Dict[str, _Robot] = {}
         self._inflight: Dict[str, _Dispatch] = {}   # task_id → 응답 대기 호출
@@ -265,6 +285,7 @@ class FleetManagerNode(Node):
             f'comm={self._comm.describe()}, '
             f'batch_window={float(p("allocation_batch_window_s")) * 1e3:g} ms, '
             f'epoch={self._command.epoch} leader={self._command.leader_id}, '
+            f'heartbeat={self._describe_heartbeat()}, '
             f'use_sim_time={p("use_sim_time")}, log_dir={self._log_dir}')
 
     # ------------------------------------------------------------------ 파라미터
@@ -300,6 +321,9 @@ class FleetManagerNode(Node):
             'epoch': 0,                      # 권위자 epoch. 0 = epoch_file 이 있으면 그 값 + 1, 없으면 1
             'epoch_file': '',                # '' = 영속 안 함. 경로면 시작마다 +1 해 원자적으로 쓴다
             'leader_id': '',                 # '' = 노드 전체 이름 (/fleet/fleet_manager_node)
+            'heartbeat.enabled': False,      # /fleet/heartbeat 발행 (분산 모드). false = 중앙 모드 그대로
+            'heartbeat.period_s': 0.5,       # 하트비트 주기 [s, 노드 시계] — 보고서 sim 2 Hz
+            'heartbeat.observe_s': 0.0,      # > 0 이면 기동 뒤 이만큼 관찰자로 비컨 epoch 를 모은 뒤 명령
             'scheduler.band_width': 32,
             'scheduler.deadline_weight': 1.0,
             'scheduler.fifo_weight': 0.0,
@@ -318,7 +342,8 @@ class FleetManagerNode(Node):
     def _on_set_parameters(self, params) -> SetParametersResult:
         """시작 전용 파라미터 변경은 거절, 실행 중 파라미터는 하한 검사 (max_task_retries 는 즉시 반영)."""
         for prm in params:
-            if prm.name in STARTUP_ONLY_PARAMS or prm.name.startswith('scheduler.'):
+            if (prm.name in STARTUP_ONLY_PARAMS
+                    or prm.name.startswith(('scheduler.', 'heartbeat.'))):
                 return SetParametersResult(
                     successful=False, reason=f'{prm.name} 는 시작 시에만 읽는다 (노드 재시작 필요)')
             lo = RUNTIME_MIN.get(prm.name)
@@ -669,6 +694,50 @@ class FleetManagerNode(Node):
                     robot_id, alert_values(rec.task_id, robot_id, owner=rec.robot_id,
                                            status=STATUS_NAMES[rec.status]))
 
+    # ------------------------------------------------------------------ 하트비트 (분산 모드)
+    @property
+    def commanding(self) -> bool:
+        """할당 명령을 내도 되는가 (하트비트가 꺼져 있거나 관찰이 끝났다)."""
+        return self._hb is None or self._hb.active
+
+    def _describe_heartbeat(self) -> str:
+        if self._hb is None:
+            return 'off'
+        return (f'period {float(self._param("heartbeat.period_s")):g} s, '
+                f'observe {self._hb.observe_s:g} s')
+
+    @_guarded
+    def _on_beacon(self, msg: AgentBeacon) -> None:
+        self._hb.on_beacon(int(msg.fence_epoch))
+
+    @_guarded
+    def _on_heartbeat_timer(self) -> None:
+        beat = self._hb.tick(self._now())
+        if beat is None:
+            return                          # /clock 전
+        if beat.activated:
+            self._command.epoch = beat.epoch     # seq 는 CommandStamp 가 이어 간다
+            path = str(self._param('epoch_file'))
+            if path:
+                write_epoch_file(path, beat.epoch)
+            self.get_logger().info(
+                f'관찰 끝 ({self._hb.observe_s:g} s): 로봇이 본 최고 epoch {self._hb.max_seen} → '
+                f'epoch {beat.epoch} 로 명령 시작')
+            self._request_batch_allocation()
+        if self._hb.superseded() and not self.superseded_warned:
+            self.superseded_warned = True
+            self._alert(DiagnosticStatus.ERROR, 'fleet/SUPERSEDED',
+                        f'로봇이 더 높은 권위자 epoch {self._hb.max_seen} 를 봤다 (내 epoch '
+                        f'{self._hb.epoch}) — 이 관리자의 명령은 로봇 펜스에 거부된다. 관찰 시간이 '
+                        f'짧았거나 다른 권위자가 있다')
+        msg = FleetHeartbeat()
+        msg.stamp = self._stamp()
+        msg.leader_id = self._command.leader_id
+        msg.epoch = int(beat.epoch)
+        msg.seq = int(beat.seq)
+        msg.role = int(beat.role)
+        self._pub_hb.publish(msg)
+
     @_guarded
     def _on_traffic_event(self, msg: DiagnosticArray) -> None:
         # traffic_manager 규약: traffic/DEADLOCK(탐지) 만 센다, traffic/RESOLVED 는 세지 않는다
@@ -737,6 +806,8 @@ class FleetManagerNode(Node):
             self._allocate_round()
 
     def _allocate_round(self) -> None:
+        if not self.commanding:
+            return                          # 관찰자 복귀 중: 로봇이 본 최고 epoch 를 알기 전에는 명령하지 않는다
         # 거절 → 즉시 재할당이 콜백 안에서 다시 불러도 한 번에 한 라운드만 돈다
         if self._allocating:
             self._realloc_requested = True

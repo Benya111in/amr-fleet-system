@@ -73,7 +73,8 @@ def test_world_reads_repository_layout(world):
     assert world.robot_ids == ('amr_01', 'amr_02', 'amr_03', 'amr_04', 'amr_05')
     assert set(world.docks) == {'dock_1', 'dock_2', 'dock_a', 'dock_b'}
     assert 'dock_1_approach' in world.boxes and 'narrow_aisle' in world.boxes
-    assert world.approach['dock_1_approach'] == pytest.approx(1.5)   # yaml 항목 approach_m
+    # b4-wire F5: 도크 구역도 기본 요청 거리 2.0 (P0 의 approach_m 1.5 덮어쓰기는 배치를 바꿔 없앴다)
+    assert world.approach['dock_1_approach'] == pytest.approx(2.0)
     assert world.approach['x_ab_1'] == pytest.approx(2.0)
     assert world.approach['narrow_aisle'] == pytest.approx(2.5)
 

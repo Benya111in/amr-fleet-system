@@ -139,6 +139,16 @@ def resolve_epoch(param: int = 0, path: str = '') -> int:
         if last < 0:
             raise ValueError(f'epoch 파일 값이 음수다: {path}')
     epoch = last + 1
+    write_epoch_file(path, epoch)
+    return epoch
+
+
+def write_epoch_file(path: str, epoch: int) -> None:
+    """권위자 epoch 파일을 원자적으로 쓴다 (임시 파일 → fsync → rename). 관찰자 복귀로 올렸을 때도."""
+    epoch = int(epoch)
+    if epoch < 1:
+        raise ValueError(f'epoch 는 1 이상이어야 한다: {epoch}')
+    p = pathlib.Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix='.epoch_', dir=str(p.parent))
     try:
@@ -150,7 +160,6 @@ def resolve_epoch(param: int = 0, path: str = '') -> int:
     finally:
         if os.path.exists(tmp):
             os.unlink(tmp)
-    return epoch
 
 
 class CommandStamp:

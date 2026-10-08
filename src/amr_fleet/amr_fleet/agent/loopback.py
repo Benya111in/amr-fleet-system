@@ -19,6 +19,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from amr_fleet.agent.core import (
     Beacon, BoardTask, CH_TASK, CH_ZONE, CoreConfig, FleetAgentCore, ROLE_ACTIVE,
 )
+from amr_fleet.agent.path_gate import PathGate
 from amr_fleet.comm_emulator import CommEmulator, FLEET
 from amr_fleet.distributed.store import MemoryStore
 
@@ -40,7 +41,8 @@ class LoopbackFleet:
     """에이전트 코어 N 개 + 수신 측 통신 모의 + 가짜 서버."""
 
     def __init__(self, configs: Sequence[CoreConfig], comm: Optional[CommEmulator] = None,
-                 t0: float = 1.0, poses: Optional[Dict[str, Tuple[float, float]]] = None):
+                 t0: float = 1.0, poses: Optional[Dict[str, Tuple[float, float]]] = None,
+                 path_gate: Optional[PathGate] = None):
         self.t = float(t0)
         self.comm = comm if comm is not None else CommEmulator(seed=1, simulate=False)
         self.cfgs = {c.robot_id: c for c in configs}
@@ -53,6 +55,8 @@ class LoopbackFleet:
         self._fifo: Dict[Tuple[str, str], float] = collections.defaultdict(float)
         self.events: List[Dict[str, Any]] = []
         self.poses = dict(poses or {})
+        self.path_gate = path_gate          # 모든 로봇이 같은 배치 (경로 게이트, b4-wire)
+        self.dispatched: List[Tuple[str, str, float]] = []   # (로봇, 작업, t) — 실제 실행기로 넘길 협상 낙찰
         self.sent = collections.Counter()
         for r in self.members:
             self.boot(r)
@@ -61,7 +65,8 @@ class LoopbackFleet:
     def boot(self, r: str, inside_zones=None) -> FleetAgentCore:
         """(재)기동 — 저장소는 남는다."""
         zs, ts, fs = self.stores[r]
-        core = FleetAgentCore.boot(self.cfgs[r], zs, ts, fs, self.t, inside_zones=inside_zones)
+        core = FleetAgentCore.boot(self.cfgs[r], zs, ts, fs, self.t, inside_zones=inside_zones,
+                                   path_gate=self.path_gate)
         if r in self.poses:
             core.set_pose(self.poses[r][0], self.poses[r][1], 0.0)
         self.cores[r] = core
@@ -93,6 +98,8 @@ class LoopbackFleet:
         out = core.drain()
         for ev in out.events:
             self.events.append(ev)
+        for task_id in out.dispatch:
+            self.dispatched.append((src, task_id, self.t))
         for dst in self.members:
             if out.votes:
                 mine = [(ch, v) for ch, v in out.votes if v.dst == dst]

@@ -123,6 +123,66 @@ def test_launch_arguments_and_nodes():
     assert len(module._launch_setup(context)) == 1
 
 
+def _distributed_context(**extra):
+    context = LaunchContext()
+    context.launch_configurations.update({
+        'namespace': 'amr_03', 'robot_name': '', 'use_sim_time': 'true',
+        'params_file': CONFIG, 'robot_params_file': '', 'frame_prefix': 'auto',
+        'groot_publisher_port': '1670', 'groot_server_port': '1671', 'waiting_pose': '',
+        'start_executor': 'true', 'start_docking': 'false', 'start_battery_model': 'false',
+        'battery_initial_percent': '', 'log_level': 'info', 'traffic_hold_policy': ''})
+    context.launch_configurations.update(extra)
+    return context
+
+
+def _remaps(node):
+    ctx = LaunchContext()
+    return [(''.join(x.perform(ctx) for x in a), ''.join(x.perform(ctx) for x in b))
+            for a, b in node._Node__remappings]
+
+
+def test_distributed_mode_adds_the_agent_and_remaps_the_executor_service():
+    """fleet_mode:=distributed (b4-wire): 실행기 존 노드 · 리매핑 · 같은 네임스페이스의 에이전트를 한곳에서."""
+    module = _load_launch_module()
+    names = {a.name for a in module.generate_launch_description().entities if hasattr(a, 'name')}
+    assert {'fleet_mode', 'fleet_members', 'fleet_store_dir'} <= names
+    pytest.importorskip('launch_ros')
+    try:
+        from ament_index_python.packages import get_package_share_directory
+        get_package_share_directory('amr_fleet')
+    except Exception:  # noqa: B902 — amr_fleet 이 설치되지 않은 환경
+        pytest.skip('amr_fleet 이 색인에 없다')
+    ctx = _distributed_context(fleet_mode='distributed', fleet_members='amr_01,amr_02,amr_03',
+                               fleet_store_dir='/var/agents')
+    nodes = module._launch_setup(ctx)
+    exe = [n.node_executable for n in nodes]
+    assert exe == ['task_executor_node', 'fleet_agent_node']
+    executor, agent = nodes
+    assert _remaps(executor) == [('assign_task', 'executor/assign_task')]
+    values = dict(ctx.launch_configurations)
+    ex_over, _, _ = module._overrides(lambda n: values[n], 'amr_03/')
+    assert ex_over['fleet.distributed'] is True
+    from launch_ros.utilities import evaluate_parameters
+    params = evaluate_parameters(LaunchContext(), agent._Node__parameters)
+    assert str(params[0]).endswith('fleet_agent.yaml')
+    over = params[1]
+    assert over['proxy_assign_task'] is True and over['path_gate.enabled'] is True
+    assert over['executor_service'] == 'executor/assign_task'
+    assert over['release_gate'] == 'zone_map' and over['zones_file'].endswith('traffic_zones.yaml')
+    assert over['members'] == 'amr_01,amr_02,amr_03' and over['store_dir'] == '/var/agents'
+    assert agent._Node__node_namespace == 'amr_03' and agent._Node__node_name == 'fleet_agent'
+    # 중앙(인자 없음 — 상위 런치가 주지 않은 맥락)은 예전 그대로
+    central = module._launch_setup(_distributed_context())
+    assert [n.node_executable for n in central] == ['task_executor_node']
+    assert _remaps(central[0]) == []
+    values = dict(_distributed_context().launch_configurations)
+    assert 'fleet.distributed' not in module._overrides(lambda n: values[n], 'amr_03/')[0]
+    with pytest.raises(ValueError):
+        module._launch_setup(_distributed_context(fleet_mode='mesh'))
+    with pytest.raises(ValueError):
+        module._launch_setup(_distributed_context(fleet_mode='distributed', namespace=''))
+
+
 def test_parse_pose():
     module = _load_launch_module()
     assert module._parse_pose('') is None

@@ -55,6 +55,15 @@ void registerCoreNodes(BT::BehaviorTreeFactory & factory, const ContextPtr & ctx
 /// ROS 액션/서비스 노드를 실제 클라이언트로 등록한다.
 void registerRosNodes(BT::BehaviorTreeFactory & factory, const RosNodeParams & params);
 
+/// 분산 플릿 존 노드(bt_nodes/zone_*: 구역 게이트 · 작업 ID 잠금 · 서버 생존)를 에이전트 연결과
+/// 함께 등록한다. 분산 모드 실행기만 부른다 (task_executor_node fleet.distributed) — 중앙 모드는
+/// 연결을 만들지 않는다. 반환 값(연결)은 팩토리의 빌더가 함께 쥔다.
+std::shared_ptr<void> registerFleetAgentNodes(
+  BT::BehaviorTreeFactory & factory, const RosNodeParams & params);
+
+/// 존 노드를 포트 정보(manifest)만으로 등록한다 (bt_tool — 분산 트리의 Groot 모델 · 노드 목록).
+void registerFleetAgentNodeManifests(BT::BehaviorTreeFactory & factory);
+
 /// 팩토리에 등록된 노드 중 BT.CPP 내장이 아닌 것의 ID (정렬).
 std::vector<std::string> customNodeIds(const BT::BehaviorTreeFactory & factory);
 

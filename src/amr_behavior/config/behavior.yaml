@@ -44,6 +44,10 @@
   ros__parameters:
     robot_id: ""                    # "" = 네임스페이스에서 유도 (/amr_01 → amr_01)
     bt_xml: ""                      # "" = share/amr_behavior/behavior_trees/task_executor.xml
+                                    #      (fleet.distributed 면 task_executor_distributed.xml)
+    fleet:
+      distributed: false            # 분산 플릿 모드 (보너스 4): 존 노드 등록 + 분산 트리. behavior.launch.py
+                                    # fleet_mode:=distributed 가 켠다 (assign_task → executor/assign_task 리매핑)
     tick_rate_hz: 50.0              # [Hz] BT tick. 응답 예산(sequences.md): tick 주기 20 ms → 평균 대기 10 ms
     map_frame: map                  # 전역 지도 프레임 (접두어 없음, multi_robot.md §2)
     groot:
