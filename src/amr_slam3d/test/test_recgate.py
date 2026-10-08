@@ -51,8 +51,8 @@ def test_float_boundary_regression_from_pilot():
 def test_duplicates_and_backwards_fail():
     per = 5 * MS
     assert not recgate.interval_gaps([0, per, per, 2 * per], per)['ok']
-    r = recgate.interval_gaps([0, 2 * per, per, 3 * per], per)
-    assert not r['ok'] and r['backwards'] == 1
+    r = recgate.interval_gaps([0, per, per - 500_000, 2 * per - 500_000], per)
+    assert not r['ok'] and r['backwards'] == 1 and r['n_gap'] == 0 and r['dup'] == 0
 
 
 def test_too_few_samples_fail():
