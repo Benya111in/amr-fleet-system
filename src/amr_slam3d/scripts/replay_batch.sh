@@ -27,7 +27,7 @@ one() {
   echo "$(date -Iseconds) START $row r$k image=$img load=$(cut -d' ' -f1-3 /proc/loadavg)" | tee -a "$ROOT/batch.log"
   docker run --rm --name "$name" --shm-size=2g \
     -e ROS_DOMAIN_ID="$DOMAIN" -e ROS_LOCALHOST_ONLY=1 -e GIT_HEAD="$HEAD" -e IMAGE="$img" \
-    -e REPLAY_ID="B2off-$row-r$k" -v "$WT":/ros2_ws:ro -v "$BAG":/data/bag:ro -v "$out":/out -w /ros2_ws \
+    -e REPLAY_ID="$AGENT-$row-r$k" -v "$WT":/ros2_ws:ro -v "$BAG":/data/bag:ro -v "$out":/out -w /ros2_ws \
     "$img" bash -lc "/ros2_ws/src/amr_slam3d/scripts/replay_row.sh $row /data/bag /out $RATE" \
     > "$out/host.log" 2>&1
   rc=$?

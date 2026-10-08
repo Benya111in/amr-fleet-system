@@ -1,0 +1,26 @@
+# S1 정상 — routegen 씨드 1 걸음 (60 m 뒤 출발 마디로 귀환), 길이 61.0 m
+# 생성: scripts/make_routes.py write (손으로 고치지 않는다 — test_route.py 가 대조)
+route:
+  start:
+  - 18.0
+  - -16.0
+  start_yaw: 1.5708
+  hold_start_s: 10.0
+  hold_end_s: 3.0
+  dwell_s: 1.0
+  limits:
+    v_max: 0.5
+    w_max: 0.5
+  waypoints:
+  - - 18.0
+    - -15.0
+  - - 3.0
+    - -15.0
+  - - 3.0
+    - -6.0
+  - - -3.0
+    - -6.0
+  - - -3.0
+    - -15.0
+  - - 18.0
+    - -15.0

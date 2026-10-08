@@ -1,0 +1,11 @@
+# 보너스 2 G 단계 녹화 계획 (사전 등록 — docs/research/slam3d/notebook/entries/*_b2-rec_*.md).
+# rec_driver.sh 가 위에서부터 차례로 돈다. 열: <id> <route 이름> <월드 변형> <spawn 이름 | -> <경로 씨드 | ->
+# 짧은 것부터 (S3 → S1 → S6 → 긴 매핑) — 공유 슬롯을 오래 잡지 않고, 프로토콜 문제가 일찍 드러나게.
+s3_aisle   s3_aisle   s1        -          -
+s1_seed1   s1_seed1   s1        -          1
+s1_seed2   s1_seed2   s1        -          2
+s1_seed3   s1_seed3   s1        -          3
+s6_open    s6_inside  s6-open   s6_inside  -
+s6_queue   s6_inside  s6-queue  s6_inside  -
+s6_wall    s6_inside  s6-wall   s6_inside  -
+map_long   map_long   s1        -          -

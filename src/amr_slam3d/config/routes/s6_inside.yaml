@@ -1,0 +1,28 @@
+# S6 통로 안 — 스폰 (0, −8.6, −π/2), 중앙 15 s 정지 → (0, −11.4) → 후진 (0, −8.6). sim 60 s 에 출발 (s6-open·queue·wall 짝)
+# 생성: scripts/make_routes.py write (손으로 고치지 않는다 — test_route.py 가 대조)
+route:
+  start:
+  - 0.0
+  - -8.6
+  start_yaw: -1.5708
+  hold_start_s: 10.0
+  hold_end_s: 3.0
+  dwell_s: 1.0
+  limits:
+    v_max: 0.5
+    w_max: 0.5
+  depart_at_s: 60.0
+  waypoints:
+  - at:
+    - 0.0
+    - -10.0
+    dwell: 15.0
+  - at:
+    - 0.0
+    - -11.4
+    dwell: 2.0
+  - at:
+    - 0.0
+    - -8.6
+    dwell: 2.0
+    reverse: true

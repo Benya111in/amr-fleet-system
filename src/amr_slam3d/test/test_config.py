@@ -136,9 +136,16 @@ def test_record_topics_cover_report_list():
             '/amr_01/wheel_odom', '/amr_01/odometry/filtered', '/amr_01/ground_truth/odom',
             '/tf', '/tf_static', '/clock'}
     assert need <= set(rows.RECORD_TOPICS)
+    # b2-rec: 기록된 madgwick 은 새 bag 에 없다 — 파일럿 bag 재현용 옛 행 넷만 그것을 튼다
+    assert rows.IMU_MADGWICK not in rows.RECORD_TOPICS
+    assert {'/amr_01/imu/data_raw', '/amr_01/imu/data'} <= set(rows.RECORD_TOPICS)
+    pilot_rows = {n for n, r in rows.ROWS.items()
+                  if set(r.play_topics) & set(rows.PILOT_ONLY_TOPICS)}
+    assert pilot_rows == {'rtabmap3d', 'rtabmap2d', 'liosam_loop', 'liosam_noloop'}
     for r in rows.ROWS.values():
         for t in r.play_topics:
-            assert t in rows.RECORD_TOPICS + rows.DERIVED_TOPICS, (r.name, t)
+            assert t in rows.RECORD_TOPICS + rows.DERIVED_TOPICS + rows.PILOT_ONLY_TOPICS, \
+                (r.name, t)
         # 파생 토픽(재계산 madgwick)을 트는 행은 파생 bag 이 필요하다고 표시한다
         uses_derived = any(t in rows.DERIVED_TOPICS for t in r.play_topics)
         assert uses_derived == (r.bag == 'madg'), r.name
@@ -294,3 +301,91 @@ def test_missing_play_topics_against_bag_metadata():
     assert rows.missing_play_topics(rows.row('liosam_loop'), topics) == []
     assert rows.missing_play_topics(rows.row('liosam_planar'), topics) == [rows.IMU_MADG_RE]
     assert rows.missing_play_topics(rows.row('rtabmap3d_noimu'), topics) == ['/tf']
+
+
+# ---- b2-rec: 재생 시작 전 구독 확인 (replay.md §9-4) ------------------------------------------------
+# Humble `ros2 topic info -v` 실제 출력 (b2-rec 탐색: 멈춘 재생기 + 구독 없음) 에 구독자 블록을 더한 것
+_INFO = """Type: sensor_msgs/msg/PointCloud2
+
+Publisher count: 1
+
+Node name: rosbag2_player
+Node namespace: /
+Topic type: sensor_msgs/msg/PointCloud2
+Endpoint type: PUBLISHER
+GID: 01.0f.70.b7.17.00.e8.48.00.00.00.00.00.00.13.03.00.00.00.00.00.00.00.00
+QoS profile:
+  Reliability: RELIABLE
+  History (Depth): UNKNOWN
+  Durability: VOLATILE
+  Lifespan: Infinite
+  Deadline: Infinite
+  Liveliness: AUTOMATIC
+  Liveliness lease duration: Infinite
+
+Subscription count: 2
+
+Node name: icp_odometry
+Node namespace: /amr_01
+Topic type: sensor_msgs/msg/PointCloud2
+Endpoint type: SUBSCRIPTION
+GID: 01.0f.70.b7.18.00.e8.48.00.00.00.00.00.00.14.04.00.00.00.00.00.00.00.00
+QoS profile:
+  Reliability: RELIABLE
+
+Node name: slam_probe
+Node namespace: /
+Topic type: sensor_msgs/msg/PointCloud2
+Endpoint type: SUBSCRIPTION
+GID: 01.0f.70.b7.19.00.e8.48.00.00.00.00.00.00.15.04.00.00.00.00.00.00.00.00
+"""
+
+
+def test_parse_topic_info_humble_format():
+    p = rows.parse_topic_info(_INFO)
+    assert p == {'publishers': ['rosbag2_player'], 'subscribers': ['icp_odometry', 'slam_probe']}
+    assert rows.parse_topic_info('') == {'publishers': [], 'subscribers': []}
+
+
+def test_unmet_lists_missing_subscribers_and_player():
+    reqs = (('/amr_01/lidar3d/points', 'icp_odometry'), ('/amr_01/lidar3d/points', 'rtabmap'))
+    miss = rows.unmet(reqs, {'/amr_01/lidar3d/points': _INFO},
+                      player_topics=['/amr_01/lidar3d/points'])
+    assert miss == ['/amr_01/lidar3d/points ← rtabmap']
+    no_player = _INFO.replace('Endpoint type: PUBLISHER', 'Endpoint type: SUBSCRIPTION')
+    miss2 = rows.unmet(reqs[:1], {'/amr_01/lidar3d/points': no_player},
+                       player_topics=['/amr_01/lidar3d/points'])
+    assert miss2 == ['/amr_01/lidar3d/points → rosbag2_player']
+    assert rows.unmet(reqs[:1], {}, ()) == ['/amr_01/lidar3d/points ← icp_odometry']
+
+
+def test_every_row_has_ready_requirements_on_played_topics():
+    """모든 행: 입력 토픽에 측정 노드·SLAM 노드, IMU 를 트는 행은 IMU 구독도, 처리 출력에는 C++ 기록기."""
+    for name, r in rows.ROWS.items():
+        req = rows.ready_requirements(r)
+        topics = {t for t, _ in req}
+        assert (r.input_topic, rows.PROBE_NODE) in req, name
+        assert len([1 for t, n in req if t == r.input_topic and n != rows.PROBE_NODE]) >= 1, name
+        for t in topics - {t for t, _, _ in r.processed}:
+            assert t in r.play_topics or t == rows.IMU_MADGWICK, (name, t)
+        imu = [t for t in r.play_topics if '/imu/' in t]
+        if imu:
+            assert any(t == imu[0] for t, _ in req), name
+        for t, _, _ in r.processed:
+            assert (t, rows.RECORDER_NODE) in req, name
+    lio = rows.ready_requirements(rows.row('liosam_planar'))
+    assert (rows.IMU_MADG_RE, 'lio_sam_imu_preintegration') in lio
+    assert (rows.CLOUD, 'lio_sam_imageProjection') in lio
+    noimu = rows.ready_requirements(rows.row('rtabmap3d_noimu'))
+    assert not any('/imu/' in t for t, _ in noimu)
+
+
+def test_record_qos_overrides_cover_all_volatile_record_topics():
+    """기록기 구독 깊이: /tf_static(transient_local) 을 뺀 모든 기록 토픽, reliable·volatile, 고빈도는 ≥ 1000."""
+    q = yaml.safe_load(rows.record_qos_yaml())
+    assert set(q) == set(rows.RECORD_TOPICS) - {'/tf_static'}
+    for t, p in q.items():
+        assert p == {'history': 'keep_last', 'depth': rows.RECORD_QOS_DEPTH[t],
+                     'reliability': 'reliable', 'durability': 'volatile'}, t
+    for t in ('/clock', '/tf', '/amr_01/imu/data_raw', '/amr_01/imu/data', '/amr_01/joint_states'):
+        assert q[t]['depth'] >= 1000

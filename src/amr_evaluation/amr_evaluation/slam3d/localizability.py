@@ -236,9 +236,13 @@ def s6_blockers(variant: str) -> Optional[Boxes]:
     queue2  : 양끝 대기 (북 (0, -5.5) + 남 (0, -14.5))
     follow  : 같은 방향 추종 AMR 이 통로 안 1.0 m 뒤 (same_direction: true 로 허용됨) — 대상 (0, -10) 기준 (0, -11.0)
     wall    : 양끝 입구를 0.8 x 0.3 x 0.5 m 화물로 완전히 막음 (최악 — 보고서의 4 m 사거리 상한 대용과 같은 성격)
+    queue@Y : queue 와 같은 AMR 을 (0, Y) 에 — 정지점 감도 (리뷰 N4: 요청 지점 −5.5 에서 실제 정지점은 확인 주기·
+              지연·제동만큼 입구(y = −8) 쪽으로 최대 1.1 m 더 들어온다, traffic.yaml:34)
     """
     if variant == 'open':
         return None
+    if variant.startswith('queue@'):
+        return amr(0.0, float(variant.split('@', 1)[1]), -math.pi / 2)
     if variant == 'queue':
         return amr(0.0, -5.5, -math.pi / 2)
     if variant == 'queue2':
@@ -261,7 +265,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser(description='GT 기하 단일 스캔 localizability (S6 변형 포함)')
     ap.add_argument('--gt-dir', required=True, help='gen_warehouse_world.py --gt-dir 출력')
     ap.add_argument('--poses', nargs='+', default=['aisle_centre'], choices=sorted(POSES))
-    ap.add_argument('--variants', nargs='+', default=['open', 'queue', 'queue2', 'follow', 'wall'])
+    ap.add_argument('--variants', nargs='+', default=['open', 'queue', 'queue2', 'follow', 'wall'],
+                    help='open | queue | queue2 | follow | wall | queue@Y (북쪽 대기 AMR 을 (0, Y) 에)')
     ap.add_argument('--voxel', type=float, default=0.0, help='점 복셀 솎기 [m] (보고서 표 = 0)')
     ap.add_argument('--rcap', type=float, default=math.inf, help='사거리 상한 [m] (보고서 막힘 대용 = 4)')
     ap.add_argument('--sigma', type=float, default=0.03)

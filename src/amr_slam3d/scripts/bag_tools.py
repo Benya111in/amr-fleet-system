@@ -9,6 +9,8 @@ bag·지도 파일 도구 — 파일럿 bag 메타데이터, 정답 궤적(TUM),
         [--tail-exempt 2]
     bag_tools.py poses <poses.txt> <out.tum> --tf x,y,z,qx,qy,qz,qw     (SLAM map 프레임 → 월드)
     bag_tools.py assemble <bag> --topic /amr_01/lidar3d/points --poses p.tum --base F --out c.ply
+    bag_tools.py gate <bag> --out gate.json [--depart-at 60]
+        녹화 직후 공백 검사 (recgate.py, 실패면 종료 코드 1)
 
 match 는 "처리 스캔 누락 0" 판정이다: 입력 bag 의 header 스탬프마다 출력 bag 에 같은 스탬프가 있는지 본다.
 출력 bag 은 C++ 기록기(ros2 bag record)라 Python 측정 노드처럼 뒤처져 버리지 않는다.
@@ -18,7 +20,9 @@ assemble 은 자세 파일(월드 프레임, 스탬프 = 스캔 스탬프)의 �
 점군 프레임 → base 변환은 bag 의 /tf_static 으로 계산한다.
 
 stats 는 header 가 첫 필드인 형만 header.stamp 로 주기를 낸다 (CDR 머리만 읽는다 — 점군을 역직렬화하지 않는다).
-TFMessage·Clock 같은 형은 bag 기록 시각(벽시계 기준 수신 시각) 통계만 낸다.
+rosgraph_msgs/Clock 은 첫 필드가 builtin_interfaces/Time 이라 CDR 배치가 같아 sim 시각 통계를 낸다.
+TFMessage 같은 형은 bag 기록 시각(벽시계 기준 수신 시각) 통계만 낸다.
+gate 는 recgate.py 의 사전 등록 규칙 (토픽 간격 ≤ 1.5 주기, 덮음, 처음 ≥ 10 s·끝 ≥ 0.5 s 정지) 으로 판정한다.
 """
 
 import argparse
@@ -26,14 +30,16 @@ import json
 import os
 import sys
 
-from amr_slam3d import bagstat, cloudio
+from amr_slam3d import bagstat, cloudio, recgate
+from amr_slam3d.se2 import yaw_from_quat
 import numpy as np
 
 #: header 가 첫 필드인 형 (CDR 머리로 스탬프를 읽는다)
 HEADER_TYPES = {'sensor_msgs/msg/PointCloud2', 'sensor_msgs/msg/LaserScan', 'sensor_msgs/msg/Imu',
                 'sensor_msgs/msg/JointState', 'nav_msgs/msg/Odometry',
-                'geometry_msgs/msg/TwistStamped'}
-NOMINAL_HZ = {'sensor_msgs/msg/PointCloud2': 10.0, 'sensor_msgs/msg/LaserScan': 10.0}
+                'geometry_msgs/msg/TwistStamped', 'rosgraph_msgs/msg/Clock'}
+NOMINAL_HZ = {'sensor_msgs/msg/PointCloud2': 10.0, 'sensor_msgs/msg/LaserScan': 10.0,
+              'rosgraph_msgs/msg/Clock': 1000.0}
 
 
 def storage_id(path: str) -> str:
@@ -239,6 +245,68 @@ def cmd_assemble(ns) -> int:
     return 0
 
 
+def read_gate_series(path: str, robot: str = recgate.ROBOT):
+    """
+    녹화 bag → (검사 토픽 스탬프 열 {토픽: [ns]}, 정답 자세 (t, x, y, yaw), 기록 순서 [(토픽, ns)]).
+
+    기록 순서는 clock lead 진단용이다.
+
+    EKF TF 는 /tf 안의 <robot>/odom → <robot>/base_footprint 변환의 스탬프 (recgate.EKF_TF 키).
+    """
+    from nav_msgs.msg import Odometry
+    from rclpy.serialization import deserialize_message
+    from tf2_msgs.msg import TFMessage
+    import rosbag2_py
+    reader, types = _reader(path)
+    gt_topic = f'/{robot}/ground_truth/odom'
+    plain = [t for t in recgate.GATE_PERIODS_NS if t.startswith('/') and t in types]
+    want = plain + [t for t in ('/tf', gt_topic) if t in types]
+    reader.set_filter(rosbag2_py.StorageFilter(topics=want))
+    series = {t: [] for t in plain}
+    series[recgate.EKF_TF] = []
+    parent, child = f'{robot}/odom', f'{robot}/base_footprint'
+    gt = ([], [], [], [])
+    order = []
+    while reader.has_next():
+        topic, raw, _ = reader.read_next()
+        if topic == '/tf':
+            for tr in deserialize_message(raw, TFMessage).transforms:
+                if tr.header.frame_id == parent and tr.child_frame_id == child:
+                    series[recgate.EKF_TF].append(tr.header.stamp.sec * 1_000_000_000
+                                                  + tr.header.stamp.nanosec)
+            continue
+        if topic == gt_topic:
+            m = deserialize_message(raw, Odometry)
+            p, q = m.pose.pose.position, m.pose.pose.orientation
+            gt[0].append(m.header.stamp.sec + m.header.stamp.nanosec * 1e-9)
+            gt[1].append(p.x)
+            gt[2].append(p.y)
+            gt[3].append(yaw_from_quat(q.x, q.y, q.z, q.w))
+            continue
+        sec, nsec = bagstat.cdr_header_key(raw)
+        ns = sec * 1_000_000_000 + nsec
+        series[topic].append(ns)
+        order.append((topic, ns))
+    if not series[recgate.EKF_TF]:
+        del series[recgate.EKF_TF]
+    return series, gt, order
+
+
+def cmd_gate(ns) -> int:
+    series, gt, order = read_gate_series(ns.bag)
+    res = recgate.evaluate(series, gt if gt[0] else None, ns.depart_at)
+    res['bag'] = os.path.abspath(ns.bag)
+    res['clock_lead'] = recgate.clock_lead(order)
+    raw_n = len(series.get(f'/{recgate.ROBOT}/lidar3d/points_raw', []))
+    pre_n = len(series.get(f'/{recgate.ROBOT}/lidar3d/points', []))
+    res['cloud_counts'] = {'points_raw': raw_n, 'points': pre_n, 'diff': raw_n - pre_n}
+    with open(ns.out, 'w', encoding='utf-8') as f:
+        json.dump(res, f, ensure_ascii=False, indent=1)
+    print(json.dumps({'pass': res['pass'], 'reasons': res['reasons'],
+                      'protocol': res['protocol']}, ensure_ascii=False))
+    return 0 if res['pass'] else 1
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     sub = ap.add_subparsers(dest='cmd', required=True)
@@ -274,9 +342,14 @@ def main(argv=None) -> int:
     s.add_argument('--range-min', type=float, default=0.2)
     s.add_argument('--range-max', type=float, default=30.0)
     s.add_argument('--out', required=True)
+    s = sub.add_parser('gate')
+    s.add_argument('bag')
+    s.add_argument('--out', required=True)
+    s.add_argument('--depart-at', type=float, default=None,
+                   help='[s, sim] 출발 시각 확인 (S6 변형 짝 — recgate.DEPART_WINDOW_S 안)')
     ns = ap.parse_args(argv)
     return {'stats': cmd_stats, 'tum': cmd_tum, 'cloud': cmd_cloud, 'match': cmd_match,
-            'poses': cmd_poses, 'assemble': cmd_assemble}[ns.cmd](ns)
+            'poses': cmd_poses, 'assemble': cmd_assemble, 'gate': cmd_gate}[ns.cmd](ns)
 
 
 if __name__ == '__main__':

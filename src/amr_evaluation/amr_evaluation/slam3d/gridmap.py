@@ -112,35 +112,83 @@ def sample_field(field: np.ndarray, grid: Grid, pts: np.ndarray) -> np.ndarray:
     return ndimage.map_coordinates(field, [row, col], order=1, mode='nearest')
 
 
-def observed_mask(est: Grid, target: Grid, margin: float, free_only: bool = False) -> np.ndarray:
+def observed_mask(est: Grid, target: Grid, margin: float, free_only: bool = False,
+                  chunk: int = 256) -> np.ndarray:
     """
     관측 영역: target 셀 중 중심이 est 의 알려진 셀 안인 것을 margin [m] 만큼 넓힌 마스크.
 
     free_only 면 알려진 셀 대신 **자유** 셀만 넓힌다 — 면(경계) 재현율용: 벽 뒷면처럼 자유 공간에 닿지 않은
     면은 관측 영역에 들지 않는다.
+
+    메모리 (리뷰 N11): 예전 판은 target 전체(0.01 GT 6200 x 4200)의 셀 중심 좌표·조회 색인 배열(float64·int64,
+    배열마다 0.2–0.4 GB)과 거리변환(float64)을 만들었다. 지금은 (1) est 원점 yaw 0 이면 셀 중심이 축마다 따로 정해지므로
+    열·행 색인을 1 차원으로 구해 바깥 곱으로 조회하고, yaw ≠ 0 이면 행 묶음(chunk)마다 조회하며, (2) margin 넓히기를
+    거리변환 대신 원판 팽창(행 묶음마다, 정수 오프셋 di² + dj² ≤ (margin/res)² — 거리변환 문턱과 같은 집합)으로 한다.
+    결과는 예전 판과 같다 (test_slam3d_metrics.py 가 예전 구현과 대조).
     """
-    from scipy import ndimage
-    rows, cols = np.mgrid[0:target.shape[0], 0:target.shape[1]]
-    pts = np.stack([target.origin_x + (cols.ravel() + 0.5) * target.resolution,
-                    target.origin_y + (rows.ravel() + 0.5) * target.resolution], 1)
-    known = np.zeros(len(pts), dtype=bool)
     src = est.known & ~est.occupied if free_only else est.known
+    h, w = target.shape
+    xs = target.origin_x + (np.arange(w) + 0.5) * target.resolution
+    ys = target.origin_y + (np.arange(h) + 0.5) * target.resolution
+    mask = np.zeros((h, w), dtype=bool)
     if abs(est.origin_yaw) < 1e-12:
-        r, c, ok = est.lookup(pts)
-        known[ok] = src[r[ok], c[ok]]
+        c = np.floor((xs - est.origin_x) / est.resolution).astype(np.int64)
+        r = np.floor((ys - est.origin_y) / est.resolution).astype(np.int64)
+        okc = (c >= 0) & (c < est.shape[1])
+        okr = (r >= 0) & (r < est.shape[0])
+        if okc.any() and okr.any():
+            mask[np.ix_(okr, okc)] = src[np.ix_(r[okr], c[okc])]
     else:
         cs, sn = math.cos(-est.origin_yaw), math.sin(-est.origin_yaw)
-        d = pts - [est.origin_x, est.origin_y]
-        lx, ly = cs * d[:, 0] - sn * d[:, 1], sn * d[:, 0] + cs * d[:, 1]
-        c = np.floor(lx / est.resolution).astype(np.int64)
-        r = np.floor(ly / est.resolution).astype(np.int64)
-        ok = (c >= 0) & (c < est.shape[1]) & (r >= 0) & (r < est.shape[0])
-        known[ok] = src[r[ok], c[ok]]
-    mask = known.reshape(target.shape)
+        dx = xs - est.origin_x
+        for a in range(0, h, chunk):
+            dy = ys[a:a + chunk, None] - est.origin_y
+            lx, ly = cs * dx[None, :] - sn * dy, sn * dx[None, :] + cs * dy
+            c = np.floor(lx / est.resolution).astype(np.int64)
+            r = np.floor(ly / est.resolution).astype(np.int64)
+            ok = (c >= 0) & (c < est.shape[1]) & (r >= 0) & (r < est.shape[0])
+            blk = np.zeros(ok.shape, dtype=bool)
+            blk[ok] = src[r[ok], c[ok]]
+            mask[a:a + chunk] = blk
     if margin > 0:
-        dist = ndimage.distance_transform_edt(~mask) * target.resolution
-        mask = dist <= margin + 1e-9
+        mask = disk_dilate(mask, (margin + 1e-9) / target.resolution, chunk)
     return mask
+
+
+def disk_dilate(mask: np.ndarray, radius_cells: float, chunk: int = 256) -> np.ndarray:
+    """
+    원판 팽창: out[y, x] = 정수 오프셋 (di, dj), di² + dj² ≤ radius² 인 이웃 중 하나라도 True.
+
+    `distance_transform_edt(~mask) ≤ radius` (셀 중심 거리) 와 같은 집합이다 (단, mask 가 전부 False 면 전부 False).
+    행마다 누적합으로 가로 팽창(반폭 ⌊√(r² − di²)⌋)을 하고 세로 이동으로 합친다 — 행 묶음 단위라 추가 메모리는
+    묶음 크기에만 비례한다.
+    """
+    h, w = mask.shape
+    big_r = int(math.floor(radius_cells))
+    if big_r <= 0 or not mask.any():
+        return mask.copy()
+    half = {di: int(math.floor(math.sqrt(max(radius_cells * radius_cells - di * di, 0.0))))
+            for di in range(-big_r, big_r + 1)}
+    out = np.zeros_like(mask)
+    cols = np.arange(w)
+    for a in range(0, h, chunk):
+        b = min(h, a + chunk)
+        ia, ib = max(0, a - big_r), min(h, b + big_r)
+        cs = np.zeros((ib - ia, w + 1), dtype=np.int32)
+        np.cumsum(mask[ia:ib], axis=1, out=cs[:, 1:])
+        acc = np.zeros((b - a, w), dtype=bool)
+        for hw in sorted(set(half.values())):
+            lo = np.clip(cols - hw, 0, w)
+            hi = np.clip(cols + hw + 1, 0, w)
+            row = (cs[:, hi] - cs[:, lo]) > 0
+            for di, ww in half.items():
+                if ww != hw:
+                    continue
+                s0, s1 = max(a + di, ia), min(b + di, ib)
+                if s0 < s1:
+                    acc[s0 - di - a:s1 - di - a] |= row[s0 - ia:s1 - ia]
+        out[a:b] = acc
+    return out
 
 
 def paint(points: np.ndarray, target: Grid) -> np.ndarray:
