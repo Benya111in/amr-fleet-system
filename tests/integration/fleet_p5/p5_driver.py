@@ -187,6 +187,9 @@ class Driver:
                 r = sh(['docker', 'exec', stack, 'ps', '-eo', 'pid,etime,pcpu,rss,args'])
                 with open(os.path.join(d, 'ps_stack.txt'), 'w', encoding='utf-8') as f:
                     f.write(f'{now_iso()} sim={clock.get("sim")}\n' + r.stdout + r.stderr)
+                r = sh(['docker', 'exec', stack, 'df', '-k'])     # shm 마운트 사용량 (UDP 전용이면 ~0)
+                with open(os.path.join(d, 'df_stack.txt'), 'w', encoding='utf-8') as f:
+                    f.write(f'{now_iso()}\n' + r.stdout + r.stderr)
                 ps_done = True
             if clock.get('state') == 'END':
                 last_change = time.time()

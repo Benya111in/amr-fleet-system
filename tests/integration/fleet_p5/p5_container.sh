@@ -16,7 +16,14 @@ export IGN_PARTITION="b4p5_${P5_TAG}"
 export PYTHONHASHSEED=0
 unset ROS_LOCALHOST_ONLY
 CFG=/ros2_ws/install/amr_bringup/share/amr_bringup/config
-export FASTRTPS_DEFAULT_PROFILES_FILE="${CFG}/fastdds_multi_robot.xml"
+# DDS: UDP 전용 (SHM 없음) — 결과 뒤 변경 (노트 01:25): SHM 프로파일에서 clock_bridge 참가자가 그래프에서 사라지며 ROS /clock 이 멎는
+# 갈래가 잇따랐다 (Gazebo 내부 시각은 진행). b4-s12 의 SHM 송신 경로 정지 진단과 같은 계열로 본다. 비용: 카메라 영상이 UDP 조각 전송.
+# P5_DDS=shm 이면 예전 프로파일 (비교 · 진단용). bringup 은 이미 준 프로파일을 유지한다 (launch_utils.dds_environment).
+if [ "${P5_DDS:-udp}" = shm ]; then
+    export FASTRTPS_DEFAULT_PROFILES_FILE="${CFG}/fastdds_multi_robot.xml"
+else
+    export FASTRTPS_DEFAULT_PROFILES_FILE="${CFG}/fastdds_multi_robot_udponly.xml"
+fi
 mkdir -p "${P5_OUT}"
 env | grep -E '^(ROS_|RMW_|FASTRTPS_|IGN_|GZ_|P5_|AMR_)' | sort > "${P5_OUT}/env.txt"
 

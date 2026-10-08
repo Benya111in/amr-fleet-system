@@ -296,6 +296,17 @@ sim ~300 s. 동시 짝이면 AA · C1 · C3 · F5L 짝당 ≈ 40 분 × 30 = 20 
     (`graph_at_end.json`: /clock 발행자 수 · 노드 이름)를 남긴다. 해시 `p5_recorder.py` `d0ff03fa9492afe7b5b102ddb8b378104b805c58d7ad6e648b10d3b83153eec6`.
   - 전송을 UDP 전용으로 바꾸는 것은 **하지 않았다**: 카메라 영상 조각 전송으로 인식 처리율이 0.32–0.54 로 떨어진다는 기록(프로파일 머리말)이 있고
     파일럿 짝 1 재시도는 SHM 으로 두 갈래 모두 정상이었다. 무효율이 높으면 다시 판단한다 (판단과 근거를 이 항목에 적는다).
+- **(01:25 결과 뒤 변경 — 환경: DDS 를 UDP 전용으로, 본 실행 유효 0 회 시점)** AA 짝 1 의 두 갈래가 **모두** ROS /clock 정지(CLOCK_STALL)로
+  끝났다 [측정]: 갈래 b 는 sim 5.5 s 에서 기록기의 /clock 이 멎었는데 같은 기록기가 받은 정답 odom(gz_bridge) 머리 시각은 179 s 까지 갔고
+  (`gt.csv`), 서버 하트비트(서버 sim 시계 타이머)도 sim 5.5 s 무렵 끊겼다 — **clock_bridge 의 /clock 전달만** 멎었다. Gazebo 내부 RTF 0.33.
+  지금까지 SHM 프로파일 갈래 7 개 중 /clock 정지 3 (파일럿 짝 2 분산 · AA 짝 1 a · b), 기동 lifecycle 실패 1, 정상 3. clock_bridge 는 /clock 을
+  sim 갱신마다 노드 ~170 개에 보낸다 — SHM 전송은 읽는 쪽 포트가 막히면 쓰는 쪽 송신이 멈출 수 있다 (b4-s12 진단 `SharedMemTransport::send`).
+  그래서 **스택 · 서버 컨테이너의 DDS 를 `fastdds_multi_robot_udponly.xml` 로** 바꾼다 (기록기는 처음부터 UDP 전용). 두 갈래 · 모든 실험에
+  같다 — 비교의 공정성은 그대로다. 비용 [문서주장, 프로파일 머리말]: 카메라 영상이 UDP 조각 전송이라 인식 처리율 0.32–0.54. 도킹 · 인식 실패가
+  늘면 결과에 함께 적는다. `P5_DDS=shm` 으로 예전 프로파일을 다시 쓸 수 있다 (진단용). 드라이버가 스택 `df -k` 를 남겨 shm 사용량(UDP 전용이면
+  fastrtps 세그먼트 없음)을 확인한다. 파일럿 결정(차례로 · T_START 60)은 그대로 쓰되, UDP 갈래의 t_ready 가 60 s 를 넘으면(LATE_START)
+  P 실험 전에 T_START 를 같은 규칙으로 다시 정한다. 해시 `p5_container.sh` `e8b53c7398e0fd8157a23881e35ad8696d9aea6a3dc47838df24bf6272924faf`,
+  `p5_server.sh` `c741c59bb2d4e53fc71bc1eabf4d8b952db4d22623989250ec59ca2eb22ac883`, `p5_driver.py` `7c703ba79b0985977751d82731950e18ae2d4d86cdf84ea70b913d82613ff60b`.
 
 ## 결과
 
