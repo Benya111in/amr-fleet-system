@@ -11,6 +11,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -837,4 +838,55 @@ TEST(TrafficLinkWatch, ContextStepsWithItsOwnGateState)
   EXPECT_EQ(ctx.trafficLink().resubscribes(), 1);
   EXPECT_EQ(ctx.trafficLink().alarms(), 1);
   EXPECT_DOUBLE_EQ(ctx.trafficLink().config().alarm_after_s, 2.0);
+}
+
+namespace
+{
+
+/// 분산 플릿 모드 실행기 (b4-wire): fleet.distributed 면 존 노드를 등록하고 분산 트리를 띄운다.
+class DistributedExecutorTest : public ::testing::Test
+{
+protected:
+  static void SetUpTestSuite() {rclcpp::init(0, nullptr);}
+  static void TearDownTestSuite() {rclcpp::shutdown();}
+
+  static std::shared_ptr<amr_behavior::TaskExecutorNode> make(bool distributed)
+  {
+    const std::vector<rclcpp::Parameter> overrides = {
+      rclcpp::Parameter(
+        "bt_xml",
+        std::string(AMR_BEHAVIOR_SOURCE_DIR) + "/behavior_trees/task_executor_distributed.xml"),
+      rclcpp::Parameter("robot_id", "amr_08"),
+      rclcpp::Parameter("fleet.distributed", distributed),
+      rclcpp::Parameter("groot.enabled", false),
+      rclcpp::Parameter("charger_claims_topic", ""),
+    };
+    return std::make_shared<amr_behavior::TaskExecutorNode>(
+      rclcpp::NodeOptions().parameter_overrides(overrides));
+  }
+};
+
+}  // namespace
+
+TEST_F(DistributedExecutorTest, RegistersZoneNodesAndLoadsTheDistributedTree)
+{
+  auto node = make(true);
+  ASSERT_NO_THROW(node->init());
+  std::set<std::string> ids;
+  for (const auto & n : node->tree()->nodes) {
+    ids.insert(n->registrationName());
+  }
+  for (const char * id : {"ZonePathClear", "IsFleetServerAlive", "CommitTaskLock"}) {
+    EXPECT_EQ(ids.count(id), 1U) << id;
+  }
+  // 에이전트 연결: 실행기 노드가 fleet_agent/state 를 구독한다
+  EXPECT_EQ(node->count_subscribers("fleet_agent/state"), 1U);
+}
+
+TEST_F(DistributedExecutorTest, CentralExecutorDoesNotRegisterZoneNodes)
+{
+  // 중앙 모드 실행기는 존 노드를 등록하지 않는다 → 분산 트리를 주면 트리 생성이 실패한다
+  auto node = make(false);
+  EXPECT_THROW(node->init(), std::exception);
+  EXPECT_EQ(node->count_subscribers("fleet_agent/state"), 0U);   // 에이전트 연결을 만들지 않는다
 }

@@ -156,6 +156,11 @@ if(BUILD_TESTING)
   target_link_libraries(test_task_tree amr_behavior_bt)
   target_compile_definitions(test_task_tree PRIVATE ${_src_def})
 
+  # 분산 플릿 launch 시험 (보너스 4 b4-wire, test_fleet_world/): 실제 실행기 · 에이전트 · 관리자 5 대 +
+  # 가짜 세계(운동학 Nav2 대역). 가짜 /clock 을 내므로 도메인을 가른다 (56). 오래 걸린다 (합 10 분 안팎)
+  ament_add_pytest_test(amr_behavior_fleet_world test_fleet_world TIMEOUT 2400
+    ENV ROS_DOMAIN_ID=56 "TASK_EXECUTOR_EXE=$<TARGET_FILE:task_executor_node>")
+
   # 분산 플릿 모드 트리 (task_executor_distributed.xml, 보너스 4 b4-wire) — 존 노드는 스텁
   ament_add_gtest(test_task_tree_distributed test/test_task_tree_distributed.cpp TIMEOUT 120)
   target_link_libraries(test_task_tree_distributed amr_behavior_bt)
