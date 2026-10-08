@@ -6,9 +6,11 @@
 #
 # 프로토콜 (replay.md §9-1·2·3·5, 사전 등록 docs/research/slam3d/notebook/entries/*_b2-rec_*):
 #  1) 월드: gen_warehouse_world.py --variant <V> → <출력>/world/warehouse.sdf (기본 월드 출력은 바이트 동일).
-#     생성된 사본의 물리 real_time_factor 를 RTF_TARGET (기본 0.5) 으로 낮춘다 — 시운전 1 회차(sim 81 s, 실제 RTF 0.85)에서
+#     생성된 사본의 물리 real_time_factor 를 RTF_TARGET (기본 0.25) 으로 낮춘다 — 시운전 1 회차(sim 81 s, 실제 RTF 0.85)에서
 #     EKF 타이머 지연(33–54 ms)·imu_filter 입력 버림(15 ms)·/clock 틱 누락이 공백 검사를 실패시켰다. 시뮬 시각이 벽시계보다
-#     느리게 가면 처리 노드가 sim 주기마다 쓸 벽시계 여유가 늘어난다 (물리 스텝·센서 주기·주행은 sim 시각 기준이라 그대로)
+#     느리게 가면 처리 노드가 sim 주기마다 쓸 벽시계 여유가 늘어난다 (물리 스텝·센서 주기·주행은 sim 시각 기준이라 그대로).
+#     0.5 → 0.25 (s1_seed2 시도 뒤): 통과한 녹화는 실제 RTF 가 목표(0.49)였고, 실패한 둘은 목표 아래(0.41·0.34 — 다른 사용자
+#     부하로 시뮬이 목표를 못 따라가 여유가 없었다)였다 [측정 rec/*/bag_meta.json]
 #  2) multi_robot.launch.py: amr_01(3D) 1 대, localization mode odom (휠·imu_filter·scan_filter·odom EKF),
 #     Nav2·perception·behavior·fleet 없음. **madgwick 은 띄우지 않는다** — 원시 IMU(imu/data_raw·imu/data)만 기록하고
 #     madgwick 은 녹화 뒤 madg_lockstep.py 로 파생한다 (기록 때 madgwick 이 입력을 잃었다 — replay.md §1.2)
@@ -95,7 +97,7 @@ mkdir -p "$OUT/world"
 python3 /ros2_ws/src/amr_simulation/worlds/gen_warehouse_world.py --variant "$VARIANT" \
   "$OUT/world/warehouse.sdf" > "$OUT/world.log" 2>&1
 echo "generated: $(sha256sum < "$OUT/world/warehouse.sdf")" >> "$OUT/world.log"
-RTF_TARGET=${RTF_TARGET:-0.5}
+RTF_TARGET=${RTF_TARGET:-0.25}
 sed -i "s#<real_time_factor>1.0</real_time_factor>#<real_time_factor>$RTF_TARGET</real_time_factor>#" \
   "$OUT/world/warehouse.sdf"
 if [ "$(grep -c "<real_time_factor>$RTF_TARGET</real_time_factor>" "$OUT/world/warehouse.sdf")" != 1 ]; then

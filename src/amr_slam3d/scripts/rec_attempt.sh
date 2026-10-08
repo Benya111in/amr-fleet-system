@@ -9,6 +9,17 @@
 set -uo pipefail
 WT=${1:?}; D=${2:?}; TAG=${3:?}; ROUTE=${4:?}; VARIANT=${5:?}; SP=${6:?}
 DOMAIN=${DOMAIN:-47}; IMAGE=${IMAGE:-amr-ai/slam:0.1}; AGENT=${AGENT:-b2-rec}
+# 시작 조건: loadavg 1 분값 < LOAD_MAX (기본 8, b4-s12 짝 실행과 같은 문턱) — 다른 사용자 부하가 몰릴 때 시작하지 않는다
+# (s1_seed2 의 두 실패가 부하 급증과 겹쳤다). LOAD_WAIT_MAX (기본 21600 s) 넘게 기다리면 그대로 시작하고 적어 둔다.
+LOAD_MAX=${LOAD_MAX:-8}; LOAD_WAIT_MAX=${LOAD_WAIT_MAX:-21600}
+w0=$SECONDS
+while :; do
+  read -r l1 _ < /proc/loadavg
+  if awk -v a="$l1" -v b="$LOAD_MAX" 'BEGIN { exit !(a < b) }'; then break; fi
+  if [ $((SECONDS - w0)) -ge "$LOAD_WAIT_MAX" ]; then echo "load_wait_timeout" > "$D/load_wait.txt"; break; fi
+  sleep 30
+done
+echo "load_wait_s: $((SECONDS - w0)) load1_at_start: $l1 limit: $LOAD_MAX" >> "$D/load_wait.txt"
 git -C "$WT" rev-parse HEAD > "$D/HEAD.txt"
 git -C "$WT" diff --stat > "$D/diff_stat.txt"
 git -C "$WT" status --porcelain -- src > "$D/status.txt"
