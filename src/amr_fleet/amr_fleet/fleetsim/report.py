@@ -310,8 +310,10 @@ def main_markdown(rows: List[dict], aa: Optional[dict]) -> (str, dict):
 
 # ---------------------------------------------------------------------- 리뷰 B1: hold 의미 (P4-5)
 def _below(r: dict) -> int:
+    # P4 배치의 결정점 미달 구역(도크 넷)으로 센다 — 이 보고는 P4 실행(fd17e49 배치)을 다시 만드는 것이다.
+    # 지금 배치에는 미달 구역이 없어 새 실행에서는 이 칸이 '도크 구역 사건' 을 뜻한다 (plan.py 주석).
     z = r.get('cooccupancy_zones') or {}
-    return sum(n for k, n in z.items() if k in plan.BELOW_DECISION_ZONES)
+    return sum(n for k, n in z.items() if k in plan.P4_BELOW_DECISION_ZONES)
 
 
 def hold_safety(rows: List[dict]) -> List[dict]:

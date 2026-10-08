@@ -200,11 +200,20 @@ def test_shipped_layout_has_no_waiting_spot_inside_zones():
     zones, _ = load_layout(str(CONFIG), True)
     approach = approach_map(zones, z['approach_distance_m'], z['corridor_approach_m'])
     assert spacing_conflicts(zones, approach, z['chain_gap_m'], params['robot_radius']) == []
-    # 구역별 approach_m 없이 기본값만 쓰면 2 m 간격 도크 쌍이 거절된다 (그래서 도크만 1.5 — p0.md §5)
+    # 도크 구역 예전 높이(staging ±1 m, 같은 쪽 간격 2.0 m)로는 기본 요청 거리 2.0 을 쓸 수 없었다 — 그래서 P0 은
+    # 도크만 1.5 로 두어 결정점 거리에 미달했다 (p0.md §5). 지금 배치(±0.75 m, 간격 2.5 m)는 기본값 그대로 통과한다
     plain = {zz.zone_id: z['corridor_approach_m'] if zz.kind == CORRIDOR
              else z['approach_distance_m'] for zz in zones}
+    assert plain == approach
+    old = []
+    for zz in zones:
+        poly = zz.polygon.tolist()
+        if zz.zone_id.startswith('dock_'):
+            cy = float(zz.centroid[1])
+            poly = [[x, cy - 1.0 if y < cy else cy + 1.0] for x, y in poly]
+        old.append(dict(id=zz.zone_id, kind=zz.kind, polygon=poly))
     assert {(a, b) for a, b, _ in spacing_conflicts(
-        zones, plain, z['chain_gap_m'], params['robot_radius'])} == {
+        zones_from_config(old), plain, z['chain_gap_m'], params['robot_radius'])} == {
         ('dock_1_approach', 'dock_2_approach'), ('dock_a_approach', 'dock_b_approach')}
     # 리뷰 finding 1 의 원래 배치(교차로 = 틈 폭 4 m, approach 2.5)는 통로를 따라 2 m 간격이라 거절된다
 
@@ -437,16 +446,53 @@ def test_decision_distance_formula():
             decision_distance(**bad)
 
 
-def test_shipped_approach_meets_decision_distance_except_docks():
-    """배포 값: 결정점 거리 1.85 m 를 못 채우는 구역은 도크 넷뿐이다 (간격 2 m 배치 제약 — 미달로 적는다)."""
+def test_shipped_approach_meets_decision_distance():
+    """
+    배포 값: 모든 구역의 요청 거리가 결정점 거리 1.85 m 이상이다 (예외 목록이 비었다).
+
+    P0 에서는 도크 넷이 예외였다 (approach_m 1.5 — 간격 2 m 배치 제약, 옛 이름
+    test_shipped_approach_meets_decision_distance_except_docks). b4-wire F5 가 도크 구역 높이를 줄여 풀었다.
+    """
     params = yaml.safe_load(PARAMS.read_text())['/fleet/traffic_manager_node']['ros__parameters']
     z = params['zones']
     zones, _ = load_layout(str(CONFIG), True)
     approach = approach_map(zones, z['approach_distance_m'], z['corridor_approach_m'])
     need = decision_distance(**DECISION_INPUTS)
     short = sorted(zid for zid, d in approach.items() if d < need)
-    assert short == ['dock_1_approach', 'dock_2_approach', 'dock_a_approach', 'dock_b_approach']
+    assert short == []
     assert approach['x_ab_1'] == 2.0 and approach['narrow_aisle'] == 2.5
+    assert all(approach[d] == 2.0 for d in DOCK_ZONES)
+    assert all(zz.approach_m is None for zz in zones)       # 구역별 덮어쓰기 없음
+
+
+DOCK_ZONES = ('dock_1_approach', 'dock_2_approach', 'dock_a_approach', 'dock_b_approach')
+BEHAVIOR_YAML = (pathlib.Path(__file__).resolve().parents[2] / 'amr_behavior' / 'config'
+                 / 'behavior.yaml')
+
+
+def test_dock_zones_contain_the_robot_while_it_works_at_the_dock():
+    """
+    도크 구역을 줄여도 도크 작업 내내 몸체가 구역 안이다 (b4-wire F5).
+
+    staging(돌아보기 · 회전 포함 — 외접 원판)과 도킹 끝(판 면에서 standoff) 사이 선분의 모든 점에서 외접 원판
+    (0.36 m)이 다각형 안. 도크 표는 amr_behavior/config/behavior.yaml (소스 트리 밖이면 건너뜀).
+    """
+    if not BEHAVIOR_YAML.is_file():
+        pytest.skip('amr_behavior 소스가 없다 (설치 공간에서 실행)')
+    docks = yaml.safe_load(BEHAVIOR_YAML.read_text())['/**']['ros__parameters']['docks']
+    zones = {zz.zone_id: zz for zz in load_layout(str(CONFIG), True)[0]}
+    r = 0.36
+    for dock in ('dock_1', 'dock_2', 'dock_a', 'dock_b'):
+        sx, sy, _ = docks[dock]['staging']
+        mx, my, _ = docks[dock]['marker_pose']
+        standoff = docks[dock]['standoff']
+        ex = mx + math.copysign(standoff, sx - mx)          # 판 면에서 standoff 만큼 staging 쪽
+        poly = zones[f'{dock}_approach'].polygon
+        for t in np.linspace(0.0, 1.0, 11):
+            cx, cy = sx + t * (ex - sx), sy + t * (my - sy)
+            ring = np.array([[cx + r * math.cos(a), cy + r * math.sin(a)]
+                             for a in np.linspace(0.0, 2 * math.pi, 24, endpoint=False)])
+            assert points_in_polygon(ring, poly).all(), (dock, t, (cx, cy))
 
 
 def test_zone_approach_override_parsing():
