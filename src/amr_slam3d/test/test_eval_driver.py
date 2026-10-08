@@ -164,3 +164,97 @@ def test_job_wt_override_reaches_docker_mount(tmp_path, monkeypatch):
     fh.close()
     assert f'{snap}:/ros2_ws:ro' in calls['cmd']
     assert (tmp_path / 'root' / j['id'] / 'HEAD.txt').read_text().strip() == 'deadbeef'
+
+
+def test_plan_e3_e4_shapes_and_dependencies():
+    e3 = drv.plan_e3()
+    assert len(e3) == 1 + 4 * 7 * 3
+    assert len({j['id'] for j in e3}) == len(e3)
+    gtdb = [j for j in e3 if j['row'] == 'rtabmap3d_gtdb']
+    assert len(gtdb) == 1 and gtdb[0]['bag'] == 'map_long_a1' and not gtdb[0]['requires']
+    for j in e3:
+        assert j['wt'] == drv.WS_E3 and j['domain'] == 46 and j['image'] == 'amr-ai/slam:0.1'
+        assert rows.row(j['row']).image == j['image']
+        if j['row'] == 'rtabmap3d_gtdb':
+            continue
+        assert j['bag'] != 'map_long_a1'
+        assert j['requires'] and j['mounts'] == [f'{drv.MAPS}:/data/map:ro']
+        r = rows.row(j['row'])
+        if r.loc_map == 'db':
+            assert j['env']['MAP_SPAWN'] == drv.MAP_LONG_SPAWN and 'LOC_DB' in j['env']
+        else:
+            assert 'LOC_MAP' in j['env']
+    e4 = drv.plan_e4()
+    assert len(e4) == 9 * 4 * 2
+    assert {j['row'] for j in e4} == set(drv.ABL_ROWS)
+    assert all(rows.row(r) for r in drv.ABL_ROWS)
+    assert min(j['priority'] for j in e4) > max(j['priority'] for j in e3)
+    e2 = drv.plan_e2()
+    assert min(j['priority'] for j in e3 if j['row'] != 'rtabmap3d_gtdb') > max(
+        j['priority'] for j in e2 if j['row'] in drv.E2_ROWS_MAIN)
+
+
+def test_select_rule_preregistered():
+    assert peval.select_rule([(0, 1.0, True), (1, 3.0, True), (2, 2.0, True)]) == (2, 'median_ate')
+    assert peval.select_rule([(1, 9.0, True), (2, 1.0, True)]) == (1, 'lowest_index_clean')
+    assert peval.select_rule([(2, 5.0, True)]) == (2, 'only_clean')
+    assert peval.select_rule([(1, 1.0, False), (0, 2.0, False)]) == (1, 'failed_replay_map')
+    assert peval.select_rule([]) == (None, 'none')
+
+
+def test_loc_fail_rules_and_e2_rules_unchanged():
+    base = {'row': 'rtabmap3d_loc_gt', 'rc': 0, 'coverage': 1.0, 'missing': 0, 'null_odom': 1,
+            'fatal': 0, 'ate_max_cm': 3.0, 'yaw_max_deg': 0.5}
+    assert peval.loc_fail_of(base) == []
+    assert peval.loc_fail_of(dict(base, null_odom=3)) == ['lost=2']
+    assert peval.loc_fail_of(dict(base, ate_max_cm=60.0)) == ['diverged']
+    assert peval.loc_fail_of(dict(base, yaw_max_deg=11.0)) == ['diverged']
+    am = {'row': 'amcl_gt', 'rc': 0, 'coverage': 1.0, 'missing': None, 'msgfilter_drop': 2,
+          'fatal': 0, 'ate_max_cm': 3.0, 'yaw_max_deg': 0.5}
+    assert peval.loc_fail_of(am) == ['msgfilter=2']
+    assert peval.is_loc_row('amcl_slam') and peval.is_loc_row('rtabmap3d_loc_slam')
+    assert not peval.is_loc_row('rtabmap3d_noimu') and not peval.is_loc_row('slam_toolbox')
+    # E2 정의는 그대로 (발산은 E2 실패 사유가 아니다)
+    e2 = {'row': 'rtabmap3d_noimu', 'family': 'rtabmap', 'rc': 0, 'missing': 0, 'fatal': 0,
+          'coverage': 0.99, 'ate_max_cm': 80.0}
+    assert peval.fail_of(e2) == []
+
+
+def test_compare_loc_and_abl_run_on_synthetic(tmp_path):
+    recs = []
+    for i, bag in enumerate(peval.LOC_BAGS_ALL):
+        for k in range(3):
+            for row, v in (('amcl_gt', 2.0), ('rtabmap3d_loc_gt', 1.0), ('amcl_slam', 2.5),
+                           ('rtabmap3d_loc_slam', 1.5)):
+                recs.append({'bag': bag, 'row': row, 'replay': k, 'fail': [],
+                             'ate_rmse_cm': v + 0.01 * i, 'seg_still_rmse_cm': v,
+                             'seg_still_max_cm': v * 2, 'seg_still_p95_cm': v,
+                             'aisle_axis_rmse_cm': v})
+    path = tmp_path / 'loc.jsonl'
+    path.write_text('\n'.join(json.dumps(r) for r in recs))
+    ns = type('N', (), {'replays': [str(path)], 'out': str(tmp_path / 'o')})
+    assert peval.cmd_compare_loc(ns) == 0
+    res = json.loads((tmp_path / 'o' / 'compare_loc.json').read_text())
+    l1 = res['tests']['ALL7']['families']['L1'][0]
+    assert l1['n_neg'] == 7 and l1['verdict'] == 'A<B' and l1['rejectable']
+    l1p = res['tests']['PRE6']['families']['L1'][0]
+    assert l1p['n_bags'] == 6 and l1p['rejectable']           # 2/64 < 0.05 (가족마다 하나)
+    assert res['segments']['amcl_gt']['still']['rmse_pass'] == 21
+    assert res['segments']['amcl_gt']['still']['max_pass'] == 0   # 4 cm > 3 cm
+    abl = []
+    for bag in peval.ABL_BAGS:
+        for k in range(3):
+            abl.append({'bag': bag, 'row': 'rtabmap3d_noimu', 'replay': k, 'fail': [],
+                        'ate_rmse_cm': 1.0, 'lat_icp': {'p50_ms': 40.0}})
+        for k in range(2):
+            abl.append({'bag': bag, 'row': 'rtabmap3d_abl_vox02', 'replay': k, 'fail': [],
+                        'ate_rmse_cm': 1.5, 'lat_icp': {'p50_ms': 20.0}})
+    p2 = tmp_path / 'abl.jsonl'
+    p2.write_text('\n'.join(json.dumps(r) for r in abl))
+    ns = type('N', (), {'replays': [str(p2)], 'out': str(tmp_path / 'a')})
+    assert peval.cmd_compare_abl(ns) == 0
+    res = json.loads((tmp_path / 'a' / 'compare_abl.json').read_text())
+    m = res['rows']['rtabmap3d_abl_vox02']['metrics']
+    assert m['ate_rmse_cm']['n_differs'] == 4
+    assert m['ate_rmse_cm']['mean_diff'] == pytest.approx(0.5)
+    assert m['lat_icp_p50_ms']['mean_diff'] == pytest.approx(-20.0)

@@ -63,6 +63,8 @@ class Row:
     initialpose: bool = False
     # 정답 지도 생성 행: ground_truth/odom 을 틀어 그 자세로 RTAB-Map DB 를 만든다 (SLAM 행이 아니다 — 오라클 입력)
     gt_builder: bool = False
+    # 처리 대응 판정 없이 out_bag 에 같이 기록할 토픽 (배포 위치추정의 amcl_pose·LOST 등 — 보조 분석)
+    record_extra: Tuple[str, ...] = ()
 
 
 _R = f'/{ROBOT}'
@@ -136,7 +138,7 @@ GT_ODOM = f'{_R}/ground_truth/odom'
 #: 컨테이너 안에서 만들어지는 토픽 (재생하지 않는다) — 구독 확인 대상이 될 수 있다
 MAP_AMCL = f'{_R}/map_amcl'
 INITIALPOSE = f'{_R}/initialpose'
-INTERNAL_TOPICS: Tuple[str, ...] = (MAP_AMCL, INITIALPOSE)
+INTERNAL_TOPICS: Tuple[str, ...] = (MAP_AMCL, INITIALPOSE, f'{_R}/amcl_pose')
 #: E4 절제 실험 파라미터 파일 (한 손잡이만) — 작업공간 소스 경로 (재생 컨테이너가 /ros2_ws 로 마운트)
 ABLATION_DIR = '/ros2_ws/src/amr_slam3d/config/ablation'
 CLOUD_RAW = f'{_R}/lidar3d/points_raw'
@@ -156,12 +158,29 @@ def _ablation(name: str, knob: str = '', cloud: str = CLOUD) -> Row:
                log_processed=base.log_processed, bag='orig')
 
 
+#: 배포 2D 위치추정 사슬이 bag 에서 받는 전처리 출력 (localization.launch.py 의 전처리 노드 대신)
+IMU_DATA = f'{_R}/imu/data'
+WHEEL_ODOM = f'{_R}/wheel_odom'
+ODOM_FILTERED = f'{_R}/odometry/filtered'
+AMCL_POSE = f'{_R}/amcl_pose'
+DEPLOY_RECORD = (AMCL_POSE, f'{_R}/scan_match_pose', f'{_R}/odometry/filtered_map',
+                 f'{_R}/localization/lost', f'{_R}/localization/kidnap_status')
+
+
 def _amcl(name: str) -> Row:
-    """AMCL 위치추정 (배포 amcl.yaml) — 지도는 재생마다 LOC_MAP 으로 준다. AMCL 의 global frame = map(월드)."""
+    """
+    배포 2D 위치추정 사슬 (AMCL + map EKF + scan_matcher + kidnap_monitor).
+
+    amcl_loc.launch.py chain:=deploy.
+
+    지도는 재생마다 LOC_MAP 으로 준다. global frame = map(월드). map EKF 가 쓰는 imu/data 는 각속도·가속도만
+    (config/ekf.yaml imu0_config — 방위 미사용, 그 방위는 어차피 항등) 이라 정답 누출이 아니다.
+    """
     return Row(name=name, image='amr-ai/slam:0.1', launch=AMCL_LAUNCH,
-               play_topics=CLOCK + TF + (SCAN,), input_topic=SCAN, input_kind='scan',
-               anchors=(), fatal_patterns=(), note_patterns=('Message Filter dropping',),
-               loc_map='grid')
+               play_topics=CLOCK + TF + (SCAN, WHEEL_ODOM, IMU_DATA, ODOM_FILTERED),
+               input_topic=SCAN, input_kind='scan', anchors=(), fatal_patterns=(),
+               note_patterns=('Message Filter dropping', 'LOST'), loc_map='grid',
+               record_extra=DEPLOY_RECORD)
 
 
 def _rtabloc(name: str) -> Row:
@@ -337,7 +356,9 @@ def ready_requirements(r: Row) -> Tuple[Tuple[str, str], ...]:
     if 'odom_mode:=gt_tf' in r.launch:
         req += [(r.input_topic, 'rtabmap'), (GT_ODOM, 'gt_odom_tf')]
     elif 'amcl_loc.launch.py' in r.launch:
-        req += [(r.input_topic, 'amcl'), (MAP_AMCL, 'amcl')]
+        req += [(r.input_topic, 'amcl'), (MAP_AMCL, 'amcl'), (r.input_topic, 'scan_matcher_node'),
+                (IMU_DATA, 'ekf_filter_node_map'), (WHEEL_ODOM, 'ekf_filter_node_map'),
+                (AMCL_POSE, RECORDER_NODE)]
     elif 'rtabmap.launch.py' in r.launch:
         req += [(r.input_topic, 'icp_odometry'), (r.input_topic, 'rtabmap')]
         if imu and r.pre_launch:

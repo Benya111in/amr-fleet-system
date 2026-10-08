@@ -7,6 +7,10 @@
         [--window-stage e2]
     peval.py compare --replays R/analysis/e2/replays.jsonl --out R/analysis/e2
         # E2·E3(a)·E5(매핑)
+    peval.py compare-loc --replays R/analysis/e3/replays.jsonl --out R/analysis/e3
+        # E3(b)·E5(위치추정)
+    peval.py compare-abl --replays R/analysis/e4/replays.jsonl R/analysis/e2/replays.jsonl \
+        --out R/analysis/e4                                                            # E4
 
 정의 (노트 항목 `2026-10-09_*_b2-eval_*` 의 사전 등록과 같다 — 바꾸면 "결과 뒤 변경"):
 - 궤적: slam_probe 의 traj_online.tum (입력 스탬프마다 map → base_footprint, map = 월드) 대 bag 의 gt.tum.
@@ -265,10 +269,10 @@ def traj_metrics(gt2, gt3, est3, window, bag, row):
 class GridEval:
     """GT 0.01 단면 (한 번 읽음) → 지도 지표."""
 
-    def __init__(self):
+    def __init__(self, gt_file=GT_GRID):
         from amr_evaluation.slam3d import gridmap
         self.gm = gridmap
-        self.gt = gridmap.read_map_yaml(os.path.join(GT_DIR, GT_GRID))
+        self.gt = gridmap.read_map_yaml(os.path.join(GT_DIR, gt_file))
 
     def metrics(self, yaml_path, bag):
         from amr_evaluation.slam3d import localizability, pmetrics
@@ -345,6 +349,47 @@ class CloudEval:
         return out
 
 
+GT_BAND = 'band_z0.050-2.000_r0.010.yaml'
+#: 위치추정 발산 (사전 등록, E3(b)): 평가 창 안 xy 오차 최대 > 0.5 m 또는 yaw 오차 최대 > 10°
+DIVERGE_XY_CM, DIVERGE_YAW_DEG = 50.0, 10.0
+
+
+def is_loc_row(row):
+    """E3(b) 위치추정 행 (AMCL·RTAB-Map 위치추정)."""
+    return row.startswith(('amcl_', 'rtabmap3d_loc_'))
+
+
+def loc_fail_of(rec):
+    """
+    위치추정 행의 실패 사유 (E3(b) 사전 등록): 기동·처리 실패 + 발산·LOST.
+
+    처리: rc ≠ 0, 덮음 < 90 %, RTAB-Map 은 처리 스캔 판정 누락 > 0, AMCL 은 "Message Filter dropping" > 0 (대용).
+    발산: ate_max_cm > 50 또는 yaw_max_deg > 10.
+    LOST: RTAB-Map icp_odometry null odom (첫 장 1 개 제외) > 0.
+    """
+    why = []
+    if rec.get('rc') not in (0, None):
+        why.append(f"rc={rec.get('rc')}")
+    if (rec.get('coverage') or 0.0) < COVER_MIN:
+        why.append(f"coverage={rec.get('coverage', 0):.2f}")
+    if rec.get('row', '').startswith('amcl_'):
+        if rec.get('msgfilter_drop'):
+            why.append(f"msgfilter={rec['msgfilter_drop']}")
+    else:
+        if rec.get('missing') is None:
+            why.append('missing=미측정')
+        elif rec.get('missing'):
+            why.append(f"missing={rec['missing']}")
+        if (rec.get('null_odom') or 0) > 1:
+            why.append(f"lost={rec['null_odom'] - 1}")
+    if rec.get('fatal'):
+        why.append(f"fatal={rec['fatal']}")
+    mx, yw = rec.get('ate_max_cm'), rec.get('yaw_max_deg')
+    if (mx is not None and mx > DIVERGE_XY_CM) or (yw is not None and yw > DIVERGE_YAW_DEG):
+        why.append('diverged')
+    return why
+
+
 def fail_of(rec):
     """실패 사유 목록 (사전 등록 규칙)."""
     why = []
@@ -372,6 +417,7 @@ def cmd_replays(ns):
     wstage = ns.window_stage or ns.stage
     wruns = list_replays(ns.root, wstage)
     grid = GridEval() if not ns.no_grid else None
+    band = GridEval(GT_BAND) if ns.grid_band and not ns.no_grid else None
     os.makedirs(os.path.dirname(os.path.abspath(ns.out)), exist_ok=True)
     out = open(ns.out, 'w', encoding='utf-8')
     windows = {}
@@ -415,9 +461,12 @@ def cmd_replays(ns):
             else:
                 r['coverage'] = 0.0
             ymap = os.path.join(d, 'map_world.yaml')
-            if grid is not None and os.path.isfile(ymap):
+            if grid is not None and os.path.isfile(ymap) and not is_loc_row(row):
                 try:
                     r.update(grid.metrics(ymap, bag))
+                    if band is not None:
+                        r.update({k + '_band': v for k, v in band.metrics(ymap, bag).items()
+                                  if k.startswith('map_')})
                 except ValueError as exc:
                     r['map_error'] = str(exc)
             log = os.path.join(d, 'row.log')
@@ -426,7 +475,7 @@ def cmd_replays(ns):
                 txt = open(log, encoding='utf-8', errors='replace').read()
                 r['lat_icp'] = pmetrics.icp_latency(txt)
                 r['lat_rtabmap'] = pmetrics.rtabmap_latency(txt)
-            r['fail'] = fail_of(r)
+            r['fail'] = loc_fail_of(r) if is_loc_row(row) else fail_of(r)
             out.write(json.dumps(r, ensure_ascii=False, default=float) + '\n')
             out.flush()
             print(f"{bag} {row} r{k} fail={r['fail']} ate={r.get('ate_rmse_cm')}", flush=True)
@@ -488,11 +537,11 @@ def pairs_for(recs, a, b, metric, bags):
     return out
 
 
-def family_tests(recs, bags, tag):
-    """가족 T·M — Wilcoxon 정확 + Holm + 두 단계 부트스트랩 + 판정."""
+def family_tests(recs, bags, tag, families=None):
+    """가족 T·M (또는 주어진 가족) — Wilcoxon 정확 + Holm + 두 단계 부트스트랩 + 판정."""
     from amr_evaluation.slam3d import pstats
     res = {}
-    for fam, comps in FAMILIES.items():
+    for fam, comps in (families or FAMILIES).items():
         rows = []
         for name, a, b, metric, delta in comps:
             pr = pairs_for(recs, a, b, metric, bags)
@@ -642,6 +691,251 @@ def cmd_compare(ns):
     return 0
 
 
+# ======================================================================== E3(b)·E5(위치추정)
+LOC_BAGS_ALL = tuple(b for b in BAGS_ALL if b != 'map_long_a1')
+LOC_BAGS_PRE = tuple(b for b in LOC_BAGS_ALL if b != 's1_seed2x_a1')
+#: 가족 L1·L2 (각자 하나 — Holm 없음). 차 = 3D − 2D
+LOC_FAMILIES = {
+    'L1': [('L1', 'rtabmap3d_loc_gt', 'amcl_gt', 'ate_rmse_cm', 0.2)],
+    'L2': [('L2', 'rtabmap3d_loc_slam', 'amcl_slam', 'ate_rmse_cm', 0.2)],
+}
+LOC_ROWS = ('amcl_gt', 'rtabmap3d_loc_gt', 'amcl_slam', 'rtabmap3d_loc_slam')
+SEG_LIMIT = {'still': 3.0, 'straight': 5.0, 'turn': 8.0}
+
+
+def loc_tests(recs, bags, tag):
+    """가족 L1·L2 — family_tests 와 같은 계산 (가족마다 비교 하나)."""
+    return family_tests(recs, bags, tag, LOC_FAMILIES)
+
+
+def segment_table(recs):
+    """행 × 구간: 재생별 RMSE·max·p95 (cm) 의 bag 평균의 평균과 팀 기준(3/5/8 cm) 통과 재생 수."""
+    out = {}
+    for row in LOC_ROWS + E5_ROWS:
+        rr = [r for r in recs if r['row'] == row]
+        if not rr:
+            continue
+        ent = {}
+        for seg, lim in SEG_LIMIT.items():
+            e = {}
+            for st in ('rmse', 'max', 'p95'):
+                byb = {}
+                for r in rr:
+                    v = _val(r, f'seg_{seg}_{st}_cm')
+                    if math.isfinite(v):
+                        byb.setdefault(r['bag'], []).append(v)
+                e[st] = float(np.mean([np.mean(v) for v in byb.values()])) if byb else math.nan
+                e[f'{st}_worst'] = max((max(v) for v in byb.values()), default=math.nan)
+                e[f'{st}_pass'] = sum(1 for r in rr if _val(r, f'seg_{seg}_{st}_cm') <= lim)
+            e['n'] = len(rr)
+            e['limit_cm'] = lim
+            ent[seg] = e
+        out[row] = ent
+    return out
+
+
+def loc_failures(recs):
+    """행별 위치추정 실패(발산·LOST 포함) 수와 Wilson 구간, 사유별 수."""
+    from amr_evaluation.slam3d import pstats
+    out = {}
+    for row in LOC_ROWS:
+        rr = [r for r in recs if r['row'] == row]
+        if not rr:
+            continue
+        k = sum(1 for r in rr if r['fail'])
+        reasons = {}
+        for r in rr:
+            for w in r['fail']:
+                key = w.split('=')[0]
+                reasons[key] = reasons.get(key, 0) + 1
+        out[row] = {'n': len(rr), 'fail': k, 'wilson': pstats.wilson(k, len(rr)),
+                    'diverged': sum(1 for r in rr if 'diverged' in r['fail']),
+                    'reasons': reasons}
+    return out
+
+
+def map_effect(recs):
+    """지도 품질이 위치추정에 주는 몫 (기술): (SLAM 지도 − 정답 지도) xy ATE RMSE, 같은 bag·재생 짝."""
+    from amr_evaluation.slam3d import pstats
+    out = {}
+    for loc, (a, b) in {'2d_amcl': ('amcl_slam', 'amcl_gt'),
+                        '3d_rtabmap': ('rtabmap3d_loc_slam', 'rtabmap3d_loc_gt')}.items():
+        pr = pairs_for(recs, a, b, 'ate_rmse_cm', LOC_BAGS_ALL)
+        out[loc] = {'bag_diffs': pstats.bag_diffs(pr), 'boot': pstats.cluster_bootstrap(pr)}
+    return out
+
+
+def e5_loc(recs):
+    """S6 가설 (위치추정): 행마다 wall/queue − open 통로 축 RMSE, 2D 대 3D 차의 차 (정답 지도 = 주)."""
+    from amr_evaluation.slam3d import pstats
+    idx = {(r['bag'], r['row'], r['replay']): r for r in recs}
+    out = {'per_row': {}, 'did': {}}
+    for row in LOC_ROWS:
+        vals = {v: [_val(idx[(b, row, k)], 'aisle_axis_rmse_cm') for k in range(3)
+                    if (b, row, k) in idx] for b, v in S6_VARIANT.items()}
+        ent = {'values': vals}
+        for v in ('queue', 'wall'):
+            a, o = vals.get(v, []), vals.get('open', [])
+            ent[f'{v}_minus_open'] = (float(np.nanmean(a) - np.nanmean(o))
+                                      if a and o else math.nan)
+            ent[f'{v}_rule'] = pstats.replay_rule(a, o, 0.2)
+        for m2 in ('aisle_lateral_rmse_cm', 'aisle_axis_max_cm', 'ate_rmse_cm'):
+            ent[m2] = {v: [_val(idx[(b, row, k)], m2) for k in range(3) if (b, row, k) in idx]
+                       for b, v in S6_VARIANT.items()}
+        out['per_row'][row] = ent
+    for d2, d3 in (('amcl_gt', 'rtabmap3d_loc_gt'), ('amcl_slam', 'rtabmap3d_loc_slam')):
+        for v in ('queue', 'wall'):
+            x = out['per_row'].get(d2, {}).get(f'{v}_minus_open', math.nan)
+            y = out['per_row'].get(d3, {}).get(f'{v}_minus_open', math.nan)
+            out['did'][f'{d2}-vs-{d3}:{v}'] = x - y
+    return out
+
+
+def cmd_compare_loc(ns):
+    """E3(b): 가족 L1·L2 (7 bag·사전 등록 6 bag), 구간 표, 실패, 지도 몫, E5(위치추정)."""
+    recs = load_replays(ns.replays)
+    res = {'tests': {'ALL7': loc_tests(recs, LOC_BAGS_ALL, 'ALL7'),
+                     'PRE6': loc_tests(recs, LOC_BAGS_PRE, 'PRE6'),
+                     'S1_3': loc_tests(recs, S1_ALL, 'S1_3'),
+                     'S1_2': loc_tests(recs, S1_PRE, 'S1_2')},
+           'rows': per_row_tables(recs, sorted({r['row'] for r in recs})),
+           'rows_pre6': per_row_tables([r for r in recs if r['bag'] in LOC_BAGS_PRE],
+                                       sorted({r['row'] for r in recs})),
+           'segments': segment_table(recs), 'failures': loc_failures(recs),
+           'map_effect': map_effect(recs), 'e5_loc': e5_loc(recs)}
+    os.makedirs(ns.out, exist_ok=True)
+    with open(os.path.join(ns.out, 'compare_loc.json'), 'w', encoding='utf-8') as f:
+        json.dump(res, f, ensure_ascii=False, indent=1, default=float)
+    print(os.path.join(ns.out, 'compare_loc.json'))
+    return 0
+
+
+# ======================================================================== E4 절제
+ABL_BASE = 'rtabmap3d_noimu'
+ABL_BAGS = ('s3_aisle_a1', 's1_seed1_a1', 's1_seed3_a2', 's1_seed2x_a1')
+#: 지표 → δ (기술 판정 replay_rule). 지연은 공유 부하 하 예비값
+ABL_METRICS = {'ate_rmse_cm': 0.2, 'ate_max_cm': 0.2, 'rpe1_pct': 0.05,
+               'map_adnn_surf_cm': 0.2, 'map_f1': 0.01, 'map_iou': 0.01, 'map_recall_surf': 0.01,
+               'map_adnn_surf_cm_band': 0.2, 'map_recall_surf_band': 0.01, 'map_iou_band': 0.01,
+               'cloud_f5': 0.01, 'lat_icp_p50_ms': 5.0, 'lat_icp_p95_ms': 5.0,
+               'lat_rtabmap_p50_ms': 10.0}
+
+
+def _abl_val(r, m):
+    if m.startswith('lat_'):
+        part, st = ('lat_icp', m[len('lat_icp_'):]) if m.startswith('lat_icp_') else \
+            ('lat_rtabmap', m[len('lat_rtabmap_'):])
+        v = (r.get(part) or {}).get(st)
+        return float(v) if v is not None else math.nan
+    return _val(r, m)
+
+
+def cmd_compare_abl(ns):
+    """E4: 절제 행마다 기준(E2 rtabmap3d_noimu, 같은 bag) 대비 bag 별 평균 차와 replay_rule 판정 (기술)."""
+    from amr_evaluation.slam3d import pstats
+    recs = load_replays(ns.replays)
+    rows = sorted({r['row'] for r in recs if r['row'].startswith('rtabmap3d_abl_')})
+    res = {'base': ABL_BASE, 'bags': list(ABL_BAGS), 'rows': {}}
+    for row in rows:
+        ent = {'n': sum(1 for r in recs if r['row'] == row),
+               'fail': sum(1 for r in recs if r['row'] == row and r['fail']),
+               'fail_reasons': sorted({w for r in recs if r['row'] == row for w in r['fail']}),
+               'metrics': {}}
+        for m, delta in ABL_METRICS.items():
+            per = {}
+            for bag in ABL_BAGS:
+                a = [_abl_val(r, m) for r in recs if r['row'] == row and r['bag'] == bag]
+                b = [_abl_val(r, m) for r in recs if r['row'] == ABL_BASE and r['bag'] == bag]
+                a = [v for v in a if math.isfinite(v)]
+                b = [v for v in b if math.isfinite(v)]
+                if not a or not b:
+                    continue
+                per[bag] = {'abl': a, 'base': b, 'diff': float(np.mean(a) - np.mean(b)),
+                            'rule': pstats.replay_rule(a, b, delta)}
+            if per:
+                md = float(np.mean([v['diff'] for v in per.values()]))
+                ent['metrics'][m] = {'per_bag': per, 'delta': delta, 'mean_diff': md,
+                                     'n_differs': sum(1 for v in per.values()
+                                                      if v['rule'] == 'differs')}
+        res['rows'][row] = ent
+    os.makedirs(ns.out, exist_ok=True)
+    with open(os.path.join(ns.out, 'compare_abl.json'), 'w', encoding='utf-8') as f:
+        json.dump(res, f, ensure_ascii=False, indent=1, default=float)
+    print(os.path.join(ns.out, 'compare_abl.json'))
+    return 0
+
+
+# ======================================================================== E3(b) 지도 선택
+SELECT = {'sel_slam_toolbox': ('slam_toolbox', ('map_world.yaml', 'map_world.pgm')),
+          'sel_rtabmap3d': ('rtabmap3d_noimu', ('rtabmap.db',))}
+
+
+def select_rule(cands):
+    """
+    사전 등록 규칙: 후보 [(재생 번호, ATE, 깨끗한가)] → (고른 번호, 사유).
+
+    깨끗한 후보 3 → ATE 중앙값, 2 → 번호가 작은 것, 1 → 그것, 0 → 누락이 가장 적은 재생(같으면 번호 작은 것,
+    호출자가 깨끗하지 않은 후보를 (번호, 누락 수) 순으로 정렬해 준다) — "실패 재생의 지도" 표시.
+    """
+    clean = sorted((k, a) for k, a, ok in cands if ok)
+    if len(clean) >= 3:
+        k = sorted(clean, key=lambda x: (x[1], x[0]))[len(clean) // 2][0]
+        return k, 'median_ate'
+    if clean:
+        return clean[0][0], 'lowest_index_clean' if len(clean) == 2 else 'only_clean'
+    if cands:
+        return cands[0][0], 'failed_replay_map'
+    return None, 'none'
+
+
+def cmd_select_maps(ns):
+    """E2 map_long 재생에서 E3(b) 지도를 고르고 R/maps/sel_*/ 로 복사, 정답 자세 DB 도 R/maps/gtdb/ 로."""
+    import shutil
+    from amr_evaluation.slam3d import se2
+    gt2 = se2.tum_to_se2(os.path.join(ns.rec, 'map_long_a1', 'gt.tum'))
+    out = {}
+    for dst, (row, files) in SELECT.items():
+        base = os.path.join(ns.root, 'e2', 'map_long_a1', row)
+        cands, info = [], []
+        for k in range(3):
+            d = os.path.join(base, f'r{k}')
+            done = _json(os.path.join(d, 'DONE'))
+            if done is None:
+                continue
+            dr = drops_of(d, row)
+            est = _read_tum3(os.path.join(d, 'traj_online.tum'))
+            ate = math.nan
+            if est is not None:
+                a = se2.ate(gt2, se2.Traj2D(est[0], est[1][:, :2], se2.quat_to_rpy(est[2])[:, 2]),
+                            'none')
+                ate = 100 * a['trans']['rmse'] if a['n_used'] else math.nan
+            have = all(os.path.isfile(os.path.join(d, f)) for f in files)
+            bad = dr.get('missing') if row.startswith('rtabmap') else dr.get('msgfilter_drop')
+            ok = done.get('rc') == 0 and have and bad == 0 and math.isfinite(ate)
+            info.append({'replay': k, 'rc': done.get('rc'), 'ate_full_cm': ate, 'files': have,
+                         'missing_or_msgfilter': bad, 'clean': ok})
+            cands.append((k, ate, ok, bad if bad is not None else 10 ** 9))
+        dirty = sorted([c for c in cands if not c[2]], key=lambda c: (c[3], c[0]))
+        k, why = select_rule([c[:3] for c in cands if c[2]] + [c[:3] for c in dirty])
+        out[dst] = {'row': row, 'candidates': info, 'chosen': k, 'rule': why}
+        if k is not None and not ns.dry_run:
+            os.makedirs(os.path.join(ns.maps, dst), exist_ok=True)
+            for f in files:
+                shutil.copyfile(os.path.join(base, f'r{k}', f), os.path.join(ns.maps, dst, f))
+    g = os.path.join(ns.root, 'e3', 'map_long_a1', 'rtabmap3d_gtdb', 'r0')
+    gd = _json(os.path.join(g, 'DONE'))
+    out['gtdb'] = {'dir': g, 'rc': gd.get('rc') if gd else None}
+    if gd and gd.get('rc') == 0 and os.path.isfile(os.path.join(g, 'rtabmap.db')) \
+            and not ns.dry_run:
+        os.makedirs(os.path.join(ns.maps, 'gtdb'), exist_ok=True)
+        shutil.copyfile(os.path.join(g, 'rtabmap.db'), os.path.join(ns.maps, 'gtdb', 'rtabmap.db'))
+    with open(os.path.join(ns.maps, 'selection.json' if not ns.dry_run else 'selection_dry.json'),
+              'w', encoding='utf-8') as f:
+        json.dump(out, f, ensure_ascii=False, indent=1, default=float)
+    print(json.dumps(out, ensure_ascii=False, default=float))
+    return 0
+
+
 def main(argv=None):
     """명령줄."""
     ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
@@ -660,12 +954,27 @@ def main(argv=None):
     s.add_argument('--window-stage', default=None)
     s.add_argument('--window-rows', nargs='*', default=None)
     s.add_argument('--no-grid', action='store_true')
+    s.add_argument('--grid-band', action='store_true',
+                   help='대역 0.05–2.0 m GT 로도 지도 지표 (_band) — E4 높이 대역 행')
     s.add_argument('--no-cloud', action='store_true')
     s = sub.add_parser('compare')
     s.add_argument('--replays', nargs='+', required=True)
     s.add_argument('--out', required=True)
+    s = sub.add_parser('select-maps')
+    s.add_argument('--rec', default=REC)
+    s.add_argument('--root', required=True)
+    s.add_argument('--maps', required=True)
+    s.add_argument('--dry-run', action='store_true')
+    s = sub.add_parser('compare-loc')
+    s.add_argument('--replays', nargs='+', required=True)
+    s.add_argument('--out', required=True)
+    s = sub.add_parser('compare-abl')
+    s.add_argument('--replays', nargs='+', required=True)
+    s.add_argument('--out', required=True)
     ns = ap.parse_args(argv)
-    return {'cache': cmd_cache, 'replays': cmd_replays, 'compare': cmd_compare}[ns.cmd](ns)
+    return {'cache': cmd_cache, 'replays': cmd_replays, 'compare': cmd_compare,
+            'compare-loc': cmd_compare_loc, 'compare-abl': cmd_compare_abl,
+            'select-maps': cmd_select_maps}[ns.cmd](ns)
 
 
 if __name__ == '__main__':

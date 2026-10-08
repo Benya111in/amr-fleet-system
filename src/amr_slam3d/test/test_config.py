@@ -87,6 +87,10 @@ def test_rows_play_recorded_clock_and_never_oracle_topics():
     for r in rows.ROWS.values():
         assert '/clock' in r.play_topics
         for t in rows.ORACLE_TOPICS:
+            if t.endswith('imu/data') and r.loc_map == 'grid':
+                # 배포 2D 위치추정 사슬: map EKF 가 imu/data 의 각속도·가속도만 쓴다 (ekf.yaml imu0_config)
+                assert 'amcl_loc.launch.py' in r.launch, r.name
+                continue
             if t.endswith('imu/data') and r.pre_launch:
                 # imu/data 는 madgwick 입력으로만 튼다 — SLAM 노드는 madgwick 출력만 구독한다
                 assert any('madgwick' in p for p in r.pre_launch), r.name
@@ -118,9 +122,9 @@ def test_oracle_list_covers_known_ground_truth_topics():
     assert [n for n, r in rows.ROWS.items() if '/amr_01/ground_truth/odom' in r.play_topics] == \
         ['rtabmap3d_gtdb']
     assert [n for n, r in rows.ROWS.items() if r.gt_builder] == ['rtabmap3d_gtdb']
-    # imu/data 를 트는 행은 madgwick 변형 행 하나뿐이다 (madgwick 입력으로만 — rtabmap.md §1.1)
+    # imu/data 를 트는 행은 madgwick 변형 행과 배포 2D 위치추정 행뿐이다 (rtabmap.md §1.1, ekf.yaml imu0_config)
     assert [n for n, r in rows.ROWS.items() if '/amr_01/imu/data' in r.play_topics] == \
-        ['rtabmap3d_imulive']
+        ['rtabmap3d_imulive', 'amcl_gt', 'amcl_slam']
     # 정답 방위 합성 토픽은 오라클 행만 튼다
     assert [n for n, r in rows.ROWS.items() if rows.IMU_ORACLE in r.play_topics] == \
         ['liosam_oracle']
@@ -446,18 +450,24 @@ def test_rtabmap_launch_localization_and_gt_modes():
     assert ex[0][2] == base[0][1] and ex[1][2] == base[1][1]
 
 
-def test_amcl_loc_overrides_match_deployment_except_tf_broadcast():
-    """배포 localization.launch.py 가 AMCL 에 주는 값과 같고, 다른 것은 tf_broadcast 하나 (의도적)."""
+def test_amcl_loc_overrides_match_deployment():
+    """배포 localization.launch.py 가 AMCL 에 주는 값과 같다 (배포 사슬). AMCL 단독 진단만 tf_broadcast true."""
     mod = _load_launch('amcl_loc.launch.py')
-    o = mod.amcl_overrides('amr_01', 18.0, -16.0, 1.5708, True)
+    o = mod.amcl_overrides('amr_01', 18.0, -16.0, 1.5708, 'deploy')
     assert o['odom_frame_id'] == 'amr_01/odom' and o['base_frame_id'] == 'amr_01/base_footprint'
     assert o['global_frame_id'] == 'map' and o['map_topic'] == 'map_amcl'
     init = (o['initial_pose.x'], o['initial_pose.y'], o['initial_pose.yaw'])
     assert init == (18.0, -16.0, 1.5708)
     amcl = yaml.safe_load((REPO / 'src' / 'amr_localization' / 'config' / 'amcl.yaml')
                           .read_text(encoding='utf-8'))['/**/amcl']['ros__parameters']
-    assert amcl['tf_broadcast'] is False and o['tf_broadcast'] is True
-    assert 'map_topic' not in mod.amcl_overrides('amr_01', 0, 0, 0, False)
+    # 배포 사슬은 tf_broadcast 를 덮어쓰지 않는다 (map EKF 가 map → odom). AMCL 단독 진단만 true
+    assert amcl['tf_broadcast'] is False and 'tf_broadcast' not in o
+    assert mod.amcl_overrides('amr_01', 0, 0, 0, 'amcl')['tf_broadcast'] is True
+    with pytest.raises(RuntimeError):
+        mod.amcl_overrides('amr_01', 0, 0, 0, 'ekf')
+    r = rows.row('amcl_gt')
+    assert set(rows.DEPLOY_RECORD) == set(r.record_extra) and rows.AMCL_POSE in r.record_extra
+    assert {rows.WHEEL_ODOM, rows.IMU_DATA, rows.ODOM_FILTERED} <= set(r.play_topics)
 
 
 def test_ablation_rows_change_exactly_one_knob():

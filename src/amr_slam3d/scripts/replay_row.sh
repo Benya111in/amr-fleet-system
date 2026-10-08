@@ -65,6 +65,7 @@ print('READY_TOPICS=(' + ' '.join(sorted({shlex.quote(t) for t, _ in rows.ready_
       + ')')
 print(f"LOC_MAP_KIND={shlex.quote(r.loc_map)} INITIALPOSE={int(r.initialpose)} "
       f"GT_BUILDER={int(r.gt_builder)}")
+print(f"EXTRA_RECORD={shlex.quote(' '.join(r.record_extra))}")
 EOF
 )"
 
@@ -177,10 +178,11 @@ PIDS+=("$LAUNCH_PID")
 python3 "$SCRIPTS/slam_probe.py" --row "$ROW" --out "$OUT" > "$OUT/probe.log" 2>&1 &
 PROBE=$!
 REC=""
-if [ -n "$PROC_TOPICS" ]; then
-  # 처리 출력의 권위 있는 개수 — C++ 기록기 (Python 측정 노드는 부하에 뒤처질 수 있다)
+if [ -n "$PROC_TOPICS$EXTRA_RECORD" ]; then
+  # 처리 출력의 권위 있는 개수 — C++ 기록기 (Python 측정 노드는 부하에 뒤처질 수 있다).
+  # EXTRA_RECORD 는 대응 판정 없이 같이 기록만 한다 (배포 위치추정의 amcl_pose·LOST 등)
   # shellcheck disable=SC2086
-  ros2 bag record -s mcap -o "$OUT/out_bag" $PROC_TOPICS /tf > "$OUT/out_record.log" 2>&1 &
+  ros2 bag record -s mcap -o "$OUT/out_bag" $PROC_TOPICS $EXTRA_RECORD /tf > "$OUT/out_record.log" 2>&1 &
   REC=$!
   PIDS+=("$REC")
 fi

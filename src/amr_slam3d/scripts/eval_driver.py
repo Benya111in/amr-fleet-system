@@ -120,7 +120,65 @@ def plan_e2():
     return jobs
 
 
-PLANS = {'e2': plan_e2}
+RUNS = '/home/CAPYI_AI/runs/b24/b2-eval'
+#: E3(b)·E4 재생 사본 (E2 스냅샷과 같은 커밋이어도 따로 둔다 — 지도 선택 뒤 E3(b) 를 바꿔도 E2 를 건드리지 않게)
+WS_E3 = f'{RUNS}/ws_e3'
+MAPS = f'{RUNS}/maps'
+MAP_LONG_SPAWN = '18.0,-16.0,1.5708'
+LOC_BAGS = tuple(b for b in BAGS if b != 'map_long_a1')
+ABL_BAGS = ('s3_aisle_a1', 's1_seed1_a1', 's1_seed3_a2', 's1_seed2x_a1')
+ABL_ROWS = ('rtabmap3d_abl_vox005', 'rtabmap3d_abl_vox02', 'rtabmap3d_abl_vox03',
+            'rtabmap3d_abl_p2p', 'rtabmap3d_abl_obs10', 'rtabmap3d_abl_obs20',
+            'rtabmap3d_abl_opt10', 'rtabmap3d_abl_opt30', 'rtabmap3d_abl_raw')
+SLAM_IMG = 'amr-ai/slam:0.1'
+
+
+def plan_e3():
+    """
+    E3(b) 위치추정: 정답 자세 DB 1 (map_long) + 행 4 × bag 7 × 재생 3.
+
+    지도: AMCL 정답 = GT 0.05 m 단면 (maps/slice_z0.200_r0.050.yaml),
+    AMCL SLAM = 선택된 slam_toolbox map_long 지도 (maps/sel_slam_toolbox/),
+    RTAB-Map 정답 = 정답 자세 DB (maps/gtdb/), RTAB-Map SLAM = 선택된 rtabmap3d_noimu
+    map_long DB (maps/sel_rtabmap3d/). 선택은 peval.py select-maps (사전 등록 규칙). 지도는 읽기 전용 /data/map.
+    """
+    mnt = [f'{MAPS}:/data/map:ro']
+    jobs = [job('e3', 'map_long_a1', 'rtabmap3d_gtdb', 0, 15, 46, image=SLAM_IMG, kind='bag')]
+    jobs[0]['wt'] = WS_E3
+    maps = {
+        'amcl_gt': ({'LOC_MAP': '/data/map/slice_z0.200_r0.050.yaml'},
+                    [f'{MAPS}/slice_z0.200_r0.050.yaml']),
+        'amcl_slam': ({'LOC_MAP': '/data/map/sel_slam_toolbox/map_world.yaml'},
+                      [f'{MAPS}/sel_slam_toolbox/map_world.yaml']),
+        'rtabmap3d_loc_gt': ({'LOC_DB': '/data/map/gtdb/rtabmap.db', 'MAP_SPAWN': MAP_LONG_SPAWN},
+                             [f'{MAPS}/gtdb/rtabmap.db']),
+        'rtabmap3d_loc_slam': ({'LOC_DB': '/data/map/sel_rtabmap3d/rtabmap.db',
+                                'MAP_SPAWN': MAP_LONG_SPAWN},
+                               [f'{MAPS}/sel_rtabmap3d/rtabmap.db']),
+    }
+    for k in range(3):
+        for row, (env, req) in maps.items():
+            for bag in LOC_BAGS:
+                j = job('e3', bag, row, k, 45 + k, 46, image=SLAM_IMG, kind='bag', env=env,
+                        requires=req, mounts=mnt)
+                j['wt'] = WS_E3
+                jobs.append(j)
+    return jobs
+
+
+def plan_e4():
+    """E4 절제: 행 9 × bag 4 (S3 + S1 셋) × 재생 2. 기준 = E2 의 rtabmap3d_noimu (같은 bag, 재생 3)."""
+    jobs = []
+    for k in range(2):
+        for row in ABL_ROWS:
+            for bag in ABL_BAGS:
+                j = job('e4', bag, row, k, 60 + k, 48, image=SLAM_IMG, kind='bag')
+                j['wt'] = WS_E3
+                jobs.append(j)
+    return jobs
+
+
+PLANS = {'e2': plan_e2, 'e3': plan_e3, 'e4': plan_e4}
 
 
 def load_jobs(root):
