@@ -79,6 +79,10 @@ MUTATIONS = [
     ('M-PLAN', '에이전트 노드가 plan 을 경로 게이트에 넣지 않는다 (ROS 결선 — launch W1 이 잡아야)',
      NODE, [('        self.core.set_plan(pts if len(pts) >= 2 else None)',
              '        self.core.set_plan(None)')], False, W1, 'M-PLAN'),
+    # 결과 뒤 추가 (W-diag B 에서 찾은 거짓 양성을 고친 가드, 이 변이는 그 고침과 같은 커밋에서 등록)
+    ('M-STAMP', '낡은 LOCKED 정리가 LOCKED 를 본 뒤 만든 비컨인지 보지 않는다', CORE,
+     [('            made_after = b.stamp > since + self.cfg.stale_lock_margin_s',
+       '            made_after = True')], False, PY_FLEET, 'test/test_agent_dispatch.py'),
     ('M-GATE', '경로 게이트가 결정점 안에서도 막지 않는다 (blocking 비움)',
      'src/amr_fleet/amr_fleet/agent/path_gate.py',
      [('            blocking = tuple(r for r in request if r not in held)',

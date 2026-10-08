@@ -96,9 +96,12 @@ class CoreConfig:
     sim_exec: Optional[SimExecConfig] = None      # 가짜 실행기 (None = 실제 실행기가 따로 있다)
     # 협상 표의 낡은 LOCKED 정리 (b4-wire): CBAA 는 잠정 과반(GRANTED)에서 LOCKED 를 알리고 "잠금은 사실" 이라 남이
     # 영영 지우지 못한다 — 그 로봇이 픽업 전에 실패해 놓으면 아무도 다시 못 잡는다. 켜면 보유자의 신선한 비컨이
-    # stale_lock_s 동안 이어서 "그 작업을 쫓지도 쥐지도 않음" 이면 내 표에서 지운다 (안전은 작업 ID 잠금이 진다)
+    # stale_lock_s 동안 이어서 "그 작업을 쫓지도 쥐지도 않음" 이면 내 표에서 지운다 (안전은 작업 ID 잠금이 진다).
+    # 판단에 쓰는 비컨은 그 LOCKED 를 처음 본 뒤 stale_lock_margin_s 넘어 만들어진 것이어야 한다 (비컨 stamp) — 낙찰
+    # 직전에 만든 비컨(현재 작업 없음)이 손실로 오래 남아 있으면 쫓는 중인데도 지우던 거짓 양성 (W-diag B, 결과 뒤 변경)
     stale_lock_gc: bool = False
     stale_lock_s: float = 1.0
+    stale_lock_margin_s: float = 0.5              # 로봇 사이 시계 어긋남 여유 (state 의 미래 stamp 허용치와 같은 값)
 
     def __post_init__(self):
         members = tuple(sorted(set(self.members)))
@@ -276,7 +279,7 @@ class FleetAgentCore:
         self._wait_priority = 0
         self.central_task = ''                        # NORMAL 에서 프록시로 받은 작업
         self.negotiated = ''                          # 협상 낙찰을 실제 실행기에 넘긴 작업 (가짜 실행기 없을 때)
-        self._stale_since: Dict[str, float] = {}      # 작업 → 낡은 LOCKED 로 처음 본 시각
+        self._stale_since: Dict[Tuple[str, str], float] = {}   # (작업, 보유자) → 낡은 LOCKED 로 처음 본 시각
         self._stale_cleared: Set[Tuple[str, str]] = set()   # 지운 (작업, 보유자)
         self.low_epoch_rejected = 0
         self.deadlock: Tuple[Tuple[str, ...], str] = ((), '')
@@ -785,8 +788,9 @@ class FleetAgentCore:
         협상 표의 낡은 LOCKED 입찰을 지운다 (CoreConfig.stale_lock_gc 설명). 라운드 시작 때, 입찰 직전에 부른다.
 
         - 남의 LOCKED: 보유자의 비컨이 신선(받은 뒤 ≤ beacon_ttl_s)하고 그 비컨의 current_task_id 가 그 작업이 아니며
-          held 에 task:<id> 가 없고, 내가 확정(taken)으로 알지 않고, 이 상태가 stale_lock_s 이어졌다. 비컨이 없거나
-          오래되면 지우지 않는다 (모르면 잠금으로 본다).
+          held 에 task:<id> 가 없고, 내가 확정(taken)으로 알지 않고, 이 상태가 stale_lock_s 이어졌고, 그 비컨이
+          이 LOCKED 를 처음 본 뒤 stale_lock_margin_s 넘어 만들어졌다 (stamp — LOCKED 는 보유자의 낙찰 뒤에야 오므로
+          그 뒤 비컨에 작업이 없으면 쫓지 않는 것이다). 비컨이 없거나 오래되면 지우지 않는다 (모르면 잠금으로 본다).
         - 내 LOCKED: 내가 그 작업을 실행하지도 확정하지도 끝내지도 않았다 (픽업 전 실패 · 실행기 거부 뒤).
         CBAA 병합은 "잠금은 늘 받아들인다" 라 동료의 옛 메시지가 같은 잠금을 되돌려 놓는다 — 한 번 지운 (작업, 보유자)
         는 기억해 두고 같은 조건이면 기다리지 않고 다시 지운다 (보유자가 다시 그 작업을 쫓으면 잊는다).
@@ -805,19 +809,21 @@ class FleetAgentCore:
             age = self.now - self._peer_seen.get(bid.winner, -math.inf)
             if b is None or not 0.0 <= age <= self.cfg.beacon_ttl_s:
                 continue
+            key = (task, bid.winner)
             if b.current_task_id == task or task_resource(task) in b.held:
-                self._stale_cleared.discard((task, bid.winner))
+                self._stale_cleared.discard(key)
                 continue
-            seen.add(task)
-            since = self._stale_since.setdefault(task, self.now)
-            if ((task, bid.winner) in self._stale_cleared
-                    or self.now - since >= self.cfg.stale_lock_s):
+            seen.add(key)
+            since = self._stale_since.setdefault(key, self.now)
+            made_after = b.stamp > since + self.cfg.stale_lock_margin_s
+            if (key in self._stale_cleared
+                    or (made_after and self.now - since >= self.cfg.stale_lock_s)):
                 self.cbaa.table[task] = NO_BID
                 if (task, bid.winner) not in self._stale_cleared:
                     self._stale_cleared.add((task, bid.winner))
                     self._note('stale_lock_cleared', task_id=task, holder=bid.winner)
-        for task in set(self._stale_since) - seen:
-            del self._stale_since[task]
+        for key in set(self._stale_since) - seen:
+            del self._stale_since[key]
 
     def _start_task(self, task_id: str) -> None:
         # 잠정 낙찰이라 taken(확정)에 넣지 않는다 — 실행 중에는 executor/cbaa.executing 이, 실패하면 CBAA 의 blocked ·

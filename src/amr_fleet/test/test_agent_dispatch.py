@@ -8,6 +8,7 @@
 """
 
 import collections
+import dataclasses
 
 import pytest
 
@@ -17,6 +18,7 @@ from amr_fleet.agent.core import (
 from amr_fleet.agent.loopback import LoopbackFleet
 from amr_fleet.agent.modes import DEGRADED, ModeConfig
 from amr_fleet.distributed.vote_core import VoteConfig
+from amr_fleet.negotiation.bids import Bid, LOCKED_COST
 
 ROBOTS = ('amr_01', 'amr_02', 'amr_03', 'amr_04', 'amr_05')
 POSES = {'amr_01': (0.0, 0.0), 'amr_02': (5.0, 0.0), 'amr_03': (10.0, 0.0),
@@ -162,3 +164,41 @@ def test_busy_executor_does_not_bid():
     f.run(20.0)
     assert {r for r, _, _ in f.dispatched} <= set(ROBOTS) - {'amr_03'}
     assert f.dispatched
+
+
+def test_stale_lock_needs_a_beacon_made_after_the_lock_was_seen():
+    """
+    낡은 LOCKED 정리는 LOCKED 를 처음 본 뒤 만들어진 비컨이 "안 쫓음" 일 때만 지운다.
+
+    거짓 양성 (W-diag B, 결과 뒤 변경): 보유자가 낙찰 직전에 만든 비컨(현재 작업 없음)만 있고 그 뒤 비컨이 손실되면,
+    쫓는 중인데도 1 s 뒤 지웠다 (ROS ④c 실행 4 번 중 2 번, 지운 4 건 모두 낙찰 뒤 1.2–1.8 s). 쫓으면 남긴다.
+    """
+    f = _degraded_fleet(True)
+    holder = 'amr_02'
+    t0 = f.t
+    obs = {r: f.cores[r] for r in ('amr_01', 'amr_03')}
+    last = f.cores['amr_01'].peers[holder]
+    assert last.current_task_id == '' and t0 - 0.6 < last.stamp <= t0
+    for o in obs.values():
+        o.now = t0
+        o.cbaa.table['z9'] = Bid(cost=LOCKED_COST, winner=holder)
+        o._clear_stale_locks()                            # 처음 봄
+        assert o.cbaa.table['z9'].locked
+        o.now = t0 + 1.5                                  # 그 뒤 비컨 손실 — 옛 규칙은 여기서 지웠다
+        o._clear_stale_locks()
+        assert o.cbaa.table['z9'].locked
+    # amr_01: 처음 본 뒤 만들어진 비컨이 그 작업을 쫓지 않는다 → 지운다
+    o = obs['amr_01']
+    o.on_beacon(dataclasses.replace(o.peers[holder], seq=o.peers[holder].seq + 1,
+                                    stamp=t0 + 1.6), t0 + 1.6)
+    o._clear_stale_locks()
+    assert not o.cbaa.table['z9'].locked
+    assert o.counters.get('stale_lock_cleared') == 1
+    # amr_03: 그 비컨이 그 작업을 쫓는다 → 남긴다 (오래 지나도)
+    o = obs['amr_03']
+    o.on_beacon(dataclasses.replace(o.peers[holder], seq=o.peers[holder].seq + 1,
+                                    stamp=t0 + 1.6, current_task_id='z9'), t0 + 1.6)
+    o.now = t0 + 1.9
+    o._clear_stale_locks()
+    assert o.cbaa.table['z9'].locked
+    assert o.counters.get('stale_lock_cleared', 0) == 0
