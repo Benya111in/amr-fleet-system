@@ -14,8 +14,9 @@ b2-rec 녹화 끝 조건 (COORDINATION §10.1): ① 명령줄에 '/wt/b2-rec/' �
 
 파일럿 규칙 (사전 등록 항목 「파일럿」): 짝 2 의 두 갈래 RTF 가 모두 ≥ 0.6 × 짝 1 같은 모드 RTF 이고 짝 2 두 갈래가 유효면 동시,
 아니면 차례로. T_START = max(240, 30 의 배수로 올림(1.25 × 파일럿 네 갈래 t_ready 최댓값)).
-점검 (도구 결함 감지 — 지표 값으로 규칙을 바꾸지 않는다): 파일럿 네 갈래 모두 유효, 정답 자세 표본 > 0, 분산 갈래 에이전트 상태 기록 있음,
-완료 작업 ≥ 1. 하나라도 어긋나면 본 실행을 시작하지 않고 멈춘다 (raw/CAMPAIGN_HALT.txt).
+점검 (도구 결함 감지 — 지표 값으로 규칙을 바꾸지 않는다): 파일럿 네 갈래 모두 유효, 정답 자세 표본 > 0,
+분산 갈래 에이전트 상태 기록 있음, 완료 작업 ≥ 1, 스택 컨테이너에 관리자 · 교통 관리자가 없음(서버 컨테이너에만).
+하나라도 어긋나면 본 실행을 시작하지 않고 멈춘다 (raw/CAMPAIGN_HALT.txt).
 """
 
 import argparse
@@ -132,6 +133,9 @@ def decide(raw):
             problems.append(f'pilot 짝 {k} {mode}: 완료 작업 0')
         if mode == 'distributed' and not m.get('mode_transitions'):
             problems.append(f'pilot 짝 {k} {mode}: 에이전트 상태 기록 없음')
+        if m.get('stack_has_server') is not False:
+            problems.append(f'pilot 짝 {k} {mode}: 스택 컨테이너 프로세스 표 없음 또는 관리자 · 교통 '
+                            f'관리자가 스택에도 떴다 (stack_has_server={m.get("stack_has_server")})')
     rtf = {key: (m or {}).get('rtf') for key, (_, m) in arms.items()}
     ready = [(m or {}).get('t_ready') for _, m in arms.values()]
     conc = all(rtf.get((2, md)) is not None and rtf.get((1, md)) is not None

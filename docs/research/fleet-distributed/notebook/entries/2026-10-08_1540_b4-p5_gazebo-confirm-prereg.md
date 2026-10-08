@@ -211,6 +211,14 @@ sim ~300 s. 동시 짝이면 AA · C1 · C3 · F5L 짝당 ≈ 40 분 × 30 = 20 
   (27 통과 — 파일럿 규칙 · b2-rec 조건 시험 3 개 추가). 나머지 도구 해시는 위 표와 같다 (바꾸지 않았다).
 - 실험 사본: `ws_new` · `ws_old` 를 이 보완 커밋의 `git archive` 로 갱신했다 (`src/` 는 `41e90ca` 와 바이트 같다 — 빌드 재사용, 확인 명령
   `git diff --stat 41e90ca <이 커밋> -- src` 빈 출력).
+- **(16:20 보완, 결과 전) 스택 컨테이너 프로세스 표**: 드라이버가 갈래 시작 420 s(벽시계) 뒤 `docker exec <스택> ps` 를 `ps_stack.txt` 로
+  남기고, 분석이 `stack_has_server`(스택에 fleet_manager_node · traffic_manager_node 가 있나)를 센다. 스택 런치에 준
+  `launch_manager:=false traffic_manager:=false` 가 하위 런치로 상속되는지는 Gazebo 없이 확인하지 못했다 — 상속이 안 되면 관리자가 둘(스택 +
+  서버 컨테이너)이 되어 실험이 무의미하므로 파일럿 점검 항목에 넣었다 (어긋나면 본 실행을 시작하지 않는다). 해시 갱신: `p5_driver.py`
+  `d52dd71c79d3cb9de65ccc85f029be7ed6b5ab7f3e6a811a48a79f6ad20bf216`, `p5_analyze.py` `f7597db93c51cf44d76ad2a7cfcd4bbd65c8e342c61d12dad3bba00329565fb2`
+  (지표 정의 변경 없음 — `stack_processes` · `stack_has_server` 두 필드 추가), `p5_campaign.py`
+  `64dcda2971094ede61cec15189db3e72f502acc9f10d36e086593f52e97aa6dd`, `unit/test_fleet_p5.py`
+  `6fc87dbe147b09f3db1ed596f8caa20c0557fdd6c2a01b5a62e49b914f4361c7` (28 통과).
 
 ## 결과
 

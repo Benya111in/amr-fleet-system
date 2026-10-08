@@ -146,6 +146,7 @@ class Driver:
             time.sleep(3)
             server(1, {'scheduled': None})
         pending = sorted(arm['faults'], key=lambda f: f[0])
+        ps_done = False
         last_change = time.time()
         last_mtime = None
         aborted = None
@@ -171,6 +172,12 @@ class Driver:
                     r = sh(['docker', action, name])
                     action_log(dict(rec, action=action, server=k, rc=r.returncode,
                                     out=(r.stdout + r.stderr).strip()[:300]))
+            if not ps_done and time.time() - t_wall0 > self.a.ps_after_s:
+                # 스택 컨테이너 프로세스 표 (관리자 · 교통 관리자가 스택에 없어야 한다 — 서버는 다른 컨테이너)
+                r = sh(['docker', 'exec', stack, 'ps', '-eo', 'pid,etime,pcpu,rss,args'])
+                with open(os.path.join(d, 'ps_stack.txt'), 'w', encoding='utf-8') as f:
+                    f.write(f'{now_iso()} sim={clock.get("sim")}\n' + r.stdout + r.stderr)
+                ps_done = True
             if clock.get('state') == 'END':
                 last_change = time.time()
             stall = time.time() - last_change
@@ -384,6 +391,8 @@ def main(argv=None):
     ap.add_argument('--dryrun', action='store_true',
                     help='파이프라인 시험 (Gazebo 없음, 실험 dry): 스택 대신 가짜 /clock')
     ap.add_argument('--stall-s', type=float, default=900.0)
+    ap.add_argument('--ps-after-s', type=float, default=420.0,
+                    help='갈래 시작 뒤 이만큼(벽시계) 지나 스택 컨테이너 프로세스 표를 남긴다')
     ap.add_argument('--arm-timeout-s', type=float, default=4 * 3600.0)
     ap.add_argument('--load-max', type=float, default=8.0)
     ap.add_argument('--load-wait-max-s', type=float, default=1800.0)

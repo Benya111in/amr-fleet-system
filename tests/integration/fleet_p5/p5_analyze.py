@@ -382,6 +382,13 @@ def run_metrics(raw: str) -> dict:
                                              set(summ.get('hold_first', []))),
                 'hold_unmanaged': summ.get('hold_unmanaged', [])})
     out['valid'] = bool(summ.get('why') == 'DONE' and not out['aborted'] and t_base is not None)
+    ps_path = os.path.join(raw, 'ps_stack.txt')
+    if os.path.isfile(ps_path):
+        with open(ps_path, encoding='utf-8') as f:
+            ps = f.read()
+        out['stack_processes'] = max(0, len(ps.strip().split('\n')) - 2)
+        out['stack_has_server'] = any(n in ps for n in ('fleet_manager_node',
+                                                        'traffic_manager_node'))
     if t_base is None or t_end is None:
         return out
     # 작업

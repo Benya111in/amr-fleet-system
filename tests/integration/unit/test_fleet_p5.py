@@ -338,7 +338,8 @@ def _pilot_metrics(raw, k, label, mode, rtf, t_ready, valid=True):
     d.mkdir(parents=True)
     (d / 'metrics.json').write_text(json.dumps({
         'valid': valid, 'rtf': rtf, 't_ready': t_ready, 'completed': 3, 'mode': mode,
-        'distance_m': {'amr_01': 10.0}, 'mode_transitions': [{'mode': 'NORMAL'}]}))
+        'distance_m': {'amr_01': 10.0}, 'mode_transitions': [{'mode': 'NORMAL'}],
+        'stack_has_server': False}))
 
 
 def test_pilot_rule_concurrent_and_t_start(tmp_path):
@@ -352,7 +353,7 @@ def test_pilot_rule_concurrent_and_t_start(tmp_path):
     assert t_start == 270.0                         # 1.25 × 200 = 250 → 30 의 배수로 올림 270
     (tmp_path / 'p5_pilot_p2_distributed' / 'metrics.json').write_text(json.dumps({
         'valid': True, 'rtf': 0.16, 't_ready': 100.0, 'completed': 3, 'mode': 'distributed',
-        'distance_m': {'amr_01': 1.0}, 'mode_transitions': [{}]}))
+        'distance_m': {'amr_01': 1.0}, 'mode_transitions': [{}], 'stack_has_server': False}))
     conc2, t2, _, _ = C.decide(str(tmp_path))
     assert conc2 is False and t2 == 240.0          # 0.16 < 0.6 × 0.28, 하한 240
 
@@ -372,3 +373,12 @@ def test_b2_recordings_doc_condition(tmp_path):
     f.write_text('# x\n\n## 0. 먼저 알아야 할 불리한 사실\n\n- 녹화 8 개 중 …\n\n## 1. y\n(녹화 뒤 채운다)\n')
     assert C.b2_doc_done(str(f)) is True
     assert C.b2_doc_done(str(tmp_path / 'none.md')) is False
+
+
+def test_stack_process_table_flags_a_second_manager(tmp_path):
+    d = write_run(tmp_path, [], [])
+    (d / 'ps_stack.txt').write_text('t\n  PID ARGS\n 1 bash\n 2 /opt/x/fleet_adapter_node\n')
+    assert A.run_metrics(str(d))['stack_has_server'] is False
+    (d / 'ps_stack.txt').write_text('t\n  PID ARGS\n 1 bash\n 2 /opt/x/fleet_manager_node\n')
+    m = A.run_metrics(str(d))
+    assert m['stack_has_server'] is True and m['stack_processes'] == 2
