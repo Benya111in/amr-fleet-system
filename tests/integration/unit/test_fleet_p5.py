@@ -420,3 +420,18 @@ def test_written_comm_model_follows_the_run_t_start(tmp_path):
                    '--comm-out', str(comm), '--t-start', '60']) == 0
     assert json.loads(plan.read_text())['t_start'] == 60.0
     assert json.loads(comm.read_text())['partitions'][0]['start_s'] == 100.0
+
+
+def test_recorder_readiness_helpers():
+    """기록기 준비 판정 도우미 (rclpy 가 있는 환경에서만 — 모듈이 rclpy 를 import 한다)."""
+    pytest.importorskip('rclpy')
+    pytest.importorskip('amr_msgs')
+    import p5_recorder as R
+    assert R.watchdog_ok(-1, -1) is False
+    assert R.watchdog_ok(500, 100) is True and R.watchdog_ok(100, 500) is False
+    assert R.seed_due(10.0, None, None, 0) is False                  # 나쁜 상태 아님
+    assert R.seed_due(10.0, 0.0, None, 0) is False                   # 15 s 안 됨
+    assert R.seed_due(16.0, 0.0, None, 0) is True
+    assert R.seed_due(30.0, 0.0, 16.0, 1) is False                   # 간격 20 s 안 됨
+    assert R.seed_due(36.5, 0.0, 16.0, 1) is True
+    assert R.seed_due(500.0, 0.0, 16.0, R.SEED_MAX) is False         # 상한

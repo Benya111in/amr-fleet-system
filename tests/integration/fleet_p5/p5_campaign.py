@@ -160,8 +160,9 @@ def run(a):
     log(raw, f'캠페인 run 시작 EXCLUSIVE_HOLDER={os.environ.get("EXCLUSIVE_HOLDER")} '
              f'load {os.getloadavg()}')
     if not a.skip_pilot:
-        driver(a, ['--order', 'pilot', '--pair-range', '1-1'])
-        driver(a, ['--order', 'pilot', '--pair-range', '2-2', '--concurrent'])
+        tp = ['--t-start', str(T_FLOOR)]           # 파일럿도 하한 시각에 게시 (셈 밖 — RTF · t_ready 만 본다)
+        driver(a, ['--order', 'pilot', '--pair-range', '1-1'] + tp)
+        driver(a, ['--order', 'pilot', '--pair-range', '2-2', '--concurrent'] + tp)
     conc, t_start, problems, basis = decide(raw)
     dec = {'decided': now_iso(), 'concurrent': conc, 't_start': t_start, 'problems': problems,
            'basis': basis}

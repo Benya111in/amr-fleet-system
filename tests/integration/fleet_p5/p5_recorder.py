@@ -40,11 +40,16 @@ from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 
 from amr_msgs.msg import (AgentBeacon, AgentState, FleetHeartbeat, FleetStatus, FleetVoteBatch,
                           NegState, Task)
+from geometry_msgs.msg import PoseWithCovarianceStamped
 from diagnostic_msgs.msg import DiagnosticArray
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry, Path
 from std_msgs.msg import Bool, String
-from std_srvs.srv import Trigger
+from std_srvs.srv import Empty, Trigger
+try:
+    from robot_localization.srv import SetPose
+except ImportError:          # pragma: no cover - robot_localization 없는 환경
+    SetPose = None
 
 ROBOTS = ['amr_01', 'amr_02', 'amr_03', 'amr_04', 'amr_05']
 LATCHED = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
@@ -55,6 +60,27 @@ RELIABLE100 = QoSProfile(depth=100, reliability=ReliabilityPolicy.RELIABLE)
 BEST = QoSProfile(depth=50, reliability=ReliabilityPolicy.BEST_EFFORT)
 RE_HOLD_FIRST = re.compile(r'\[(amr_\d+)\.task_executor_node\]: traffic/hold: 첫 값 수신')
 RE_HOLD_UNMANAGED = re.compile(r'\[(amr_\d+)\.task_executor_node\]: traffic/hold: 발행자 없음')
+RE_WD_STUCK = re.compile(r'\[lifecycle_watchdog\]: \S+ 이 \w+ 에 멈춰 있다')
+RE_WD_ALL = re.compile(r'\[lifecycle_watchdog\]: 감시 대상이 모두 active')
+SEED_BAD_S = 15.0         # [sim s] lost 이거나 추정 오차 > 0.30 m 가 이만큼 이어지면 자세를 알려 준다 (준비 단계만)
+SEED_GAP_S = 20.0         # [sim s] 같은 로봇 연속 알림 간격
+SEED_MAX = 5              # 로봇당 상한
+
+
+def watchdog_ok(all_active_pos: int, stuck_pos: int) -> bool:
+    """lifecycle_watchdog 가 '모두 active' 를 마지막 '멈춰 있다' 경고 뒤에 냈나 (로그 안 위치로 비교, 없으면 -1)."""
+    return all_active_pos >= 0 and all_active_pos > stuck_pos
+
+
+def seed_due(now: float, bad_since, last_seed, n_seeds: int) -> bool:
+    """준비 단계 자세 알림 규칙 (rclpy 비의존 — 시험용)."""
+    if bad_since is None or n_seeds >= SEED_MAX:
+        return False
+    if now - bad_since < SEED_BAD_S:
+        return False
+    return last_seed is None or now - last_seed >= SEED_GAP_S
+
+
 STATUS_NAME = {0: 'PENDING', 1: 'IN_PROGRESS', 2: 'COMPLETED', 3: 'FAILED'}
 
 
@@ -132,6 +158,20 @@ class Recorder(Node):
         self.mgr_client = {m: self.create_client(Trigger, f'{m}/is_active') for m in self.managers}
         self.mgr_pending = {}
         self.lifecycle_assumed = False
+        self.lifecycle_watchdog = False
+        self.wd_all_pos = -1
+        self.wd_stuck_pos = -1
+        # 준비 단계 자세 알림 (하네스 actions.seed_pose 와 같은 묶음: initialpose 3 회 + map EKF set_pose
+        # + AMCL 무이동 갱신)
+        self.bad_since = {}
+        self.last_seed = {}
+        self.n_seeds = {}
+        self.pub_init = {r: self.create_publisher(PoseWithCovarianceStamped, f'/{r}/initialpose',
+                                                  10) for r in self.robots}
+        self.cli_ekf = ({r: self.create_client(SetPose, f'/{r}/ekf_filter_node_map/set_pose')
+                         for r in self.robots} if SetPose is not None else {})
+        self.cli_nomotion = {r: self.create_client(Empty, f'/{r}/request_nomotion_update')
+                             for r in self.robots}
         # 구독
         for r in self.robots:
             self.create_subscription(Odometry, f'/{r}/ground_truth/odom',
@@ -316,6 +356,11 @@ class Recorder(Node):
         except OSError:
             return
         text = chunk.decode('utf-8', errors='replace')
+        base = self.launch_log_pos - len(chunk)
+        for mm in RE_WD_STUCK.finditer(text):
+            self.wd_stuck_pos = base + mm.start()
+        for mm in RE_WD_ALL.finditer(text):
+            self.wd_all_pos = base + mm.start()
         for mm in RE_HOLD_FIRST.finditer(text):
             if mm.group(1) not in self.hold_first:
                 self.hold_first.add(mm.group(1))
@@ -382,6 +427,14 @@ class Recorder(Node):
         if self.mode == 'central' and time.time() - self.status_seen > 5.0:
             return False
         if not all(self.mgr_active.values()):
+            if watchdog_ok(self.wd_all_pos, self.wd_stuck_pos):
+                # 관리자 응답이 유실돼 is_active 는 false 지만 lifecycle_watchdog 가 관리 노드를 직접 올렸다 (하네스
+                # cases.wait_lifecycle_active 의 wedge 폴백과 같은 근거)
+                if not self.lifecycle_watchdog:
+                    self.lifecycle_watchdog = True
+                    self._ev('note', '', text='lifecycle_watchdog: 감시 대상이 모두 active — 응답 없는 관리자 '
+                             + ','.join(m for m, ok in self.mgr_active.items() if not ok))
+                return True
             if time.time() - self.wall0 < self.args.lifecycle_assume_s:
                 return False
             if not self.lifecycle_assumed:
@@ -390,6 +443,50 @@ class Recorder(Node):
                     m for m, ok in self.mgr_active.items() if not ok))
                 self._ev('note', '', text=self.notes[-1])
         return True
+
+    def _maybe_seed(self, rep: dict, now: float) -> None:
+        """
+        준비 단계(작업 게시 전)에서만: 위치추정이 lost 이거나 추정 오차 > 0.30 m 가 SEED_BAD_S 이어지면 정답 자세를 알려 준다.
+
+        로봇은 작업 전이라 대기 구역에 서 있다 — 운영자가 로봇 자세를 알려 주는 것과 같다 (하네스 actions.seed_pose, 판정 대상 아님).
+        기동 때 lifecycle 응답 유실로 AMCL 이 늦게 활성되면 초기 자세를 놓치고, 대칭 창고에서 재위치추정이 별칭에 갇힌다 (파일럿
+        p5_pilot_p1_distributed: amr_02 · 03 · 05 lost 반복, 오차 46–54 m). 사건 'seed' 로 남고
+        summary.seeds 로 센다.
+        """
+        for r, d in rep.items():
+            bad = d['lost'] is True or (d['loc_err'] is not None and d['loc_err'] > 0.30)
+            if not bad:
+                self.bad_since.pop(r, None)
+                continue
+            self.bad_since.setdefault(r, now)
+            if not seed_due(now, self.bad_since.get(r), self.last_seed.get(r),
+                            self.n_seeds.get(r, 0)):
+                continue
+            g = self.gt.get(r)
+            if g is None:
+                continue
+            _, x, y, yaw, _ = g
+            msg = PoseWithCovarianceStamped()
+            msg.header.frame_id = 'map'
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.pose.pose = pose_stamped(x, y, yaw).pose
+            msg.pose.covariance[0] = msg.pose.covariance[7] = 0.05 ** 2
+            msg.pose.covariance[35] = math.radians(3.0) ** 2
+            for _ in range(3):
+                self.pub_init[r].publish(msg)
+            calls = []
+            if r in self.cli_ekf and self.cli_ekf[r].service_is_ready():
+                req = SetPose.Request()
+                req.pose = msg
+                self.cli_ekf[r].call_async(req)
+                calls.append('ekf_set_pose')
+            if self.cli_nomotion[r].service_is_ready():
+                self.cli_nomotion[r].call_async(Empty.Request())
+                calls.append('nomotion')
+            self.last_seed[r] = now
+            self.n_seeds[r] = self.n_seeds.get(r, 0) + 1
+            self._ev('seed', r, x=round(x, 3), y=round(y, 3), yaw=round(yaw, 4),
+                     lost=d['lost'], loc_err=d['loc_err'], calls=calls, n=self.n_seeds[r])
 
     # ------------------------------------------------------------------ 주기
     def _on_tick(self) -> None:
@@ -403,6 +500,7 @@ class Recorder(Node):
         if self.state == 'WAIT_READY':
             self._poll_lifecycle()
             rep = self._ready_report()
+            self._maybe_seed(rep, now)
             if int(wall) % 10 == 0:
                 self._ev('ready_check', '', report=rep,
                          lifecycle={m: v for m, v in self.mgr_active.items() if not v})
@@ -414,7 +512,8 @@ class Recorder(Node):
                     self.notes.append(f'LATE_START: 준비가 늦어 t_base {self.t_base:.1f} > t_start '
                                       f'{self.plan["t_start"]} (t_ready {now:.1f}, lead {lead:g})')
                 self._ev('ready', '', t_ready=now, t_base=self.t_base, report=rep,
-                         lifecycle_assumed=self.lifecycle_assumed)
+                         lifecycle_assumed=self.lifecycle_assumed,
+                         lifecycle_watchdog=self.lifecycle_watchdog, seeds=self.n_seeds)
                 self.state = 'RUN'
             elif wall - self.wall0 > self.args.ready_timeout_s:
                 self._ev('ready_timeout', '', report=rep,
@@ -481,6 +580,7 @@ class Recorder(Node):
                    't_base': self.t_base, 't_end': now, 'wall_s': time.time() - self.wall0,
                    'posted': sorted(self.posted), 'completed': self.completed,
                    'notes': self.notes, 'lifecycle_assumed': self.lifecycle_assumed,
+                   'lifecycle_watchdog': self.lifecycle_watchdog, 'seeds': self.n_seeds,
                    'hold_first': sorted(self.hold_first),
                    'hold_unmanaged': sorted(self.hold_unmanaged),
                    'lifecycle_inactive': [m for m, ok in self.mgr_active.items() if not ok]}

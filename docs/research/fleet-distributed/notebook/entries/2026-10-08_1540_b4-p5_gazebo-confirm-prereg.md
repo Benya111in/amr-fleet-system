@@ -247,6 +247,23 @@ sim ~300 s. 동시 짝이면 AA · C1 · C3 · F5L 짝당 ≈ 40 분 × 30 = 20 
   `26455d05e7d61f068c2b8d33ef605f28f5e44aac2d2224e66ef5f76f6dfc515d`, `unit/test_fleet_p5.py` `7150b6a575da0bab5dd4b3822f5a3e0310b9e6daf8593c9fcb5dc38acb704740`
   (31 통과). 이미 돈 캠페인 프로세스는 옛 규칙을 쥐고 있으므로, 파일럿 짝 2 시작 뒤 STOP 파일로 본 실행 드라이버를 첫 짝 전에 멈추고 새 코드로
   캠페인을 다시 띄운다 (파일럿 짝은 `.done` 이라 건너뛴다).
+- **(23:05 결과 뒤 변경 — 도구: 준비 판정 · 준비 단계 조치, 파일럿 짝 1 에서 발견)** 파일럿 짝 1 [측정]: 중앙 갈래
+  `p5_pilot_p1_central` 은 sim 9.4 s 에 준비, 5/5 완료(makespan 283.5 s), 도킹 10/10 이 ≤ 2 cm · 1°, 스택 컨테이너 프로세스 172 개 ·
+  관리자 없음, RTF 0.266 (공유 부하 하 예비값, 시작 load1 8.4). **분산 갈래 `p5_pilot_p1_distributed` 는 준비하지 못했다**: 기동 때
+  lifecycle 전이 응답이 유실돼(`failed to send response to /amr_0X/amcl/change_state (timeout)`) amr_02 · 03 · 05 의 AMCL 과 amr_04 의
+  Nav2 가 늦게(lifecycle_watchdog 직접 전이, 벽시계 +100 s) 활성됐고, AMCL 이 초기 자세를 놓쳐 amr_02 · 03 · 05 가 lost 를 되풀이했다
+  (추정 오차 46–54 m, kidnap_monitor `recovery exhausted` · `alias margin blocks convergence`). 관리자 is_active 는 끝까지 false 였다
+  (응답 유실 — 하네스가 아는 결함, cases.wait_lifecycle_active 의 wedge 폴백). 이것은 플릿 모드 효과의 증거가 아니다 (기동 시점 lifecycle
+  응답 유실은 b4-s12 · 시나리오 12 기록에도 있다). sim 194 s 에 수동으로 멈췄다 (`MANUAL_STOP.txt`), 파일럿 짝 1 은 무효 → 새 태그로 다시.
+  - 고친 것 (지표 · 판정 무관, 두 모드 같은 규칙): (1) lifecycle 판정 — 관리자 is_active 가 모두 true **또는** launch.log 에
+    `lifecycle_watchdog: 감시 대상이 모두 active` 가 마지막 `멈춰 있다` 경고 뒤에 있으면 통과 (`summary.lifecycle_watchdog` 표시).
+    (2) **준비 단계 자세 알림** — 작업 게시 전, 로봇이 lost 이거나 추정 오차 > 0.30 m 가 sim 15 s 이어지면 그 로봇의 정답 자세를
+    initialpose(3 회) + map EKF set_pose + AMCL 무이동 갱신으로 준다 (하네스 `actions.seed_pose` 와 같은 묶음, 로봇당 20 s 간격 ·
+    5 회 상한, 사건 `seed` · `summary.seeds`). 로봇은 작업 전이라 대기 구역에 서 있다 — 운영자가 자세를 알려 주는 준비 단계이고,
+    작업 게시 뒤(t_base 뒤)에는 하지 않는다. 분석은 seed 가 있었던 실행을 표시한다. (3) 파일럿도 T_FLOOR(60 s)에 게시.
+  - 해시: `p5_recorder.py` `71890edc4778ce640d96dc105d6c1dcfcdf5ee9ad23759825747a91551b7cac4`, `p5_analyze.py` `14fc14a8606210b7638c8c58e01119754765fa0df25873eadbfd2c3eff928429`
+    (seeds · lifecycle_watchdog 필드만 추가), `p5_campaign.py` `800023fa5c20da4dd8107dbbe76dc11b923cd6ae01dd0682eaa833be210e926c`,
+    `unit/test_fleet_p5.py` `cc4badcdafce2ec7962b9923219685fa4bc38b6d78ebdc38f2aa6d847a980591` (컨테이너 32 통과).
 
 ## 결과
 

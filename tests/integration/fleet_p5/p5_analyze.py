@@ -378,6 +378,8 @@ def run_metrics(raw: str) -> dict:
     t_base, t_end = summ.get('t_base'), summ.get('t_end')
     out.update({'t_ready': summ.get('t_ready'), 't_base': t_base, 't_end': t_end,
                 'lifecycle_assumed': summ.get('lifecycle_assumed'),
+                'lifecycle_watchdog': summ.get('lifecycle_watchdog'),
+                'seeds': summ.get('seeds') or {},
                 'hold_first_missing': sorted(set(plan.get('robots', [])) -
                                              set(summ.get('hold_first', []))),
                 'hold_unmanaged': summ.get('hold_unmanaged', [])})
