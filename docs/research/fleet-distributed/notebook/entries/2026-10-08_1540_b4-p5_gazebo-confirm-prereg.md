@@ -275,6 +275,17 @@ sim ~300 s. 동시 짝이면 AA · C1 · C3 · F5L 짝당 ≈ 40 분 × 30 = 20 
   전(최대 30 s) 첫 정지만 결정점 정지(`gate_stops_before_grant`), 정지 없이 허가를 받으면 지나감(`gate_pass_without_stop` — 사전 요청 효과).
   해시: `p5_analyze.py` `8ad6852b435da4d7362ed83c10785d789f8f908d371639ba181759d4b62400db`, `unit/test_fleet_p5.py`
   `9e9eb017872934834b868a99b8edfc6e3718d60c45c909fa59d4de5030770465` (34 통과, 가드 변이 12/12 KILLED 다시 확인 `tmp/mut/mut_result_v3.txt`).
+- **(00:50 파일럿 짝 2 결과와 결정 — 규칙 그대로)** 파일럿 짝 2(동시) [측정, 셈 밖]: 다른 사용자 부하(load1 91–121, openroad) 아래 5 대 스택
+  둘을 함께 띄우자 lifecycle bond 시간 초과(`SERVER amcl IS DOWN after not receiving a heartbeat for 30000 ms`) · AMCL change_state 실패가 잇따랐고,
+  분산 갈래는 /clock 이 sim 1.7 s 에서 사실상 멈춰 기록기가 CLOCK_STALL 로 끝났으며 중앙 갈래는 벽시계 10 분에 sim 101 s · 준비 못 함 (수동 중단,
+  `MANUAL_STOP.txt` — 재시도 3 회 × 30 분을 피하려고). **규칙: 짝 2 가 DONE 이 아니므로 본 실행은 차례로** (짝 안 먼저 띄우는 갈래를 번갈아).
+  T_START = max(60, ceil30(1.25 × 25.0)) = **60 s** (파일럿 짝 1 재시도 t_ready 22.0 · 25.0 s). 짝 1 단독 RTF [측정]: 중앙 0.242 · 분산 0.168.
+- **(같은 때, 캠페인 결함 — 사전 등록 규칙과 어긋난 코드)** `p5_campaign.decide` 가 짝 2 의 무효를 도구 결함 점검 문제로 보고 본 실행을 멈췄다
+  (`CAMPAIGN_HALT_2_0046.txt`). 사전 등록 규칙은 "짝 2 가 DONE 이 아니면 차례로" 다 — 점검은 짝 1 만 보도록 고치고 시험으로 고정했다.
+  해시 `p5_campaign.py` `8e64e76b33df54c938523a0c18d2d1501335e7fac66ba687e957879a29dc20b0`, `unit/test_fleet_p5.py`
+  `1b40238ebd52af5a1633269a0e72f4b30927293da1cb75bdcafba917a9fba9b9` (35 통과). 캠페인은 `--skip-pilot` 으로 다시 띄운다.
+- **부하에 대한 주의 (불리한 것)**: 본 실행도 같은 공유 서버 부하 아래 돈다. 짝은 차례로 돌므로 짝 안 두 갈래의 부하가 같지 않을 수 있다 —
+  갈래마다 시작 · 끝 loadavg 를 남기고, 짝 차와 부하 차의 관계를 결과에서 따로 본다 (판정 규칙은 그대로).
 
 ## 결과
 

@@ -469,3 +469,12 @@ def test_gate_stop_before_grant_and_pass_through(tmp_path):
                      'held': ['zone:x_ab_4']}]
     m2 = A.run_metrics(str(write_run(tmp_path / 'b', gt, ev2)))
     assert m2['gate_pass_without_stop'] == 1 and m2['gate_stops_before_grant'] == []
+
+
+def test_invalid_concurrent_pilot_means_sequential_not_halt(tmp_path):
+    import p5_campaign as C
+    _pilot_metrics(tmp_path, 1, 'central', 'central', 0.24, 22.0)
+    _pilot_metrics(tmp_path, 1, 'distributed', 'distributed', 0.17, 25.0)
+    _pilot_metrics(tmp_path, 2, 'central', 'central', 0.15, 30.0, valid=False)
+    conc, t_start, problems, _ = C.decide(str(tmp_path))      # 짝 2 분산은 metrics 없음
+    assert conc is False and problems == [] and t_start == 60.0

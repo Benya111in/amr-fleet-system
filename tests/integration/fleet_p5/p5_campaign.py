@@ -14,7 +14,7 @@ b2-rec 녹화 끝 조건 (COORDINATION §10.1): ① 명령줄에 '/wt/b2-rec/' �
 
 파일럿 규칙 (사전 등록 항목 「파일럿」): 짝 2 의 두 갈래 RTF 가 모두 ≥ 0.6 × 짝 1 같은 모드 RTF 이고 짝 2 두 갈래가 유효면 동시,
 아니면 차례로. T_START = max(T_FLOOR, 30 의 배수로 올림(1.25 × 파일럿 네 갈래 t_ready 최댓값)) — T_FLOOR 은 아래 주석.
-점검 (도구 결함 감지 — 지표 값으로 규칙을 바꾸지 않는다): 파일럿 네 갈래 모두 유효, 정답 자세 표본 > 0,
+점검 (도구 결함 감지 — 지표 값으로 규칙을 바꾸지 않는다): 파일럿 짝 1 두 갈래가 유효, 정답 자세 표본 > 0,
 분산 갈래 에이전트 상태 기록 있음, 완료 작업 ≥ 1, 스택 컨테이너에 관리자 · 교통 관리자가 없음(서버 컨테이너에만).
 하나라도 어긋나면 본 실행을 시작하지 않고 멈춘다 (raw/CAMPAIGN_HALT.txt).
 """
@@ -125,6 +125,8 @@ def decide(raw):
             arms[(k, a['mode'])] = (tag, metrics(raw, tag) if tag else None)
     problems = []
     for (k, mode), (tag, m) in sorted(arms.items()):
+        if k == 2:
+            continue      # 짝 2(동시)가 무효 · 없음이면 "차례로" 일 뿐 도구 결함 점검 대상이 아니다 (사전 등록 규칙)
         if m is None:
             problems.append(f'pilot 짝 {k} {mode}: metrics 없음 ({tag})')
             continue
