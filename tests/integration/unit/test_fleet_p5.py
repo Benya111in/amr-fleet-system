@@ -270,8 +270,11 @@ def test_every_experiment_has_two_arms_and_known_actions():
             assert a['mode'] in ('central', 'distributed')
             assert a['layout'] in ('old', 'new')
             for off, action, k in a['faults']:
-                assert action in ('kill', 'pause', 'unpause', 'start') and k >= 1
                 assert math.isfinite(off)
+                if action in ('agent_kill', 'agent_restart'):
+                    assert k in P.ROBOTS
+                else:
+                    assert action in ('kill', 'pause', 'unpause', 'start') and k >= 1
             assert a['comm'] in (None, 'partition_contention', 'stress')
     assert set(P.ORDER) <= set(P.EXPERIMENTS)
 
@@ -382,3 +385,20 @@ def test_stack_process_table_flags_a_second_manager(tmp_path):
     (d / 'ps_stack.txt').write_text('t\n  PID ARGS\n 1 bash\n 2 /opt/x/fleet_manager_node\n')
     m = A.run_metrics(str(d))
     assert m['stack_has_server'] is True and m['stack_processes'] == 2
+
+
+def test_agent_restart_boot_and_orphan_release(tmp_path):
+    ev = [{'t': 100, 'k': 'agent_event', 'r': 'amr_03',
+           'ev': {'event': 'boot', 'incarnation': 1, 'kept_zones': [], 'kept_tasks': []}},
+          {'t': 178.2, 'k': 'agent_event', 'r': 'amr_03',
+           'ev': {'event': 'boot', 'incarnation': 2, 'kept_zones': ['zone:x_bc_4'],
+                  'kept_tasks': ['task:p5r.01']}},
+          {'t': 181.0, 'k': 'agent_event', 'r': 'amr_03',
+           'ev': {'event': 'zone_release', 'resources': ['zone:x_bc_4']}}]
+    faults = [{'action': 'agent_kill', 'robot': 'amr_03', 'sim': 160.0},
+              {'action': 'agent_restart', 'robot': 'amr_03', 'sim': 175.0}]
+    m = A.run_metrics(str(write_run(tmp_path, [], ev, faults=faults)))
+    b = [x for x in m['boots'] if x['incarnation'] == 2][0]
+    assert b['kept_zones'] == ['zone:x_bc_4'] and b['first_release_after_s'] == 2.8
+    r = [x for x in m['fault_response'] if x['action'] == 'agent_restart'][0]
+    assert r['boot_after_s'] == 3.2

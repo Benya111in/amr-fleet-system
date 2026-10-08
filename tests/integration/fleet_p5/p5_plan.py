@@ -69,7 +69,8 @@ def arm(mode, layout='new', faults=(), comm=None, label=''):
             'label': label or mode}
 
 
-# 장애: (offset_s, 동작, 서버 번호). 동작: kill · pause · unpause · start. 서버 1 은 갈래 시작 때 뜬다.
+# 장애: (offset_s, 동작, 대상). 서버 동작 kill · pause · unpause · start 의 대상은 서버 번호 (서버 1 은 갈래 시작 때 뜬다),
+# 에이전트 동작 agent_kill · agent_restart 의 대상은 로봇 id (스택 컨테이너 안 p5_agent_ctl.py).
 EXPERIMENTS = {
     'pilot': {'pairs': 2, 'question': '준비 시각 · RTF (짝 1 차례로 = 단독, 짝 2 동시) — 셈 밖',
               'arms': [arm('central'), arm('distributed')],
@@ -111,6 +112,14 @@ EXPERIMENTS = {
                        comm='partition_contention', label='dist_p_b')],
           'tasks': batch(0, 5, 0.0, 'p5p') + batch(5, 8, 210.0, 'p5p'),
           'horizon_s': 780.0, 'min_end_s': 460.0, 'lead_s': 0.0},
+    'R': {'pairs': 2, 'question': 'p3 §8-7: 에이전트 재기동 (amr_03 SIGKILL → 같은 명령줄 · 저장소로 15 s 뒤)',
+          'arms': [arm('distributed', faults=[(60.0, 'agent_kill', 'amr_03'),
+                                              (75.0, 'agent_restart', 'amr_03')],
+                       label='dist_r_a'),
+                   arm('distributed', faults=[(60.0, 'agent_kill', 'amr_03'),
+                                              (75.0, 'agent_restart', 'amr_03')],
+                       label='dist_r_b')],
+          'tasks': batch(0, 5, 0.0, 'p5r'), 'horizon_s': HORIZON, 'lead_s': 0.0},
     'X': {'pairs': 2, 'question': '보고서 F7 무장애 스트레스: 지연 U(0,1000) ms · 손실 0.1 · 버스트',
           'arms': [arm('distributed', comm='stress', label='dist_x_a'),
                    arm('distributed', comm='stress', label='dist_x_b')],
@@ -127,7 +136,7 @@ EXPERIMENTS['dry'] = {
     'tasks': batch(0, 2, 0.0, 'p5dry'), 'horizon_s': 70.0, 'lead_s': 0.0}
 COMM_MODELS = {'partition_contention': comm_partition_contention, 'stress': comm_stress}
 # 실행 순서 (우선순위): A/A 를 먼저 (보고서 — 잡음 바닥을 잰 뒤 비교), 그다음 사전 등록 비교, 기술(記述) 장애.
-ORDER = ['AA', 'C1', 'C2', 'C3', 'F5L', 'S', 'P', 'X']
+ORDER = ['AA', 'C1', 'C2', 'C3', 'F5L', 'S', 'P', 'X', 'R']
 DOMAINS = [(21, 23), (25, 27)]       # 짝마다 번갈아 (COORDINATION §10.1 배정 21–29, 짝 안 간격 2)
 
 

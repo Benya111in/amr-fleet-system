@@ -33,6 +33,7 @@ if [ -n "${P5_COMM:-}" ]; then
 fi
 echo "$(date -Iseconds) p5_container: ros2 launch amr_bringup multi_robot.launch.py ${ARGS[*]}" \
     > "${P5_OUT}/container.log"
+export -p > "${P5_OUT}/stack_env.sh"      # 에이전트 재기동(p5_agent_ctl.py restart)이 같은 환경을 쓰게
 
 if [ "${P5_DRYRUN:-0}" = 1 ]; then
     # 파이프라인 시험 전용 (Gazebo 없음): 스택 대신 가짜 /clock 만 — 기록기는 준비를 못 해 READY_TIMEOUT 으로 끝난다

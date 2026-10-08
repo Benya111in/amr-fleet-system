@@ -160,7 +160,7 @@
 | §8-3 해제 게이트 + AMCL 별칭 | 함 | 해제 게이트 (원판이 구역 안인데 해제) |
 | §8-4 RTF 하트비트 오탐 (F7) | 함 | 오탐 전환 (AA · C1 · C3 생존 · X) |
 | §8-6 메시지 수 · 대역 | 함 | 메시지 · 대역 |
-| §8-7 에이전트 재기동 (고아 구역 해제 · 작업 잠금 유지) | **안 함** | 에이전트는 로봇 스택 런치(behavior.launch.py, 소유 밖)의 respawn 없는 노드다. 같은 파라미터로 컨테이너 안에서 다시 띄우는 도구를 새로 만들어야 하고, 그 도구의 파라미터가 런치와 어긋나면 결과가 무의미하다 — 시험 설계(launch 수준)부터 다음 단계로 |
+| §8-7 에이전트 재기동 (고아 구역 해제 · 작업 잠금 유지) | **함 (17:55 보완 — 실험 R)** | 처음에는 "안 함"(런치가 respawn 하지 않고 같은 파라미터로 다시 띄우는 도구가 없음)이었다. 같은 명령줄 · 환경을 그대로 다시 쓰는 도구 `p5_agent_ctl.py` 로 풀었다 — 아래 보완 절 |
 | §8-8 좁은 통로 교착 스트레스 | **안 함** | 시나리오 12 작업은 narrow_aisle 을 지나지 않는다. 좁은 통로 전용 작업 · 배치를 새로 만들어야 한다 — 시간 우선순위로 뒤로 (P4 도 Gazebo 값을 우선하라고 했다 — 결과 문서의 "주장할 수 없는 것" 에 적는다) |
 | §8-9 · 10 영속 파일 · 재전송 | 일부 | 영속 파일 크기만. 투표자 영구 사망(F6) 실험은 안 함 (보고서 우선순위 밖) |
 | §8-11 프록시 시간 초과 잠정 잠금 | 기록만 | 에이전트 사건(central_timeout_ignored 등) 수 |
@@ -219,6 +219,23 @@ sim ~300 s. 동시 짝이면 AA · C1 · C3 · F5L 짝당 ≈ 40 분 × 30 = 20 
   (지표 정의 변경 없음 — `stack_processes` · `stack_has_server` 두 필드 추가), `p5_campaign.py`
   `64dcda2971094ede61cec15189db3e72f502acc9f10d36e086593f52e97aa6dd`, `unit/test_fleet_p5.py`
   `6fc87dbe147b09f3db1ed596f8caa20c0557fdd6c2a01b5a62e49b914f4361c7` (28 통과).
+- **(17:55 보완, 결과 전 — Gazebo 실행 0 회) 실험 R 추가 · §8-7 을 "안 함" → "함"**: b2-rec 녹화를 기다리는 동안 에이전트 재기동 도구를
+  만들었다. `p5_agent_ctl.py` — 스택 컨테이너 안에서 `fleet_agent_node`(argv[0] 또는 python 의 argv[1] 이 실행 파일이고 정확히
+  `__ns:=/<로봇>` 인 프로세스만)를 SIGKILL 하고 그 명령줄(런치가 만든 `/tmp/launch_params_*` 포함)을 남긴 뒤, `p5_container.sh` 가 남긴
+  `export -p` 환경으로 **같은 명령줄 · 같은 store_dir** 로 다시 띄운다. 도구 시험 [측정, `/home/CAPYI_AI/runs/b24/b4-p5/tmp/agentctl/`]:
+  가짜 `fleet_agent_node` 셋(amr_03 · amr_033 · 그 낱말이 든 셸) 중 amr_03 만 죽고, 같은 argv · 환경 변수로 다시 떴다. 첫 판은 명령줄
+  문자열에 그 낱말이 든 셸(PID 1)을 골랐다 — 시험이 잡았고 실행 파일 위치로 고쳤다.
+  - **R**: 짝 2 (분산 · 분산 복제), 묶음 A @0, `agent_kill amr_03` @60 → `agent_restart amr_03` @75 (sim s). 지표: 재기동 boot 사건
+    (incarnation 증가, 디스크에서 남긴 구역 kept_zones · 작업 잠금 kept_tasks), 남긴 구역의 첫 해제까지 시간, 그 사이 다른 로봇이 그 구역을
+    받았는지(믿은 허가 겹침 · 원판 동시 점유 — 안전 불변식과 같은 판정), amr_03 작업 완료 여부. **가설**: 재기동한 에이전트는 몸체가 구역
+    안이면 그 구역을 계속 쥐고(fail-closed), 밖이면 해제한다; 작업 잠금(HELD)은 남는다; 죽은 15 s 동안 그 로봇의 실행기는 상태가 3 s 넘게
+    오래돼 `ZonePathClear` 가 막아 멈춘다 (안전 쪽). 순서 `ORDER` 끝 (X 다음).
+  - 해시 갱신: `p5_agent_ctl.py` `586e19a4bba00f1540cb689a2beafc740dd87a6f9f75a63fe33822dcaf6f01dd`, `p5_analyze.py`
+    `f3c31b17e0783a524c21f7eecfb8d97182c9682781e902034bbf792638c574b9` (boots · 재기동 반응 추가, 다른 지표 그대로), `p5_driver.py`
+    `8b02b128ac6dda94d33ac37f4e310c1765bc8d0672710742e9c4e20389e0e55e`, `p5_plan.py` `0cf2471c0c8335e8edb5b3fc48e52448c629ff806747d9873beb8adc6f38a60c`,
+    `p5_container.sh` `dfd2b54f945b327de41320741d07f4fb232165aa6f35f045cef1562931059134` (환경 덤프 한 줄), `unit/test_fleet_p5.py`
+    `f49e9e3c143307f88e1537f2ff763bb3e15de371656bf8c72f2507e5d72ce71f` (29 통과), 형식 도구 `p5_report.py`
+    `132d3b3eb299d21a924c7c07722e0732a8d2952faa1bc2846e5a359dc1e3e53f`. 시간 어림 + 1.5 h.
 
 ## 결과
 

@@ -485,6 +485,25 @@ def run_metrics(raw: str) -> dict:
             resp[r] = {'resync_s': None if a is None else round(a - t, 2),
                        'normal_s': None if b is None else round(b - t, 2)}
         out['fault_response'].append(resp)
+    # 에이전트 재기동 (p3 §8-7): boot 사건 (incarnation · 디스크에서 남긴 구역 · 작업 잠금), 재기동 뒤 그 로봇의 구역 해제
+    boots = []
+    for e in events:
+        ev = e.get('ev') or {}
+        if e.get('k') == 'agent_event' and ev.get('event') == 'boot':
+            rel = [x['t'] for x in events if x.get('k') == 'agent_event' and x.get('r') == e['r']
+                   and (x.get('ev') or {}).get('event') == 'zone_release' and x['t'] >= e['t']]
+            boots.append({'t': round(e['t'], 2), 'robot': e['r'],
+                          'incarnation': ev.get('incarnation'),
+                          'kept_zones': ev.get('kept_zones'), 'kept_tasks': ev.get('kept_tasks'),
+                          'first_release_after_s': round(min(rel) - e['t'], 2) if rel else None})
+    out['boots'] = boots
+    for f in faults:
+        if f.get('action') in ('agent_kill', 'agent_restart') and f.get('sim') is not None:
+            later = [b for b in boots if b['robot'] == f.get('robot') and b['t'] >= f['sim']]
+            out['fault_response'].append({'action': f['action'], 'sim': f['sim'],
+                                          'robot': f.get('robot'),
+                                          'boot_after_s': round(later[0]['t'] - f['sim'], 2)
+                                          if later else None})
     # 하트비트 epoch
     hb = [(e['t'], e.get('epoch'), e.get('role'), e.get('leader')) for e in events
           if e.get('k') == 'hb']

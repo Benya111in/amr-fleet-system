@@ -167,6 +167,16 @@ class Driver:
                 rec = {'scheduled': off, 'scheduled_sim': tb + off}
                 if action == 'start':
                     server(k, rec)
+                elif action in ('agent_kill', 'agent_restart'):
+                    pre = f'{rawc}/agent_{k}'
+                    ctl = ['python3', '/ros2_ws/tests/integration/fleet_p5/p5_agent_ctl.py']
+                    if action == 'agent_kill':
+                        r = sh(['docker', 'exec', stack] + ctl + ['kill', k, pre])
+                    else:
+                        r = sh(['docker', 'exec', '-d', stack] + ctl + [
+                            'restart', pre, f'{rawc}/stack_env.sh'])
+                    action_log(dict(rec, action=action, robot=k, rc=r.returncode,
+                                    out=(r.stdout + r.stderr).strip()[:300]))
                 else:
                     name = servers.get(k, (f'amr-ai-{AGENT}-srv-{tag}-{k}', None))[0]
                     r = sh(['docker', action, name])
