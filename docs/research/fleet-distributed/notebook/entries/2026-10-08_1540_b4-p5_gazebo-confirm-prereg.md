@@ -315,6 +315,10 @@ sim ~300 s. 동시 짝이면 AA · C1 · C3 · F5L 짝당 ≈ 40 분 × 30 = 20 
   중단이면 둘째 갈래는 띄우지 않는다. 부하 중단은 연속 실패 3 회 규칙에 넣지 않는다 (원인이 환경이고 진단됐다). 이 규칙은 결과 값이 아니라
   부하만 본다. 지금 갈래는 수동 중단한다 (`MANUAL_STOP.txt`). 해시 `p5_driver.py` `87d538657f6d57f8875933ae04ee34ed471a16cf9f2c6081a9c82dcdef8dd6c0`,
   `p5_campaign.py` `865f8b6879f12b05ceccb56e3538179e3348f1ae7de0ac8be45cbe2225dacb61`.
+- **(02:45 결과 뒤 변경 — 운영)** 부하 중단 규칙 뒤 AA 짝 1 시도 3 [측정]: loadavg 130–140 에서 sim 270 s 까지 완료 0, 단계 RECOVERING 21 ·
+  ERROR 3 — 기아 상태 확인, 02:25 부하 중단. 시도 4 는 1 분 load 27 의 짧은 틈에 시작했으나 곧 179–193. 다른 사용자 OpenROAD(ISPD) 작업이 몇 분
+  단위로 끝나고 다시 뜨며 1 분 값만 잠깐 내려간다. 짝 시작 조건에 **loadavg(5 분) < 60** 을 더한다 (1 분 < 30 과 함께, 두 번 연속). 해시
+  `p5_driver.py` `62825afa227fefbbb950cf97c88cf638ad26de4b2f6ca20202947b35fb94f4ec`. 오케스트레이터에 알림 (`/home/CAPYI_AI/logs/orch/ALERT_b4-p5.txt`).
 
 ## 결과
 
