@@ -178,7 +178,7 @@ def ate(gt: Traj2D, est: Traj2D, align: str = 'none', max_gap: float = 0.1) -> D
     g, e = associate(gt, est, max_gap)
     if len(g) == 0:
         return {'trans': stats([]), 'yaw_deg': stats([]), 'align': (0.0, 0.0, 0.0),
-                'n_est': len(est), 'n_used': 0}
+                'n_est': len(est), 'n_used': 0, 'errors': np.zeros(0)}
     tf = alignment(g, e, align)
     e = apply_se2(e, *tf)
     dt = np.linalg.norm(e.xy - g.xy, axis=1)

@@ -41,8 +41,19 @@ def cmd_traj(args: argparse.Namespace) -> List[Dict[str, object]]:
     gt, est = _traj(args.gt), _traj(args.est)
     rows: List[Dict[str, object]] = []
     for align in ['none'] + [a for a in args.align if a != 'none']:
-        r = se2.ate(gt, est, align, args.max_gap)
         c = _common(args, align)
+        try:
+            r = se2.ate(gt, est, align, args.max_gap)
+        except ValueError as exc:
+            # 정렬 실패 (예: se2 정렬에 연관 표본 < 2, 리뷰 N6) — CLI 를 멈추지 않고 failed=1 행을 남긴다
+            # (results.py: 실패 실행도 행을 남긴다 — 평균에서 빼지 않기 위해서다)
+            n_used = len(se2.associate(gt, est, args.max_gap)[0])
+            nan = dict(se2.stats([]), n=n_used)
+            note = f"{c.get('notes') or ''} 정렬 {align} 실패: {exc}".strip()
+            cf = dict(c, failed=1, notes=note)
+            rows += results.rows_from_stats(cf, 'ate_trans', nan, 'm', segment='all')
+            rows += results.rows_from_stats(cf, 'ate_yaw', nan, 'deg', segment='all')
+            continue
         rows += results.rows_from_stats(c, 'ate_trans', r['trans'], 'm', segment='all')
         rows += results.rows_from_stats(c, 'ate_yaw', r['yaw_deg'], 'deg', segment='all')
     c = _common(args, 'n/a')
