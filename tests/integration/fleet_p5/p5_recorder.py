@@ -574,6 +574,16 @@ class Recorder(Node):
 
     def _finish(self, why: str, code: int) -> None:
         now = self.now()
+        if why != 'DONE':
+            # 진단: 이 참가자가 보는 그래프 (/clock 발행자 수 · 노드 이름) — 기동 실패 · /clock 정지의 원인 가르기용
+            try:
+                names = sorted(f'{ns.rstrip("/")}/{n}' for n, ns in
+                               self.get_node_names_and_namespaces())
+                self._atomic_json('graph_at_end.json', {
+                    'why': why, 'sim': now, 'clock_publishers': self.count_publishers('/clock'),
+                    'nodes': names, 'topics': len(self.get_topic_names_and_types())})
+            except Exception as exc:  # noqa: B902 — 진단 실패는 끝내기를 막지 않는다
+                self._ev('note', '', text=f'graph_at_end 실패: {exc}')
         self._flush_p2p()
         self._ev('end', '', why=why, code=code)
         summary = {'why': why, 'code': code, 'state': self.state, 't_ready': self.t_ready,
@@ -601,10 +611,10 @@ def main(argv=None) -> int:
     ap.add_argument('--zones', default='')
     ap.add_argument('--behavior', default='')
     ap.add_argument('--traffic', default='')
-    ap.add_argument('--ready-timeout-s', type=float, default=1800.0, help='벽시계')
-    ap.add_argument('--lifecycle-assume-s', type=float, default=900.0,
+    ap.add_argument('--ready-timeout-s', type=float, default=900.0, help='벽시계')
+    ap.add_argument('--lifecycle-assume-s', type=float, default=600.0,
                     help='벽시계 — 이 뒤에는 is_active 응답 없는 관리자를 활성으로 본다 (기록)')
-    ap.add_argument('--clock-stall-s', type=float, default=600.0, help='벽시계')
+    ap.add_argument('--clock-stall-s', type=float, default=180.0, help='벽시계')
     ap.add_argument('--skip-ready', action='store_true',
                     help='파이프라인 시험 전용 (Gazebo 없음): 준비 판정을 건너뛴다')
     args = ap.parse_args(argv)
