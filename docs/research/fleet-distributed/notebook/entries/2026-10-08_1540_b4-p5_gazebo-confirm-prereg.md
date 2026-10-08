@@ -322,6 +322,13 @@ sim ~300 s. 동시 짝이면 AA · C1 · C3 · F5L 짝당 ≈ 40 분 × 30 = 20 
 - **(03:05 결과 뒤 변경 — 운영)** 시도 5 도 1 분 21.9 · 5 분 56.7 에 시작했으나 10 분 만에 158. 다른 사용자 일괄 작업이 이어지는 동안에는 짧은 틈만
   있다. 짝 시작 조건을 **loadavg 1 분 < 30 · 5 분 < 50 · 15 분 < 80** (두 번 연속)으로 — 15 분 값은 일괄 작업이 실제로 멈췄을 때만 내려간다.
   해시 `p5_driver.py` `e8043b6a8f01325a6db1a43d90cd175c47e09a5b2d54cea0b383d40e807bb106`.
+- **(04:00 결과 뒤 변경 — 환경: DDS 를 SHM 기본으로 되돌림)** UDP 전용 갈래 5 개(`p5_AA_p1_dist_ar2`–`ar7`)는 모두 부하 아래였고, `ar7` 에서
+  [측정] yolo `처리 0.1 FPS`, `scan_costmap observation buffer has not been updated for 0.3–0.5 s`, `Control loop missed its desired rate of 20 Hz`
+  12 회, follow_path 중단 9 회 — **UDP 전용은 부하 아래 센서 자료가 늦어 주행이 무너졌다.** SHM 기본 프로파일 갈래는 부하 58–131 에서도 5/5 를
+  마쳤다 (`p5_pilot_p1_distributedr2`). SHM 의 /clock 정지(7 중 3)는 기록기 감시(180 s)로 빨리 무효화하고 짝을 다시 도는 편이 낫다고 판단해
+  **기본을 SHM 으로 되돌린다** (`P5_DDS=udp` 로 UDP 전용). 두 모드 · 모든 실험 같음. 해시 `p5_container.sh`
+  `d9549bda888e1b6ab21aad2ada70d8370ec4eb898f98e931f702cb4d17982b80`, `p5_server.sh` `6ef269ab5b0499b8cc277e28fb0d3f8aefd218b8ea271b0a7fe8a87a7cfce23b`.
+  UDP 갈래는 유효 결과를 하나도 내지 않았으므로 비교에 섞일 것이 없다.
 
 ## 결과
 

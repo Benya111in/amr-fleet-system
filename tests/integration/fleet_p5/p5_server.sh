@@ -14,10 +14,10 @@ export ROS_DOMAIN_ID="${P5_DOMAIN}"
 export PYTHONHASHSEED=0
 unset ROS_LOCALHOST_ONLY
 CFG=/ros2_ws/install/amr_bringup/share/amr_bringup/config
-if [ "${P5_DDS:-udp}" = shm ]; then        # 스택과 같은 전송 (p5_container.sh 주석)
-    export FASTRTPS_DEFAULT_PROFILES_FILE="${CFG}/fastdds_multi_robot.xml"
-else
+if [ "${P5_DDS:-shm}" = udp ]; then        # 스택과 같은 전송 (p5_container.sh 주석)
     export FASTRTPS_DEFAULT_PROFILES_FILE="${CFG}/fastdds_multi_robot_udponly.xml"
+else
+    export FASTRTPS_DEFAULT_PROFILES_FILE="${CFG}/fastdds_multi_robot.xml"
 fi
 mkdir -p "${P5_OUT}/srv${P5_SERVER}"
 ARGS=(launch_adapters:=false robot_ids:=amr_01,amr_02,amr_03,amr_04,amr_05 use_sim_time:=true
