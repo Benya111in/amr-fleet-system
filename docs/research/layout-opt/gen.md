@@ -163,7 +163,34 @@ python3 $REPO/tests/integration/fleet_p5/p5_driver.py \
 
 ## 6. 스모크 실행 (기준 배치 묶음) — 결과
 
-(작성 중)
+`LOsmoke` 를 기준 묶음, 도메인 59, 파티션 `amr_ai_layopt_e3`, gz_slot `layopt-gen` 으로 돌렸다. 원자료는 `runs/layopt/tmp/gen/e3_smoke/<태그>/` 이고, 실행 목록 run_id 는 `LOGEN_<태그>` 다.
+
+| 시도 | 태그 | 결과 | 벽시계 | 부하 (시작 → 중간 최대 → 끝, 1/5/15 분) |
+|---|---|---|---|---|
+| 1 | 20261009T175916Z_…_LOsmoke | **무효 CLOCK_STALL** (sim 15.4 s, 준비 전) | 332 s (+ 시작 대기 60 s) | 27.1/32.0/28.5 → 1 분 95 → 42.4/60.6/45.6 |
+| 2 | 20261009T180713Z_…_LOsmoke | **무효 CLOCK_STALL** (sim 2.1 s, 준비 전) | 356 s (+ 시작 대기 330 s) | 26.7/44.1/44.0 → 1 분 101 → 42.1/52.8/50.3 |
+| 3 | 20261009T182454Z_…_LOsmoke | (엄격한 시작 조건 load < 20/25/35 로 대기 중) | | |
+
+[측정] 두 번 모두 확인된 것과 확인 안 된 것을 나눈다.
+
+- 묶음 겹침은 맞았다. `bundle_check.txt` 의 sha256 이 5/5 일치했다. 확인한 경로:
+  - install share 의 월드·behavior·fleet_spawn·구역 파일
+  - traffic_manager 가 읽는 소스 트리 구역 파일 (서버 컨테이너도 따로 확인)
+- 기동은 정상 순서로 진행됐다.
+  - 런치 인자: `map_yaml:=/bundle/map.yaml robots_file:=/bundle/config/fleet_spawn.yaml`
+  - 스폰 위치: 묶음 슬롯 (18…26, −16), 5 대 스폰 확인
+  - 월드 재개, 스택 기동
+- 끊긴 것: 기록기 그래프에서 `/clock` 발행자가 0 이 됐다 (`graph_at_end.json`, 노드 ~100 개만 보임). 그래서 기록기 180 s 감시가 rc 4 로 끝냈다.
+- 시도 1 의 Gazebo 자체는 계속 돌았다. 같은 시각 `ign topic` 의 sim 은 55 s, RTF 0.31 이었다. 시도 2 는 2.1 s sim 에 벽시계 약 140 s 가 걸렸다.
+- 두 시도 모두 스택 기동 중 부하 1 분 값이 95–101 이었다.
+  - 다른 사용자의 openroad 가 ~4–11 코어를 썼다.
+  - layopt-sim E1 (cpu_slot, `--cpus 12`), layopt-loc E0·E2 Gazebo 가 함께 돌았다.
+  - P5 가 `/clock` 정지로 무효가 된 경우와 같은 형태다 (P5 원자료 10 건 중 3 건 CLOCK_STALL).
+- 시도 1 에는 SHM `open_and_lock_file failed` 가 9 건 있었다. 유효했던 P5 실행 3 건에는 0 건이다. 시도 2 에는 1 건이었다.
+- **원인은 가르지 못했다** (미측정). 과부하 기동 실패로 보지만, 도메인 59 와 저장소 기본 배치를 같은 조건에서 대조하지 않았다.
+- 판단: E3 실행은 P5 처럼 저부하 시간대에 돌아야 한다. 방법은 둘이다.
+  - `exclusive.sh`
+  - 드라이버의 `--load-max/--load5-max/--load15-max` 를 낮춘다.
 
 ## 7. 540 묶음 생성 — 결과 [계산]
 
