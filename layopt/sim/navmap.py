@@ -142,24 +142,40 @@ class NavMap:
         sub[inside] = val
 
     def with_obstacles(self, grid: np.ndarray, discs: Sequence[Tuple[float, float, float]] = (),
-                       lethal_mask: Optional[np.ndarray] = None) -> np.ndarray:
-        """판 사본에 원(중심, 반경) · keepout 마스크(같은 격자 bool)를 LETHAL 로 칠한다."""
+                       lethal_mask: Optional[np.ndarray] = None,
+                       keep: Sequence[Tuple[float, float, float]] = ()) -> np.ndarray:
+        """
+        판 사본에 원(중심, 반경) · keepout 마스크(같은 격자 bool)를 LETHAL 로 칠한다.
+
+        keep 의 원 안은 원래 판 값으로 되돌린다 (계획하는 로봇 자기 몸 — 시작 칸이 LETHAL 이면 계획이 실패한다,
+        traffic_resolution.build_keepout_mask 와 같은 규칙).
+        """
         g = grid.copy()
         if lethal_mask is not None:
             g[lethal_mask] = LETHAL
         for x, y, r in discs:
-            cx0, cy0 = self.world_to_cell(x - r, y - r)
-            cx1, cy1 = self.world_to_cell(x + r, y + r)
-            cx0, cy0 = max(cx0, 0), max(cy0, 0)
-            cx1, cy1 = min(cx1, self.w - 1), min(cy1, self.h - 1)
-            if cx1 < cx0 or cy1 < cy0:
-                continue
-            gx = self.ox + (np.arange(cx0, cx1 + 1) + 0.5) * self.res
-            gy = self.oy + (np.arange(cy0, cy1 + 1) + 0.5) * self.res
-            X, Y = np.meshgrid(gx, gy)
-            sub = g[cy0:cy1 + 1, cx0:cx1 + 1]
-            sub[(X - x) ** 2 + (Y - y) ** 2 <= r * r] = LETHAL
+            win = self._disc(x, y, r)
+            if win is not None:
+                sl, inside = win
+                g[sl][inside] = LETHAL
+        for x, y, r in keep:
+            win = self._disc(x, y, r)
+            if win is not None:
+                sl, inside = win
+                g[sl][inside] = grid[sl][inside]
         return g
+
+    def _disc(self, x: float, y: float, r: float):
+        cx0, cy0 = self.world_to_cell(x - r, y - r)
+        cx1, cy1 = self.world_to_cell(x + r, y + r)
+        cx0, cy0 = max(cx0, 0), max(cy0, 0)
+        cx1, cy1 = min(cx1, self.w - 1), min(cy1, self.h - 1)
+        if cx1 < cx0 or cy1 < cy0:
+            return None
+        gx = self.ox + (np.arange(cx0, cx1 + 1) + 0.5) * self.res
+        gy = self.oy + (np.arange(cy0, cy1 + 1) + 0.5) * self.res
+        X, Y = np.meshgrid(gx, gy)
+        return (slice(cy0, cy1 + 1), slice(cx0, cx1 + 1)), (X - x) ** 2 + (Y - y) ** 2 <= r * r
 
     # ------------------------------------------------------------------ 경로
     def plan(self, start: Tuple[float, float], goal: Pose, robot: Optional[str] = None,

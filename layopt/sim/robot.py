@@ -245,7 +245,8 @@ class Robot:
         self.yield_pose = pose
         nm = self.sim.navmap
         discs = [(o.x, o.y, CIRCUM + 0.2) for o in self.sim.robots if o is not self]
-        grid = nm.with_obstacles(nm.variant(self.id), discs)
+        grid = nm.with_obstacles(nm.variant(self.id), discs,
+                                 keep=[(self.x, self.y, CIRCUM + 0.05)])
         p = nm.plan((self.x, self.y), (pose[0], pose[1], pose[2]), self.id, grid=grid)
         if p is None:
             p = nm.plan((self.x, self.y), (pose[0], pose[1], pose[2]), self.id)
@@ -570,7 +571,10 @@ class Robot:
                 sim.navmap.clearance_at(px, py) >= need + HALF_W + WALL_GAP
             # 교통 hold 로 선 로봇 뒤에 같은 방향으로 오면 줄 선다 (같은 구역을 기다린다). 마주 보는 경우는
             # 지나갈 수 있다 — P5 Gazebo 에서 도크 접근 대기 로봇 옆을 0.8–0.9 m 로 지나간 기록 (sim.md)
-            queue_behind = held[j] and abs(wrap(thb - thp)) < math.pi / 2
+            # 단, 내가 그 로봇이 기다리는 구역의 토큰을 쥐었으면 줄 서지 않는다 (토큰 보유자는 지나가야 한다 —
+            # 뒤 로봇이 토큰을 먼저 받은 경우, 1단계 첫 판의 영구 교착 v10-v20-v3x-v41-v52 시드 1, sim.md)
+            queue_behind = (held[j] and abs(wrap(thb - thp)) < math.pi / 2
+                            and not (sim.wait_zones[j] & sim.token_zones.get(self.id, set())))
             passable = (room and cls != 'cross' and not queue_behind
                         and (cls != 'same' or spd < OVERTAKE_V))
             if sb <= s + 0.05:                               # 옆 · 바로 뒤: 지나가는 중 — 감속만
@@ -607,11 +611,13 @@ class Robot:
         if j is None or self.goal is None:
             return
         bx, _, _, hl, hw, _, _ = sim.bodies
-        r = math.hypot(hl[j], hw[j]) + HALF_W + 0.05
+        # 몸체 규칙의 상호작용 거리(반폭 + 상대 최대 반폭 + 옆 간격) 밖으로 비켜 가는 경로만 찾는다 — 더 작으면
+        # 우회 경로가 다시 '막힘' 으로 판정되어 5 s 마다 우회를 되풀이한다 (1단계 첫 판, sim.md)
+        r = math.hypot(hl[j], hw[j]) + HALF_W + GAP_LAT + 0.05
         nm = sim.navmap
         base = nm.variant(self.id)
         grid = nm.with_obstacles(base, [(float(bx[j, 0]), float(bx[j, 1]), r)],
-                                 lethal_mask=self.keepout)
+                                 lethal_mask=self.keepout, keep=[(self.x, self.y, CIRCUM + 0.05)])
         goal = self.yield_pose if self.yielding else self.goal
         if goal is None:
             return

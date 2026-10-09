@@ -135,6 +135,8 @@ class E1Sim:
         self.hw = np.concatenate([np.full(self.n, HALF_W), self.actor_field.half_wid])
         self.kinds = ['robot'] * self.n + self.actor_field.kinds
         self._held = [False] * (self.n + na)
+        self.wait_zones: List[set] = [set() for _ in range(self.n + na)]   # hold 로 기다리는 구역
+        self.token_zones: Dict[str, set] = {}                                # 로봇 → 쥔 구역 토큰
         self.bodies = None
         self.robot_th = [0.0] * self.n
         self.dwell = DwellTracker(lay.dwell_points, self.n, queue_radius=cfg.queue_radius)
@@ -244,6 +246,7 @@ class E1Sim:
                 self.trace.append((round(now, 2), 'tm', ev.name, ev.message))
         for rid, cmd in res.commands.items():
             self.by_id[rid].apply_command(now, cmd)
+        self.token_zones = {r: set(z) for r, z in self.tm.tokens.holdings().items()}
 
     def _make_bodies(self, k: int) -> None:
         n = self.n
@@ -252,6 +255,8 @@ class E1Sim:
         for i, r in enumerate(self.robots):
             self.robot_th[i] = r.th
             self._held[i] = r.hold and not r.yielding
+            zoned = self._held[i] and r.hold_reason.startswith('zone:')
+            self.wait_zones[i] = set(r.hold_reason[5:].split('+')) if zoned else set()
         if self.actor_field.n:
             axy, av = self.actor_field.at(k)
             bx = np.concatenate([rx, axy])

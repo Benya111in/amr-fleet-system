@@ -287,3 +287,23 @@ def test_dwell_queue_attribution_and_chain():
     dt.step(np.array([[30.0, 0.0], [40, 0], [50, 0], [60, 0]]), np.zeros(4), 1.0,
             hold_zones=[['z1'], None, None, None])
     assert dt.unattributed_hold_s == 1.0
+
+
+@needs_core
+def test_token_holder_passes_robot_waiting_for_that_zone(world, no_detour):
+    """뒤 로봇이 앞 로봇이 기다리는 구역의 토큰을 쥐면 (자리가 있을 때) 지나간다 — 영구 교착 방지."""
+    sim = _sim(world)
+    _park_all(sim, ('amr_01', 'amr_02'))
+    b = _driver(sim, 'amr_02', (-6.0, 0.0), (6.0, 0.0))
+    b.hold, b.hold_reason = True, 'zone:x_bc_3'
+    a = _driver(sim, 'amr_01', (-14.0, 0.0), (6.0, 0.0))
+    sim.token_zones = {'amr_01': {'x_bc_3'}}
+    _advance(sim, 30)
+    assert a.x > b.x + 1.0
+    sim2 = _sim(world)                                   # 대조: 토큰이 없으면 줄 선다
+    _park_all(sim2, ('amr_01', 'amr_02'))
+    b2 = _driver(sim2, 'amr_02', (-6.0, 0.0), (6.0, 0.0))
+    b2.hold, b2.hold_reason = True, 'zone:x_bc_3'
+    a2 = _driver(sim2, 'amr_01', (-14.0, 0.0), (6.0, 0.0))
+    _advance(sim2, 30)
+    assert a2.x < b2.x - 0.5
