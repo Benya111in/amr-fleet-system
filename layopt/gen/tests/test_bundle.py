@@ -43,8 +43,11 @@ def test_contract_files(baseline):
 
 def test_refuses_existing(baseline):
     out, _ = baseline
+    before = (out / 'spec.json').read_text()
     with pytest.raises(FileExistsError):
         B.build(L.parse_spec_id(L.BASELINE_ID), out, 'test', False, seal=False)
+    assert (out / 'spec.json').read_text() == before
+    assert not list(out.parent.glob(f'{out.name}.tmp-*')), '거부했는데 임시 디렉토리를 만들었다'
 
 
 @pytest.mark.parametrize('sid', ['v12-v22-v31-v42-v52', 'v14-v21-v32-v41-v51',
