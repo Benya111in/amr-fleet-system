@@ -37,6 +37,9 @@ spec_id ─ levels.resolve ─▶ 배치 사양(LayoutSpec, 생성기 default_la
   - 도크 4 개와 다른 튜닝값·주석은 원문 그대로 둔다.
   - `waiting_pose` 는 대기 패드 중심 [x, y, 패드 yaw] 다. 원문의 [22, −16, 0] 과 같은 규칙이다. 다중 로봇은 런치가 로봇마다 자기 슬롯으로 덮어쓴다 (`launch_utils.stack_arguments`).
 - **교통 구역·포켓·경로·체류 지점의 규칙**은 `levels.md` §4 에 있다.
+- **월드 이름 주의**: `world.sdf` 의 `<world name="warehouse">` 는 그대로다. 이 파일을 `warehouse.launch.py world:=<경로>` 로 직접 주면 런치가 월드 이름을 파일 이름(`world`)으로 잡는다. 그러면 스폰·world_gate 가 `/world/world/...` 를 찾다가 실패한다.
+  - 해결 1: 파일을 `warehouse.sdf` 라는 이름으로 복사하거나 링크해서 준다.
+  - 해결 2: P5 하네스처럼 `src/amr_simulation/worlds/warehouse.sdf` 위에 겹쳐 마운트한다.
 
 ### `layout.json` 필드 (contract §2 + 정보 필드)
 
