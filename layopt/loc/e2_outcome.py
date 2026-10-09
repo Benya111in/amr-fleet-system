@@ -78,6 +78,11 @@ class Track:
             return self.t[i - 1], self.p[i - 1]
         return None
 
+    def last_before(self, t: float) -> Optional[Tuple[float, Tuple]]:
+        """t 이하 마지막 표본 (간격 제한 없음 — 정지 중 갱신하지 않는 AMCL 의 '현재 값')."""
+        i = bisect.bisect_right(self.t, t)
+        return (self.t[i - 1], self.p[i - 1]) if i > 0 else None
+
     def nearest(self, t: float, max_gap: float = 1.0) -> Optional[Tuple[float, Tuple]]:
         """t 에 가장 가까운 표본 (max_gap 안)."""
         i = bisect.bisect_left(self.t, t)

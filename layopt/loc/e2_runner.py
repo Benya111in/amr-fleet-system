@@ -91,6 +91,7 @@ class Recorder:
         self.logs: List[Dict] = []
         self.events: List = []              # (t, e2_outcome 사건)
         self.lost: List = []                # (t, bool)
+        self.amcl_cov = eo.Track()          # (t, cov_xy, var_yaw, 0) — 판정 시각 AMCL 퍼짐
         self.scans: Dict[str, Dict] = {}
 
     def pose(self, src: str, t: float, x: float, y: float, yaw: float, extra: str = '') -> None:
@@ -175,6 +176,8 @@ class E2Node(Node):
         self.counts['amcl'] += 1
         if self.rec:
             self.rec.pose('amcl', t, *self.last['amcl'][1], extra=f'{c[0] + c[7]:.5f}')
+            with self.rec.lock:
+                self.rec.amcl_cov.add(t, c[0] + c[7], c[35], 0.0)
 
     def on_status(self, m: String) -> None:
         """kidnap_status JSON (수신 sim 시각을 붙인다)."""
@@ -517,7 +520,8 @@ class Runner:
         with rec.lock:
             est = rec.est.at_or_after(t_out)
             est1 = rec.est.at_or_after(t_out + 1.0)
-            amcl = rec.amcl.nearest(t_out, max_gap=30.0)
+            amcl = rec.amcl.last_before(t_out + 0.05)   # 정지 중 AMCL 은 발행하지 않는다
+            acov = rec.amcl_cov.last_before(t_out + 0.05)
             gt = rec.gt.nearest(t_out)
             gt1 = rec.gt.nearest(t_out + 1.0)
             events = list(rec.events)
@@ -557,6 +561,10 @@ class Runner:
             'failed_reason': summ['failed'], 'lost_reason': summ['lost_reason'],
             'final_state': final_state,
             'est_source': 'odometry/filtered_map',
+            # 판정 시각의 AMCL 퍼짐: 크면 "틀린 곳에 확신" 이 아니라 "아직 모름" (판정은 prereg 대로 오차만)
+            'amcl_cov_xy_at': None if not acov else round(acov[1][0], 4),
+            'amcl_var_yaw_at': None if not acov else round(acov[1][1], 4),
+            'amcl_age_at': None if not acov else round(t_out - acov[0], 2),
         }
 
     def write_trial(self, tr: Dict, attempt: int, res: Dict, rec: Recorder) -> None:
@@ -643,13 +651,16 @@ def main(argv=None) -> int:
     ex.add_node(node)
     th = threading.Thread(target=ex.spin, daemon=True)
     th.start()
+    code = EXIT_ANOMALY
     try:
         code = Runner(node, a).run()
     finally:
         node.injecting.clear()
-        ex.shutdown()
-        node.destroy_node()
-        rclpy.try_shutdown()
+        sys.stdout.flush()
+        sys.stderr.flush()
+        # 결과는 시행마다 이미 fsync 했다. rclpy 정리 중 C++ 스레드 소멸자가 abort(134)를 낸 적이 있어
+        # (dbg3: "terminate called without an active exception") 정리 없이 종료 코드를 그대로 낸다.
+        os._exit(code)
     return code
 
 

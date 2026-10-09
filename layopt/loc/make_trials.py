@@ -61,15 +61,17 @@ def smoke() -> Dict:
 EXP1_SEED = 20261010
 EXP1_TARGET = 240          # 시행 목표 (prereg §1: 최소 150, 목표 240)
 EXP1_POOL = 400            # 자유 공간 후보 자세 수 (E0 k=0 마진으로 5분위)
+EXP1_MAX_QUEUE = 12        # 대기열(queue) 체류 지점 표본 상한
 K_LEVELS = (0, 2, 4)
 
 
 def exp1(bundle: Path, seed: int = EXP1_SEED, target: int = EXP1_TARGET,
-         pool_n: int = EXP1_POOL) -> Dict:
+         pool_n: int = EXP1_POOL, max_queue: int = EXP1_MAX_QUEUE) -> Dict:
     """
     실험 1 시행 목록 (사전 등록 — 결과를 보기 전에 커밋한다).
 
-    자세: 묶음 layout.json 의 체류 지점 전부(waiting · dock · charger · queue, 이웃 = layout 의 neighbors),
+    자세: 묶음 layout.json 의 체류 지점(waiting · dock · charger 전부, queue 는 시드로 max_queue 개,
+    이웃 = layout 의 neighbors),
     그리고 자유 공간 자세를 E0 k=0 마진 5분위에서 같은 수씩 (이웃 = e0.free_space_neighbors, 4 자리 모두
     비어야 후보). 각 자세 × k ∈ {0, 2, 4} 한 번씩, 순서는 시드로 섞는다. 시행마다 같은 자세·k·이웃의 E0
     값(margin, inlier, inlier_raw, occluded_frac, second_dist)을 함께 적는다 (분석이 이것과 잇는다).
@@ -79,11 +81,16 @@ def exp1(bundle: Path, seed: int = EXP1_SEED, target: int = EXP1_TARGET,
     m = mapio.load_map(bundle / 'map.yaml')
     field = mapio.distance_field(m)
     poses = []        # (pose_id, kind, pose, neighbors, extra)
-    for dp in layout['dwell_points']:
+    dps = layout['dwell_points']
+    queues = [d for d in dps if d['kind'] == 'queue']
+    if len(queues) > max_queue:     # 대기열 자세는 구역 × 4 방향이라 많다 → 시드로 max_queue 개
+        keep = set(rng.choice(len(queues), size=max_queue, replace=False).tolist())
+        queues = [q for i, q in enumerate(queues) if i in keep]
+    for dp in [d for d in dps if d['kind'] != 'queue'] + queues:
         poses.append((dp['id'], dp['kind'], (dp['x'], dp['y'], dp['yaw']),
                       dp.get('neighbors', []), {}))
-    n_free = max(int(math.ceil(target / len(K_LEVELS))) - len(poses), 5)
-    per_q = int(math.ceil(n_free / 5))
+    n_free = max(target // len(K_LEVELS) - len(poses), 5)
+    per_q = max(n_free // 5, 1)
     # 자유 공간 후보: 4 이웃 자리가 다 비고, 체류 지점에서 1.5 m 밖
     pool = []
     dwell_xy = np.array([[p[2][0], p[2][1]] for p in poses]) if poses else np.zeros((0, 2))
@@ -129,6 +136,7 @@ def exp1(bundle: Path, seed: int = EXP1_SEED, target: int = EXP1_TARGET,
             'map_sha256': m.pgm_sha256,
             'world_sha256': hashlib.sha256((bundle / 'world.sdf').read_bytes()).hexdigest(),
             'seed': seed, 'target': target, 'pool_n': pool_n, 'pool_kept': len(pool),
+            'max_queue': max_queue, 'n_queue_total': sum(1 for d in dps if d['kind'] == 'queue'),
             'quintile_edges': [round(float(v), 4) for v in edges],
             'n_dwell_poses': sum(1 for p in poses if p[1] != 'free'),
             'n_free_poses': sum(1 for p in poses if p[1] == 'free'),

@@ -89,6 +89,9 @@ def test_track_lookup():
     assert tr.nearest(0.24)[1][0] == 2
     assert tr.at_or_after(5.0) is None   # 1 s 안에 없음
     assert tr.at_or_after(1.5)[1][0] == 9  # 뒤에 없으면 1 s 안 직전 표본
+    assert tr.last_before(100.0)[1][0] == 9
+    assert tr.last_before(0.15)[1][0] == 1
+    assert tr.last_before(-1.0) is None
 
 
 def test_pose_error_wraps_yaw():
