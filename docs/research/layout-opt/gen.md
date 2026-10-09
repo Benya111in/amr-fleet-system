@@ -9,7 +9,7 @@
 |---|---|
 | 묶음 540 개 (유효한 것만 월드·지도·설정이 있다) | `/home/CAPYI_AI/runs/layopt/bundles/<spec_id>/` — 봉인 (SHA256SUMS, SEALED) |
 | 기준 배치 묶음 | `/home/CAPYI_AI/runs/layopt/bundles/v10-v20-v30-v40-v50/` (생성기 2b71c30) |
-| 5 대 실행용 빌드 작업공간 (git archive 고정본) | `/home/CAPYI_AI/runs/layopt/tmp/gen/ws/96a8883/` |
+| 5 대 실행용 빌드 작업공간 (git archive 고정본) | `/home/CAPYI_AI/runs/layopt/tmp/gen/ws/302db80/` (빌드는 96a8883 것을 복사해 재사용 — src 변경 없음, `ARCHIVE_DIFF.txt`) |
 | 묶음 하나 만들기 | `layopt/gen/run_build.sh one <spec_id>` |
 | 전부 만들기 | `/home/CAPYI_AI/env/cpu_slot.sh layopt-gen layopt/gen/run_build.sh all --workers 6` |
 | 5 대 실행 한 번 | `layopt/gen/run_e3.sh <spec_id> [LO\|LOd\|LOsmoke]` (§5) |
@@ -130,8 +130,10 @@ spec_id ─ levels.resolve ─▶ 배치 사양(LayoutSpec, 생성기 default_la
 호스트에서 포그라운드로 실행한다. 이 브랜치가 체크아웃된 작업 트리의 드라이버를 쓴다. 드라이버가 스택 컨테이너를 `gz_slot.sh <slot-id>` 로 감싸 포그라운드에서 돌린다.
 
 ```bash
-# 간단히 (아래 명령과 같다. 환경 변수 E3_WS · E3_RAW · E3_AGENT · E3_SLOT 로 바꿀 수 있다)
-E3_AGENT=<자기 id> /home/CAPYI_AI/wt/layopt-gen/layopt/gen/run_e3.sh v10-v20-v30-v40-v50 LO
+# 간단히 (아래 명령과 같다. 환경 변수 E3_WS · E3_RAW · E3_AGENT · E3_SLOT · E3_STAGGER 로 바꿀 수 있다).
+# 공유 부하 아래에서는 기동이 무너지므로 (§6) 측정 시간대 독점 안에서:
+/home/CAPYI_AI/env/exclusive.sh layopt-e3 env E3_AGENT=<자기 id> E3_STAGGER=15 \
+    /home/CAPYI_AI/wt/layopt-gen/layopt/gen/run_e3.sh v10-v20-v30-v40-v50 LO
 ```
 
 풀어 쓴 명령:
@@ -139,7 +141,7 @@ E3_AGENT=<자기 id> /home/CAPYI_AI/wt/layopt-gen/layopt/gen/run_e3.sh v10-v20-v
 ```bash
 SPEC=v10-v20-v30-v40-v50                          # 돌릴 묶음 (valid.json valid=true 인 것)
 TAG=$(date -u +%Y%m%dT%H%M%SZ)_${SPEC}_LO         # 새 run_id (= 원자료 디렉토리 이름)
-WS=/home/CAPYI_AI/runs/layopt/tmp/gen/ws/96a8883  # 빌드한 고정 작업공간 (git archive 96a8883)
+WS=/home/CAPYI_AI/runs/layopt/tmp/gen/ws/302db80  # 빌드한 고정 작업공간 (git archive 302db80)
 REPO=/home/CAPYI_AI/wt/layopt-gen                 # 실행 목록을 남길 작업 트리 (자기 것으로)
 python3 $REPO/tests/integration/fleet_p5/p5_driver.py \
     --raw /home/CAPYI_AI/runs/layopt/e3 --ws-new $WS --ws-old $WS --repo $REPO \
@@ -147,7 +149,7 @@ python3 $REPO/tests/integration/fleet_p5/p5_driver.py \
     --order LO --run-one $TAG --domain 59 --t-start 60 \
     --agent-id layopt-e3 --slot-id layopt-e3 --partition amr_ai_layopt_e3 \
     --notebook docs/research/layout-opt/notebook --stage E3 --run-id-prefix '' \
-    --record-agent <자기 id> --seal
+    --record-agent <자기 id> --seal [--stack-stagger 15]
 ```
 
 - 원자료는 `/home/CAPYI_AI/runs/layopt/e3/$TAG/` 에 모인다.
@@ -172,7 +174,8 @@ python3 $REPO/tests/integration/fleet_p5/p5_driver.py \
 |---|---|---|---|---|
 | 1 | 20261009T175916Z_…_LOsmoke | **무효 CLOCK_STALL** (sim 15.4 s, 준비 전) | 332 s (+ 시작 대기 60 s) | 27.1/32.0/28.5 → 1 분 95 → 42.4/60.6/45.6 |
 | 2 | 20261009T180713Z_…_LOsmoke | **무효 CLOCK_STALL** (sim 2.1 s, 준비 전) | 356 s (+ 시작 대기 330 s) | 26.7/44.1/44.0 → 1 분 101 → 42.1/52.8/50.3 |
-| 3 | 20261009T182454Z_…_LOsmoke | (엄격한 시작 조건 load < 20/25/35 로 대기 중) | | |
+| 3 | 20261009T182454Z_…_LOsmoke | 시작 전 거둠 (load < 20/25/35 창이 오지 않음 — CPU 슬롯 둘·gz 슬롯 하나가 다른 에이전트 장시간 작업으로 계속 참) | 대기 33 분 | 38–50 유지 |
+| 4 | 20261009T185821Z_…_LOsmoke | **무효 READY_TIMEOUT** (`--stack-stagger 15`, 작업공간 302db80). /clock 은 끊기지 않음 (끝에 발행자 1, sim 96 s, RTF ≈ 0.11). amr_01–03 은 묶음 래스터 지도에서 위치 오차 0.065/0.058/0.0 m 로 수렴·실행기 IDLE·hold 수신. amr_04 실행기 미기동, amr_05 위치추정 미수렴, lifecycle_manager 4 개(amr_03 loc, amr_04 nav, amr_05 loc·nav) 비활성 — amcl change_state 응답 시간 초과 3 건, lifecycle_watchdog 은 시작 로그 뒤 아무것도 하지 않았고 종료 신호에도 안 끝났다 | 900 s (준비 상한) | 36.4/37.4/38.8 → 1 분 129 → 88.9/101.3/83.8 |
 
 [측정] 두 번 모두 확인된 것과 확인 안 된 것을 나눈다.
 
@@ -191,9 +194,12 @@ python3 $REPO/tests/integration/fleet_p5/p5_driver.py \
   - P5 가 `/clock` 정지로 무효가 된 경우와 같은 형태다 (P5 원자료 10 건 중 3 건 CLOCK_STALL).
 - 시도 1 에는 SHM `open_and_lock_file failed` 가 9 건 있었다. 유효했던 P5 실행 3 건에는 0 건이다. 시도 2 에는 1 건이었다.
 - **원인은 가르지 못했다** (미측정). 과부하 기동 실패로 보지만, 도메인 59 와 저장소 기본 배치를 같은 조건에서 대조하지 않았다.
-- 판단: E3 실행은 P5 처럼 저부하 시간대에 돌아야 한다. 방법은 둘이다.
-  - `exclusive.sh`
-  - 드라이버의 `--load-max/--load5-max/--load15-max` 를 낮춘다.
+- 스모크 4 는 기동 간격 15 s 로 `/clock` 정지를 피했다 (표본 1). 그러나 부하 100–129 에서 로봇 2 대의 Nav2·AMCL lifecycle 이 끝내 활성되지 않았다.
+- **결론: 하네스의 묶음 경로는 기동까지 확인했다.**
+  - 확인한 것: 겹침, 런치 인자, 스폰 위치, 묶음 지도 위 위치추정 3 대.
+  - **준비 판정 통과는 미달이다** (4 회 중 0 회, 모두 공유 서버 과부하).
+- E3 실행은 P5 처럼 측정 시간대 독점(`exclusive.sh`)에서 돌린다. 기동 간격 15 s 를 권한다.
+  - P5 유효 실행 RTF 0.24–0.27 은 독점·부하 < 30 조건이었다.
 
 ## 7. 540 묶음 생성 — 결과 [계산]
 
