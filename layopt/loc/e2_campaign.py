@@ -98,6 +98,8 @@ def main(argv=None) -> int:
     # 레인 0 = 도메인 57 / amr_ai_layopt_e2 / 세션 s###, 레인 1 = 58 / amr_ai_layopt_e2b / b###
     ap.add_argument('--lane', type=int, default=0)
     ap.add_argument('--lanes', type=int, default=1)
+    ap.add_argument('--module', default='layopt.loc.e2_runner',
+                    help='컨테이너 안 러너 (탐침: layopt.loc.probe_stationary, --max-sessions 1)')
     a = ap.parse_args(argv)
 
     trials_path = Path(a.trials).resolve()
@@ -149,7 +151,8 @@ def main(argv=None) -> int:
                 '-e', f'E2_PER_SESSION={a.per_session}', '-e', f'E2_DUMMY_MODE={a.dummy_mode}',
                 '-e', f'E2_ONLY={a.only}', '-e', f'E2_MAX_ATTEMPTS={a.max_attempts}',
                 '-e', f'E2_DOMAIN={domain}', '-e', f'E2_PARTITION={partition}',
-                '-e', f'E2_LANE={a.lane}', '-e', f'E2_LANES={a.lanes}']
+                '-e', f'E2_LANE={a.lane}', '-e', f'E2_LANES={a.lanes}',
+                '-e', f'E2_MODULE={a.module}']
         cmd = [GZ_SLOT, 'layopt-loc', 'docker', 'run', '--rm', '--name', name, '--gpus', 'all',
                '--shm-size=8g', '-v', f'{WS}:/ros2_ws', '-v', f'{RUNS}:/runs'] + envs + [
                IMAGE, 'bash', '/ros2_ws/layopt/loc/e2_container.sh']
