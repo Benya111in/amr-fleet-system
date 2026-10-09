@@ -59,8 +59,9 @@ P = {
     # RTF 0.25 상한(wall_factor 4)에 걸려 멈췄다). 진짜 정지(stall_window_s 동안 sim 이 stall_min_sim_s 도
     # 안 감)만 이상으로 보고, 전체 상한은 wall_factor 배로 넉넉히 둔다.
     'wall_factor': 15.0, 'wall_min_s': 120.0, 'stall_window_s': 60.0, 'stall_min_sim_s': 0.5,
-    # 부하 문턱: 시행 시작 전 1분 loadavg 가 이 아래로 내려오기를 기다린다 (상한 load_wait_max_s 뒤 그대로 진행)
-    'load_max_1m': 64.0, 'load_wait_max_s': 1200.0, 'load_poll_s': 15.0,
+    # 부하 문턱: 시행 시작 전 1분 loadavg 가 이 아래로 내려오기를 기다린다 (상한 load_wait_max_s 뒤 그대로 진행).
+    # 20 분 상한은 E3 5 대 실행(부하 95–110, 수십 분) 동안 시행마다 20 분을 버렸다 → 3 분 (급등만 넘긴다)
+    'load_max_1m': 64.0, 'load_wait_max_s': 180.0, 'load_poll_s': 15.0,
 }
 
 
