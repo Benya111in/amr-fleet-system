@@ -197,18 +197,25 @@ class NavPath(Path):
         self.goal_yaw = float(goal_yaw)
         self.xy = np.asarray(self.points, dtype=float)
         self.cum_arr = np.asarray(self.cum, dtype=float)
-        self.vlim = speed_profile(self.xy, self.cum_arr)
+        self._vlim: Dict[float, np.ndarray] = {}
 
-    def v_at(self, s: float) -> float:
+    def vlim(self, omega: float = OMEGA_MAX) -> np.ndarray:
+        v = self._vlim.get(omega)
+        if v is None:
+            v = self._vlim[omega] = speed_profile(self.xy, self.cum_arr, omega)
+        return v
+
+    def v_at(self, s: float, omega: float = OMEGA_MAX) -> float:
         """호 길이 s 의 곡률 · 감속 속도 상한 (경로 끝은 0 이 아니다 — 끝 정지는 별도)."""
-        return float(np.interp(s, self.cum_arr, self.vlim))
+        return float(np.interp(s, self.cum_arr, self.vlim(omega)))
 
 
-def speed_profile(xy: np.ndarray, cum: np.ndarray) -> np.ndarray:
+def speed_profile(xy: np.ndarray, cum: np.ndarray, omega: float = OMEGA_MAX) -> np.ndarray:
     """
-    DWA 근사 속도 상한: 곡률 κ 에서 v ≤ ω_max/κ, 앞쪽 상한까지 감속 a 로 미리 줄인다 (뒤로 훑기).
+    DWA 근사 속도 상한: 곡률 κ 에서 v ≤ ω/κ, 앞쪽 상한까지 감속 a 로 미리 줄인다 (뒤로 훑기).
 
     κ = 창(CURV_WINDOW_M) 앞뒤 방향 차 / 창 길이. 끝점 정지는 운동학의 정지 목표가 맡는다.
+    ω 는 곡선 주행 각속도 상한 (기본 = 회전 한계 1.5 rad/s, 보정값은 SimConfig.omega_curve — sim.md §보정).
     """
     n = len(xy)
     v = np.full(n, V_MAX)
@@ -217,16 +224,13 @@ def speed_profile(xy: np.ndarray, cum: np.ndarray) -> np.ndarray:
     seg = np.diff(xy, axis=0)
     head = np.arctan2(seg[:, 1], seg[:, 0])
     hs = np.concatenate([[head[0]], head])          # 점 i 로 들어오는 방향
-    for i in range(n):
-        lo = np.searchsorted(cum, cum[i] - CURV_WINDOW_M / 2.0)
-        hi = min(n - 1, np.searchsorted(cum, cum[i] + CURV_WINDOW_M / 2.0))
-        if hi <= lo:
-            continue
-        d = math.atan2(math.sin(hs[hi] - hs[lo]), math.cos(hs[hi] - hs[lo]))
-        span = max(cum[hi] - cum[lo], 1e-6)
-        k = abs(d) / span
-        if k > 1e-6:
-            v[i] = min(V_MAX, max(V_MIN_CURVE, OMEGA_MAX / k))
+    lo = np.searchsorted(cum, cum - CURV_WINDOW_M / 2.0)
+    hi = np.minimum(n - 1, np.searchsorted(cum, cum + CURV_WINDOW_M / 2.0))
+    d = np.abs(np.arctan2(np.sin(hs[hi] - hs[lo]), np.cos(hs[hi] - hs[lo])))
+    span = np.maximum(cum[hi] - cum[lo], 1e-6)
+    k = np.where(hi > lo, d / span, 0.0)
+    curved = k > 1e-6
+    v[curved] = np.minimum(V_MAX, np.maximum(V_MIN_CURVE, omega / k[curved]))
     for i in range(n - 2, -1, -1):                   # 앞 상한까지 감속 a 로
         ds = cum[i + 1] - cum[i]
         v[i] = min(v[i], math.sqrt(v[i + 1] ** 2 + 2.0 * ACC * ds))

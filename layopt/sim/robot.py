@@ -109,6 +109,7 @@ class Robot:
         self._dock_from: Optional[Pose] = None
         self._dock_to: Optional[Pose] = None
         self._timer_t0 = 0.0
+        self._settle_until = 0.0
         # 막힘
         self.blocked_by: Optional[str] = None
         self.block_since: Optional[float] = None
@@ -398,6 +399,12 @@ class Robot:
     # ------------------------------------------------------------------ 주행
     def _drive(self, now: float, dt: float, k: int) -> None:
         p = self.path
+        sim_cfg = self.sim.cfg
+        if self.nav_phase == 'settle':                   # 목표 도착 뒤 정착 (DWA 접근 · 정렬 근사)
+            self.v = 0.0
+            if now + dt >= self._settle_until - 1e-9:
+                self._arrive(now + dt)
+            return
         moving_cmd = not self.hold or self.yielding
         if self.nav_phase == 'rot0':
             if not moving_cmd:
@@ -415,7 +422,7 @@ class Robot:
             self._rotate_to(self.goal[2], dt)
             if abs(wrap(self.goal[2] - self.th)) <= YAW_TOL:
                 self.th = self.goal[2]
-                self._arrive(now + dt)
+                self._settle_or_arrive(now + dt)
             return
         s = self.s
         stop = p.length
@@ -428,7 +435,7 @@ class Robot:
         dist = max(0.0, stop - s)
         adt = ACC * dt
         v_stop = -adt + math.sqrt(adt * adt + 2.0 * ACC * dist)
-        v_new = max(0.0, min(self.v + adt, V_MAX, p.v_at(s), v_stop, vcap))
+        v_new = max(0.0, min(self.v + adt, V_MAX, p.v_at(s, sim_cfg.omega_curve), v_stop, vcap))
         s_new = s + v_new * dt
         if s_new >= stop - SNAP_M or dist <= SNAP_M:
             s_new = max(s, stop)
@@ -467,7 +474,16 @@ class Robot:
                     abs(wrap(self.goal[2] - self.th)) > YAW_TOL:
                 self.nav_phase = 'rot1'
             else:
-                self._arrive(now + dt)
+                self._settle_or_arrive(now + dt)
+
+    def _settle_or_arrive(self, t: float) -> None:
+        settle = self.sim.cfg.nav_settle_s
+        if settle > 0.0:
+            self.nav_phase = 'settle'
+            self._settle_until = t + settle
+            self.v = 0.0
+        else:
+            self._arrive(t)
 
     def _hold_stat(self, dt: float) -> None:
         self.st['hold_s'] += dt

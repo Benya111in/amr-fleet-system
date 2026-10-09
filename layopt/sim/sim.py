@@ -65,6 +65,8 @@ class SimConfig:
     traffic: bool = True                # False = 교통 관리 없음 (진단)
     loc: LocModel = dataclasses.field(default_factory=LocModel)
     queue_radius: float = 4.0           # 토큰 대기 로봇 → 그 구역 대기열 지점 귀속 반경 (dwell.py)
+    omega_curve: float = 1.5            # 곡선 주행 각속도 상한 [rad/s] (navmap.speed_profile, 보정 sim.md)
+    nav_settle_s: float = 0.0           # 주행 목표 도착 뒤 정착 시간 [s] (보정 sim.md)
     end_when_done: bool = False         # 모든 작업 완료 + 복귀 뒤 끝 (P5)
     record: bool = False
 
