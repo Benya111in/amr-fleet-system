@@ -44,7 +44,10 @@ from amr_fleet.deadlock import strongly_connected_components  # noqa: E402
 from amr_fleet.fleetsim.geometry import box_of_polygon, rect_box_overlap  # noqa: E402
 from amr_fleet.traffic_manager import RobotObservation  # noqa: E402
 
-BASE_RATE = 1.0 / 60.0         # 기준 도착률 [1/s] — 보정 기록은 sim.md §부하 (바꾸면 거기 남긴다)
+# 기준 도착률 [1/s] (부하 1.0). 기준 묶음 · 시드 100–119 에서 비유휴 이용률(1 − 대기 슬롯 체류/(5×지평))이
+# 0.75 에 가장 가까운 값: λ=1/70 → 0.757 (1/80 → 0.676, 1/60 → 0.834). e1/20261009T180906Z_baserate ·
+# 20261009T181246Z_baserate2. 처음 규칙(작업 보유 이용률)은 0.72 에서 포화해 버렸다 (sim.md §부하)
+BASE_RATE = 1.0 / 70.0
 TM_PHASE_S = 0.25
 TM_LOG_EVENTS = ('traffic/DEADLOCK', 'traffic/RESOLVED', 'traffic/UNRESOLVED', 'traffic/ESCALATED')
 TM_LOG_MAX = 300
