@@ -162,13 +162,27 @@ def test_no_overtaking_a_queue(world, no_detour):
     """정지했지만 hold 가 아닌 로봇(줄 선 로봇) 너머에 내 정지 목표가 있으면 그 뒤에 선다 (두 번 보기)."""
     sim = _sim(world)
     _park_all(sim, ('amr_01', 'amr_02', 'amr_03'))
-    c = _driver(sim, 'amr_03', (4.0, 6.0), (10.0, 6.0))
+    bx = -6.0 - (2 * HALF_L + GAP_LON)
+    assert sim.navmap.clearance_at(bx, 0.0) > 1.5         # 넓은 곳: 혼자면 지나갈 수 있는 자리
+    c = _driver(sim, 'amr_03', (-6.0, 0.0), (6.0, 0.0))
     c.hold = True
-    _static(sim, 'amr_02', 4.0 - (2 * HALF_L + GAP_LON), 6.0, 0.0)
-    a = _driver(sim, 'amr_01', (-6.0, 6.0), (10.0, 6.0))
+    _static(sim, 'amr_02', bx, 0.0, 0.0)
+    a = _driver(sim, 'amr_01', (-14.0, 0.0), (6.0, 0.0))
     _advance(sim, 25)
     b = sim.by_id['amr_02']
     assert a.v == 0.0 and a.x < b.x - 0.5
+
+
+@needs_core
+def test_pass_static_robot_when_nothing_beyond(world, no_detour):
+    """같은 자리에 정지 로봇만 있고 그 너머가 비면 지나간다 (위 시험의 대조)."""
+    sim = _sim(world)
+    _park_all(sim, ('amr_01', 'amr_02'))
+    bx = -6.0 - (2 * HALF_L + GAP_LON)
+    _static(sim, 'amr_02', bx, 0.0, 0.0)
+    a = _driver(sim, 'amr_01', (-14.0, 0.0), (6.0, 0.0))
+    _advance(sim, 30)
+    assert a.x > bx + 2.0
 
 
 @needs_core
@@ -258,10 +272,10 @@ def test_dwell_queue_attribution_and_chain():
     dock = DwellPoint('dock:d', 'dock', 10.0, 0.0, 0.0, ((0.0, 0.0, 0.0), (-1.0, 0.0, 0.0)))
     dt = DwellTracker([q, q2, dock], 4, queue_radius=4.0)
     # 0: 구역 z1 토큰 대기, 대기열 자세에서 0.9 m 어긋남 → queue:z1:w 귀속
-    # 1: 0 에 막혀 1.2 m 뒤에 줄 선 로봇 (이웃 자세 ±0.5 m 밖) → 사슬로 이웃
+    # 1: 0 에 막혀 뒤에 줄 선 로봇 (이웃 자세 (−1, 0) 에서 0.6 m — ±0.5 m 밖) → 사슬로만 이웃
     # 2: 도크 d 에서 도킹 중 (forced) → 이웃 자세(0,0) 에 귀속된 0 과 그 줄 1 이 k
     # 3: 멀리 주행
-    xy = np.array([[0.9, 0.0], [-0.3 - 1.2 + 0.9, 0.0], [10.5, 0.0], [20.0, 20.0]])
+    xy = np.array([[0.9, 0.0], [-1.6, 0.0], [10.5, 0.0], [20.0, 20.0]])
     v = np.array([0.0, 0.0, 0.07, 1.0])
     out = dt.step(xy, v, 1.0, forced=[None, None, 'dock:d', None],
                   hold_zones=[['z1'], None, None, None], blocked_by=[-1, 0, -1, -1])
