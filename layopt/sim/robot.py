@@ -10,7 +10,8 @@
 작업 (task_executor.xml): to_pickup → perceive(3.3 s) → dock(U(21, 24.5) s) → load(물품 적재 시간) →
   undock(15.8 s) → to_drop → dock → unload → undock → 완료 → return(대기 슬롯) → idle.
   P5 Gazebo 7 회의 phase 사건에서 잰 값이다 (docs/research/layout-opt/sim.md §보정, [측정]).
-  도킹 · 적재 · 이탈 동안 차체는 staging 자세에 있다고 본다 (판까지 1.55 m 전진은 넣지 않는다).
+  도킹 동안 staging → 도킹 자세(도크 1.56 m · 충전기 0.85 m 안, layout.json docked)로 고르게 들어가고, 적재 ·
+  하역 · 충전은 도킹 자세에서, 이탈 동안 staging 으로 고르게 물러난다 (DWA 접근 · 후진의 근사).
 충전 (charge.xml, 단 대기열과 충전 뒤 복귀는 과제 지시): idle 이고 잔량 < 20 % → 가장 가까운 빈 충전기로 →
   dock → charging(≥ 80 %) → undock → 대기 슬롯 복귀. 빈 충전기가 없으면 가장 가까운 충전기 대기열 자세에서 기다린다.
 몸체 막힘 (물리, 구역 밖 포함): 경로 앞 3 m 안, 옆 간격 < 반폭 합 + 0.3 m 인 몸체(다른 로봇 · actor)는
@@ -104,6 +105,10 @@ class Robot:
         self.keepout = None               # keepout 마스크 (지도 격자 bool) — 계획에 LETHAL
         self._km_obj = None               # 마지막으로 받은 KeepoutMask 객체
         self._ctx = 'pick'                # 도킹 맥락: pick | drop | charge
+        self.place: Optional[str] = None  # 도킹 단계의 장소 (도크 id · 'charger:<id>')
+        self._dock_from: Optional[Pose] = None
+        self._dock_to: Optional[Pose] = None
+        self._timer_t0 = 0.0
         # 막힘
         self.blocked_by: Optional[str] = None
         self.block_since: Optional[float] = None
@@ -145,6 +150,12 @@ class Robot:
 
     def priority(self) -> int:
         return self.task.priority if self.task is not None else -1
+
+    def dwell_place(self) -> Optional[str]:
+        """도킹 단계면 체류 지점 id ('dock:<id>' · 'charger:<id>'), 아니면 None."""
+        if self.place is None or (self.stage not in TIMED and self.stage != CHARGING):
+            return None
+        return self.place if self.place.startswith('charger:') else 'dock:' + self.place
 
     # ------------------------------------------------------------------ 작업 · 충전 시작
     def start_task(self, now: float, task: Task) -> None:
@@ -262,6 +273,8 @@ class Robot:
             if self.task is None and self.soc < BATTERY_LOW and sim.charging_enabled:
                 self.start_charge(now)
         elif st in TIMED:
+            if st in (DOCK, UNDOCK):
+                self._dock_motion(now + dt)
             if now + dt >= self.timer_until - 1e-9:
                 self._timer_done(now + dt)
         elif st == CHARGING:
@@ -276,7 +289,7 @@ class Robot:
                 self._nav(now, sim.layout.chargers[c], TO_CHARGER)
         if self.stage in DRIVE and self.path is not None:
             self._drive(now, dt, k)
-        else:
+        elif self.stage not in (DOCK, UNDOCK):
             self.v = 0.0
         if self.task is not None:
             self.st['busy_s'] += dt
@@ -294,8 +307,32 @@ class Robot:
 
     def _timed(self, now: float, stage: str, dur: float) -> None:
         self.stage = stage
+        self._timer_t0 = now
         self.timer_until = now + dur
         self.v = 0.0
+        if stage in (DOCK, UNDOCK) and self.place is not None:
+            stg = self._staging_of(self.place)
+            dk = self.sim.layout.docked.get(self.place, stg)
+            self._dock_from, self._dock_to = (stg, dk) if stage == DOCK else (dk, stg)
+
+    def _staging_of(self, place: str) -> Pose:
+        lay = self.sim.layout
+        if place.startswith('charger:'):
+            return lay.chargers[place.split(':', 1)[1]]
+        return lay.docks[place]
+
+    def _dock_motion(self, t: float) -> None:
+        """도킹 · 이탈: 두 자세 사이를 시간에 고르게 (선속도 = 거리 / 시간)."""
+        a, b = self._dock_from, self._dock_to
+        if a is None or b is None:
+            return
+        dur = max(self.timer_until - self._timer_t0, 1e-6)
+        f = min(1.0, max(0.0, (t - self._timer_t0) / dur))
+        nx, ny = a[0] + f * (b[0] - a[0]), a[1] + f * (b[1] - a[1])
+        step = math.hypot(nx - self.x, ny - self.y)
+        self.st['distance_m'] += step
+        self.v = step / self.sim.cfg.dt
+        self.x, self.y = nx, ny
 
     def _dock_s(self, tag: str) -> float:
         tid = self.task.task_id if self.task is not None else f'charge{self.st["charge_n"]}'
@@ -308,15 +345,18 @@ class Robot:
         self.blocked_by = None
         self.block_since = None
         if st == TO_PICKUP:
+            self.place = self.task.pickup
             self._timed(now, PERCEIVE, PERCEIVE_S)
         elif st == TO_DROP:
-            self._timed(now, DOCK, self._dock_s('drop'))
+            self.place = self.task.dropoff
             self._ctx = 'drop'
+            self._timed(now, DOCK, self._dock_s('drop'))
         elif st == RETURN:
             self.stage = IDLE
         elif st == TO_CHARGER:
-            self._timed(now, DOCK, self._dock_s('charge'))
+            self.place = f'charger:{self.charger}'
             self._ctx = 'charge'
+            self._timed(now, DOCK, self._dock_s('charge'))
         elif st == TO_QUEUE:
             self.stage = QUEUED
 
@@ -341,6 +381,8 @@ class Robot:
             self.payload = 0.0
             self._timed(now, UNDOCK, UNDOCK_S)
         elif st == UNDOCK:
+            self.v = 0.0
+            self.place = None
             if ctx == 'pick':
                 self._nav(now, self.sim.layout.docks[self.task.dropoff],
                           TO_DROP)

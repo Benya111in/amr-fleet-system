@@ -34,6 +34,8 @@ HUMAN_RADIUS = 0.25         # perception predicted_layer 보행자 반경 (nav2_
 # 차량 몸체 반치수 [m] (진행 방향, 옆) — models/forklift · shuttle_amr 크기 (gen_warehouse_world.py 주석)
 VEHICLE_HALF = {'forklift_main': (1.1, 0.6), 'shuttle_amr': (0.3, 0.2)}
 VEHICLE_DT = 0.1            # 차량 왕복 궤적 표본 간격 [s]
+DOCK_IN_M = 1.56            # 도크 staging → 도킹 자세 (판 2.21 m − standoff 0.65, behavior.yaml)
+CHARGER_IN_M = 0.85         # 충전기 staging → 도킹 자세 (판 1.50 m − standoff 0.65)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -81,6 +83,7 @@ class Layout:
     valid: bool = True
     reasons: Tuple[str, ...] = ()
     source: str = 'bundle'                      # bundle | current
+    docked: Dict[str, Pose] = dataclasses.field(default_factory=dict)   # 장소 이름 → 도킹 자세
 
     @property
     def robot_ids(self) -> Tuple[str, ...]:
@@ -118,8 +121,24 @@ def load_bundle(root) -> Layout:
     zones = root / 'config' / 'traffic_zones.yaml'
     sdf = root / 'world.sdf'
     actors = parse_world_actors(sdf) if sdf.is_file() else []
+    docked = default_docked(docks, chargers)
+    for d in lj.get('dwell_points', ()):
+        if d.get('kind') == 'dock' and 'docked' in d:
+            docked[d['id'].split(':', 1)[1]] = _pose(d['docked'])
+    for c in lj['chargers']:
+        if 'docked' in c:
+            docked[f"charger:{c['id']}"] = _pose(c['docked'])
     return Layout(str(lj.get('spec_id', root.name)), root, map_yaml, zones, docks, chargers,
-                  slots, dwell, actors, valid, reasons, 'bundle')
+                  slots, dwell, actors, valid, reasons, 'bundle', docked)
+
+
+def default_docked(docks: Dict[str, Pose], chargers: Dict[str, Pose]) -> Dict[str, Pose]:
+    """도킹 자세: staging 에서 마커 쪽(staging yaw)으로 도크 1.56 m · 충전기 0.85 m 들어간 자세."""
+    out: Dict[str, Pose] = {}
+    for table, depth, pre in ((docks, DOCK_IN_M, ''), (chargers, CHARGER_IN_M, 'charger:')):
+        for k, (x, y, th) in table.items():
+            out[pre + k] = (x + depth * math.cos(th), y + depth * math.sin(th), th)
+    return out
 
 
 def _pose(p: Sequence[float]) -> Pose:
@@ -143,7 +162,8 @@ def load_current(repo: Optional[pathlib.Path] = None) -> Layout:
     sdf = repo / 'src/amr_simulation/worlds/warehouse.sdf'
     return Layout('current', None, repo / 'maps/warehouse.yaml',
                   repo / 'src/amr_fleet/config/traffic_zones.yaml', docks, chargers, slots,
-                  dwell, parse_world_actors(sdf) if sdf.is_file() else [], True, (), 'current')
+                  dwell, parse_world_actors(sdf) if sdf.is_file() else [], True, (), 'current',
+                  default_docked(docks, chargers))
 
 
 def synth_dwell_points(docks: Dict[str, Pose], chargers: Dict[str, Pose],
@@ -251,5 +271,5 @@ def shuttle_profile(lo: float, hi: float, start: float, v: float, acc: float,
 
 
 __all__ = ['ActorSpec', 'BASELINE_SPEC', 'DOCK_IDS', 'DwellPoint', 'Layout', 'Pose', 'ROBOT_IDS',
-           'load_bundle', 'load_current', 'parse_world_actors', 'shuttle_profile',
-           'synth_dwell_points']
+           'default_docked', 'load_bundle', 'load_current', 'parse_world_actors',
+           'shuttle_profile', 'synth_dwell_points']

@@ -250,3 +250,26 @@ def test_p5_run_contract_row_and_determinism(world):
     assert set(row['loc_events']) == {'lost', 'misconverge', 'recovery_s'}
     c = E1Sim(world, cfg, 4).run()
     assert c['extras']['digest'] != a['extras']['digest']   # 다른 시드 = 다른 actor 위상 · 도킹 시간
+
+
+def test_dwell_queue_attribution_and_chain():
+    q = DwellPoint('queue:z1:w', 'queue', 0.0, 0.0, 0.0, ((-1.0, 0.0, 0.0), (5.0, 0.0, 0.0)))
+    q2 = DwellPoint('queue:z1:e', 'queue', 5.0, 0.0, 3.14, ((6.0, 0.0, 0.0), (0.0, 0.0, 0.0)))
+    dock = DwellPoint('dock:d', 'dock', 10.0, 0.0, 0.0, ((0.0, 0.0, 0.0), (-1.0, 0.0, 0.0)))
+    dt = DwellTracker([q, q2, dock], 4, queue_radius=4.0)
+    # 0: 구역 z1 토큰 대기, 대기열 자세에서 0.9 m 어긋남 → queue:z1:w 귀속
+    # 1: 0 에 막혀 1.2 m 뒤에 줄 선 로봇 (이웃 자세 ±0.5 m 밖) → 사슬로 이웃
+    # 2: 도크 d 에서 도킹 중 (forced) → 이웃 자세(0,0) 에 귀속된 0 과 그 줄 1 이 k
+    # 3: 멀리 주행
+    xy = np.array([[0.9, 0.0], [-0.3 - 1.2 + 0.9, 0.0], [10.5, 0.0], [20.0, 20.0]])
+    v = np.array([0.0, 0.0, 0.07, 1.0])
+    out = dt.step(xy, v, 1.0, forced=[None, None, 'dock:d', None],
+                  hold_zones=[['z1'], None, None, None], blocked_by=[-1, 0, -1, -1])
+    got = {i: (pid, k) for i, pid, k in out}
+    assert got[0] == ('queue:z1:w', 1)          # 줄 선 1
+    assert got[2] == ('dock:d', 2)              # 대기열에 귀속된 0 + 그 뒤 1
+    assert 1 not in got and 3 not in got
+    # 토큰 대기인데 그 구역 대기열이 반경 밖이면 귀속 없음 (진단 시간에 쌓인다)
+    dt.step(np.array([[30.0, 0.0], [40, 0], [50, 0], [60, 0]]), np.zeros(4), 1.0,
+            hold_zones=[['z1'], None, None, None])
+    assert dt.unattributed_hold_s == 1.0

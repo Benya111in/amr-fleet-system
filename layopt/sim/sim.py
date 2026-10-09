@@ -46,6 +46,8 @@ from amr_fleet.traffic_manager import RobotObservation  # noqa: E402
 
 BASE_RATE = 1.0 / 60.0         # 기준 도착률 [1/s] — 보정 기록은 sim.md §부하 (바꾸면 거기 남긴다)
 TM_PHASE_S = 0.25
+TM_LOG_EVENTS = ('traffic/DEADLOCK', 'traffic/RESOLVED', 'traffic/UNRESOLVED', 'traffic/ESCALATED')
+TM_LOG_MAX = 300
 
 
 @dataclasses.dataclass
@@ -62,7 +64,7 @@ class SimConfig:
     soc: Optional[float] = None         # 고정 시작 잔량 (None = U(25, 60))
     traffic: bool = True                # False = 교통 관리 없음 (진단)
     loc: LocModel = dataclasses.field(default_factory=LocModel)
-    queue_radius: float = 0.5
+    queue_radius: float = 4.0           # 토큰 대기 로봇 → 그 구역 대기열 지점 귀속 반경 (dwell.py)
     end_when_done: bool = False         # 모든 작업 완료 + 복귀 뒤 끝 (P5)
     record: bool = False
 
@@ -132,6 +134,7 @@ class E1Sim:
         self.assigned: Dict[str, tuple] = {}
         self.loads: Dict[str, float] = {}
         self.tm_events: Dict[str, int] = {}
+        self.tm_log: List[tuple] = []
         self.hold_by: Dict[str, float] = {}
         self.hold_eps: List[list] = []
         self._hold_open: Dict[str, list] = {}
@@ -225,6 +228,8 @@ class E1Sim:
         res = self.tm.update(now, obs)
         for ev in res.events:
             self.tm_events[ev.name] = self.tm_events.get(ev.name, 0) + 1
+            if ev.name in TM_LOG_EVENTS and len(self.tm_log) < TM_LOG_MAX:
+                self.tm_log.append((round(now, 1), ev.name.split('/')[-1], ev.message[:120]))
             if self.cfg.record:
                 self.trace.append((round(now, 2), 'tm', ev.name, ev.message))
         for rid, cmd in res.commands.items():
@@ -249,7 +254,14 @@ class E1Sim:
     def _after_step(self, now: float, k: int, dt: float) -> None:
         xy = np.array([[r.x, r.y] for r in self.robots])
         v = np.array([r.v for r in self.robots])
-        at = self.dwell.step(xy, v, dt)
+        forced = [r.dwell_place() for r in self.robots]
+        hz = [r.hold_reason[5:].split('+')
+              if r.hold and not r.yielding and r.hold_reason.startswith('zone:') else None
+              for r in self.robots]
+        bb = [self.body_idx.get(r.blocked_by, -1) if r.blocked_by is not None else -1
+              for r in self.robots]
+        bb = [b if b < self.n else -1 for b in bb]
+        at = self.dwell.step(xy, v, dt, forced, hz, bb)
         if self.loc.model.enabled and at:
             for i, pid, kk in at:
                 self.loc.step(now, dt, self.robots[i], pid, kk)
@@ -371,6 +383,7 @@ class E1Sim:
             'hold_by': {k: round(v, 2) for k, v in sorted(self.hold_by.items())},
             'hold_episodes': self.hold_eps,
             'tm_events': dict(sorted(self.tm_events.items())),
+            'tm_log': self.tm_log,
             'tm_strategies': dict(tms.get('strategies', {})),
             'tm_resolved': int(tms.get('resolved', 0)),
             'phys_deadlocks': len(phys),
@@ -388,6 +401,7 @@ class E1Sim:
             'completions': {t: round(v, 2) for t, v in sorted(self.completions.items())},
             'assigned': {t: [round(a, 2), r] for t, (a, r) in sorted(self.assigned.items())},
             'loc_log': self.loc.log,
+            'unattributed_hold_s': round(self.dwell.unattributed_hold_s, 2),
             'wall_s': round(wall, 3),
         }
         extras['digest'] = hashlib.sha256(json.dumps(
