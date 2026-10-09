@@ -39,7 +39,7 @@ FIELDS = ['trial_id', 'pose_id', 'kind', 'k', 'k_used', 'x', 'y', 'yaw', 'quinti
           'err_m_plus1s', 'outcome_plus1s', 'err_m_amcl', 'outcome_amcl',
           'n_reinit', 'n_seed', 'amcl_global', 'seed1_true', 'final_state',
           'gate_margin_max', 'status_margin_median', 'attempt', 'session', 'wall_s', 'rtf',
-          'load_start_1m', 'load_end_1m']
+          'load_start_1m', 'load_end_1m', 'errata_dropped']
 
 
 def auroc(score: np.ndarray, y: np.ndarray) -> Optional[float]:
@@ -240,9 +240,28 @@ def _median(vals) -> Optional[float]:
     return float(np.median(v)) if v else None
 
 
+# 2026-10-10 05:10 추가 (주 분석 정의 불변, 민감도·탐색만): 조정자 정오표
+# analysis/errata/20261009T181209Z_queue_blocked.json 에서 기준 묶음의 막힌 queue 체류 지점.
+ERRATA = Path('/home/CAPYI_AI/runs/layopt/analysis/errata/20261009T181209Z_queue_blocked.json')
+RTF_LOW = 0.25
+
+
+def errata_ids(spec_id: str) -> List[str]:
+    """정오표의 제외 queue id (파일이 없으면 빈 목록)."""
+    if not ERRATA.exists():
+        return []
+    data = json.loads(ERRATA.read_text(encoding='utf-8'))
+    return data.get('drop_queue_ids', {}).get(spec_id, [])
+
+
 def analyze(run_dir: Path, out: Path) -> Dict:
     """전체 분석 → out/ (tidy.csv, summary.json, summary.txt)."""
     rows = tidy_rows(run_dir)
+    spec = json.loads((run_dir / 'trials.json').read_text(encoding='utf-8'))
+    spec_id = spec.get('spec_id', '')
+    dropped = set(errata_ids(spec_id))
+    for r in rows:
+        r['errata_dropped'] = int(r['pose_id'] in dropped)
     out.mkdir(parents=True, exist_ok=False)
     with (out / 'tidy.csv').open('w', newline='', encoding='utf-8') as f:
         w = csv.DictWriter(f, fieldnames=FIELDS)
@@ -272,6 +291,12 @@ def analyze(run_dir: Path, out: Path) -> Dict:
         'gate_A': gate_a(primary.get('auroc')),
         'auroc_sensitivity': {
             'drop_ambiguous': auroc_block(rows, 'e0_margin', -1.0, drop_ambiguous=True),
+            # 아래 둘은 실험 시작 뒤(결과 분석 전) 추가한 민감도 — 주 판정은 auroc_primary
+            'drop_errata_queue': auroc_block([r for r in rows if not r['errata_dropped']],
+                                             'e0_margin', -1.0),
+            'drop_rtf_below_0.25': auroc_block(
+                [r for r in rows if r['rtf'] is None or r['rtf'] >= RTF_LOW], 'e0_margin', -1.0),
+            'errata_ids': sorted(dropped),
         },
         'logit_mis_margin': logit_block(rows, 'e0_margin', 'y_mis'),
         'logit_lost_inlier': logit_block(rows, 'e0_inlier', 'natural_lost'),

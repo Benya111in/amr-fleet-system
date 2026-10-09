@@ -10,14 +10,16 @@
 #       fleet·dashboard·evaluation (단일 로봇 시행과 무관).
 # 환경: E2_RUN_DIR(컨테이너 경로) E2_TRIALS E2_SESSION E2_WORLD(월드 sdf) E2_MAP(map.yaml)
 #       E2_SPAWN("x,y,yaw") E2_PER_SESSION E2_DUMMY_MODE(move|recreate) E2_ONLY(선택) E2_MAX_ATTEMPTS
+#       E2_DOMAIN E2_PARTITION E2_LANE E2_LANES (병렬 세션)
 set -u
 : "${E2_RUN_DIR:?}" "${E2_TRIALS:?}" "${E2_SESSION:?}" "${E2_WORLD:?}" "${E2_MAP:?}" "${E2_SPAWN:?}"
 set +u
 source /opt/ros/humble/setup.bash
 source /ros2_ws/install/setup.bash
 set -u
-export ROS_DOMAIN_ID=57
-export IGN_PARTITION=amr_ai_layopt_e2
+# 레인 0 = 57 / amr_ai_layopt_e2 (contract §5), 레인 1 = 58 / amr_ai_layopt_e2b (조정자 2026-10-10 05:00 허용)
+export ROS_DOMAIN_ID="${E2_DOMAIN:-57}"
+export IGN_PARTITION="${E2_PARTITION:-amr_ai_layopt_e2}"
 export PYTHONHASHSEED=0
 export PYTHONPATH="/ros2_ws:${PYTHONPATH:-}"
 unset ROS_LOCALHOST_ONLY
@@ -55,7 +57,8 @@ trap 'stop_stack; exit 143' TERM INT
 python3 -m layopt.loc.e2_runner --trials "${E2_TRIALS}" --run-dir "${E2_RUN_DIR}" \
     --world-name "${WNAME}" --session "${E2_SESSION}" --per-session "${E2_PER_SESSION:-20}" \
     --dummy-mode "${E2_DUMMY_MODE:-move}" --only "${E2_ONLY:-}" \
-    --max-attempts "${E2_MAX_ATTEMPTS:-2}" > "${SD}/runner.log" 2>&1
+    --max-attempts "${E2_MAX_ATTEMPTS:-2}" --lane "${E2_LANE:-0}" --lanes "${E2_LANES:-1}" \
+    > "${SD}/runner.log" 2>&1
 RC=$?
 echo "$(date -Iseconds) runner rc=${RC}" >> "${SD}/container.log"
 stop_stack

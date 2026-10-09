@@ -23,6 +23,7 @@ amr_01/) — localization(amcl + 이중 EKF + kidnap_monitor + scan_matcher) + n
 
 import argparse
 import datetime as dt
+import fcntl
 import json
 import math
 import os
@@ -321,6 +322,8 @@ class Runner:
         if self.args.only:
             want = set(self.args.only.split(','))
             out = [t for t in out if t['trial_id'] in want]
+        if self.args.lanes > 1:          # 병렬 세션: order % lanes == lane 인 시행만 (겹치지 않는 분할)
+            out = [t for t in out if t['order'] % self.args.lanes == self.args.lane]
         return out
 
     # ---------------------------------------------------------------- 대기
@@ -610,9 +613,11 @@ class Runner:
         line = json.dumps(res, ensure_ascii=False) + '\n'
         for path in ([self.attempts_log] + ([self.results] if res['status'] == 'done' else [])):
             with path.open('a', encoding='utf-8') as f:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)   # 병렬 세션이 같은 파일에 덧붙인다
                 f.write(line)
                 f.flush()
                 os.fsync(f.fileno())
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
     # ---------------------------------------------------------------- 세션
     def run(self) -> int:
@@ -668,6 +673,8 @@ def main(argv=None) -> int:
     ap.add_argument('--ready-timeout', type=float, default=420.0)
     ap.add_argument('--dummy-mode', choices=('move', 'recreate'), default='move')
     ap.add_argument('--only', default='', help='쉼표 구분 trial_id (시험용)')
+    ap.add_argument('--lane', type=int, default=0, help='병렬 세션 번호 (order % lanes == lane)')
+    ap.add_argument('--lanes', type=int, default=1)
     a = ap.parse_args(argv)
     rclpy.init()
     node = E2Node()

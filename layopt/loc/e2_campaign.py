@@ -53,7 +53,8 @@ def log(run_dir: Path, msg: str) -> None:
         f.write(line + '\n')
 
 
-def pending(run_dir: Path, spec: dict, max_attempts: int, only: str = ''):
+def pending(run_dir: Path, spec: dict, max_attempts: int, only: str = '', lane: int = 0,
+            lanes: int = 1):
     """러너와 같은 규칙의 남은 시행 (order 순)."""
     hist = {}
     att = run_dir / 'attempts.jsonl'
@@ -73,6 +74,8 @@ def pending(run_dir: Path, spec: dict, max_attempts: int, only: str = ''):
     if only:
         want = set(only.split(','))
         out = [t for t in out if t['trial_id'] in want]
+    if lanes > 1:
+        out = [t for t in out if t['order'] % lanes == lane]
     return out
 
 
@@ -91,6 +94,10 @@ def main(argv=None) -> int:
     ap.add_argument('--dummy-mode', default='move')
     ap.add_argument('--only', default='')
     ap.add_argument('--session-timeout-per-trial', type=float, default=480.0)
+    # 병렬 세션 (조정자 05:00 허용): 레인마다 드라이버 하나, 시행은 order % lanes 로 나눈다.
+    # 레인 0 = 도메인 57 / amr_ai_layopt_e2 / 세션 s###, 레인 1 = 58 / amr_ai_layopt_e2b / b###
+    ap.add_argument('--lane', type=int, default=0)
+    ap.add_argument('--lanes', type=int, default=1)
     a = ap.parse_args(argv)
 
     trials_path = Path(a.trials).resolve()
@@ -121,15 +128,18 @@ def main(argv=None) -> int:
     log(run_dir, f'start run_dir={run_dir} trials={trials_path} n={len(spec["trials"])} '
                  f'per_session={a.per_session}')
     world, mapy = spec['world'], spec['map']
-    sessions_done = len(list((run_dir / 'sessions').glob('s*'))) if (
+    prefix = 'sb'[a.lane] if a.lane < 2 else f'l{a.lane}'
+    domain = {0: 57, 1: 58}[a.lane]
+    partition = {0: 'amr_ai_layopt_e2', 1: 'amr_ai_layopt_e2b'}[a.lane]
+    sessions_done = len(list((run_dir / 'sessions').glob(f'{prefix}[0-9]*'))) if (
         run_dir / 'sessions').exists() else 0
     consecutive = 0
     for s in range(sessions_done, sessions_done + a.max_sessions):
-        todo = pending(run_dir, spec, a.max_attempts, a.only)
+        todo = pending(run_dir, spec, a.max_attempts, a.only, a.lane, a.lanes)
         if not todo:
             log(run_dir, 'all trials finished')
             break
-        sess = f's{s:03d}'
+        sess = f'{prefix}{s:03d}'
         first = todo[0]
         name = f'amr-ai-layopt-e2-{run_dir.name[-24:].replace("_", "-").lower()}-{sess}'
         envs = ['-e', f'E2_RUN_DIR={cpath(run_dir)}', '-e', f'E2_TRIALS={cpath(frozen)}',
@@ -137,7 +147,9 @@ def main(argv=None) -> int:
                 '-e', f'E2_MAP={cpath(mapy)}',
                 '-e', f'E2_SPAWN={first["x"]},{first["y"]},{first["yaw"]}',
                 '-e', f'E2_PER_SESSION={a.per_session}', '-e', f'E2_DUMMY_MODE={a.dummy_mode}',
-                '-e', f'E2_ONLY={a.only}', '-e', f'E2_MAX_ATTEMPTS={a.max_attempts}']
+                '-e', f'E2_ONLY={a.only}', '-e', f'E2_MAX_ATTEMPTS={a.max_attempts}',
+                '-e', f'E2_DOMAIN={domain}', '-e', f'E2_PARTITION={partition}',
+                '-e', f'E2_LANE={a.lane}', '-e', f'E2_LANES={a.lanes}']
         cmd = [GZ_SLOT, 'layopt-loc', 'docker', 'run', '--rm', '--name', name, '--gpus', 'all',
                '--shm-size=8g', '-v', f'{WS}:/ros2_ws', '-v', f'{RUNS}:/runs'] + envs + [
                IMAGE, 'bash', '/ros2_ws/layopt/loc/e2_container.sh']
@@ -163,7 +175,7 @@ def main(argv=None) -> int:
         else:
             log(run_dir, f'unexpected rc {rc} → stop')
             return 1
-    left = pending(run_dir, spec, a.max_attempts, a.only)
+    left = pending(run_dir, spec, a.max_attempts, a.only, a.lane, a.lanes)
     log(run_dir, f'end: pending {len(left)}')
     return 0 if not left else 1
 

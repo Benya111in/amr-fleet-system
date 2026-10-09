@@ -77,6 +77,7 @@ def _fake_run(tmp: Path):
                         'outcome_plus1s': 'correct', 'outcome_amcl': 'correct',
                         'err_m': 50.0 if mis else 0.05, 'declared': not mis,
                         'recovery_s': None if mis else 12.0, 'trigger': 'forced_reg_reject',
+                        'rtf': 0.2 if i < 5 else 0.5,
                         'seeds_true': [True], 'wall_s': 100.0, 'load_start': [10, 9, 8],
                         'load_end': [11, 9, 8]})
     (tmp / 'trials.json').write_text(json.dumps({'trials': trials}))
@@ -90,6 +91,7 @@ def test_analyze_synthetic(tmp_path: Path):
     s = ax.analyze(run, tmp_path / 'out')
     assert s['n_done'] == 60 and s['n_pose'] == 30
     assert s['auroc_primary']['auroc'] == 1.0           # 마진 < 0.03 이 정확히 오수렴
+    assert s['auroc_sensitivity']['drop_rtf_below_0.25']['n'] == 50
     assert s['gate_A'].startswith('지지')
     assert s['natural_lost']['events'] == 3
     assert s['logit_lost_inlier']['note'] == 'constant predictor'
