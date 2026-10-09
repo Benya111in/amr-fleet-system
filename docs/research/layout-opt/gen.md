@@ -12,7 +12,7 @@
 | 5 대 실행용 빌드 작업공간 (git archive 고정본) | `/home/CAPYI_AI/runs/layopt/tmp/gen/ws/96a8883/` |
 | 묶음 하나 만들기 | `layopt/gen/run_build.sh one <spec_id>` |
 | 전부 만들기 | `/home/CAPYI_AI/env/cpu_slot.sh layopt-gen layopt/gen/run_build.sh all --workers 6` |
-| 5 대 실행 한 번 | §5 의 명령 |
+| 5 대 실행 한 번 | `layopt/gen/run_e3.sh <spec_id> [LO\|LOd\|LOsmoke]` (§5) |
 
 ## 2. 생성 경로
 
@@ -124,7 +124,14 @@ spec_id ─ levels.resolve ─▶ 배치 사양(LayoutSpec, 생성기 default_la
 
 ## 5. 5 대 실행 한 번 — 조정자 명령
 
-호스트에서 실행한다. 이 브랜치가 체크아웃된 작업 트리의 드라이버를 쓴다. 드라이버가 스택 컨테이너를 `gz_slot.sh <slot-id>` 로 포그라운드에서 돌린다.
+호스트에서 포그라운드로 실행한다. 이 브랜치가 체크아웃된 작업 트리의 드라이버를 쓴다. 드라이버가 스택 컨테이너를 `gz_slot.sh <slot-id>` 로 감싸 포그라운드에서 돌린다.
+
+```bash
+# 간단히 (아래 명령과 같다. 환경 변수 E3_WS · E3_RAW · E3_AGENT · E3_SLOT 로 바꿀 수 있다)
+E3_AGENT=<자기 id> /home/CAPYI_AI/wt/layopt-gen/layopt/gen/run_e3.sh v10-v20-v30-v40-v50 LO
+```
+
+풀어 쓴 명령:
 
 ```bash
 SPEC=v10-v20-v30-v40-v50                          # 돌릴 묶음 (valid.json valid=true 인 것)
@@ -158,9 +165,26 @@ python3 $REPO/tests/integration/fleet_p5/p5_driver.py \
 
 (작성 중)
 
-## 7. 540 묶음 생성 — 결과
+## 7. 540 묶음 생성 — 결과 [계산]
 
-(작성 중)
+- 명령: `cpu_slot.sh layopt-gen layopt/gen/run_build.sh all --workers 6`. 생성기 83202d2, 2026-10-10 02:58:00–02:58:30.
+  - 벽시계 30 s, 6 프로세스. 부하 시작 36.1/33.2/28.2, 끝 38.3/34.1/28.6.
+  - 요약: `runs/layopt/tmp/gen/batches/20261009T175800Z_bundles/summary.json`.
+- 결과: **유효 500 / 540**, 무효 40, 오류 0. 540 개 모두 봉인했다.
+- 무효 이유:
+
+| 종류 | 수 | 내용 |
+|---|---|---|
+| lane | 36 | n_center(v14) × beside_waiting(v31): 북쪽 벽 충전소 staging 3 개가 지게차 차선 상자에서 0.64 m (< 0.66) |
+| resolve | 4 | se_current(v10) × line3(v21) × beside_waiting(v31) × structures(v51): 대기 슬롯 줄 양 끝에 구조물 S1 자리가 없음 (동쪽은 벽, 서쪽은 충전소) |
+
+- 기준 묶음만 2b71c30 으로 먼저 만들었다 (§3). 83202d2 로 다시 만들어 보니 `spec.json` 밖의 파일이 모두 같았다.
+- 수준별 범위 (유효 묶음):
+  - 구역 수: uniform6 17, b_shift3 29, pitch_mix 17, end_moved 16. end_moved 는 C 열 서쪽 끝이 비어 x_bc 가 5 개다.
+  - 포켓 수: b_shift3 11–13, 나머지 34–37.
+  - queue 체류 지점: 38–46 개.
+  - 슬롯·staging 의 지도 여유 최솟값: 0.97 m (stagger 뒤 열, 북쪽 벽).
+  - 동적 경로 거리 최솟값: 1.50 m.
 
 ## 8. 알려진 한계
 
