@@ -110,6 +110,8 @@ class Robot:
         self._dock_to: Optional[Pose] = None
         self._timer_t0 = 0.0
         self._settle_until = 0.0
+        self._leg_n = 0
+        self.vmax = V_MAX                 # 구간 순항 상한 = V_MAX × U(leg_speed_lo, 1) (구간마다)
         # 막힘
         self.blocked_by: Optional[str] = None
         self.block_since: Optional[float] = None
@@ -179,6 +181,11 @@ class Robot:
         self.stage = stage
         self.goal = goal
         self.align_goal = align
+        self._leg_n += 1
+        lo = self.sim.cfg.leg_speed_lo
+        tag = self.task.task_id if self.task is not None else f'leg{self._leg_n}'
+        self.vmax = V_MAX * (uniform(lo, 1.0, self.sim.seed, 'legv', self.id, tag, stage)
+                             if lo < 1.0 else 1.0)
         self._plan_to(now, goal, grid)
 
     def _plan_to(self, now: float, goal: Pose, grid=None, cache: bool = True) -> bool:
@@ -435,7 +442,8 @@ class Robot:
         dist = max(0.0, stop - s)
         adt = ACC * dt
         v_stop = -adt + math.sqrt(adt * adt + 2.0 * ACC * dist)
-        v_new = max(0.0, min(self.v + adt, V_MAX, p.v_at(s, sim_cfg.omega_curve), v_stop, vcap))
+        v_new = max(0.0, min(self.v + adt, self.vmax, p.v_at(s, sim_cfg.omega_curve), v_stop,
+                             vcap))
         s_new = s + v_new * dt
         if s_new >= stop - SNAP_M or dist <= SNAP_M:
             s_new = max(s, stop)
@@ -451,7 +459,7 @@ class Robot:
         if s_new < p.length - 1e-9:
             self.th = p.heading(s_new, self.th)
         self.w = abs(wrap(self.th - th_old)) / dt
-        if vcap < V_MAX and v_end > 0:
+        if vcap < self.vmax and v_end > 0:
             self.st['pass_s'] += dt
         if not moving_cmd:
             self._hold_stat(dt)

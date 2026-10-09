@@ -35,6 +35,7 @@ from layopt.sim.sim import E1Sim, SimConfig, World  # noqa: E402
 OMEGAS = (1.5, 1.0, 0.8, 0.6, 0.5, 0.4)
 SETTLES = (0.0, 1.0, 2.0, 3.0)
 SEEDS = (0, 1, 2)
+LEG_SPEED_LO = 1.0
 
 
 def gazebo_legs(raw: pathlib.Path) -> dict:
@@ -98,7 +99,7 @@ def _leg_time(args) -> float:
     rid, route = key.split(':')
     a, b = route.split('->')
     cfg = SimConfig(workload='p5', horizon_s=400, soc=100.0, omega_curve=omega,
-                    nav_settle_s=settle)
+                    nav_settle_s=settle, leg_speed_lo=LEG_SPEED_LO)
     sim = E1Sim(_W, cfg, seed)
     sim.tasks = []
     r = sim.by_id[rid]
@@ -120,12 +121,41 @@ def _leg_time(args) -> float:
     return math.nan
 
 
+def _qs(xs):
+    xs = sorted(xs)
+    return [round(xs[int(q * (len(xs) - 1))], 3) for q in (0.05, 0.25, 0.5, 0.75, 0.95)]
+
+
+def gz_spread(g) -> list:
+    """구간 종류별 중앙값으로 나눈 Gazebo 구간 시간들의 분위수 (n ≥ 3 종류만)."""
+    rel = [x / v['median'] for v in g.values() if v['n'] >= 3 for x in v['all']]
+    return _qs(rel)
+
+
+def rel_spread(res, g, om, st) -> list:
+    rel = []
+    for k in g:
+        ts = res[(k, om, st)]
+        m = statistics.median(ts)
+        rel += [t / m for t in ts]
+    return _qs(rel)
+
+
 def main(argv=None) -> int:
+    global SEEDS, LEG_SPEED_LO, OMEGAS, SETTLES
     ap = argparse.ArgumentParser(description='구간 주행 시간 적합')
     ap.add_argument('--raw', required=True)
     ap.add_argument('--out', required=True)
     ap.add_argument('--workers', type=int, default=6)
+    ap.add_argument('--seeds', default='0,1,2')
+    ap.add_argument('--leg-speed-lo', type=float, default=1.0)
+    ap.add_argument('--omegas', default=','.join(str(o) for o in OMEGAS))
+    ap.add_argument('--settles', default=','.join(str(s) for s in SETTLES))
     a = ap.parse_args(argv)
+    SEEDS = tuple(int(s) for s in a.seeds.split(','))
+    LEG_SPEED_LO = a.leg_speed_lo
+    OMEGAS = tuple(float(s) for s in a.omegas.split(','))
+    SETTLES = tuple(float(s) for s in a.settles.split(','))
     out = pathlib.Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     g = gazebo_legs(pathlib.Path(a.raw))
@@ -145,6 +175,9 @@ def main(argv=None) -> int:
                      'err_s': {k: round(e, 2) for k, e in zip(keys, errs)}})
     grid.sort(key=lambda r: r['rms_s'])
     doc = {'label': '[계산] (목표: [측정] Gazebo 구간 중앙값)', 'gazebo_legs': g, 'grid': grid,
+           'seeds': list(SEEDS), 'leg_speed_lo': LEG_SPEED_LO,
+           'e1_rel_spread': rel_spread(res, g, grid[0]['omega_curve'], grid[0]['nav_settle_s']),
+           'gazebo_rel_spread': gz_spread(g),
            'best': {k: grid[0][k] for k in ('omega_curve', 'nav_settle_s', 'rms_s', 'bias_s')}}
     (out / 'legfit.json').write_text(json.dumps(doc, ensure_ascii=False, indent=1),
                                      encoding='utf-8')

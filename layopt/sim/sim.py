@@ -69,6 +69,7 @@ class SimConfig:
     # RMS 5.55 → 2.28 s, 치우침 −4.76 → +0.14 s). 보정 전 값은 1.5 · 0.0 (sim.md §보정)
     omega_curve: float = 0.5            # 곡선 주행 각속도 상한 [rad/s] (navmap.speed_profile)
     nav_settle_s: float = 2.0           # 주행 목표 도착 뒤 정착 시간 [s]
+    leg_speed_lo: float = 1.0           # 구간마다 순항 상한 × U(leg_speed_lo, 1) (1.0 = 잡음 없음)
     end_when_done: bool = False         # 모든 작업 완료 + 복귀 뒤 끝 (P5)
     record: bool = False
 
