@@ -38,7 +38,7 @@ FIELDS = ['trial_id', 'pose_id', 'kind', 'k', 'k_used', 'x', 'y', 'yaw', 'quinti
           'declared', 'recovery_s', 'err_m', 'err_yaw_deg', 'outcome', 'y_mis',
           'err_m_plus1s', 'outcome_plus1s', 'err_m_amcl', 'outcome_amcl',
           'n_reinit', 'n_seed', 'amcl_global', 'seed1_true', 'final_state',
-          'gate_margin_max', 'status_margin_median', 'attempt', 'session', 'wall_s',
+          'gate_margin_max', 'status_margin_median', 'attempt', 'session', 'wall_s', 'rtf',
           'load_start_1m', 'load_end_1m']
 
 
@@ -168,6 +168,7 @@ def tidy_rows(run_dir: Path) -> List[Dict]:
             'final_state': r.get('final_state'), 'gate_margin_max': r.get('gate_margin_max'),
             'status_margin_median': r.get('status_margin_median'),
             'attempt': r.get('attempt'), 'session': r.get('session'), 'wall_s': r.get('wall_s'),
+            'rtf': r.get('rtf'),
             'load_start_1m': (r.get('load_start') or [None])[0],
             'load_end_1m': (r.get('load_end') or [None])[0]})
     rows.sort(key=lambda d: d['trial_id'])

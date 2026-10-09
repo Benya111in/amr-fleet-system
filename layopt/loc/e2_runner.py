@@ -55,7 +55,12 @@ P = {
     'settle_tol_m': 0.15, 'settle_tol_yaw': math.radians(5.0), 'settle_hold_s': 2.0,
     'settle_max_s': 40.0, 'natural_s': 20.0, 'inject_hz': 100.0, 'inject_max_s': 15.0,
     'window_s': eo.RECOVERY_WINDOW_S, 'post_s': 3.0, 'track_dt': 0.1,
-    'wall_factor': 4.0, 'wall_min_s': 30.0,
+    # 시계 감시: 느린 RTF 는 이상이 아니다(공유 부하 101 에서 RTF 0.17 실측 — 첫 캠페인 세션 3 개가
+    # RTF 0.25 상한(wall_factor 4)에 걸려 멈췄다). 진짜 정지(stall_window_s 동안 sim 이 stall_min_sim_s 도
+    # 안 감)만 이상으로 보고, 전체 상한은 wall_factor 배로 넉넉히 둔다.
+    'wall_factor': 15.0, 'wall_min_s': 120.0, 'stall_window_s': 60.0, 'stall_min_sim_s': 0.5,
+    # 부하 문턱: 시행 시작 전 1분 loadavg 가 이 아래로 내려오기를 기다린다 (상한 load_wait_max_s 뒤 그대로 진행)
+    'load_max_1m': 64.0, 'load_wait_max_s': 1200.0, 'load_poll_s': 15.0,
 }
 
 
@@ -323,16 +328,31 @@ class Runner:
         n = self.node
         t0, w0 = n.now(), time.time()
         cap = max(P['wall_min_s'], sim_s * P['wall_factor'])
+        mark_w, mark_s = w0, t0          # 정지 감시 창의 시작 (벽시계, sim)
         while True:
             r = cond()
             if r:
                 return r
-            if n.now() - t0 >= sim_s:
+            now_s, now_w = n.now(), time.time()
+            if now_s - t0 >= sim_s:
                 return None
-            if time.time() - w0 > cap:
-                raise Anomaly(f'clock_stalled during {what}: sim {n.now() - t0:.1f}/{sim_s} s '
-                              f'in {time.time() - w0:.0f} s wall')
+            if now_w - mark_w >= P['stall_window_s']:
+                if now_s - mark_s < P['stall_min_sim_s']:
+                    raise Anomaly(f'clock_stalled during {what}: sim +{now_s - mark_s:.2f} s in '
+                                  f'{now_w - mark_w:.0f} s wall')
+                mark_w, mark_s = now_w, now_s
+            if now_w - w0 > cap:
+                raise Anomaly(f'too_slow during {what}: sim {now_s - t0:.1f}/{sim_s} s '
+                              f'in {now_w - w0:.0f} s wall')
             time.sleep(poll)
+
+    def wait_load(self) -> float:
+        """1분 loadavg < load_max_1m 까지 (상한 load_wait_max_s). 반환 = 기다린 벽시계 초."""
+        w0 = time.time()
+        while (os.getloadavg()[0] >= P['load_max_1m']
+               and time.time() - w0 < P['load_wait_max_s']):
+            time.sleep(P['load_poll_s'])
+        return round(time.time() - w0, 1)
 
     def wait_ready(self) -> Dict:
         """스택 준비: 시계·gt·est·kidnap_status·amcl/behavior_server active."""
@@ -392,12 +412,13 @@ class Runner:
     def run_trial(self, tr: Dict, attempt: int) -> Dict:
         """시행 하나. 반환 = trials.jsonl 한 줄 (status done | invalid)."""
         n = self.node
-        w_start = time.time()
+        load_wait = self.wait_load()
+        w_start, s_start = time.time(), n.now()
         load0 = os.getloadavg()
         res: Dict = {'trial_id': tr['trial_id'], 'attempt': attempt, 'session': self.session,
                      'pose_id': tr['pose_id'], 'kind': tr['kind'], 'k': tr['k'],
                      'x': tr['x'], 'y': tr['y'], 'yaw': tr['yaw'], 'started': utc(),
-                     'load_start': [round(v, 2) for v in load0]}
+                     'load_start': [round(v, 2) for v in load0], 'load_wait_s': load_wait}
         rec = Recorder()
         try:
             # 0. 앞 시행의 회전이 멈출 때까지
@@ -501,6 +522,8 @@ class Runner:
             n.rec = None
         res['ended'] = utc()
         res['wall_s'] = round(time.time() - w_start, 1)
+        res['sim_s'] = round(n.now() - s_start, 1)
+        res['rtf'] = round(res['sim_s'] / max(res['wall_s'], 1e-6), 3)
         res['load_end'] = [round(v, 2) for v in os.getloadavg()]
         self.write_trial(tr, attempt, res, rec)
         return res

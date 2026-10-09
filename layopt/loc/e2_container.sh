@@ -9,7 +9,7 @@
 #   끔: behavior(작업 실행기·도킹 서버 — 단일 로봇에 작업이 없고, 도킹 서버의 marker_fix 는 lost 중 무시된다),
 #       fleet·dashboard·evaluation (단일 로봇 시행과 무관).
 # 환경: E2_RUN_DIR(컨테이너 경로) E2_TRIALS E2_SESSION E2_WORLD(월드 sdf) E2_MAP(map.yaml)
-#       E2_SPAWN("x,y,yaw") E2_PER_SESSION E2_DUMMY_MODE(move|recreate) E2_ONLY(선택)
+#       E2_SPAWN("x,y,yaw") E2_PER_SESSION E2_DUMMY_MODE(move|recreate) E2_ONLY(선택) E2_MAX_ATTEMPTS
 set -u
 : "${E2_RUN_DIR:?}" "${E2_TRIALS:?}" "${E2_SESSION:?}" "${E2_WORLD:?}" "${E2_MAP:?}" "${E2_SPAWN:?}"
 set +u
@@ -54,7 +54,8 @@ trap 'stop_stack; exit 143' TERM INT
 
 python3 -m layopt.loc.e2_runner --trials "${E2_TRIALS}" --run-dir "${E2_RUN_DIR}" \
     --world-name "${WNAME}" --session "${E2_SESSION}" --per-session "${E2_PER_SESSION:-20}" \
-    --dummy-mode "${E2_DUMMY_MODE:-move}" --only "${E2_ONLY:-}" > "${SD}/runner.log" 2>&1
+    --dummy-mode "${E2_DUMMY_MODE:-move}" --only "${E2_ONLY:-}" \
+    --max-attempts "${E2_MAX_ATTEMPTS:-2}" > "${SD}/runner.log" 2>&1
 RC=$?
 echo "$(date -Iseconds) runner rc=${RC}" >> "${SD}/container.log"
 stop_stack

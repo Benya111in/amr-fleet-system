@@ -1,8 +1,8 @@
 # 실험 1 — E0 마진이 재초기화 오수렴을 예측하는가 (H1, 게이트 A)
 
 - 시각: 2026-10-10 02:39 KST · 에이전트: layopt-loc · 단계: exp1
-- 코드: `76eb27c` (브랜치 `feature/layopt-loc`)
-- 관련 실행 id: (runs/<에이전트>.jsonl 의 run_id 목록)
+- 코드: 항목 생성 `76eb27c`, 사전 등록(시행 목록·분석 규칙) `9873bec`, 캠페인 시작 HEAD `ffad667` (브랜치 `feature/layopt-loc`)
+- 관련 실행 id: 본 실행 `20261009T180550Z_exp1` (e2/), 파일럿 `20261009T173623Z_pilot-slam-dbg3`·`20261009T175549Z_pilot-bundle`, E0 `20261009T174937Z_baseline`
 
 ## 질문
 지도만으로 구한 E0 위험 점수(체류 자세에서 이웃 k대를 넣은 가상 스캔의 앨리어싱 마진)가 Gazebo 단일 로봇 E2 시행에서

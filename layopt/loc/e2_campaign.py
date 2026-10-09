@@ -86,7 +86,8 @@ def main(argv=None) -> int:
     ap.add_argument('--per-session', type=int, default=20)
     ap.add_argument('--max-sessions', type=int, default=40)
     ap.add_argument('--max-attempts', type=int, default=2)
-    ap.add_argument('--max-consecutive-anomalies', type=int, default=3)
+    ap.add_argument('--max-consecutive-anomalies', type=int, default=5)
+    ap.add_argument('--anomaly-pause-s', type=float, default=120.0)
     ap.add_argument('--dummy-mode', default='move')
     ap.add_argument('--only', default='')
     ap.add_argument('--session-timeout-per-trial', type=float, default=480.0)
@@ -136,7 +137,7 @@ def main(argv=None) -> int:
                 '-e', f'E2_MAP={cpath(mapy)}',
                 '-e', f'E2_SPAWN={first["x"]},{first["y"]},{first["yaw"]}',
                 '-e', f'E2_PER_SESSION={a.per_session}', '-e', f'E2_DUMMY_MODE={a.dummy_mode}',
-                '-e', f'E2_ONLY={a.only}']
+                '-e', f'E2_ONLY={a.only}', '-e', f'E2_MAX_ATTEMPTS={a.max_attempts}']
         cmd = [GZ_SLOT, 'layopt-loc', 'docker', 'run', '--rm', '--name', name, '--gpus', 'all',
                '--shm-size=8g', '-v', f'{WS}:/ros2_ws', '-v', f'{RUNS}:/runs'] + envs + [
                IMAGE, 'bash', '/ros2_ws/layopt/loc/e2_container.sh']
@@ -158,6 +159,7 @@ def main(argv=None) -> int:
             if consecutive >= a.max_consecutive_anomalies:
                 log(run_dir, f'{consecutive} consecutive anomalies → stop')
                 return 1
+            time.sleep(a.anomaly_pause_s)      # 부하 급등 뒤 바로 다시 띄우지 않는다
         else:
             log(run_dir, f'unexpected rc {rc} → stop')
             return 1
