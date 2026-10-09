@@ -20,6 +20,12 @@ else
     export FASTRTPS_DEFAULT_PROFILES_FILE="${CFG}/fastdds_multi_robot.xml"
 fi
 mkdir -p "${P5_OUT}/srv${P5_SERVER}"
+if [ -n "${P5_BUNDLE:-}" ]; then        # 묶음 구역 파일이 traffic_manager 가 여는 소스 트리 경로에 겹쳤는지 (p5_container.sh 0))
+    want=$(sha256sum "${P5_BUNDLE}/config/traffic_zones.yaml" | cut -d' ' -f1)
+    got=$(sha256sum "$(readlink -f /ros2_ws/src/amr_fleet/config/traffic_zones.yaml)" | cut -d' ' -f1)
+    echo "$(date -Iseconds) 묶음 구역 파일 ${want} / 서버가 보는 파일 ${got}" >> "${P5_OUT}/srv${P5_SERVER}/server.log"
+    [ "$want" = "$got" ] || { echo "묶음 구역 파일 불일치 — 서버 기동 안 함" >> "${P5_OUT}/srv${P5_SERVER}/server.log"; exit 5; }
+fi
 ARGS=(launch_adapters:=false robot_ids:=amr_01,amr_02,amr_03,amr_04,amr_05 use_sim_time:=true
       "fleet_mode:=${P5_MODE}" "epoch_file:=${P5_OUT}/epoch.txt" "log_dir:=${P5_OUT}/srv${P5_SERVER}")
 if [ -n "${P5_COMM:-}" ]; then
