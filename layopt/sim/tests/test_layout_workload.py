@@ -112,3 +112,22 @@ def test_sweep_helpers(tmp_path):
     (tmp_path / 'results.jsonl').write_text(
         json.dumps({'spec_id': 'a', 'seed': 1, 'load': 1.0}) + '\n{"spec_id": "a", "se')
     assert done_keys(tmp_path) == {('a', 1, 1.0)}           # 끊긴 마지막 줄은 무시
+
+
+def test_stage2_selection_rule():
+    from layopt.sim import select_stage2 as s2
+    rng = __import__('random').Random(3)
+    obj = {f'v1{i}-x{j}': (rng.uniform(40, 50), rng.uniform(0, 3000)) for i in range(5)
+           for j in range(30)}
+    obj[s2.BASELINE] = (30.0, 5000.0)                    # 지배당하는 기준
+    chosen, reasons, info = s2.select(obj, ['v11-x3', 'nope'])
+    front = info['front']
+    assert all(not any(s2.dominates(obj[o], obj[f]) for o in obj) for f in front)
+    par = [s for s, r in reasons.items() if r == 'pareto']
+    assert len(par) == s2.N_PARETO and set(front) <= set(par)
+    assert reasons[s2.BASELINE] == 'baseline'
+    assert reasons['v11-x3'] in ('pareto', 'must') and info['must_missing'] == ['nope']
+    assert sum(1 for r in reasons.values() if r == 'random') == s2.N_RANDOM
+    assert len(chosen) == len(set(chosen))
+    again, _, _ = s2.select(obj, ['v11-x3', 'nope'])
+    assert again == chosen                                # 결정적
