@@ -65,11 +65,13 @@ class SimConfig:
     traffic: bool = True                # False = 교통 관리 없음 (진단)
     loc: LocModel = dataclasses.field(default_factory=LocModel)
     queue_radius: float = 4.0           # 토큰 대기 로봇 → 그 구역 대기열 지점 귀속 반경 (dwell.py)
-    # 구간 주행 시간 보정 (e1/20261009T180136Z_legfit: 경합 없는 P5 구간 15 종 Gazebo 중앙값에 격자 적합,
-    # RMS 5.55 → 2.28 s, 치우침 −4.76 → +0.14 s). 보정 전 값은 1.5 · 0.0 (sim.md §보정)
-    omega_curve: float = 0.5            # 곡선 주행 각속도 상한 [rad/s] (navmap.speed_profile)
-    nav_settle_s: float = 2.0           # 주행 목표 도착 뒤 정착 시간 [s]
-    leg_speed_lo: float = 1.0           # 구간마다 순항 상한 × U(leg_speed_lo, 1) (1.0 = 잡음 없음)
+    # 구간 주행 시간 보정 (sim.md §보정). 1 단계 e1/20261009T180136Z_legfit (잡음 없이 0.5 · 2.0 s,
+    # RMS 5.55 → 2.28 s). 2 단계: 경합 없는 구간의 상대 산포(Gazebo IQR 0.976–1.051)에 순항 잡음 하한을
+    # 맞추고(0.80 → E1 IQR 0.963–1.034) 그 잡음으로 다시 적합 e1/20261009T180643Z_legfit_lo0.80_wide
+    # (RMS 3.26 s, 치우침 +0.85 s). 보정 전 값은 1.5 · 0.0 · 1.0
+    omega_curve: float = 1.0            # 곡선 주행 각속도 상한 [rad/s] (navmap.speed_profile)
+    nav_settle_s: float = 0.0           # 주행 목표 도착 뒤 정착 시간 [s]
+    leg_speed_lo: float = 0.80          # 구간마다 순항 상한 × U(leg_speed_lo, 1) (1.0 = 잡음 없음)
     end_when_done: bool = False         # 모든 작업 완료 + 복귀 뒤 끝 (P5)
     record: bool = False
 
