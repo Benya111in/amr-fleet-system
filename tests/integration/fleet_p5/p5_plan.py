@@ -125,6 +125,21 @@ EXPERIMENTS = {
                    arm('distributed', comm='stress', label='dist_x_b')],
           'tasks': batch(0, 5, 0.0, 'p5x'), 'horizon_s': HORIZON, 'lead_s': 0.0},
 }
+# layopt 배치 최적화 연구 E3 (docs/research/layout-opt/gen.md): 배치 묶음 하나에서 5 대 한 번 (짝 아님 — p5_driver.py
+# --run-one, --bundle). 1 차 5 작업 t_base, 2 차 같은 5 쌍 t_base + 300 s, 지평 900 s 고정
+# (end_when_done 끔 — 2 차 뒤에도 대기 슬롯 체류를 같은 길이로 남긴다). 갈래 하나: LO 중앙 모드,
+# LOd 분산 모드. LOsmoke 는 기동 확인용 (1 차만, 지평 60 s).
+LO_TASKS = batch(0, 5, 0.0, 'plo1') + batch(0, 5, 300.0, 'plo2')
+EXPERIMENTS['LO'] = {'pairs': 1, 'question': 'layopt E3: 배치 묶음 5 대 운용 (중앙)',
+                     'arms': [arm('central', label='lo_central')], 'tasks': LO_TASKS,
+                     'horizon_s': 900.0, 'end_when_done': False, 'lead_s': 0.0}
+EXPERIMENTS['LOd'] = {'pairs': 1, 'question': 'layopt E3: 배치 묶음 5 대 운용 (분산)',
+                      'arms': [arm('distributed', label='lo_dist')], 'tasks': LO_TASKS,
+                      'horizon_s': 900.0, 'end_when_done': False, 'lead_s': 0.0}
+EXPERIMENTS['LOsmoke'] = {'pairs': 1, 'question': 'layopt E3 하네스 기동 확인 (셈 밖)',
+                          'arms': [arm('central', label='lo_smoke')],
+                          'tasks': batch(0, 5, 0.0, 'plos'), 'horizon_s': 60.0,
+                          'end_when_done': False, 'lead_s': 0.0}
 # 파이프라인 시험 전용 (Gazebo 없음, p5_driver.py --dryrun): 장애 주입 경로 전부를 짧게
 EXPERIMENTS['dry'] = {
     'pairs': 1, 'question': '파이프라인 시험 (셈 밖)',
@@ -160,7 +175,8 @@ def run_plan(exp: str, pair: int, arm_index: int, t_start: float = None) -> dict
             'layout': a['layout'], 'robots': ROBOTS,
             't_start': float(T_START if t_start is None else t_start),
             'lead_s': float(e.get('lead_s', 0.0)), 'horizon_s': float(e['horizon_s']),
-            'min_end_s': float(e.get('min_end_s', 0.0)), 'end_when_done': True,
+            'min_end_s': float(e.get('min_end_s', 0.0)),
+            'end_when_done': bool(e.get('end_when_done', True)),
             'tasks': e['tasks'], 'faults': a['faults'], 'comm': a['comm']}
 
 

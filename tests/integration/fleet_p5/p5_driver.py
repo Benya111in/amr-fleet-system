@@ -9,6 +9,16 @@
 짝: 두 갈래를 동시에(--concurrent) 또는 차례로. 먼저 띄우는 갈래와 도메인을 짝마다 번갈아 (p5_plan.schedule).
 무효 짝(준비 시간 초과 · /clock 정지 · 감시 중단)은 새 태그(…r<n>)로 다시 돈다. 같은 짝 연속 무효 3 번이면 그 실험을 멈추고 진단.
 멈추려면: touch <원자료>/STOP (다음 짝 전에 멈춘다).
+
+배치 묶음 실행 (layopt E3, docs/research/layout-opt/gen.md) — 기본 동작은 그대로이고 아래 옵션을 줄 때만 바뀐다:
+  --run-one <태그> --order <실험> --domain <n> : 짝 없이 그 실험 갈래 0 을 한 번 (재시도 없음, 태그가 있으면 거부)
+  --bundle <묶음 디렉토리>  : 월드·지도·behavior.yaml·fleet_spawn.yaml·traffic_zones.yaml 을 묶음 것으로. 컨테이너 안
+                            소스 트리 파일 위에 묶음 파일을 읽기 전용으로 겹쳐 마운트한다 (symlink-install 이라 share 경로와
+                            소스 트리 기본값을 읽는 모든 노드가 묶음 파일을 본다). 지도·스폰 목록은 런치 인자로도 준다.
+                            컨테이너 진입 스크립트가 sha256 으로 겹침을 확인하고 어긋나면 기동하지 않는다 (bundle_check.txt).
+  --agent-id / --slot-id / --partition / --notebook / --stage / --run-id-prefix / --seal /
+  --record-agent :
+                            이름 · 기록 위치.
 """
 
 import argparse
@@ -26,6 +36,15 @@ import p5_plan  # noqa: E402
 
 IMG = 'amr-ai/rl:0.3'
 AGENT = 'b4-p5'
+# (묶음 안 경로, 컨테이너 안 소스 트리 경로) — --symlink-install 빌드라 install/.../share 의 같은 파일이 이 경로를 가리킨다
+BUNDLE_OVERLAYS = (
+    ('world.sdf', '/ros2_ws/src/amr_simulation/worlds/warehouse.sdf'),
+    ('config/behavior.yaml', '/ros2_ws/src/amr_behavior/config/behavior.yaml'),
+    ('config/fleet_spawn.yaml', '/ros2_ws/src/amr_bringup/config/fleet_spawn.yaml'),
+    ('config/traffic_zones.yaml', '/ros2_ws/src/amr_fleet/config/traffic_zones.yaml'),
+)
+BUNDLE_FILES = ('spec.json', 'valid.json', 'map.yaml', 'map.pgm', 'SEALED') + tuple(
+    r for r, _ in BUNDLE_OVERLAYS)
 
 
 def now_iso():
@@ -40,12 +59,38 @@ def sh(cmd, **kw):
     return subprocess.run(cmd, capture_output=True, text=True, **kw)
 
 
+def check_bundle(path):
+    """배치 묶음 확인 → spec.json dict. 봉인 · valid=true · 필요한 파일이 없으면 ValueError."""
+    missing = [f for f in BUNDLE_FILES if not os.path.isfile(os.path.join(path, f))]
+    if missing:
+        raise ValueError(f'묶음 {path}: 파일 없음 {missing}')
+    with open(os.path.join(path, 'valid.json'), encoding='utf-8') as f:
+        valid = json.load(f)
+    if valid.get('valid') is not True:
+        raise ValueError(f'묶음 {path}: valid=false {valid.get("reasons")}')
+    with open(os.path.join(path, 'spec.json'), encoding='utf-8') as f:
+        return json.load(f)
+
+
 class Driver:
     def __init__(self, a):
         self.a = a
         self.raw = a.raw
         os.makedirs(os.path.join(self.raw, 'pairs'), exist_ok=True)
         self.logf = os.path.join(self.raw, 'driver.log')
+        self.agent = a.agent_id
+        self.slot_id = a.slot_id or a.agent_id
+        self.bundle = os.path.abspath(a.bundle) if a.bundle else ''
+        self.bundle_spec = check_bundle(self.bundle) if self.bundle else None
+
+    def bundle_docker(self):
+        """(마운트 인자, 환경 인자) — --bundle 이 없으면 둘 다 빈 목록 (기존 동작)."""
+        if not self.bundle:
+            return [], []
+        vols = ['-v', f'{self.bundle}:/bundle:ro']
+        for rel, dst in BUNDLE_OVERLAYS:
+            vols += ['-v', f'{os.path.join(self.bundle, rel)}:{dst}:ro']
+        return vols, ['-e', 'P5_BUNDLE=/bundle']
 
     def log(self, msg):
         line = f'{now_iso()} {msg}'
@@ -88,25 +133,44 @@ class Driver:
             else:
                 f.write('git diff --stat: 없음 (git archive 사본)\n')
         img = sh(['docker', 'image', 'inspect', '-f', '{{.Id}}', IMG]).stdout.strip()
+        partition = self.a.partition or f'b4p5_{tag}'
+        bundle_txt = ''
+        if self.bundle:
+            bundle_txt = (f' bundle={self.bundle} spec_id={self.bundle_spec.get("spec_id")} '
+                          f'generator_commit={self.bundle_spec.get("generator_commit")}')
         with open(os.path.join(d, 'config.txt'), 'w', encoding='utf-8') as f:
             f.write(f'exp={exp} pair={pair} arm={arm_index} label={arm["label"]} '
                     f'mode={arm["mode"]} layout={arm["layout"]} domain={domain} '
-                    f'partition=b4p5_{tag} image={IMG} {img} '
-                    f't_start={self.a.t_start} comm={arm["comm"]} faults={arm["faults"]}\n')
+                    f'partition={partition} image={IMG} {img} '
+                    f't_start={self.a.t_start} comm={arm["comm"]} faults={arm["faults"]}'
+                    f'{bundle_txt}'
+                    + (f' stack_stagger_s={self.a.stack_stagger}' if self.a.stack_stagger else '')
+                    + '\n')
+        if self.bundle:
+            with open(os.path.join(self.bundle, 'SHA256SUMS'), encoding='utf-8') as g, \
+                    open(os.path.join(d, 'bundle_SHA256SUMS.txt'), 'w', encoding='utf-8') as f:
+                f.write(f'# {self.bundle}\n' + g.read())
         self.snap(os.path.join(d, 'start.txt'))
-        stack = f'amr-ai-{AGENT}-gz-{tag}'
+        stack = f'amr-ai-{self.agent}-gz-{tag}'
         rawc = f'/raw/{tag}'
         envs = ['-e', f'P5_TAG={tag}', '-e', f'P5_MODE={arm["mode"]}', '-e', f'P5_DOMAIN={domain}',
                 '-e', f'P5_OUT={rawc}', '-e', f'P5_PLAN={rawc}/plan.json']
+        if self.a.partition:
+            envs += ['-e', f'P5_PARTITION={self.a.partition}']
+        if self.a.stack_stagger:
+            envs += ['-e', f'P5_STACK_STAGGER={self.a.stack_stagger}']
         if comm_path:
             envs += ['-e', f'P5_COMM={rawc}/comm.yaml']
-        slot = ['/home/CAPYI_AI/env/gz_slot.sh', AGENT]
+        bvols, benv = self.bundle_docker()
+        envs += benv
+        slot = ['/home/CAPYI_AI/env/gz_slot.sh', self.slot_id]
         if self.a.dryrun:
             envs += ['-e', 'P5_DRYRUN=1']
             slot = []                       # Gazebo 없음 — 슬롯을 쥐지 않는다
         cmd = slot + [
             'docker', 'run', '--rm', '--name', stack, '--gpus', 'all', '--shm-size=8g',
-            '--ipc', 'shareable', '-v', f'{ws}:/ros2_ws', '-v', f'{self.raw}:/raw'] + envs + [
+            '--ipc', 'shareable', '-v', f'{ws}:/ros2_ws', '-v', f'{self.raw}:/raw'] + bvols \
+            + envs + [
             '-w', '/ros2_ws', IMG, 'bash', '/ros2_ws/tests/integration/fleet_p5/p5_container.sh']
         out = open(os.path.join(d, 'runner.out'), 'w', encoding='utf-8')
         t_wall0 = time.time()
@@ -121,7 +185,7 @@ class Driver:
             faults_f.write(json.dumps(rec, ensure_ascii=False) + '\n')
 
         def server(k, extra):
-            name = f'amr-ai-{AGENT}-srv-{tag}-{k}'
+            name = f'amr-ai-{self.agent}-srv-{tag}-{k}'
             senv = ['-e', f'P5_TAG={tag}', '-e', f'P5_MODE={arm["mode"]}',
                     '-e', f'P5_DOMAIN={domain}', '-e', f'P5_OUT={rawc}', '-e', f'P5_SERVER={k}']
             if comm_path:
@@ -129,7 +193,8 @@ class Driver:
             so = open(os.path.join(d, f'srv{k}.out'), 'w', encoding='utf-8')
             p = subprocess.Popen(['docker', 'run', '--rm', '--name', name, '--network',
                                   f'container:{stack}', '--ipc', f'container:{stack}',
-                                  '-v', f'{ws}:/ros2_ws', '-v', f'{self.raw}:/raw'] + senv + [
+                                  '-v', f'{ws}:/ros2_ws', '-v', f'{self.raw}:/raw'] + bvols
+                                 + senv + benv + [
                 '-w', '/ros2_ws', IMG, 'bash', '/ros2_ws/tests/integration/fleet_p5/p5_server.sh'],
                 stdout=so, stderr=subprocess.STDOUT)
             servers[k] = (name, p)
@@ -179,7 +244,7 @@ class Driver:
                     action_log(dict(rec, action=action, robot=k, rc=r.returncode,
                                     out=(r.stdout + r.stderr).strip()[:300]))
                 else:
-                    name = servers.get(k, (f'amr-ai-{AGENT}-srv-{tag}-{k}', None))[0]
+                    name = servers.get(k, (f'amr-ai-{self.agent}-srv-{tag}-{k}', None))[0]
                     r = sh(['docker', action, name])
                     action_log(dict(rec, action=action, server=k, rc=r.returncode,
                                     out=(r.stdout + r.stderr).strip()[:300]))
@@ -258,16 +323,21 @@ class Driver:
     # ------------------------------------------------------------------ 분석 · 등록
     def analyze(self, exp, pair, tag, res, label, mode):
         d = os.path.join(self.raw, tag)
-        info = {'run_id': f'P5_{tag}', 'stage': f'P5-{exp}', 'agent': AGENT, 'kind': 'gazebo',
+        bundle_txt = ''
+        if self.bundle:
+            bundle_txt = (f', 배치 묶음 {self.bundle} (spec_id {self.bundle_spec.get("spec_id")}, '
+                          f'생성기 {str(self.bundle_spec.get("generator_commit"))[:7]})')
+        info = {'run_id': f'{self.a.run_id_prefix}{tag}', 'stage': self.a.stage or f'P5-{exp}',
+                'agent': self.a.record_agent or self.agent, 'kind': 'gazebo',
                 'sim': 'gazebo', 'commit': str(res.get('commit', '?'))[:7], 'dirty': False,
                 'config': f'tests/integration/fleet_p5 실험 {exp} 짝 {pair} 갈래 {label} ({mode}), '
-                          f'plan {d}/plan.json, 도메인 {res.get("domain")}',
+                          f'plan {d}/plan.json, 도메인 {res.get("domain")}{bundle_txt}',
                 'seed': pair, 'started': res.get('started', now_iso()),
                 'ended': res.get('ended', now_iso()), 'raw_dir': d,
                 'label': f'{exp}/{label}', 'load': self.load_text(d)}
         with open(os.path.join(d, 'registry_info.json'), 'w', encoding='utf-8') as f:
             json.dump(info, f, ensure_ascii=False)
-        r = sh(['docker', 'run', '--rm', '--name', f'amr-ai-{AGENT}-ana-{tag}',
+        r = sh(['docker', 'run', '--rm', '--name', f'amr-ai-{self.agent}-ana-{tag}',
                 '--network', 'none',
                 '-v', f'{HERE}:/p5:ro', '-v', f'{self.raw}:/raw', IMG, 'python3',
                 '/p5/p5_analyze.py', 'run', f'/raw/{tag}', '--registry-info',
@@ -282,8 +352,7 @@ class Driver:
             with open(reg, 'w', encoding='utf-8') as f:
                 json.dump(rec, f, ensure_ascii=False, indent=1)
             rr = sh(['python3', os.path.join(self.a.repo, 'scripts/notebook.py'), '--nb',
-                     os.path.join(self.a.repo, 'docs/research/fleet-distributed/notebook'),
-                     'register', '--file', reg])
+                     os.path.join(self.a.repo, self.a.notebook), 'register', '--file', reg])
             self.log(f'{tag} 분석 rc={r.returncode} {r.stdout.strip()[-200:]} | 등록 '
                      f'{(rr.stdout + rr.stderr).strip()[-120:]}')
         try:
@@ -382,12 +451,39 @@ class Driver:
         return f'p5_{exp}_p{k}_{label}' + ('' if n == 1 else f'r{n}')
 
     def analyze_exp(self, exp):
-        r = sh(['docker', 'run', '--rm', '--name', f'amr-ai-{AGENT}-ana-{exp}',
+        r = sh(['docker', 'run', '--rm', '--name', f'amr-ai-{self.agent}-ana-{exp}',
                 '--network', 'none', '-v', f'{HERE}:/p5:ro', '-v', f'{self.raw}:/raw', IMG,
                 'python3', '/p5/p5_analyze.py', 'exp', exp, '/raw', '--out', '/raw/analysis'])
         self.log(f'{exp} 실험 분석 rc={r.returncode}')
 
+    def run_one(self):
+        """--run-one: 실험 하나의 갈래 0 을 한 번 (짝·재시도 없음). 반환 0 유효, 4 무효, 1 중단."""
+        exp, tag = self.a.order, self.a.run_one
+        if exp not in p5_plan.EXPERIMENTS:
+            self.log(f'--run-one: 실험 {exp!r} 없음')
+            return 2
+        d = os.path.join(self.raw, tag)
+        if os.path.exists(d):
+            self.log(f'--run-one: {d} 가 이미 있다 — 새 태그를 쓴다 (덮어쓰지 않는다)')
+            return 2
+        self.log(f'단일 실행 시작 pid {os.getpid()} {exp} 태그 {tag} 도메인 {self.a.domain} '
+                 f'묶음 {self.bundle or "(없음 — 저장소 기본 배치)"} load {load3()}')
+        if not self.wait_quiet(tag):
+            return 1
+        arm = p5_plan.EXPERIMENTS[exp]['arms'][0]
+        result = {}
+        self.run_arm(exp, 1, 0, tag, self.a.domain, result)
+        valid = self.analyze(exp, 1, tag, result, arm['label'], arm['mode'])
+        self.log(f'단일 실행 끝 {tag}: 유효 {valid} rc {result.get("rc")} '
+                 f'중단 {result.get("aborted")} load {load3()}')
+        if self.a.seal:
+            r = sh(['bash', '/home/CAPYI_AI/runs/layopt/bin/seal', d])
+            self.log(f'봉인 {d}: {(r.stdout + r.stderr).strip()}')
+        return 0 if valid else 4
+
     def run(self):
+        if self.a.run_one:
+            return self.run_one()
         self.log(f'드라이버 시작 pid {os.getpid()} EXCLUSIVE_HOLDER='
                  f'{os.environ.get("EXCLUSIVE_HOLDER")} load {load3()} 순서 {self.a.order} '
                  f'동시={self.a.concurrent} t_start={self.a.t_start}')
@@ -443,6 +539,23 @@ def main(argv=None):
     ap.add_argument('--load-abort', type=float, default=120.0,
                     help='갈래 중 loadavg(5 분)가 이 값을 load-abort-s 동안 넘으면 갈래 중단 · 짝 다시')
     ap.add_argument('--load-abort-s', type=float, default=600.0)
+    ap.add_argument('--bundle', default='',
+                    help='배치 묶음 디렉토리 (layopt): 월드·지도·설정 5 개를 묶음 것으로 (모듈 설명)')
+    ap.add_argument('--run-one', default='', metavar='TAG',
+                    help='짝 없이 --order 의 실험(하나) 갈래 0 을 이 태그로 한 번')
+    ap.add_argument('--domain', type=int, default=21, help='--run-one 의 ROS_DOMAIN_ID')
+    ap.add_argument('--agent-id', default=AGENT, help='컨테이너 이름 amr-ai-<id>-… · 기록 agent')
+    ap.add_argument('--slot-id', default='', help='gz_slot.sh id (기본 --agent-id)')
+    ap.add_argument('--partition', default='', help="IGN_PARTITION ('' = b4p5_<태그>)")
+    ap.add_argument('--notebook', default='docs/research/fleet-distributed/notebook',
+                    help='실행 목록을 등록할 노트 (--repo 기준)')
+    ap.add_argument('--stage', default='', help="실행 목록 stage ('' = P5-<실험>)")
+    ap.add_argument('--run-id-prefix', default='P5_', help='실행 목록 run_id = 접두어 + 태그')
+    ap.add_argument('--seal', action='store_true', help='--run-one 끝에 갈래 디렉토리를 봉인')
+    ap.add_argument('--stack-stagger', default='',
+                    help="로봇 스택 시작 간격 stack_stagger_s [s] ('' = 런치 기본 6 s)")
+    ap.add_argument('--record-agent', default='',
+                    help="실행 목록 agent (= runs/<agent>.jsonl, '' = --agent-id)")
     a = ap.parse_args(argv)
     return Driver(a).run()
 
