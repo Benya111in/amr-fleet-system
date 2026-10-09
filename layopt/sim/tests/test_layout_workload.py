@@ -131,3 +131,24 @@ def test_stage2_selection_rule():
     assert len(chosen) == len(set(chosen))
     again, _, _ = s2.select(obj, ['v11-x3', 'nope'])
     assert again == chosen                                # 결정적
+
+
+def test_summarize_paired_and_main_effects(tmp_path):
+    from layopt.sim.summarize import summarize
+
+    def row(sid, seed, thr, w):
+        return {'spec_id': sid, 'seed': seed, 'load': 1.0, 'throughput_per_h': thr,
+                'task_p50_s': 100.0, 'task_p95_s': 200.0, 'gate_wait_s': 5.0, 'deadlocks': 0,
+                'unresolved': 0, 'distance_m': 1.0,
+                'dwell': [{'id': 'wait:amr_01', 'k_hist_s': {'0': 10.0, '1': w, '2': 0.0}},
+                          {'id': 'queue:z:w', 'k_hist_s': {'0': 3.0, '1': 0.0, '2': 0.0}}]}
+    rows = [row('v10-v20-v30-v40-v50', s, 40.0 + s, 100.0) for s in range(3)]
+    rows += [row('v11-v20-v30-v40-v50', s, 42.0 + s, 50.0 + s) for s in range(3)]
+    p = tmp_path / 'results.jsonl'
+    p.write_text('\n'.join(json.dumps(r) for r in rows) + '\n')
+    doc = summarize(p)
+    c = doc['cells']['v11-v20-v30-v40-v50|1']
+    assert c['n_seeds'] == 3 and c['W'] == 51.0 and c['queue_s'] == 3.0
+    assert c['paired_vs_baseline']['throughput_per_h'] == 2.0
+    assert c['paired_vs_baseline']['W'] == -49.0
+    assert doc['main_effects']['load=1|V1']['v11:W'] == 51.0
