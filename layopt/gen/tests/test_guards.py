@@ -90,3 +90,18 @@ def test_merge_rule_on_synthetic_rows():
     rows['B']['xs'] = [-18.0, -8.0, -2.0]                           # 틈 -13 (범위 안), -5 (밖)
     # 구역 (-16,-14) (-14,-12) (-10,-8): 간격 0 (사슬) · 2.0 (충돌 → 병합)
     assert spans(rows) == [(-16.0, -14.0), (-14.0, -8.0)]
+
+
+def test_queue_points_need_open_approach():
+    """좁은 통로 옆면·도크 화물 너머·랙이 막은 T 자 교차로 쪽 대기 자세는 만들지 않는다."""
+    from layopt.gen import dwell
+    cases = (('v10-v20-v30-v40-v50', ('queue:narrow_aisle:w', 'queue:narrow_aisle:e',
+                                      'queue:dock_2_approach:s', 'queue:dock_b_approach:s')),
+             ('v10-v20-v30-v41-v50', ('queue:x_ab_2:n', 'queue:x_bc_2:s')))
+    for sid, banned in cases:
+        res = L.resolve(L.parse_spec_id(sid))
+        obstacles = L._static_obstacles(res['gen_spec'])
+        tz, _ = Z.derive(res, obstacles)
+        ids = {p['id'] for p in dwell.dwell_points(res, tz, obstacles)}
+        assert not ids & set(banned), sorted(ids & set(banned))
+        assert {'queue:narrow_aisle:n', 'queue:narrow_aisle:s'} <= ids

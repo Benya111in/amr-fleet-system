@@ -8,7 +8,10 @@
                        (staging 에서 판 반대쪽으로 1.0 m).
 - queue:<zone>:<w|e|n|s>  구역(교차로·좁은 통로·도크 접근) 앞에서 토큰을 기다리는 자세: 구역 경계에서 요청 거리
                        (교차로·도크 2.0 m, 좁은 통로 2.5 m) 밖, 구역 쪽을 본다. 다른 구역 안이거나 장애물 0.45 m 안이면
-                       뺀다. 이웃 = 구역 안을 지나는 로봇(구역 중심), 줄 둘째(1.0 m 뒤), 같은 구역의 다른 대기 자세.
+                       뺀다. 그 자세에서 구역 쪽으로 요청 거리만큼 곧게 가는 선분이 장애물에서 0.25 m 안을 지나면
+                       (그쪽으로는 구역에 들어갈 수 없다 — 좁은 통로 옆면, 도크 화물 너머, 랙이 막은 T 자 교차로) 뺀다
+                       (approach_blocked, 2026-10-10 수정 — 그 전 묶음의 오류 목록은 errata_queue.py).
+                       이웃 = 구역 안을 지나는 로봇(구역 중심), 줄 둘째(1.0 m 뒤), 같은 구역의 다른 대기 자세.
 추가 필드 (contract 밖, 정보용): docked (dock·charger 의 도킹 완료 자세).
 표준 라이브러리만 쓴다.
 """
@@ -16,10 +19,17 @@
 import math
 
 from layopt.gen.common import DOCK_STANDOFF, load_generator
-from layopt.gen.levels import charger_geometry, point_aabb
+from layopt.gen.levels import charger_geometry, point_aabb, seg_aabb
 from layopt.gen.zones import APPROACH_M, CORRIDOR_APPROACH_M, in_polygon
 
 SECOND_IN_LINE = 1.0
+APPROACH_CLEAR = 0.25            # 반폭 0.20 + 0.05 (validate.PASS_CLEAR 와 같다)
+
+
+def approach_blocked(x, y, yaw, dist, aabbs):
+    """대기 자세 (x, y, yaw) 에서 yaw 방향으로 dist 만큼 가는 선분이 장애물 AABB 에서 APPROACH_CLEAR 안을 지나는가."""
+    bx, by = x + dist * math.cos(yaw), y + dist * math.sin(yaw)
+    return any(seg_aabb(x, y, bx, by, b) < APPROACH_CLEAR for b in aabbs)
 
 
 def _p(x, y, yaw):
@@ -50,6 +60,8 @@ def queue_points(zone, zones, obstacles):
         if any(point_aabb(x, y, b) < 0.45 for _n, b in obstacles):
             continue
         if any(in_polygon(x, y, z['polygon']) for z in zones):
+            continue
+        if approach_blocked(x, y, yaw, d, [b for _n, b in obstacles]):
             continue
         out.append((side, x, y, yaw, back))
     return out
