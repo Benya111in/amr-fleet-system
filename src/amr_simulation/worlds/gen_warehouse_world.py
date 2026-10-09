@@ -4,6 +4,12 @@ warehouse.sdf 생성기 — 60 m x 40 m 물류센터 (명세 4.1 시뮬레이터
 
     python3 gen_warehouse_world.py              # 같은 디렉토리의 warehouse.sdf 를 다시 쓴다
     python3 gen_warehouse_world.py out.sdf
+    python3 gen_warehouse_world.py out.sdf --spec layout_spec.json   # 배치 사양(LayoutSpec)으로 변형 월드
+
+배치 사양 (LayoutSpec, --spec): 랙·기둥·충전소·대기/충전 패드·표지·구조물·동적 장애물 경로를 JSON 으로 바꿔 끼운다
+(키는 default_layout(), 빠진 키는 현행 값). layopt 배치 최적화 연구가 쓴다
+(docs/research/layout-opt/contract.md, layopt/gen). 사양이 없거나 현행 값과 같으면 출력은 커밋된
+warehouse.sdf 와 바이트 단위로 같다.
 
 생성물(warehouse.sdf)을 커밋하므로 빌드 시 실행할 필요는 없다. 레이아웃을 바꾸면 이 파일을 고치고 다시 생성한다.
 colcon test 가 "다시 생성한 결과 == 커밋된 warehouse.sdf" 를 검사한다 (test/test_world.py). 의존성: 표준 라이브러리만.
@@ -54,6 +60,9 @@ colcon test 가 "다시 생성한 결과 == 커밋된 warehouse.sdf" 를 검사�
   지면 진실: OdometryPublisher → gz /model/<이름>/odometry (월드 절대 자세 + 속도) → ROS /sim/<이름>/odom
   (warehouse.launch.py 가 브리지). PosePublisher(/model/<이름>/pose)는 트리거 입력용이다.
 """
+import argparse
+import copy
+import json
 import math
 import os
 import random
@@ -250,11 +259,10 @@ def lights():
 
 
 def rack_instances():
-    """(이름, x, y, yaw) 목록: 열 A/B/C 7베이씩 + 좁은 통로 4베이."""
+    """(이름, x, y, yaw) 목록: 주 랙(LAY racks, 현행 열 A/B/C 7베이씩) + 좁은 통로 4베이."""
     racks = []
-    for row, y in ROWS.items():
-        for i, x in enumerate(RACK_X, 1):
-            racks.append((f"rack_{row}{i}", x, y, 0.0))
+    for r in LAY["racks"]:
+        racks.append((r["id"], r["x"], r["y"], r.get("yaw", 0.0)))
     # 좁은 통로: 랙을 90도 돌려(길이 2.0 m 가 y 방향) 좌우 2베이씩 세운다. 안쪽 면 x = ±NARROW_CLEAR/2
     off = NARROW_CLEAR / 2 + RACK_D / 2
     for side, sx in (("W", -off), ("E", off)):
@@ -332,46 +340,66 @@ SIGN_SIZE = {
     "caution_forklift": (0.60, 0.60), "caution_narrow": (0.60, 0.60), "exit": (0.80, 0.30),
 }
 _W, _E, _S, _N = 0.0, math.pi, math.pi / 2, -math.pi / 2     # 판이 보는 방향: 서벽→동쪽, 동벽→서쪽, 남벽→북쪽, 북벽→남쪽
-_RACK_END = RACK_X[-1] + RACK_L / 2                          # 랙 열 끝면 |x| = 19
+_RACK_END = RACK_X[-1] + RACK_L / 2                          # 랙 열 끝면 |x| = 19 (현행 배치)
 _NARROW_OFF = NARROW_CLEAR / 2 + RACK_D / 2
-SIGN_POSES = [   # (이름, 텍스처, x, y, 판 중심 높이, yaw)
-    ("sign_dock_1", "dock_1", -HALF_X + PLATE_OFF, 17.0, 1.6, _W),
-    ("sign_dock_2", "dock_2", -HALF_X + PLATE_OFF, 13.0, 1.6, _W),
-    ("sign_dock_a", "dock_a", HALF_X - PLATE_OFF, 17.0, 1.6, _E),
-    ("sign_dock_b", "dock_b", HALF_X - PLATE_OFF, 13.0, 1.6, _E),
-    ("sign_zone_inbound", "zone_inbound", -HALF_X + PLATE_OFF, 15.0, 2.6, _W),
-    ("sign_zone_outbound", "zone_outbound", HALF_X - PLATE_OFF, 15.0, 2.6, _E),
-    ("sign_charging", "charging", -22.0, -HALF_Y + PLATE_OFF, 1.8, _S),
-    ("sign_waiting", "waiting", 22.0, -HALF_Y + PLATE_OFF, 1.8, _S),
-] + [
-    (f"sign_{n}", n, x, CHARGER_Y + STATION_FRONT + PLATE_OFF, 0.53, _S)
-    for n, (x, _) in CHARGERS.items()
-] + [
-    (f"sign_zone_{r.lower()}_{side}", f"zone_{r.lower()}", sx * (_RACK_END + PLATE_OFF), y, 1.7,
-     _W if sx > 0 else _E)
-    for r, y in ROWS.items() for side, sx in (("west", -1), ("east", 1))
-] + [
-    (f"sign_caution_forklift_{i}", "caution_forklift", x, 12 - PILLAR_HALF - PLATE_OFF, 1.6, _N)
-    for i, x in enumerate((-10.0, 10.0), 1)
-] + [
-    ("sign_caution_narrow_north", "caution_narrow", NARROW_CX - _NARROW_OFF,
-     NARROW_CY + RACK_L + PLATE_OFF, 1.6, _S),
-    ("sign_caution_narrow_south", "caution_narrow", NARROW_CX + _NARROW_OFF,
-     NARROW_CY - RACK_L - PLATE_OFF, 1.6, _N),
-    ("sign_exit_north", "exit", 0.0, HALF_Y - PLATE_OFF, 2.4, _N),
-    ("sign_exit_south", "exit", 0.0, -HALF_Y + PLATE_OFF, 2.4, _S),
-    ("sign_exit_west", "exit", -HALF_X + PLATE_OFF, 0.0, 2.4, _W),
-    ("sign_exit_east", "exit", HALF_X - PLATE_OFF, 0.0, 2.4, _E),
-]
+
+
+def rows_of(racks):
+    """{열 이름: (y, [x 정렬])} — 주 랙 목록에서 열별 (처음 나온 순서)."""
+    rows = {}
+    for r in racks:
+        rows.setdefault(r["row"], (r["y"], []))[1].append(r["x"])
+    return {k: (y, sorted(xs)) for k, (y, xs) in rows.items()}
+
+
+def sign_poses():
+    """(이름, 텍스처, x, y, 판 중심 높이, yaw) — 현재 배치(LAY) 기준. 충전·대기 표지와 열 끝면 표지는 배치를 따른다."""
+    cs, ws = LAY["charging_sign"], LAY["waiting_sign"]
+    out = [
+        ("sign_dock_1", "dock_1", -HALF_X + PLATE_OFF, 17.0, 1.6, _W),
+        ("sign_dock_2", "dock_2", -HALF_X + PLATE_OFF, 13.0, 1.6, _W),
+        ("sign_dock_a", "dock_a", HALF_X - PLATE_OFF, 17.0, 1.6, _E),
+        ("sign_dock_b", "dock_b", HALF_X - PLATE_OFF, 13.0, 1.6, _E),
+        ("sign_zone_inbound", "zone_inbound", -HALF_X + PLATE_OFF, 15.0, 2.6, _W),
+        ("sign_zone_outbound", "zone_outbound", HALF_X - PLATE_OFF, 15.0, 2.6, _E),
+        ("sign_charging", "charging", cs[0], cs[1], 1.8, cs[2]),
+        ("sign_waiting", "waiting", ws[0], ws[1], 1.8, ws[2]),
+    ]
+    # 충전소 번호판: 스테이션 전면(보는 방향 yaw 로 STATION_FRONT) 앞
+    for c in LAY["chargers"]:
+        f = STATION_FRONT + PLATE_OFF
+        out.append((f"sign_{c['id']}", c["id"], c["x"] + f * math.cos(c["yaw"]),
+                    c["y"] + f * math.sin(c["yaw"]), 0.53, c["yaw"]))
+    for r, (y, xs) in rows_of(LAY["racks"]).items():
+        out.append((f"sign_zone_{r.lower()}_west", f"zone_{r.lower()}",
+                    -(-xs[0] + RACK_L / 2 + PLATE_OFF), y, 1.7, _E))
+        out.append((f"sign_zone_{r.lower()}_east", f"zone_{r.lower()}",
+                    xs[-1] + RACK_L / 2 + PLATE_OFF, y, 1.7, _W))
+    # 지게차 주의: 기둥 1·2 (현행 (∓10, 12)) 의 남쪽 면
+    for i, (px, py) in enumerate(LAY["pillars"][:2], 1):
+        out.append((f"sign_caution_forklift_{i}", "caution_forklift", px,
+                    py - PILLAR_HALF - PLATE_OFF, 1.6, _N))
+    out += [
+        ("sign_caution_narrow_north", "caution_narrow", NARROW_CX - _NARROW_OFF,
+         NARROW_CY + RACK_L + PLATE_OFF, 1.6, _S),
+        ("sign_caution_narrow_south", "caution_narrow", NARROW_CX + _NARROW_OFF,
+         NARROW_CY - RACK_L - PLATE_OFF, 1.6, _N),
+        ("sign_exit_north", "exit", 0.0, HALF_Y - PLATE_OFF, 2.4, _N),
+        ("sign_exit_south", "exit", 0.0, -HALF_Y + PLATE_OFF, 2.4, _S),
+        ("sign_exit_west", "exit", -HALF_X + PLATE_OFF, 0.0, 2.4, _W),
+        ("sign_exit_east", "exit", HALF_X - PLATE_OFF, 0.0, 2.4, _E),
+    ]
+    return out
 
 
 def signs():
     out = ""
-    for name, tex, x, y, z, yaw in SIGN_POSES:
+    poses = sign_poses()
+    for name, tex, x, y, z, yaw in poses:
         w, h = SIGN_SIZE[tex]
         out += plate_model(name, f"{SIGN_TEX}{tex}.png", x, y, z, yaw, w, h)
     # 비상구 문 (벽면 도색 판, 1.0 x 2.1 m) — 비상구 표지 아래
-    for name, tex, x, y, z, yaw in SIGN_POSES:
+    for name, tex, x, y, z, yaw in poses:
         if tex != "exit":
             continue
         out += f"""    <model name="{name.replace('sign_', 'door_')}">
@@ -407,13 +435,44 @@ def docks_and_zones():
                        rng.uniform(-0.3, 0.3))
         out += include("box_large", f"{name}_box_large", bx, y - 1.0, 0.0,
                        rng.uniform(-0.3, 0.3))
-    # 충전 구역: 패드 + 스테이션 3개(남쪽 벽 앞, +x 진입 방향이 +y 가 되도록 yaw=π/2) + 스테이션 전면 마커
-    out += include("charging_pad", "charging_zone_pad", -22.0, -16.0)
-    for name, (x, mid) in CHARGERS.items():
-        cs = f"charging_station_{name}"
-        out += include("charging_station", cs, x, CHARGER_Y, 0.0, math.pi / 2)
-        out += marker_model(f"{cs}_marker", mid, x, CHARGER_Y + STATION_FRONT + 0.01, math.pi / 2)
-    out += include("waiting_zone", "waiting_zone_pad", 22.0, -16.0)
+    # 충전 구역: 패드 + 스테이션 3개(현행: 남쪽 벽 앞, +x 진입 방향이 +y 가 되도록 yaw=π/2) + 스테이션 전면 마커.
+    # 스테이션 yaw = 판(마커)이 보는 방향 = 로봇이 다가오는 쪽
+    px, py, pyaw = LAY["charging_pad"]
+    out += include("charging_pad", "charging_zone_pad", px, py, 0.0, pyaw)
+    for c in LAY["chargers"]:
+        cs = f"charging_station_{c['id']}"
+        x, y, yaw, f = c["x"], c["y"], c["yaw"], STATION_FRONT + 0.01
+        out += include("charging_station", cs, x, y, 0.0, yaw)
+        out += marker_model(f"{cs}_marker", c["marker_id"], x + f * math.cos(yaw),
+                            y + f * math.sin(yaw), yaw)
+    wx, wy, wyaw = LAY["waiting_pad"]
+    out += include("waiting_zone", "waiting_zone_pad", wx, wy, 0.0, wyaw)
+    return out
+
+
+def structures():
+    """비대칭 고정 구조물 (LAY structures, 현행 없음): 상자 하나짜리 정적 모델, 충돌체 = 시각체."""
+    out = ""
+    for s in LAY["structures"]:
+        size = f"{s['l']:.2f} {s['d']:.2f} {s['h']:.2f}"
+        out += f"""    <model name="structure_{s['id']}">
+      <static>true</static>
+      <pose>{pose(s['x'], s['y'], 0, 0, 0, s.get('yaw', 0.0))}</pose>
+      <link name="link">
+        <collision name="collision">
+          <pose>0 0 {s['h'] / 2:.3f} 0 0 0</pose>
+          <geometry><box><size>{size}</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <pose>0 0 {s['h'] / 2:.3f} 0 0 0</pose>
+          <geometry><box><size>{size}</size></box></geometry>
+          <material>
+            <ambient>0.55 0.42 0.25 1</ambient><diffuse>0.55 0.42 0.25 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+"""
     return out
 
 
@@ -431,7 +490,7 @@ def pillar_markers():
     """기둥 i 의 면 j → id = PILLAR_MARKER_ID0 + 4*(i-1) + j (면 순서 +x, -x, +y, -y)."""
     off = PILLAR_HALF + PLATE_OFF
     out = ""
-    for i, (px, py) in enumerate(PILLARS, 1):
+    for i, (px, py) in enumerate(LAY["pillars"], 1):
         for j, (nx, ny, yaw) in enumerate(PILLAR_FACES):
             mid = PILLAR_MARKER_ID0 + 4 * (i - 1) + j
             out += marker_model(f"pillar_{i}_marker_{j}", mid, px + nx * off, py + ny * off,
@@ -443,7 +502,7 @@ def pillar_marker_poses():
     """{id: (x, y, yaw)} — 재위치추정 레지스트리(config/behavior.yaml)와 같은 값이어야 한다."""
     off = PILLAR_HALF + PLATE_OFF
     out = {}
-    for i, (px, py) in enumerate(PILLARS, 1):
+    for i, (px, py) in enumerate(LAY["pillars"], 1):
         for j, (nx, ny, yaw) in enumerate(PILLAR_FACES):
             out[PILLAR_MARKER_ID0 + 4 * (i - 1) + j] = (px + nx * off, py + ny * off, yaw)
     return out
@@ -457,8 +516,8 @@ def rack_marker_poses():
     off = RACK_D / 2 + PLATE_OFF
     out = {}
     k = 0
-    for row_y in sorted(ROWS.values(), reverse=True):
-        for cx in RACK_X:
+    for row_y, xs in sorted(rows_of(LAY["racks"]).values(), reverse=True):
+        for cx in xs:
             out[RACK_MARKER_ID0 + k] = (cx, row_y + off, math.pi / 2)      # 북쪽 통로를 본다
             out[RACK_MARKER_ID0 + k + 1] = (cx, row_y - off, -math.pi / 2)  # 남쪽 통로를 본다
             k += 2
@@ -473,7 +532,8 @@ def rack_markers():
 
 
 def pillars():
-    return "".join(include("pillar", f"pillar_{i}", x, y) for i, (x, y) in enumerate(PILLARS, 1))
+    return "".join(include("pillar", f"pillar_{i}", x, y)
+                   for i, (x, y) in enumerate(LAY["pillars"], 1))
 
 
 # ---- 동적 장애물: 사람 actor ---------------------------------------------------
@@ -568,32 +628,41 @@ def circle_waypoints(cx, cy, r, speed, dt=ACTOR_DT):
     return wps
 
 
-def random_walk_nodes(seed=SEED, steps=36):
+def default_walk_edges():
     """
-    통로 격자(x∈{±3,±9,±15}, y∈{6,0,-6}, 간격 6 m) 위 무작위 보행.
+    현행 통로 격자(x∈{±3,±9,±15}, y∈{6,0,-6}, 간격 6 m) 간선 [((x, y), (x, y))] — 잇는 순서 그대로.
 
-    스폰 셀을 지나는 간선 (-3,0)-(3,0) 은 제외한다.
-
-    seed 고정 → 항상 같은 경로. steps 걸음 후 BFS 최단 경로로 출발점에 돌아와 루프를 닫는다.
+    스폰 셀을 지나는 간선 (-3,0)-(3,0) 은 제외한다. 순서가 인접 목록 순서 = 무작위 선택 결과를 정한다.
     """
     xs, ys = [-15, -9, -3, 3, 9, 15], [6, 0, -6]
-    nodes = [(x, y) for x in xs for y in ys]
-    adj = {n: [] for n in nodes}
-
-    def link(a, b):
-        adj[a].append(b)
-        adj[b].append(a)
-
+    edges = []
     for y in ys:
         for i in range(len(xs) - 1):
             if y == 0 and xs[i] == -3:
                 continue                     # 스폰 셀 (0,0) 통과 간선 제외
-            link((xs[i], y), (xs[i + 1], y))
+            edges.append(((xs[i], y), (xs[i + 1], y)))
     for x in xs:
         for j in range(len(ys) - 1):
-            link((x, ys[j]), (x, ys[j + 1]))
+            edges.append(((x, ys[j]), (x, ys[j + 1])))
+    return edges
+
+
+def random_walk_nodes(seed=SEED, steps=36, edges=None, start=(-9, -6)):
+    """
+    통로 격자 위 무작위 보행 (격자 = edges, 기본은 현행 격자 default_walk_edges).
+
+    seed 고정 → 항상 같은 경로. steps 걸음 후 BFS 최단 경로로 출발점에 돌아와 루프를 닫는다.
+    """
+    adj = {}
+
+    def link(a, b):
+        adj.setdefault(a, []).append(b)
+        adj.setdefault(b, []).append(a)
+
+    for a, b in (default_walk_edges() if edges is None else edges):
+        link(tuple(a), tuple(b))
     r = random.Random(seed)
-    start = (-9, -6)
+    start = tuple(start)
     path = [start]
     prev = None
     for _ in range(steps):
@@ -641,17 +710,23 @@ def actor_xml(name, wps):
 
 def actor_specs():
     """(이름, 속도, 웨이포인트, 설명)."""
-    def shuttle(a, b, v):
+    lanes = LAY["lanes"]
+
+    def shuttle(name, v):
+        a, b = tuple(lanes[name]["a"]), tuple(lanes[name]["b"])
         return path_waypoints([a, b, a], v)
+    cv, rw = lanes["worker_curve"], lanes["worker_random"]
     return [
-        ("worker_straight_slow", 0.5, shuttle((-16.0, 6.0), (16.0, 6.0), 0.5), "직선 왕복, A-B 통로"),
-        ("worker_straight_fast", 1.2, shuttle((22.0, -10.0), (22.0, 10.0), 1.2), "직선 왕복, 동측 통로"),
-        ("worker_curve", 0.8, circle_waypoints(-24.0, 0.0, 3.5, 0.8), "곡선(원) 순환, 서측 공터"),
-        ("worker_random", 0.6, path_waypoints(random_walk_nodes(), 0.6),
+        ("worker_straight_slow", 0.5, shuttle("worker_straight_slow", 0.5), "직선 왕복, A-B 통로"),
+        ("worker_straight_fast", 1.2, shuttle("worker_straight_fast", 1.2), "직선 왕복, 동측 통로"),
+        ("worker_curve", 0.8, circle_waypoints(cv["c"][0], cv["c"][1], cv["r"], 0.8),
+         "곡선(원) 순환, 서측 공터"),
+        ("worker_random", 0.6,
+         path_waypoints(random_walk_nodes(edges=rw["edges"], start=rw["start"]), 0.6),
          f"무작위 보행 (seed {SEED}, gen_warehouse_world.py random_walk_nodes)"),
-        ("worker_crossing", 1.0, shuttle((-6.0, -7.0), (6.0, -7.0), 1.0),
+        ("worker_crossing", 1.0, shuttle("worker_crossing", 1.0),
          "좁은 통로 입구 횡단 (명세 4.7: 1.0 m/s 동적 장애물)"),
-        ("worker_slow_south", 0.3, shuttle((-6.0, -14.5), (6.0, -14.5), 0.3),
+        ("worker_slow_south", 0.3, shuttle("worker_slow_south", 0.3),
          "좁은 통로 남쪽 출구 앞 느린 보행 (명세 하한 0.3 m/s)"),
     ]
 
@@ -733,9 +808,19 @@ def vehicle_start(axis, lo, fixed, speed, accel):
     return (s, fixed) if axis == "x" else (fixed, s)
 
 
+def vehicle_table():
+    """VEHICLES 에 LAY vehicles 의 차선(lo, hi, fixed) 덮어쓰기를 얹은 표."""
+    out = {}
+    for name, row in VEHICLES.items():
+        o = LAY["vehicles"].get(name, {})
+        out[name] = (row[0], o.get("lo", row[1]), o.get("hi", row[2]), o.get("fixed", row[3])) \
+            + row[4:]
+    return out
+
+
 def vehicles():
     out = ""
-    for name, (axis, lo, hi, fixed, v, a, yaw, model, sep, r) in VEHICLES.items():
+    for name, (axis, lo, hi, fixed, v, a, yaw, model, sep, r) in vehicle_table().items():
         x, y = vehicle_start(axis, lo, fixed, v, a)
         desc = {"forklift_main": "지게차 (2.5 t, 전진·후진 왕복)",
                 "shuttle_amr": "다른 회사 AMR 셔틀 (0.6 x 0.4 m, 전진·후진 왕복)"}[name]
@@ -777,9 +862,18 @@ def _aabbs(racks):
     for name, x, y, yaw in racks:
         hx, hy = (RACK_L / 2, RACK_D / 2) if abs(math.sin(yaw)) < 0.5 else (RACK_D / 2, RACK_L / 2)
         aabbs.append((name, x - hx, x + hx, y - hy, y + hy))
-    for i, (x, y) in enumerate(PILLARS, 1):
+    for i, (x, y) in enumerate(LAY["pillars"], 1):
         aabbs.append((f"pillar_{i}", x - PILLAR_HALF, x + PILLAR_HALF,
                       y - PILLAR_HALF, y + PILLAR_HALF))
+    for c in LAY["chargers"]:           # 스테이션 0.5 x 0.4 (yaw 0 이면 x 가 0.5)
+        hx, hy = (0.25, 0.2) if abs(math.sin(c["yaw"])) < 0.5 else (0.2, 0.25)
+        aabbs.append((f"charging_station_{c['id']}", c["x"] - hx, c["x"] + hx,
+                      c["y"] - hy, c["y"] + hy))
+    for st in LAY["structures"]:
+        hx, hy = (st["l"] / 2, st["d"] / 2) if abs(math.sin(st.get("yaw", 0.0))) < 0.5 \
+            else (st["d"] / 2, st["l"] / 2)
+        aabbs.append((f"structure_{st['id']}", st["x"] - hx, st["x"] + hx,
+                      st["y"] - hy, st["y"] + hy))
     return aabbs
 
 
@@ -800,7 +894,7 @@ def check_layout(racks, specs):
     # 차량 경로(반전 지점까지 + 차체 반폭 + 여유)가 랙·기둥과 겹치지 않는다
     half_w = {"forklift_main": 0.7, "shuttle_amr": 0.25}
     reach = {"forklift_main": (1.3, 2.1), "shuttle_amr": (0.35, 0.35)}   # 후방, 전방(포크) 길이
-    for name, (axis, lo, hi, fixed, *_rest) in VEHICLES.items():
+    for name, (axis, lo, hi, fixed, *_rest) in vehicle_table().items():
         w, (back, front) = half_w[name] + 0.3, reach[name]
         a0, a1 = lo - back, hi + front
         box = (a0, a1, fixed - w, fixed + w) if axis == "x" else (fixed - w, fixed + w, a0, a1)
@@ -815,14 +909,78 @@ def check_layout(racks, specs):
     assert abs(clear - NARROW_CLEAR) < 1e-6, clear
 
 
-def main():
-    here = os.path.dirname(os.path.abspath(__file__))
-    out_path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(here, "warehouse.sdf")
+# ---- 배치 사양 (LayoutSpec) ----------------------------------------------------------
+LAYOUT_KEYS = ("racks", "pillars", "chargers", "charging_pad", "charging_sign", "waiting_pad",
+               "waiting_sign", "structures", "lanes", "vehicles")
+
+
+def default_layout():
+    """
+    현행 배치 = 위 모듈 상수를 LayoutSpec 사전으로 (--spec JSON 의 키와 같다).
+
+    racks      주 랙 [{id, row, x, y, yaw}] (좁은 통로 4베이는 NARROW_* 상수로 고정)
+    pillars    기둥 중심 [[x, y]] — 순서가 기둥 마커 id 를 정한다 (기둥 i 면 j → 10 + 4(i-1) + j)
+    chargers   [{id, x, y, yaw, marker_id}] 스테이션 중심, yaw = 판이 보는 방향 (마커는 그 방향 앞 0.26 m)
+    charging_pad / waiting_pad   바닥 도색 [x, y, yaw]
+    charging_sign / waiting_sign 벽 표지 [x, y, yaw]
+    structures 비대칭 고정 구조물 [{id, x, y, yaw, l, d, h}] (상자, 충돌체 있음)
+    lanes      사람 actor 경로: 직선 왕복 {a, b}, 원 {c, r}, 무작위 보행 {edges, start}
+    vehicles   차량 차선 덮어쓰기 {이름: {lo, hi, fixed}} (VEHICLES 의 축·속도·모델은 그대로)
+    """
+    return {
+        "racks": [{"id": f"rack_{row}{i}", "row": row, "x": x, "y": y, "yaw": 0.0}
+                  for row, y in ROWS.items() for i, x in enumerate(RACK_X, 1)],
+        "pillars": [list(p) for p in PILLARS],
+        "chargers": [{"id": n, "x": x, "y": CHARGER_Y, "yaw": math.pi / 2, "marker_id": mid}
+                     for n, (x, mid) in CHARGERS.items()],
+        "charging_pad": [-22.0, -16.0, 0.0],
+        "charging_sign": [-22.0, -HALF_Y + PLATE_OFF, _S],
+        "waiting_pad": [22.0, -16.0, 0.0],
+        "waiting_sign": [22.0, -HALF_Y + PLATE_OFF, _S],
+        "structures": [],
+        "lanes": {
+            "worker_straight_slow": {"a": [-16.0, 6.0], "b": [16.0, 6.0]},
+            "worker_straight_fast": {"a": [22.0, -10.0], "b": [22.0, 10.0]},
+            "worker_curve": {"c": [-24.0, 0.0], "r": 3.5},
+            "worker_random": {"edges": None, "start": [-9, -6]},
+            "worker_crossing": {"a": [-6.0, -7.0], "b": [6.0, -7.0]},
+            "worker_slow_south": {"a": [-6.0, -14.5], "b": [6.0, -14.5]},
+        },
+        "vehicles": {},
+    }
+
+
+LAY = default_layout()
+
+
+def set_layout(spec=None):
+    """현재 배치를 바꾼다: 현행 값에 spec 의 키를 덮어쓴다 (모르는 키는 ValueError). None 이면 현행."""
+    global LAY
+    lay = default_layout()
+    for key, value in (spec or {}).items():
+        if key not in LAYOUT_KEYS:
+            raise ValueError(f"모르는 배치 사양 키: {key!r} (허용: {LAYOUT_KEYS})")
+        if key == "lanes":
+            for name, lane in value.items():
+                if name not in lay["lanes"]:
+                    raise ValueError(f"모르는 actor 경로: {name!r}")
+                lay["lanes"][name] = dict(lay["lanes"][name], **lane)
+        else:
+            lay[key] = copy.deepcopy(value)
+    LAY = lay
+    return LAY
+
+
+def build_sdf(spec=None):
+    """배치 사양 → (SDF 문자열, 요약 dict). 난수 상태를 처음부터 시작하므로 같은 사양은 같은 바이트."""
+    set_layout(spec)
+    rng.seed(SEED)
     racks = rack_instances()
     dyn_xml, specs = dynamic_obstacles()
     check_layout(racks, specs)
 
-    n_loc_markers = 4 * len(PILLARS) + len(rack_marker_poses())
+    n_loc_markers = 4 * len(LAY["pillars"]) + len(rack_marker_poses())
+    n_signs = len(sign_poses())
     sdf = f"""<?xml version="1.0" ?>
 <!--
   물류센터 월드 (내부 60 x 40 m) — gen_warehouse_world.py 가 생성 (seed {SEED}). 직접 수정하지 말고 생성기를 고칠 것.
@@ -859,8 +1017,8 @@ def main():
     <!-- ===== 바닥 / 외벽 / 천장 ===== -->
 {ground_and_walls()}
 {roof()}
-    <!-- ===== 기둥 {len(PILLARS)}개 + 위치 표지 마커 {n_loc_markers}개 ===== -->
-{pillars()}{pillar_markers()}{rack_markers()}
+    <!-- ===== 기둥 {len(LAY["pillars"])}개 + 위치 표지 마커 {n_loc_markers}개 ===== -->
+{pillars()}{pillar_markers()}{rack_markers()}{structures()}
     <!-- ===== 랙: A/B/C 열 7베이씩 (21) + 좁은 통로 4베이 (rack_narrow_*) =====
          좁은 통로: 중심 ({NARROW_CX}, {NARROW_CY}), y 방향 4 m,
          순폭 {NARROW_CLEAR} m = 로봇 폭 0.40 + 0.20 (명세 4.4).
@@ -872,15 +1030,38 @@ def main():
 {rack_boxes(racks)}
     <!-- ===== 도크 / 충전 / 대기 구역 (마커: DICT_4X4_50, dock 0~3, charger 4~6) ===== -->
 {docks_and_zones()}
-    <!-- ===== 표지판 {len(SIGN_POSES)}개 (models/sign 텍스처, 판 법선 = 보는 쪽) + 비상구 문 ===== -->
+    <!-- ===== 표지판 {n_signs}개 (models/sign 텍스처, 판 법선 = 보는 쪽) + 비상구 문 ===== -->
 {signs()}
 {dyn_xml}  </world>
 </sdf>
 """
+    return sdf, {"racks": len(racks), "actors": specs, "vehicles": len(VEHICLES),
+                 "signs": n_signs}
+
+
+SIGN_POSES = sign_poses()       # 현행 배치의 표지 (다른 도구가 읽는 모듈 상수)
+
+
+def main(argv=None):
+    here = os.path.dirname(os.path.abspath(__file__))
+    ap = argparse.ArgumentParser(description="물류센터 월드 SDF 생성기")
+    ap.add_argument("out", nargs="?", default=os.path.join(here, "warehouse.sdf"),
+                    help="출력 SDF (기본: 같은 디렉토리의 warehouse.sdf)")
+    ap.add_argument("--spec", default=None,
+                    help="배치 사양 JSON (LayoutSpec, default_layout() 의 키). 없으면 현행 배치")
+    args = ap.parse_args(sys.argv[1:] if argv is None else argv)
+    spec = None
+    if args.spec:
+        with open(args.spec, encoding="utf-8") as f:
+            spec = json.load(f)
+        spec = spec.get("layout_spec", spec)
+    sdf, info = build_sdf(spec)
+    out_path = args.out
     with open(out_path, "w") as f:
         f.write(sdf)
-    print(f"wrote {out_path}: racks={len(racks)} actors={len(specs)} vehicles={len(VEHICLES)} "
-          f"signs={len(SIGN_POSES)}")
+    specs = info["actors"]
+    print(f"wrote {out_path}: racks={info['racks']} actors={len(specs)} "
+          f"vehicles={info['vehicles']} signs={info['signs']}")
     for name, v, wps, _ in specs:
         print(f"  {name:22s} {v} m/s loop={wps[-1][0]:.1f}s waypoints={len(wps)}")
 
