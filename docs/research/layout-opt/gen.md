@@ -186,7 +186,13 @@ python3 $REPO/tests/integration/fleet_p5/p5_driver.py \
   - 슬롯·staging 의 지도 여유 최솟값: 0.97 m (stagger 뒤 열, 북쪽 벽).
   - 동적 경로 거리 최솟값: 1.50 m.
 
-## 8. 알려진 한계
+## 8. 알려진 한계와 정오표
+
+- **queue 체류 지점 정오표 (2026-10-10 03:12, 47b04f1)**: 봉인 묶음(생성기 83202d2·2b71c30) 의 `layout.json` queue 점 일부는 구역에 들어갈 수 없는 쪽에 있다.
+  - 모든 유효 묶음의 4 개: `queue:narrow_aisle:w`, `:e`, `queue:dock_2_approach:s`, `queue:dock_b_approach:s`.
+  - b_shift3 의 12 개: `x_ab_{2,4,…,12}:n`, `x_bc_{2,4,…,12}:s`.
+  - E0·E1 은 묶음별 목록에 있는 id 를 빼고 쓴다. 목록: `runs/layopt/tmp/gen/errata/20261009T181209Z_queue_blocked.json` (`{"drop_queue_ids": {spec_id: [id…]}}`, `layopt/gen/errata_queue.py`).
+  - 생성기는 고쳤다 (`dwell.approach_blocked`). 묶음은 봉인 규칙 때문에 다시 만들지 않았다. 다시 만들지는 조정자가 정한다.
 
 - **대기 패드 도색**: 바닥 도색(10 × 4 m, 시각체만)은 슬롯 배열과 무관하게 중심에 놓인다. line3 의 양 끝 슬롯(±6 m)은 도색 밖이다. LiDAR 와 지도에는 영향이 없고, 카메라 영상만 다르다.
 - **b_shift3 의 통로**:
