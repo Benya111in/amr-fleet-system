@@ -16,7 +16,8 @@
                             소스 트리 파일 위에 묶음 파일을 읽기 전용으로 겹쳐 마운트한다 (symlink-install 이라 share 경로와
                             소스 트리 기본값을 읽는 모든 노드가 묶음 파일을 본다). 지도·스폰 목록은 런치 인자로도 준다.
                             컨테이너 진입 스크립트가 sha256 으로 겹침을 확인하고 어긋나면 기동하지 않는다 (bundle_check.txt).
-  --agent-id / --slot-id / --partition / --notebook / --stage / --run-id-prefix / --seal :
+  --agent-id / --slot-id / --partition / --notebook / --stage / --run-id-prefix / --seal /
+  --record-agent :
                             이름 · 기록 위치.
 """
 
@@ -323,7 +324,7 @@ class Driver:
             bundle_txt = (f', 배치 묶음 {self.bundle} (spec_id {self.bundle_spec.get("spec_id")}, '
                           f'생성기 {str(self.bundle_spec.get("generator_commit"))[:7]})')
         info = {'run_id': f'{self.a.run_id_prefix}{tag}', 'stage': self.a.stage or f'P5-{exp}',
-                'agent': self.agent, 'kind': 'gazebo',
+                'agent': self.a.record_agent or self.agent, 'kind': 'gazebo',
                 'sim': 'gazebo', 'commit': str(res.get('commit', '?'))[:7], 'dirty': False,
                 'config': f'tests/integration/fleet_p5 실험 {exp} 짝 {pair} 갈래 {label} ({mode}), '
                           f'plan {d}/plan.json, 도메인 {res.get("domain")}{bundle_txt}',
@@ -547,6 +548,8 @@ def main(argv=None):
     ap.add_argument('--stage', default='', help="실행 목록 stage ('' = P5-<실험>)")
     ap.add_argument('--run-id-prefix', default='P5_', help='실행 목록 run_id = 접두어 + 태그')
     ap.add_argument('--seal', action='store_true', help='--run-one 끝에 갈래 디렉토리를 봉인')
+    ap.add_argument('--record-agent', default='',
+                    help="실행 목록 agent (= runs/<agent>.jsonl, '' = --agent-id)")
     a = ap.parse_args(argv)
     return Driver(a).run()
 
