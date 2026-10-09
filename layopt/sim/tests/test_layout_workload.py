@@ -98,3 +98,17 @@ def test_p5_tasks():
         ('dock_1', 'dock_a'), ('dock_a', 'dock_1'), ('dock_2', 'dock_b'), ('dock_b', 'dock_2'),
         ('dock_1', 'dock_b')]
     assert all(t.t == 60.0 and t.mass == 2.0 and t.load_time == 5.0 for t in ts)
+
+
+def test_sweep_helpers(tmp_path):
+    from layopt.sim.sweep import done_keys, find_bundles, parse_seeds
+    assert parse_seeds('0:3') == [0, 1, 2, 3]
+    assert parse_seeds('1,5:6') == [1, 5, 6]
+    b = tmp_path / 'v1'
+    b.mkdir()
+    (b / 'layout.json').write_text('{}')
+    (tmp_path / 'junk').mkdir()
+    assert find_bundles(f'{tmp_path}/*,current') == [str(b), 'current']
+    (tmp_path / 'results.jsonl').write_text(
+        json.dumps({'spec_id': 'a', 'seed': 1, 'load': 1.0}) + '\n{"spec_id": "a", "se')
+    assert done_keys(tmp_path) == {('a', 1, 1.0)}           # 끊긴 마지막 줄은 무시
