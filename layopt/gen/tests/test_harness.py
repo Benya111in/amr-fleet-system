@@ -73,6 +73,7 @@ def test_driver_defaults_unchanged(tmp_path):
     a = captured['a']
     assert a.agent_id == 'b4-p5' and a.partition == '' and a.bundle == '' and a.run_one == ''
     assert a.notebook == 'docs/research/fleet-distributed/notebook' and a.run_id_prefix == 'P5_'
+    assert a.stack_stagger == '' and a.record_agent == ''
     assert captured['vols'] == ([], [])
 
 

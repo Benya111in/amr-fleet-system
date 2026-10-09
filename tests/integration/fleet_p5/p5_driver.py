@@ -143,7 +143,9 @@ class Driver:
                     f'mode={arm["mode"]} layout={arm["layout"]} domain={domain} '
                     f'partition={partition} image={IMG} {img} '
                     f't_start={self.a.t_start} comm={arm["comm"]} faults={arm["faults"]}'
-                    f'{bundle_txt}\n')
+                    f'{bundle_txt}'
+                    + (f' stack_stagger_s={self.a.stack_stagger}' if self.a.stack_stagger else '')
+                    + '\n')
         if self.bundle:
             with open(os.path.join(self.bundle, 'SHA256SUMS'), encoding='utf-8') as g, \
                     open(os.path.join(d, 'bundle_SHA256SUMS.txt'), 'w', encoding='utf-8') as f:
@@ -155,6 +157,8 @@ class Driver:
                 '-e', f'P5_OUT={rawc}', '-e', f'P5_PLAN={rawc}/plan.json']
         if self.a.partition:
             envs += ['-e', f'P5_PARTITION={self.a.partition}']
+        if self.a.stack_stagger:
+            envs += ['-e', f'P5_STACK_STAGGER={self.a.stack_stagger}']
         if comm_path:
             envs += ['-e', f'P5_COMM={rawc}/comm.yaml']
         bvols, benv = self.bundle_docker()
@@ -548,6 +552,8 @@ def main(argv=None):
     ap.add_argument('--stage', default='', help="실행 목록 stage ('' = P5-<실험>)")
     ap.add_argument('--run-id-prefix', default='P5_', help='실행 목록 run_id = 접두어 + 태그')
     ap.add_argument('--seal', action='store_true', help='--run-one 끝에 갈래 디렉토리를 봉인')
+    ap.add_argument('--stack-stagger', default='',
+                    help="로봇 스택 시작 간격 stack_stagger_s [s] ('' = 런치 기본 6 s)")
     ap.add_argument('--record-agent', default='',
                     help="실행 목록 agent (= runs/<agent>.jsonl, '' = --agent-id)")
     a = ap.parse_args(argv)

@@ -3,6 +3,7 @@
 # 호스트 p5_driver.py 가 `docker run ... bash /ros2_ws/tests/integration/fleet_p5/p5_container.sh` 로 부른다.
 # 환경: P5_TAG P5_MODE(central|distributed) P5_DOMAIN P5_OUT(/raw/<태그>) P5_PLAN P5_COMM(선택, 통신 모의 YAML)
 #       P5_PARTITION(선택, 기본 b4p5_<태그>) P5_BUNDLE(선택, layopt 배치 묶음 마운트 /bundle — 아래 0))
+#       P5_STACK_STAGGER(선택, multi_robot stack_stagger_s — 없으면 런치 기본 6 s)
 # 1) multi_robot.launch.py 를 launch_manager:=false traffic_manager:=false 로 (관리자 · 교통 관리자는 서버 컨테이너가),
 #    fleet_mode 와 실행마다 새 에이전트 저장소를 준다. 통신 모의가 있으면 에이전트(환경 변수)와 어댑터(launch 인자)에 같은 파일.
 # 2) 기록기(p5_recorder.py)를 UDP 전용 DDS 프로파일로 포그라운드 실행 — 끝나면 스택을 SIGINT → 60 s 뒤 SIGKILL.
@@ -68,6 +69,9 @@ ARGS=(num_robots:=5 use_sim_time:=true headless:=true localization_mode:=localiz
       "fleet_mode:=${P5_MODE}" "${BUNDLE_ARGS[@]}")
 if [ "${P5_MODE}" = distributed ]; then
     ARGS+=("fleet_store_dir:=${P5_OUT}/store")
+fi
+if [ -n "${P5_STACK_STAGGER:-}" ]; then
+    ARGS+=("stack_stagger_s:=${P5_STACK_STAGGER}")
 fi
 if [ -n "${P5_COMM:-}" ]; then
     export AMR_FLEET_COMM_MODEL_FILE="${P5_COMM}"
