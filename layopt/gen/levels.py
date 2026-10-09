@@ -60,7 +60,7 @@ V3 = [
     {'key': 'beside_waiting',
      'desc': '대기 구역 옆: 같은 벽 앞, 슬롯 줄 끝에서 3 m 떨어져 4 m 간격 3대 (+u 쪽, 안 들어가면 -u 쪽)'},
     {'key': 'split_docks',
-     'desc': '도크 쪽 분산: 북쪽 벽 앞 x = -22 (입고 도크 쪽) · 22 · 18 (출고 도크 쪽)'},
+     'desc': '도크 쪽 분산: 서쪽 벽 y = 9 (입고 도크 아래) 1 대, 동쪽 벽 y = 9 · 5 (출고 도크 아래) 2 대'},
 ]
 # V4 랙 배열: 열마다 랙 중심 x (주 랙 21 개 고정)
 _X6 = [-18.0, -12.0, -6.0, 0.0, 6.0, 12.0, 18.0]
@@ -88,7 +88,8 @@ LEVELS = {'V1': V1, 'V2': V2, 'V3': V3, 'V4': V4, 'V5': V5}
 ROW_Y = {'A': 9.0, 'B': 3.0, 'C': -3.0}
 STRUCT = {'l': 1.2, 'd': 1.0, 'h': 1.5}
 PILLAR_MOVES = {3: (13.0, -12.0), 7: (25.0, -9.5)}      # 0 부터 센 기둥 번호 → 새 중심
-SPLIT_CHARGERS = [(-22.0, 'N'), (22.0, 'N'), (18.0, 'N')]
+# 북쪽 벽은 지게차 차선(y 15, 상자 y ≤ 16.0)과 staging(y 16.64)이 0.64 m 라 쓰지 않는다 (2026-10-10 시험 생성)
+SPLIT_CHARGERS = [(9.0, 'W'), (9.0, 'E'), (5.0, 'E')]
 
 SPEC_RE = re.compile(r'^v1(\d)-v2(\d)-v3(\d)-v4(\d)-v5(\d)$')
 BASELINE_ID = 'v10-v20-v30-v40-v50'
@@ -331,12 +332,12 @@ def resolve_lanes(lay, obstacles, notes):
     lanes = copy.deepcopy(gen.default_layout()['lanes'])
     rows = rows_from_racks(lay['racks'])
     margin = 0.40                    # 생성기 check_layout 0.35 + 표본 여유
-    # 동측 통로 보행자 (현행 x = 22, y -10..10)
+    # 동측 통로 보행자 (현행 x = 22, y -10..10): 막히면 랙 끝과 동쪽 기둥 열(x 25) 사이에서 여유가 가장 큰 x
     fast = lanes['worker_straight_fast']
     if not _lane_clear(22.0, -10.0, 22.0, 10.0, obstacles, margin):
         best = None
-        for k in range(0, 33):
-            x = 19.5 + 0.25 * k
+        for k in range(0, 41):
+            x = 19.5 + 0.125 * k
             m = min(seg_aabb(x, -10.0, x, 10.0, b) for _n, b in obstacles)
             key = (round(m, 3), -abs(x - 22.0))
             if best is None or key > best[0]:
