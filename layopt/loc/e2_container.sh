@@ -11,6 +11,7 @@
 # 환경: E2_RUN_DIR(컨테이너 경로) E2_TRIALS E2_SESSION E2_WORLD(월드 sdf) E2_MAP(map.yaml)
 #       E2_SPAWN("x,y,yaw") E2_PER_SESSION E2_DUMMY_MODE(move|recreate) E2_ONLY(선택) E2_MAX_ATTEMPTS
 #       E2_DOMAIN E2_PARTITION E2_LANE E2_LANES (병렬 세션) E2_MODULE (기본 e2_runner, 탐침은 probe_stationary)
+#       E2_SPEC_ID (여러 묶음 목록에서 이 묶음만, 실험 4)
 set -u
 : "${E2_RUN_DIR:?}" "${E2_TRIALS:?}" "${E2_SESSION:?}" "${E2_WORLD:?}" "${E2_MAP:?}" "${E2_SPAWN:?}"
 set +u
@@ -58,6 +59,7 @@ python3 -m "${E2_MODULE:-layopt.loc.e2_runner}" --trials "${E2_TRIALS}" --run-di
     --world-name "${WNAME}" --session "${E2_SESSION}" --per-session "${E2_PER_SESSION:-20}" \
     --dummy-mode "${E2_DUMMY_MODE:-move}" --only "${E2_ONLY:-}" \
     --max-attempts "${E2_MAX_ATTEMPTS:-2}" --lane "${E2_LANE:-0}" --lanes "${E2_LANES:-1}" \
+    --spec-id "${E2_SPEC_ID:-}" \
     > "${SD}/runner.log" 2>&1
 RC=$?
 echo "$(date -Iseconds) runner rc=${RC}" >> "${SD}/container.log"

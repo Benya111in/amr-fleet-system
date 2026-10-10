@@ -138,6 +138,7 @@ def main(argv=None) -> int:
     ap.add_argument('--only', default='')
     ap.add_argument('--lane', type=int, default=0)
     ap.add_argument('--lanes', type=int, default=1)
+    ap.add_argument('--spec-id', default='')
     a = ap.parse_args(argv)
     rclpy.init()
     node = ProbeNode()

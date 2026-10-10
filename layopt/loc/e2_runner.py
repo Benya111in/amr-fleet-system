@@ -322,6 +322,8 @@ class Runner:
         if self.args.only:
             want = set(self.args.only.split(','))
             out = [t for t in out if t['trial_id'] in want]
+        if self.args.spec_id:            # 여러 묶음 목록(실험 4): 이 세션 월드의 묶음 시행만
+            out = [t for t in out if t.get('spec_id', self.args.spec_id) == self.args.spec_id]
         if self.args.lanes > 1:          # 병렬 세션: order % lanes == lane 인 시행만 (겹치지 않는 분할)
             out = [t for t in out if t['order'] % self.args.lanes == self.args.lane]
         return out
@@ -675,6 +677,7 @@ def main(argv=None) -> int:
     ap.add_argument('--only', default='', help='쉼표 구분 trial_id (시험용)')
     ap.add_argument('--lane', type=int, default=0, help='병렬 세션 번호 (order % lanes == lane)')
     ap.add_argument('--lanes', type=int, default=1)
+    ap.add_argument('--spec-id', default='', help='여러 묶음 목록에서 이 묶음 시행만')
     a = ap.parse_args(argv)
     rclpy.init()
     node = E2Node()
