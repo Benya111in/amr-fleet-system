@@ -35,10 +35,15 @@ def run_metrics(p):
         (w0, t0), (w1, t1) = pairs[i - 1], pairs[i]
         return t0 if w1 == w0 else t0 + (t1 - t0) * (w - w0) / (w1 - w0)
     lost = {}
+    bt_fail = {}
     for line in open(os.path.join(p, 'launch.log'), errors='replace'):
         mm = PAT.search(line)
         if mm:
             lost.setdefault(mm.group(2), []).append(w2t(float(mm.group(1))))
+        elif 'Exception when loading BT' in line:
+            mb = re.search(r'\[(amr_\d+)\.bt_navigator\]', line)
+            if mb:
+                bt_fail[mb.group(1)] = bt_fail.get(mb.group(1), 0) + 1
     gt, est = {}, {}
     for r in csv.DictReader(open(os.path.join(p, 'gt.csv'))):
         gt.setdefault(r['robot'], []).append((float(r['t']), float(r['x']), float(r['y']), float(r['v'])))
@@ -95,6 +100,8 @@ def run_metrics(p):
         n_lost += len(lost.get(rb, []))
         rob[rb] = {'lost': len(lost.get(rb, [])), 'mis_segments': [[round(s[0], 1), round(s[1], 1), s[2]]
                                                                    for s in segs]}
+    # 사후 표시(사전 등록 외): Nav2 bt_navigator 가 BT 를 끝내 못 올린 로봇 = 그 로봇은 실행 내내 주행 불가
+    out['nav_dead'] = sorted(r for r, c in bt_fail.items() if c >= 10)
     out.update({'lost_total': n_lost, 'parked_first_lost': n_park_lost, 'parked_exposure_s': round(park_exp, 1),
                 'mis_segments': n_mis, 'mirror_segments': n_mir, 'err_gt1m_robot_s': round(err_s, 1),
                 'robots': rob})
@@ -119,6 +126,7 @@ def main():
               'mk', r.get('makespan'), 'rtf', r.get('rtf'), 'LOST', r.get('lost_total'),
               'parkLOST', r.get('parked_first_lost'), '/', r.get('parked_exposure_s'), 's',
               'mis', r.get('mis_segments'), 'mirror', r.get('mirror_segments'), 'err>1m', r.get('err_gt1m_robot_s'),
+              'nav_dead', r.get('nav_dead'),
               r.get('error', ''))
 
 
