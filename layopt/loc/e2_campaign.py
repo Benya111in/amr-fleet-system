@@ -3,6 +3,8 @@ E2 캠페인 드라이버 (호스트, 표준 라이브러리만) — 세션을 �
 
     python3 layopt/loc/e2_campaign.py --trials layopt/loc/exp1_trials.json --tag exp1
     python3 layopt/loc/e2_campaign.py --trials ... --run-dir <runs>/e2/<run_id> --resume
+    python3 layopt/loc/e2_campaign.py --trials layopt/loc/exp4_trials.json --spec-id <묶음> \
+        --tag exp4-<묶음> --parallel 2        # 레인 2 개 (도메인 57·58), 새 실행 디렉터리
 
 세션 하나 = `gz_slot.sh layopt-loc docker run --rm amr-ai/rl:0.3 … e2_container.sh` (Gazebo + 스택 + 러너,
 per_session 시행 뒤 또는 이상 시 끝남). 세션마다 Gazebo 를 새로 띄우므로 이상 상태가 다음 세션으로 넘어가지 않는다.
@@ -22,7 +24,9 @@ import time
 
 WS = Path(__file__).resolve().parents[2]
 RUNS = Path('/home/CAPYI_AI/runs/layopt')
-GZ_SLOT = '/home/CAPYI_AI/env/gz_slot.sh'
+# 배관 시험용 덮어쓰기 (Gazebo 없이 명령 조립만 본다): LAYOPT_GZ_SLOT, LAYOPT_E2_ROOT
+GZ_SLOT = os.environ.get('LAYOPT_GZ_SLOT', '/home/CAPYI_AI/env/gz_slot.sh')
+E2_ROOT = Path(os.environ.get('LAYOPT_E2_ROOT', str(RUNS / 'e2')))
 IMAGE = 'amr-ai/rl:0.3'
 EXIT_ANOMALY = 10
 
@@ -54,7 +58,7 @@ def log(run_dir: Path, msg: str) -> None:
 
 
 def pending(run_dir: Path, spec: dict, max_attempts: int, only: str = '', lane: int = 0,
-            lanes: int = 1):
+            lanes: int = 1, spec_id: str = ''):
     """러너와 같은 규칙의 남은 시행 (order 순)."""
     hist = {}
     att = run_dir / 'attempts.jsonl'
@@ -65,6 +69,8 @@ def pending(run_dir: Path, spec: dict, max_attempts: int, only: str = '', lane: 
                 hist.setdefault(r['trial_id'], []).append(r)
     out = []
     for tr in sorted(spec['trials'], key=lambda r: r['order']):
+        if spec_id and tr.get('spec_id', spec_id) != spec_id:
+            continue
         h = hist.get(tr['trial_id'], [])
         if any(r['status'] == 'done' for r in h):
             continue
@@ -77,6 +83,35 @@ def pending(run_dir: Path, spec: dict, max_attempts: int, only: str = '', lane: 
     if lanes > 1:
         out = [t for t in out if t['order'] % lanes == lane]
     return out
+
+
+def run_parallel(a, argv, run_dir: Path) -> int:
+    """레인 a.parallel 개를 자식 드라이버로 (같은 실행 디렉터리, --resume, 45 s 간격으로 띄운다)."""
+    base, skip = [], False
+    for x in argv:                       # --parallel N, --tag, --run-dir, --resume, --lane(s) 를 뺀다
+        if skip:
+            skip = False
+            continue
+        if x in ('--parallel', '--tag', '--run-dir', '--lane', '--lanes'):
+            skip = True
+            continue
+        if x.startswith(('--parallel=', '--tag=', '--run-dir=', '--lane=', '--lanes=')) or (
+                x == '--resume'):
+            continue
+        base.append(x)
+    procs = []
+    for lane in range(a.parallel):
+        if lane:
+            time.sleep(45.0)             # Gazebo 두 개가 동시에 뜨며 부하가 겹치지 않게
+        cmd = [sys.executable, str(Path(__file__).resolve())] + base + [
+            '--run-dir', str(run_dir), '--resume', '--lane', str(lane),
+            '--lanes', str(a.parallel)]
+        out = (run_dir / f'driver_lane{lane}.out').open('a', encoding='utf-8')
+        procs.append(subprocess.Popen(cmd, stdout=out, stderr=subprocess.STDOUT))
+        log(run_dir, f'parallel: lane {lane} pid {procs[-1].pid}')
+    rcs = [p.wait() for p in procs]
+    log(run_dir, f'parallel end: rc {rcs}')
+    return max(rcs)
 
 
 def main(argv=None) -> int:
@@ -100,17 +135,25 @@ def main(argv=None) -> int:
     ap.add_argument('--lanes', type=int, default=1)
     ap.add_argument('--module', default='layopt.loc.e2_runner',
                     help='컨테이너 안 러너 (탐침: layopt.loc.probe_stationary, --max-sessions 1)')
+    # 여러 묶음 시행 목록(실험 4): 묶음 하나만 돈다 — 월드·지도는 spec['bundles'][spec_id]
+    ap.add_argument('--spec-id', default='')
+    # 한 명령으로 레인 N 개: 부모가 실행 디렉터리를 만들고 레인마다 자식 드라이버를 띄워 기다린다
+    ap.add_argument('--parallel', type=int, default=1)
     a = ap.parse_args(argv)
 
     trials_path = Path(a.trials).resolve()
     spec = json.loads(trials_path.read_text(encoding='utf-8'))
+    if spec.get('bundles') and a.spec_id not in spec['bundles']:   # 실행 디렉터리를 만들기 전에 거부
+        print(f'여러 묶음 목록이다: --spec-id 를 {sorted(spec["bundles"])} 중에서 준다',
+              file=sys.stderr)
+        return 2
     if a.run_dir:
         run_dir = Path(a.run_dir)
         if not run_dir.exists() or not a.resume:
             print('--run-dir 는 --resume 과 함께 기존 디렉터리에만', file=sys.stderr)
             return 2
     else:
-        run_dir = RUNS / 'e2' / f'{utc_id()}_{a.tag or "e2"}'
+        run_dir = E2_ROOT / f'{utc_id()}_{a.tag or "e2"}'
         if run_dir.exists():
             print(f'이미 있다: {run_dir}', file=sys.stderr)
             return 2
@@ -123,13 +166,22 @@ def main(argv=None) -> int:
             ['git', '-C', str(WS), 'status', '--porcelain'], capture_output=True,
             text=True).stdout, encoding='utf-8')
         (run_dir / 'trials_source.txt').write_text(str(trials_path) + '\n', encoding='utf-8')
+    if a.parallel > 1:
+        return run_parallel(a, argv if argv is not None else sys.argv[1:], run_dir)
     frozen = run_dir / 'trials.json'
     if json.loads(frozen.read_text(encoding='utf-8'))['trials'] != spec['trials']:
         print('시행 목록이 실행 디렉터리 사본과 다르다 — 거부', file=sys.stderr)
         return 2
     log(run_dir, f'start run_dir={run_dir} trials={trials_path} n={len(spec["trials"])} '
                  f'per_session={a.per_session}')
-    world, mapy = spec['world'], spec['map']
+    if spec.get('bundles'):
+        if a.spec_id not in spec['bundles']:
+            print(f'여러 묶음 목록이다: --spec-id 를 {sorted(spec["bundles"])} 중에서 준다',
+                  file=sys.stderr)
+            return 2
+        world, mapy = spec['bundles'][a.spec_id]['world'], spec['bundles'][a.spec_id]['map']
+    else:
+        world, mapy = spec['world'], spec['map']
     prefix = 'sb'[a.lane] if a.lane < 2 else f'l{a.lane}'
     domain = {0: 57, 1: 58}[a.lane]
     partition = {0: 'amr_ai_layopt_e2', 1: 'amr_ai_layopt_e2b'}[a.lane]
@@ -137,7 +189,7 @@ def main(argv=None) -> int:
         run_dir / 'sessions').exists() else 0
     consecutive = 0
     for s in range(sessions_done, sessions_done + a.max_sessions):
-        todo = pending(run_dir, spec, a.max_attempts, a.only, a.lane, a.lanes)
+        todo = pending(run_dir, spec, a.max_attempts, a.only, a.lane, a.lanes, a.spec_id)
         if not todo:
             log(run_dir, 'all trials finished')
             break
@@ -152,7 +204,7 @@ def main(argv=None) -> int:
                 '-e', f'E2_ONLY={a.only}', '-e', f'E2_MAX_ATTEMPTS={a.max_attempts}',
                 '-e', f'E2_DOMAIN={domain}', '-e', f'E2_PARTITION={partition}',
                 '-e', f'E2_LANE={a.lane}', '-e', f'E2_LANES={a.lanes}',
-                '-e', f'E2_MODULE={a.module}']
+                '-e', f'E2_MODULE={a.module}', '-e', f'E2_SPEC_ID={a.spec_id}']
         cmd = [GZ_SLOT, 'layopt-loc', 'docker', 'run', '--rm', '--name', name, '--gpus', 'all',
                '--shm-size=8g', '-v', f'{WS}:/ros2_ws', '-v', f'{RUNS}:/runs'] + envs + [
                IMAGE, 'bash', '/ros2_ws/layopt/loc/e2_container.sh']
@@ -178,7 +230,7 @@ def main(argv=None) -> int:
         else:
             log(run_dir, f'unexpected rc {rc} → stop')
             return 1
-    left = pending(run_dir, spec, a.max_attempts, a.only, a.lane, a.lanes)
+    left = pending(run_dir, spec, a.max_attempts, a.only, a.lane, a.lanes, a.spec_id)
     log(run_dir, f'end: pending {len(left)}')
     return 0 if not left else 1
 

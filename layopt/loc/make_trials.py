@@ -16,7 +16,7 @@ import json
 import math
 from pathlib import Path
 import sys
-from typing import Dict
+from typing import Dict, List
 
 import numpy as np
 
@@ -146,6 +146,113 @@ def exp1(bundle: Path, seed: int = EXP1_SEED, target: int = EXP1_TARGET,
             'trials': trials}
 
 
+# ------------------------------------------------------------------ 실험 4 (E2 부분, design §6)
+EXP4_SEED = 20261011
+EXP4_BUNDLES = ('v13-v20-v30-v40-v50', 'v14-v21-v30-v41-v51', 'v11-v21-v31-v41-v51')
+EXP4_COUNTS = {'dock': 2, 'charger': 2, 'queue': 3}   # 대기 슬롯은 전부(5)
+EXP4_FREE_PER_Q = 2                                   # 자유 공간: E0 k=0 마진 4분위 × 2
+EXP4_POOL = 400
+ERRATA = Path('/home/CAPYI_AI/runs/layopt/analysis/errata/20261009T181209Z_queue_blocked.json')
+
+
+def errata_queue_ids(spec_id: str) -> List[str]:
+    """정오표의 막힌 queue id (조정자 analysis/errata, 파일이 없으면 빈 목록)."""
+    if not ERRATA.exists():
+        return []
+    data = json.loads(ERRATA.read_text(encoding='utf-8'))
+    return data.get('drop_queue_ids', {}).get(spec_id, [])
+
+
+def exp4_bundle(bundle: Path, seed: int, pool_n: int = EXP4_POOL) -> Dict:
+    """
+    실험 4 E2 시행 목록 — 묶음 하나 60 시행 (사전 등록, 결과 전에 커밋).
+
+    자세 20 개 × k ∈ {0, 2, 4}:
+      대기 슬롯 5 전부, 도크 staging 2·충전 staging 2·queue 3 (정오표 id 제외) 을 시드로 고르고,
+      자유 공간 8 = 후보 pool_n 개(실험 1 과 같은 조건: 점유 ≥ 0.8 m, 이웃 4 자리 빔, 체류 지점 1.5 m 밖)의
+      E0 k=0 마진 4분위 × 2. 이웃·E0 값·trial 형식은 실험 1 과 같다. trial_id 앞에 묶음 표지를 붙인다.
+    순서는 묶음 안에서 시드로 섞는다 (묶음별로 따로 돈다: e2_campaign --spec-id).
+    """
+    rng = np.random.default_rng(seed)
+    layout = json.loads((bundle / 'layout.json').read_text(encoding='utf-8'))
+    spec_id = layout.get('spec_id', bundle.name)
+    tag = spec_id.replace('-', '')
+    m = mapio.load_map(bundle / 'map.yaml')
+    field = mapio.distance_field(m)
+    dps = layout['dwell_points']
+    drop = set(errata_queue_ids(spec_id))
+    poses = [(d['id'], d['kind'], (d['x'], d['y'], d['yaw']), d.get('neighbors', []), {})
+             for d in dps if d['kind'] == 'waiting']
+    for kind, n in EXP4_COUNTS.items():
+        cand = [d for d in dps if d['kind'] == kind and d['id'] not in drop]
+        pick = sorted(rng.choice(len(cand), size=min(n, len(cand)), replace=False).tolist())
+        poses += [(cand[i]['id'], kind, (cand[i]['x'], cand[i]['y'], cand[i]['yaw']),
+                   cand[i].get('neighbors', []), {}) for i in pick]
+    dwell_xy = np.array([[d['x'], d['y']] for d in dps])
+    pool = []
+    for pose in e0.sample_free_poses(field, pool_n, seed, bounds=layout.get('bounds')):
+        if np.min(np.hypot(dwell_xy[:, 0] - pose[0], dwell_xy[:, 1] - pose[1])) < 1.5:
+            continue
+        nbs = e0.free_space_neighbors(m, pose)
+        if len(nbs) < 4:
+            continue
+        r = e0.evaluate_pose(field, m.occ, pose, ())
+        if r['margin'] is None:
+            continue
+        pool.append((pose, nbs, r['margin']))
+    margins = np.array([q[2] for q in pool])
+    edges = np.quantile(margins, [0.25, 0.5, 0.75])
+    quart = np.searchsorted(edges, margins, side='right')
+    for q in range(4):
+        idx = np.nonzero(quart == q)[0]
+        pick = rng.choice(idx, size=min(EXP4_FREE_PER_Q, idx.size), replace=False)
+        for j, i in enumerate(sorted(pick.tolist())):
+            pose, nbs, mg = pool[i]
+            poses.append((f'free:q{q}_{j:02d}', 'free', pose, nbs,
+                          {'quartile': q, 'pool_margin_k0': mg}))
+    rows = []
+    for pid, kind, pose, nbs, extra in poses:
+        for k in K_LEVELS:
+            used = nbs[:k]
+            r = e0.evaluate_pose(field, m.occ, pose, used)
+            e0v = {key: r[key] for key in ('margin', 'inlier', 'inlier_raw', 'occluded_frac',
+                                           'rho_true', 'second', 'second_rho', 'second_dist',
+                                           'truth_rank')}
+            rows.append((pid, kind, pose, k, nbs, {**extra, 'k_used': len(used), 'e0': e0v,
+                                                   'spec_id': spec_id}))
+    order = rng.permutation(len(rows))
+    trials = []
+    for o, i in enumerate(order.tolist()):
+        pid, kind, pose, k, nbs, extra = rows[i]
+        t = _trial(o, pid, kind, pose, k, nbs, extra)
+        t['trial_id'] = f'{tag}_{t["trial_id"]}'
+        trials.append(t)
+    trials.sort(key=lambda t: t['order'])
+    meta = {'bundle': str(bundle), 'world': str(bundle / 'world.sdf'),
+            'map': str(bundle / 'map.yaml'), 'map_sha256': m.pgm_sha256,
+            'world_sha256': hashlib.sha256((bundle / 'world.sdf').read_bytes()).hexdigest(),
+            'pool_kept': len(pool), 'quartile_edges': [round(float(v), 4) for v in edges],
+            'errata_dropped_queue': sorted(drop), 'n_poses': len(poses),
+            'kinds': {k: sum(1 for p in poses if p[1] == k) for k in
+                      ('waiting', 'dock', 'charger', 'queue', 'free')}}
+    return {'spec_id': spec_id, 'meta': meta, 'trials': trials}
+
+
+def exp4(bundles_root: Path, spec_ids=EXP4_BUNDLES, seed: int = EXP4_SEED) -> Dict:
+    """실험 4 E2 시행 목록 (묶음 3 × 60). 묶음 i 의 시드 = seed + i."""
+    out = {'schema': SCHEMA, 'name': 'exp4-e2', 'map_kind': 'bundle-raster', 'seed': seed,
+           'k_levels': list(K_LEVELS), 'counts': {'waiting': 5, **EXP4_COUNTS,
+                                                  'free_per_quartile': EXP4_FREE_PER_Q},
+           'e0_params': {'beams': 720, 'noise': 0.03, 'scan_seed': 0, 'inlier_dist': 0.2},
+           'bundles': {}, 'trials': [],
+           'created': dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}
+    for i, sid in enumerate(spec_ids):
+        b = exp4_bundle(Path(bundles_root) / sid, seed + i)
+        out['bundles'][sid] = {**b['meta'], 'seed': seed + i}
+        out['trials'] += b['trials']
+    return out
+
+
 def main(argv=None) -> int:
     """명령줄."""
     ap = argparse.ArgumentParser()
@@ -158,11 +265,18 @@ def main(argv=None) -> int:
     x.add_argument('--seed', type=int, default=EXP1_SEED)
     x.add_argument('--target', type=int, default=EXP1_TARGET)
     x.add_argument('--pool', type=int, default=EXP1_POOL)
+    y = sub.add_parser('exp4')
+    y.add_argument('--bundles-root', default='/home/CAPYI_AI/runs/layopt/bundles')
+    y.add_argument('--spec-ids', default=','.join(EXP4_BUNDLES))
+    y.add_argument('--seed', type=int, default=EXP4_SEED)
+    y.add_argument('--out', required=True)
     a = ap.parse_args(argv)
     if a.cmd == 'smoke':
         spec = smoke()
-    else:
+    elif a.cmd == 'exp1':
         spec = exp1(Path(a.bundle), a.seed, a.target, a.pool)
+    else:
+        spec = exp4(Path(a.bundles_root), a.spec_ids.split(','), a.seed)
     out = Path(a.out)
     if out.exists():
         print(f'이미 있다: {out}', file=sys.stderr)
