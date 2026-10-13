@@ -165,6 +165,42 @@ rtabmap.md §4.3 의 4.62 / 0.746 / 0.548 과 같다. 이 검증은 공개된 �
   (깨끗한 후보 3 → ATE 중앙값), rtabmap3d_noimu **r1** (깨끗한 후보 0 → 누락이 가장 적은 재생 = 7 장, "실패 재생의 지도").
   `maps/selection.json`, 지도 sha256 은 `maps/` 아래.
 
+### 이어받기 (2026-10-13 22시, 새 b2-eval 인스턴스) — 지표를 보기 전 (rc·누락·필터 버림만)
+
+- **끊긴 경위** [측정]: 구동기·pool·재생 컨테이너 4 개가 **2026-10-09 07:07:46 KST 에 함께 끊겼다** — 네 재생의 `env.txt`
+  `launch_exit` 가 07:07:46, `driver.log` 에 END·REL 없음, `cpu_slots.log` 에 b2-eval REL 없음, 그 직전 `cpu_samples.jsonl` loadavg 218.
+  서버 재부팅(2026-10-10 17:43)보다 **하루 반 앞**이다. 앞선 인스턴스가 사용량 한도로 끝난 시각과 같아, 세션 종료가 nohup setsid
+  자식까지 거둔 것으로 본다 **[추정]** (journal 에 OOM 기록 없음). 교훈: setsid 구동기도 감독 세션과 함께 죽을 수 있다 → 재개
+  가능 설계(DONE 건너뜀)가 이번에 그대로 쓰였다.
+- **재고** (`runs/b24/b2-eval/resume/inventory_before.jsonl`, `tmp/inventory.py` — 작업 목록 301 × 원자료, `peval.drops_of`):
+  E2 완결 66 / 144 (주 행 r0·r1 64 + map_long 의 slam_toolbox·rtabmap3d_noimu r2), 부분 4, 미시작 74. 참고·보조 행(liosam_loop_re·
+  liosam_oracle) 0. E3(b) 정답 자세 DB 1 / 85 완결, E4 0 / 72. 완결 66 개 모두 rc 0.
+  주 행 (r0 / r1 / r2 — "완" = DONE rc 0, **실패** = 사전 등록 실패 규칙의 누락·메시지 필터 버림 > 0, "부분" = 완결 표지 없음):
+
+| bag | slam_toolbox | rtabmap2d_noimu | rtabmap3d_noimu | liosam_planar |
+|---|---|---|---|---|
+| s3_aisle_a1 | 완 **실패**(필터 1) / 완 **실패**(필터 1) / — | 완 **실패**(누락 2) / 완 **실패**(누락 1) / — | 완 **실패**(누락 1) / 완 **실패**(누락 1) / — | 완 / 완 / — |
+| s1_seed1_a1 | 완 / 완 / — | 완 / 완 / 부분 | 완 / 완 / — | 완 / 완 / 부분 |
+| s1_seed3_a2 | 완 / 완 / — | 완 / 완 / — | 완 / 완 / — | 완 / 완 / — |
+| s1_seed2x_a1 | 완 / 완 / — | 완 / 완 / — | 완 / 완 / — | 완 / 완 / — |
+| s6_open_a3 | 완 / 완 / — | 완 / 완 / — | 완 / 완 / — | 완 / 완 / — |
+| s6_queue_a1 | 완 / 완 / — | 완 / 완 / — | 완 / 완 / — | 완 / 완 / — |
+| s6_wall_a1 | 완 **실패**(필터 1) / 완 **실패**(필터 1) / — | 완 **실패**(누락 3) / 완 **실패**(누락 3) / — | 완 **실패**(누락 3) / 완 **실패**(누락 3) / — | 완 **실패**(누락 1) / 완 **실패**(누락 1) / — |
+| map_long_a1 | 완 / 완 / 완 | 완 **실패**(누락 1) / 완 **실패**(누락 1) / 부분 | 완 **실패**(누락 10) / 완 **실패**(누락 7) / 완 **실패**(누락 12) | 완 / 완 / 부분 |
+
+- 눈에 띄는 것 (해석은 결과 절에서): s3_aisle·s6_wall 두 bag 의 실패가 **r0·r1 에서 같은 수로 되풀이**되고 행을 가로지른다
+  (s6_wall: RTAB-Map 2D·3D 누락 3·3, LIO-SAM 1, slam_toolbox 필터 1). 부하에 따른 우연이 아니라 bag 에 묶인 사건일 수 있다 —
+  사전 등록 규칙대로 실패로 세고 평균에서 빼지 않는다. s3_aisle rtabmap2d 의 "치명" 1 은 `aborting odometry update` (같은 장의
+  `Odom: ratio=0` 1 건). 원인 조사는 E2 가 끝난 뒤 **보충(사전 등록 외)** 으로 한다.
+- **조치**: 부분 재생 4 개(map_long rtabmap2d_noimu·liosam_planar r2, s1_seed1 rtabmap2d_noimu·liosam_planar r2)를 지우지 않고
+  `<출력>.aborted.20261013T220358` 로 옮겼다 (안에 `ABORTED.txt` 사유, 낡은 claim 의 owner 를 `claim_owner.txt` 로). claim 디렉터리는
+  손으로 지웠다 — 재부팅 뒤 pid 가 재사용되면 구동기의 "주인 살아 있음" 판정이 틀릴 수 있어서다. 끝난 66 재생은 다시 돌리지 않는다:
+  구동기는 `DONE` 이 있는 작업을 집지 않는다 (`is_done`; 다시 띄우기 전 `eval_driver.py status` = e2 done 66 / todo 78, 첫 후보 6 개가
+  모두 r2 미완결 작업임을 확인). `plans/*.json` 은 지금 코드의 `plan_e2/e3/e4()` 출력과 같다 (301 작업 비교).
+- **다시 띄움**: 2026-10-13 22:04 KST, `bin/eval_driver_888a5c4.py` (= 커밋 888a5c4 의 `eval_driver.py`, sha256 `de421b71…`), k = 2 / 슬롯
+  (control.json 그대로), 부하 규칙 그대로 (시작 loadavg 22.9). 남은 순서 = E2 주 행 r2 → 참고 행 → E3(b) → E2 보조(오라클) → E4.
+  남은 재생 234 개, 직렬 어림 약 52 h → 동시 4 로 약 13 h (+ 부하 대기).
+
 ## 결과
 
 (E2 끝난 뒤 채운다)
