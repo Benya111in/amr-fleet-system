@@ -150,6 +150,15 @@ E2 항목의 규칙이 01:25 에 발동해 k = 2 / 슬롯 (동시 4) 이다 (map
 E3(b) 85 재생 ≈ 직렬 14 h → 동시 4 면 약 3.5 h (+ 부하 대기). E4 72 재생 ≈ 직렬 17.5 h → 약 4.4 h. E2 뒤 E3(b) → E4 순서
 (우선순위 45·60). 분석 약 1 h.
 
+### 이어받기 뒤 실행 중 기록 (2026-10-13, E3(b)·E4 재생 0 건 상태)
+
+- 구동기가 2026-10-09 07:07 에 끊겨 E3(b) 는 정답 자세 DB 1 건만, E4 는 0 건이었다 (E2 항목 「이어받기」 절). 2026-10-13 22:04 에 다시 띄웠다.
+- **도구 추가 (E3(b) 결과 전)**: 위 「위치추정 실패」 의 "2D 의 kidnap_monitor LOST 는 out_bag 의 `localization/lost` 로 따로 센다" 를
+  셀 도구가 없었다 (peval.py 에 없음). `src/amr_slam3d/scripts/loc_lost.py` (sha256 `c4859fa8…`) — 재생마다 `localization/lost` 메시지 수·
+  True 수·False→True 전이(LOST 사건) 수, `kidnap_status` 마지막 상태, `amcl_pose` 수. 토픽이 없으면 None(미측정). 정의는 이 항목의 문구
+  그대로이고 판정(L1·L2)에는 들어가지 않는 별도 셈이다. 시험 `test_loc_lost.py` 2 개. 파일럿 bag(P 데이터 밖) 배포 사슬 두 재생에서
+  lost 1 메시지(False)·사건 0·마지막 상태 TRACKING·amcl_pose 513 으로 돈다 (`validate/` 와 같은 범주의 도구 확인).
+
 ## 결과
 
 (E3(b)·E4 끝난 뒤 채운다)
