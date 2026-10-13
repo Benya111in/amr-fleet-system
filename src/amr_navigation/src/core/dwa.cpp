@@ -97,7 +97,8 @@ YieldConfig DwaPlanner::yieldConfig() const
 
 std::pair<double, double> DwaPlanner::windowCenter(const DwaInput & in) const
 {
-  if (in.has_last && std::abs(in.v_last - in.v_meas) <= config_.window_reset_v &&
+  if (!config_.window_center_measured && in.has_last &&
+    std::abs(in.v_last - in.v_meas) <= config_.window_reset_v &&
     std::abs(in.w_last - in.w_meas) <= config_.window_reset_w)
   {
     return {in.v_last, in.w_last};
@@ -159,6 +160,9 @@ std::vector<std::pair<double, double>> DwaPlanner::sampleVelocities(
     for (double w : ws) {
       out.emplace_back(v, w);
     }
+  }
+  if (!config_.brake_candidate) {   // M4-d 절제: 교과서 격자만
+    return out;
   }
   // 제동 후보: 최대 감속, ω 를 0 쪽으로 (항상 창 안)
   const auto & L = config_.limits;
@@ -432,6 +436,43 @@ void fillDiag(
 }
 }  // namespace
 
+void DwaPlanner::textbookTerms(
+  DwaCandidate * c, const DwaInput & in, const std::vector<Pose2D> & path,
+  const std::vector<double> & cum_s, double s_robot, bool aligning, double goal_yaw,
+  double v_des_goal, double clear_abs) const
+{
+  const auto & L = config_.limits;
+  // 제동점: 다음 주기 동안 (v, ω) 를 유지한 뒤 최대 감속으로 서는 자리 (Fox 1997 의 방향 평가
+  // 위치). 곡률은 유지한다. v ≈ 0 이면 회전만: ω·Δt_c + ω|ω|/(2α).
+  Pose2D pb = in.pose;
+  const double av = std::abs(c->v);
+  if (av > 1e-6) {
+    const double sb = av * config_.control_period +
+      c->v * c->v / (2.0 * std::max(1e-6, L.decel_lim_x));
+    pb = integrateArc(in.pose, c->v, c->w, sb / av);
+  } else {
+    pb.theta = in.pose.theta + c->w * config_.control_period +
+      c->w * std::abs(c->w) / (2.0 * std::max(1e-6, L.acc_lim_theta));
+  }
+  double heading = 0.0;
+  if (!path.empty()) {
+    const Pose2D g = interpolateAt(path, cum_s, s_robot + config_.textbook_lookahead);
+    const double dx = g.x - pb.x;
+    const double dy = g.y - pb.y;
+    heading = (aligning || std::hypot(dx, dy) <= 1e-3) ?
+      std::abs(wrapAngle(goal_yaw - pb.theta)) / kPi :
+      std::abs(wrapAngle(std::atan2(dy, dx) - pb.theta)) / kPi;
+  }
+  const double v_span = std::max(1e-6, L.max_vel_x - L.min_vel_x);
+  const double v_des = aligning ? 0.0 : v_des_goal;
+  c->terms.heading = heading;
+  c->terms.clearance = std::min(1.0, clear_abs / 252.0);
+  c->terms.velocity = std::abs(v_des - c->v) / v_span;
+  c->terms.path = 0.0;
+  c->terms.off_path = 0.0;
+  c->terms.oscillation = 0.0;
+}
+
 DwaResult DwaPlanner::compute(
   const DwaInput & in, const FootprintCostFn & footprint_cost,
   const PointCostFn & point_cost) const
@@ -645,13 +686,18 @@ DwaResult DwaPlanner::compute(
 
   // 목표 속도: 접근 감속 + 현재 헤딩 오차가 크면 감속 (경로가 뒤에 있으면 제자리 회전 유도)
   double v_des = v_cap;
-  if (std::isfinite(d_goal)) {
+  if (std::isfinite(d_goal) && config_.goal_approach == 0) {
     // 목표 접근: 저크·지연을 넣은 정지거리의 역함수
     // (사다리꼴 √(2ad) 는 하류 저크 필터 때문에 지나친다)
     v_des = std::min(
       v_des,
       SpeedProfile::maxSpeedForStop(d_goal, L.decel_lim_x, L.jerk_lim_x, config_.approach_latency));
+  } else if (std::isfinite(d_goal) && config_.goal_approach == 2) {
+    // M2 절제 (보조): 사다리꼴 — 저크·지연 없이 "지금 감속하면 선다"
+    v_des = std::min(v_des, std::sqrt(2.0 * std::max(0.0, L.decel_lim_x) * d_goal));
   }
+  // M1 절제(교과서 속도 항)가 쓰는 목표 속도: 접근 법칙(M2)까지만, 헤딩 감속(M1-d)은 뺀다
+  const double v_des_goal = v_des;
   if (!path.empty()) {
     const double ell0 = config_.heading_lookahead_min;
     const Pose2D tgt0 = interpolateAt(path, cum_s, robot_proj.s + ell0);
@@ -678,7 +724,7 @@ DwaResult DwaPlanner::compute(
     DwaCandidate c;
     c.v = samples[si].first;
     c.w = samples[si].second;
-    c.is_brake = (si + 1 == samples.size());
+    c.is_brake = config_.brake_candidate && (si + 1 == samples.size());
     const double T = simTime(c.v);
     if (config_.sustained_sampling) {
       // R1: (c.v, c.w) 는 **목표 명령**이고 롤아웃이 가속·저크로 거기까지 램프한다.
@@ -793,12 +839,14 @@ DwaResult DwaPlanner::compute(
     }
     // 여유(기준 경로 대비 초과 비용)와 경로 이탈
     double clear = 0.0;
+    double clear_abs = 0.0;   // M1·M1-c 절제용 절대 비용 (기본 동작에는 쓰이지 않는다)
     double path_sum = 0.0;
     double cte_max = 0.0;
     std::size_t hint = robot_proj.segment;
     for (std::size_t k = 1; k < c.poses.size(); ++k) {
       const Pose2D & p = c.poses[k];
       const double cp = point_cost(p.x, p.y);
+      clear_abs = std::max(clear_abs, cp);
       double cg = 0.0;
       if (!path.empty()) {
         const double s_ref = robot_proj.s + c.arc[k];
@@ -813,7 +861,7 @@ DwaResult DwaPlanner::compute(
       clear = std::max(clear, std::max(0.0, cp - cg));
     }
     const std::size_t nk = std::max<std::size_t>(1, k_eval);
-    c.terms.clearance = std::min(1.0, clear / 252.0);
+    c.terms.clearance = std::min(1.0, (config_.relative_clearance ? clear : clear_abs) / 252.0);
     c.terms.path = path.empty() ? 0.0 : path_sum / static_cast<double>(nk);
     c.max_cte = cte_max;
     // 이탈 한계 초과 벌점: 한계는 max(d_off, 지금 로봇의 이탈) — 이미 밖이면 그 거리까지는 벌하지
@@ -926,6 +974,9 @@ DwaResult DwaPlanner::compute(
       c.terms.escape = block_drift ? 1.0 :
         std::clamp(1.0 - beta_dir / std::max(1e-6, rc), 0.0, directed ? 2.0 : 1.0);
     }
+    if (config_.textbook_cost) {
+      textbookTerms(&c, in, path, cum_s, robot_proj.s, aligning, goal_yaw, v_des_goal, clear_abs);
+    }
     c.cost = W.heading * c.terms.heading + W.clearance * c.terms.clearance +
       W.velocity * c.terms.velocity + W.path * c.terms.path +
       W.oscillation * c.terms.oscillation + W.dynamic * c.terms.dynamic +
@@ -1031,6 +1082,13 @@ DwaResult DwaPlanner::compute(
     // (sustained_sampling 이 꺼져 있으면 v_emit == v 이므로 종전과 같다).
     res.v = best->v_emit;
     res.w = best->w_emit;
+  } else if (!config_.brake_candidate) {
+    // M4-d 절제: 허용 속도가 없으면 정지 명령 (하류 프로파일러가 저크 한계로 감속한다)
+    res.found = false;
+    res.best = DwaCandidate{};
+    res.best.poses = {in.pose};
+    res.v = 0.0;
+    res.w = 0.0;
   } else {
     // 유효 샘플 없음 → 제동 후보 (마지막 샘플)
     res.found = false;

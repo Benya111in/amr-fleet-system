@@ -201,6 +201,27 @@ struct DwaConfig
   double recenter_step{0.025};      // [m] 탐색 간격 (지역 코스트맵 해상도)
   int recenter_smooth{4};           // 이동량 이동평균 반폭 [경로 점]
   double recenter_goal_keep{0.5};   // [m] 목표에서 이 거리 안은 옮기지 않는다
+  // --- 절제 스위치 (docs/research/dwa-ablation/prereg.md). 기본값이면 배포 동작과 비트
+  //     동일하다 (test_dwa_ablation.cpp DefaultsAreBitIdenticalToBaselineCore). 끈 쪽이
+  //     교과서(Fox, Burgard & Thrun 1997) 쪽이다. M4-a(속도별 지평)는 기존 sim_time_min =
+  //     sim_time_max, M5 는 recenter_narrow, M1-e 는 path_eval_time ≤ 0 으로 끈다.
+  /// M1: 비용을 교과서 3 항으로 바꾼다 — 방향(제동점 헤딩과 목표점 방향의 차 / π),
+  /// 여유(롤아웃 최대 절대 비용 / 252), 속도(|v_des − v| / v_span; v_des = v_cap 을
+  /// 목표 접근 법칙(M2)으로만 깎은 값, 헤딩 감속 없음, 정렬 구간에서 0).
+  /// 제동점 = 후보 원호를 따라 |v|·Δt_c + v²/(2·a_dec) 간 자세 (Fox 의 "다음 주기 +
+  /// 최대 감속"), 목표점 = 로봇 투영점에서 경로를 따라 textbook_lookahead 앞.
+  /// 경로·이탈·진동 항은 0 (동적 항·탈출 항은 M6·M7 몫이라 그대로 둔다).
+  bool textbook_cost{false};
+  double textbook_lookahead{1.2};   // [m]
+  /// M1-c: false 면 여유 항이 기준 경로 비용을 빼지 않는다 (절대 비용 max_k c(p_k) / 252).
+  bool relative_clearance{true};
+  /// M2: 목표 접근 법칙 — 0 저크·지연 포함 정지거리 역함수(배포), 1 없음(교과서),
+  /// 2 사다리꼴 √(2·a_dec·d_goal).
+  int goal_approach{0};
+  /// M3: true 면 창 중심이 항상 측정값이다 (교과서). false 면 직전 명령 + 재설정 규칙.
+  bool window_center_measured{false};
+  /// M4-d: false 면 제동 후보를 넣지 않고, 유효 샘플이 없으면 (0, 0) 을 낸다 (교과서).
+  bool brake_candidate{true};
 };
 
 struct DwaCostTerms
@@ -372,6 +393,12 @@ public:
   std::vector<Pose2D> recenterPath(
     const std::vector<Pose2D> & path, const PointCostFn & point_cost, bool end_is_goal,
     std::size_t * shifted = nullptr) const;
+
+  /// M1 절제 (textbook_cost): 교과서 3 항으로 c->terms 를 덮어쓴다. 경로·이탈·진동 항은 0.
+  void textbookTerms(
+    DwaCandidate * c, const DwaInput & in, const std::vector<Pose2D> & path,
+    const std::vector<double> & cum_s, double s_robot, bool aligning, double goal_yaw,
+    double v_des_goal, double clear_abs) const;
 
 private:
   DwaConfig config_;

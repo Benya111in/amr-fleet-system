@@ -5,6 +5,7 @@
 #include <cmath>
 #include <limits>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -208,6 +209,25 @@ void DWAController::configure(
   c.recenter_smooth = param(node, p + "recenter_smooth", 4);
   c.recenter_goal_keep = param(node, p + "recenter_goal_keep", 0.5);
   c.recenter_step = costmap_ros_->getCostmap()->getResolution();   // 탐색 간격 = 지역 코스트맵 셀
+  // 절제 스위치 (docs/research/dwa-ablation/prereg.md). 기본값 = 배포 동작 (비트 동일).
+  c.textbook_cost = param(node, p + "textbook_cost", false);
+  c.textbook_lookahead = param(node, p + "textbook_lookahead", 1.2);
+  c.relative_clearance = param(node, p + "relative_clearance", true);
+  const std::string approach =
+    param(node, p + "goal_approach", std::string("jerk_latency"));
+  if (approach == "jerk_latency") {
+    c.goal_approach = 0;
+  } else if (approach == "none") {
+    c.goal_approach = 1;
+  } else if (approach == "trapezoid") {
+    c.goal_approach = 2;
+  } else {
+    throw std::runtime_error(
+            "DWAController: goal_approach must be jerk_latency|none|trapezoid, got '" +
+            approach + "'");
+  }
+  c.window_center_measured = param(node, p + "window_center_measured", false);
+  c.brake_candidate = param(node, p + "brake_candidate", true);
   const double robot_radius = param(node, p + "robot_radius", -1.0);
   c.robot_radius = robot_radius > 0.0 ? robot_radius :
     core::FootprintChecker::circumscribedRadius(footprintOf(*costmap_ros_));
@@ -246,6 +266,13 @@ void DWAController::configure(
     node->get_logger(), "  표본: %s (지속 목표 명령 + 램프 롤아웃 = %s)",
     c.sustained_sampling ? "sustained" : "1주기 창",
     c.sustained_sampling ? "on" : "off");
+  RCLCPP_INFO(
+    logger_,
+    "  절제 스위치: textbook_cost %d, relative_clearance %d, goal_approach %d, "
+    "window_center_measured %d, brake_candidate %d, sim_time [%.2f, %.2f], recenter %d, "
+    "path_eval_time %.2f",
+    c.textbook_cost, c.relative_clearance, c.goal_approach, c.window_center_measured,
+    c.brake_candidate, c.sim_time_min, c.sim_time_max, c.recenter_narrow, c.path_eval_time);
 }
 
 void DWAController::cleanup()
