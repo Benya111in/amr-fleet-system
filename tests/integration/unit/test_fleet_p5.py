@@ -558,3 +558,77 @@ def test_exp_summary_prefers_the_done_tags(tmp_path):
         {'tags': {'0': 'p5_C1_p1_centralr3', '1': 'p5_C1_p1_distributedr3'}}))
     res = A.exp_summary('C1', str(tmp_path))
     assert res['n_pairs_valid'] == 1 and res['compare']['completed']['diffs'] == [-2]
+
+
+# ------------------------------------------------------- 갈래별 기동 재시도 (2026-10-13 23:50)
+def _fake_driver(tmp_path, script):
+    """script: 태그 → (posted, valid, load_abort). 없으면 (5, True, False)."""
+    import argparse
+    import p5_driver as D
+    a = argparse.Namespace(raw=str(tmp_path), repo=str(REPO), order='C2', concurrent=False,
+                           t_start=60.0, pair_range='1-99', no_new_pair_after='',
+                           arm_retry_max=6)
+    drv = D.Driver(a)
+    launched = []
+
+    def run_arm(exp, k, i, tag, dom, res):
+        launched.append(tag)
+        posted, _, load = script.get(tag, (5, True, False))
+        d = tmp_path / tag
+        d.mkdir()
+        (d / 'clock.json').write_text(json.dumps({'posted': posted, 'state': 'END'}))
+        (d / 'faults.jsonl').write_text(json.dumps({'scheduled': None, 'action': 'start'}) + '\n')
+        if load:
+            res['load_abort'] = True
+        res['rc'] = 0
+
+    def analyze(exp, k, tag, res, label, mode):
+        return script.get(tag, (5, True, False))[1] if (tmp_path / tag / 'clock.json').exists() \
+            else False
+
+    drv.run_arm, drv.analyze, drv.wait_quiet = run_arm, analyze, lambda key: True
+    return drv, launched
+
+
+def test_startup_failure_retries_only_that_arm(tmp_path):
+    script = {'p5_C2_p1_central': (0, False, False), 'p5_C2_p1_centralr2': (0, False, False)}
+    drv, launched = _fake_driver(tmp_path, script)
+    assert drv.run_pair('C2', 1, 0, (21, 23)) == 'ok'
+    assert launched == ['p5_C2_p1_central', 'p5_C2_p1_centralr2', 'p5_C2_p1_centralr3',
+                        'p5_C2_p1_distributed']
+    done = json.loads((tmp_path / 'pairs' / 'C2_p1.done').read_text())
+    assert set(done['tags'].values()) == {'p5_C2_p1_centralr3', 'p5_C2_p1_distributed'}
+
+
+def test_failure_after_tasks_invalidates_pair_and_skips_second_arm(tmp_path):
+    drv, launched = _fake_driver(tmp_path, {'p5_C2_p2_distributed': (3, False, False)})
+    assert drv.run_pair('C2', 2, 1, (25, 27)) == 'invalid'      # 짝 2 는 분산(1 번 갈래)이 먼저
+    assert launched == ['p5_C2_p2_distributed']
+    assert (tmp_path / 'p5_C2_p2_central' / 'ABORTED.txt').exists()
+    assert not (tmp_path / 'pairs' / 'C2_p2.done').exists()
+
+
+def test_scheduled_fault_means_not_a_startup_failure(tmp_path):
+    drv, _ = _fake_driver(tmp_path, {})
+    d = tmp_path / 'p5_C3_p1_dist_dead'
+    d.mkdir()
+    (d / 'clock.json').write_text(json.dumps({'posted': 0}))
+    (d / 'faults.jsonl').write_text(json.dumps({'scheduled': -30.0, 'action': 'kill'}) + '\n')
+    assert drv.pre_task('p5_C3_p1_dist_dead') is False
+    (d / 'faults.jsonl').write_text('')
+    assert drv.pre_task('p5_C3_p1_dist_dead') is True
+    (d / 'events.jsonl').write_text(json.dumps({'k': 'post', 't': 60.0}) + '\n')
+    assert drv.pre_task('p5_C3_p1_dist_dead') is False
+
+
+def test_repeated_startup_failure_halts_and_load_abort_skips(tmp_path):
+    script = {f'p5_C2_p1_distributed{s}': (0, False, False)
+              for s in ['', 'r2', 'r3', 'r4', 'r5', 'r6']}
+    drv, launched = _fake_driver(tmp_path, script)
+    assert drv.run_pair('C2', 1, 0, (21, 23)) == 'halt'
+    assert launched.count('p5_C2_p1_central') == 1 and len(launched) == 7
+    (tmp_path / 'x').mkdir()
+    drv2, launched2 = _fake_driver(tmp_path / 'x', {'p5_C2_p1_central': (5, False, True)})
+    assert drv2.run_pair('C2', 1, 0, (21, 23)) == 'load'
+    assert launched2 == ['p5_C2_p1_central']
+    assert (tmp_path / 'x' / 'p5_C2_p1_distributed' / 'ABORTED.txt').exists()

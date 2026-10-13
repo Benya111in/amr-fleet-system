@@ -389,6 +389,8 @@ class Driver:
             return 'stop'
         if past_deadline(self.a.no_new_pair_after):      # 시작 조건을 기다리는 사이에 마감이 지났다
             return 'deadline'
+        if not self.a.concurrent and self.a.arm_retry_max > 0:
+            return self.run_pair_arms(exp, k, first, doms, key, e)
         order = [first, 1 - first]
         tags = {i: self.tag(exp, k, n, e['arms'][i]['label']) for i in (0, 1)}
         results = {0: {}, 1: {}}
@@ -427,6 +429,102 @@ class Driver:
             return 'ok'
         return 'invalid'
 
+    def free_attempt(self, exp, k, label):
+        """그 갈래의 다음 시도 번호 (원자료에 없는 첫 태그)."""
+        n = 1
+        while os.path.exists(os.path.join(self.raw, self.tag(exp, k, n, label))):
+            n += 1
+        return n
+
+    def pre_task(self, tag):
+        """
+        갈래가 작업 게시 · 예정 장애 전에 끝났는가 (기동 무효).
+
+        clock.json 의 posted 가 0, events.jsonl 에 작업 게시(post) 사건이 없고,
+        faults.jsonl 에 예정 장애(scheduled 있는 것)가 없을 때만 참이다.
+        외생 입력이 하나도 들어가지 않았으므로 그 갈래만 다시 띄워도 짝 비교 구간과 무관하다.
+        """
+        d = os.path.join(self.raw, tag)
+        try:
+            with open(os.path.join(d, 'clock.json'), encoding='utf-8') as f:
+                if (json.load(f).get('posted') or 0) > 0:
+                    return False
+        except (OSError, ValueError):
+            pass
+        for name, test in (('events.jsonl', lambda r: r.get('k') == 'post'),
+                           ('faults.jsonl', lambda r: r.get('scheduled') is not None)):
+            path = os.path.join(d, name)
+            if not os.path.isfile(path):
+                continue
+            with open(path, encoding='utf-8') as f:
+                for line in f:
+                    try:
+                        if test(json.loads(line)):
+                            return False
+                    except ValueError:
+                        continue
+        return True
+
+    def skip_arm(self, exp, k, i, why):
+        """짝의 다른 갈래를 띄우지 않았음을 원자료 · 실행 목록에 남긴다."""
+        e = p5_plan.EXPERIMENTS[exp]
+        arm = e['arms'][i]
+        tag = self.tag(exp, k, self.free_attempt(exp, k, arm['label']), arm['label'])
+        os.makedirs(os.path.join(self.raw, tag), exist_ok=True)
+        with open(os.path.join(self.raw, tag, 'ABORTED.txt'), 'w', encoding='utf-8') as f:
+            f.write(f'띄우지 않음: {why} — {now_iso()}\n')
+        self.analyze(exp, k, tag, {'rc': 'skipped'}, arm['label'], arm['mode'])
+
+    def run_pair_arms(self, exp, k, first, doms, key, e):
+        """
+        차례로 도는 짝 — 갈래별 기동 재시도 (결과 뒤 변경 — 운영, 노트 2026-10-13 23:50).
+
+        갈래가 작업 게시 · 예정 장애 전에 무효로 끝나면(/clock 정지 · 준비 시간 초과 등, pre_task) **그 갈래만** 새 태그로 다시
+        띄운다 — 같은 갈래 연속 arm_retry_max 번이면 'halt' (그 실험을 멈추고 진단). 작업 게시 뒤 무효는 사전 등록대로 짝 무효
+        ('invalid', 짝째로 다시)이고, 첫 갈래가 그렇게 끝나면 둘째 갈래는 띄우지 않는다 (어차피 버릴 갈래). 부하 중단은 그대로.
+        """
+        order = [first, 1 - first]
+        tags = {}
+        self.log(f'{key} 시작 (갈래별 기동 재시도): ' + ', '.join(
+            f'{e["arms"][i]["label"]}(도메인 {doms[j]})' for j, i in enumerate(order)) + ' 차례로')
+        for j, i in enumerate(order):
+            arm = e['arms'][i]
+            fails = 0
+            while True:
+                tag = self.tag(exp, k, self.free_attempt(exp, k, arm['label']), arm['label'])
+                res = {}
+                self.log(f'{key} 갈래 {tag} (도메인 {doms[j]}) 시작')
+                self.run_arm(exp, k, i, tag, doms[j], res)
+                valid = self.analyze(exp, k, tag, res, arm['label'], arm['mode'])
+                if res.get('load_abort'):
+                    if j == 0:
+                        self.log(f'{key}: 첫 갈래가 부하 중단 — 둘째 갈래를 띄우지 않는다')
+                        self.skip_arm(exp, k, order[1], '첫 갈래 부하 중단')
+                    self.log(f'{key} 부하 중단 — 짝 무효, 연속 실패 수에 넣지 않고 다시 돈다')
+                    return 'load'
+                if valid:
+                    tags[i] = tag
+                    break
+                if res.get('rc') == 'plan':
+                    return 'invalid'
+                if self.pre_task(tag):
+                    fails += 1
+                    if fails >= self.a.arm_retry_max:
+                        self.log(f'{key}: {arm["label"]} 기동 무효 {fails} 번 연속 — 이 실험을 멈추고 진단')
+                        return 'halt'
+                    self.log(f'{tag} 기동 무효 (작업 게시 · 예정 장애 전) — 이 갈래만 다시 띄운다 '
+                             f'(연속 {fails})')
+                    continue
+                if j == 0:
+                    self.log(f'{key}: 첫 갈래 {tag} 가 작업 게시 뒤 무효 — 둘째 갈래를 띄우지 않는다')
+                    self.skip_arm(exp, k, order[1], f'첫 갈래 {tag} 무효 (작업 게시 뒤)')
+                self.log(f'{key} 끝: {tag} 무효 (작업 게시 뒤) — 짝 무효')
+                return 'invalid'
+        with open(os.path.join(self.raw, 'pairs', key + '.done'), 'w', encoding='utf-8') as f:
+            f.write(json.dumps({'tags': tags, 'ended': now_iso()}))
+        self.log(f'{key} 끝: 유효 {[tags[i] for i in (0, 1)]}')
+        return 'ok'
+
     @staticmethod
     def tag(exp, k, n, label):
         return f'p5_{exp}_p{k}_{label}' + ('' if n == 1 else f'r{n}')
@@ -461,6 +559,9 @@ class Driver:
                     return 0
                 if r == 'load':
                     continue                    # 환경(다른 사용자 부하) 탓 — 시작 조건을 다시 기다린다
+                if r == 'halt':
+                    stopped_exp.add(exp)
+                    break
                 fails += 1
                 if fails >= 3:
                     self.log(f'{exp}_p{k}: 무효 3 번 연속 — 이 실험을 멈추고 진단 (재시도 안 함)')
@@ -481,6 +582,8 @@ def main(argv=None):
     ap.add_argument('--order', default=','.join(p5_plan.ORDER))
     ap.add_argument('--t-start', type=float, default=p5_plan.T_START)
     ap.add_argument('--concurrent', action='store_true')
+    ap.add_argument('--arm-retry-max', type=int, default=6,
+                    help='차례로 도는 짝에서 작업 게시 전 무효 갈래만 다시 띄우는 연속 상한 (0 = 짝째로, 옛 규칙)')
     ap.add_argument('--no-new-pair-after', default='',
                     help='이 시각(ISO 8601, 시간대 포함) 뒤에는 새 짝을 시작하지 않는다 (줄이는 규칙)')
     ap.add_argument('--pair-range', default='1-99', help='짝 번호 범위 a-b (파일럿 단독/동시 나누기)')
