@@ -126,6 +126,8 @@ class KinematicSim(Node):
         self.v_axis = ServoAxis(tau, delay, p('max_linear_accel', 1.0).value, self.dt)
         self.w_axis = ServoAxis(tau, delay, p('max_angular_accel', 2.0).value, self.dt)
         self.odom_noise = p('odom_noise_v', 0.0).value
+        # 절제 실험 잡음 조건 (docs/research/dwa-ablation/prereg.md): 기본값이면 종전과 같다
+        self.odom_noise_w = p('odom_noise_w', 0.0).value
         self.beams = int(p('scan_beams', 720).value)
         self.scan_range = p('scan_range', 12.0).value
         self.scan_range_min = p('scan_range_min', 0.10).value
@@ -138,7 +140,7 @@ class KinematicSim(Node):
         self.obstacles = [mov[i:i + 5] for i in range(0, len(mov) - 4, 5)]
         map_yaml = p('map_yaml', '').value
         self.grid = warehouse_map.load_map(map_yaml) if map_yaml else None
-        self.rng = np.random.default_rng(1)
+        self.rng = np.random.default_rng(int(p('noise_seed', 1).value))
         self.cmd = (0.0, 0.0)
         self.last_cmd = self.get_clock().now()
         self.t = 0.0
@@ -217,7 +219,8 @@ class KinematicSim(Node):
         odom.pose.pose.orientation.w = qw
         noise = self.rng.normal(0.0, self.odom_noise) if self.odom_noise > 0 else 0.0
         odom.twist.twist.linear.x = v + noise
-        odom.twist.twist.angular.z = w
+        odom.twist.twist.angular.z = w + (
+            self.rng.normal(0.0, self.odom_noise_w) if self.odom_noise_w > 0 else 0.0)
         self.pub_odom.publish(odom)
         gt = Odometry()
         gt.header.stamp = stamp

@@ -67,6 +67,11 @@ def _setup(context):
     }
     if obstacles:
         sim_params['moving_obstacles'] = obstacles
+    # 절제 실험 잡음 조건 (docs/research/dwa-ablation/prereg.md). 비어 있으면 노드 기본값(종전 동작)
+    for key in ('odom_noise_v', 'odom_noise_w', 'noise_seed'):
+        val = LaunchConfiguration(key).perform(context)
+        if val:
+            sim_params[key] = int(val) if key == 'noise_seed' else float(val)
     return [
         Node(package='nav2_map_server', executable='map_server', name='map_server',
              output='screen', parameters=[{'yaml_filename': map_yaml, 'topic_name': '/map',
@@ -110,6 +115,12 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('moving_obstacles', default_value='',
                               description='x,y,vx,vy,r 반복 (왕복 등속 원판 장애물)'),
         DeclareLaunchArgument('use_ttc_bt', default_value='auto'),
+        DeclareLaunchArgument('odom_noise_v', default_value='',
+                              description='오도메트리 선속도 잡음 σ [m/s] (빈 값 = 노드 기본 0)'),
+        DeclareLaunchArgument('odom_noise_w', default_value='',
+                              description='오도메트리 각속도 잡음 σ [rad/s] (빈 값 = 노드 기본 0)'),
+        DeclareLaunchArgument('noise_seed', default_value='',
+                              description='시뮬레이터 잡음 seed (빈 값 = 노드 기본 1)'),
         DeclareLaunchArgument(
             'params_file', default_value='',
             description="nav2 파라미터 ('' = amr_navigation config/nav2_params.yaml)"),

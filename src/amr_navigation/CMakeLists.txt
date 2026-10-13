@@ -109,6 +109,9 @@ add_executable(cost_probe tools/cost_probe.cpp)
 target_link_libraries(cost_probe amr_navigation_core)
 add_executable(tracking_sim tools/tracking_sim.cpp)
 target_link_libraries(tracking_sim amr_navigation_core)
+# DWA 절제·고전 비교용 ROS 없는 폐루프 시험대 (docs/research/dwa-ablation/prereg.md)
+add_executable(chain_sim tools/chain_sim.cpp)
+target_link_libraries(chain_sim amr_navigation_core)
 
 install(DIRECTORY include/ DESTINATION include)
 install(TARGETS amr_navigation_core amr_navigation_plugins amr_velocity_profiler
@@ -119,6 +122,7 @@ install(TARGETS amr_navigation_core amr_navigation_plugins amr_velocity_profiler
   RUNTIME DESTINATION bin
 )
 install(TARGETS velocity_profiler_node costmap_scan_filter_node pid_tuning astar_benchmark cost_probe tracking_sim
+  chain_sim
   DESTINATION lib/${PROJECT_NAME}
 )
 install(PROGRAMS
