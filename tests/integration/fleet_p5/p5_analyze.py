@@ -787,14 +787,40 @@ def zero_events(ms, key):
                for m in ms)
 
 
+def attempt_rank(root: str, name: str, m: dict) -> tuple:
+    """
+    갈래 디렉터리의 순위 (클수록 나중 · 우선): (드라이버 .done 태그인가, 시도 번호).
+
+    태그 규칙은 p5_driver.Driver.tag: p5_<실험>_p<짝>_<갈래>[r<n>] (첫 시도는 접미사 없음 = 1).
+    """
+    base = f"p5_{m.get('exp')}_p{m.get('pair')}_{m.get('label')}"
+    tail = name[len(base):] if name.startswith(base) else None
+    if tail == '':
+        n = 1
+    elif tail and tail[0] == 'r' and tail[1:].isdigit():
+        n = int(tail[1:])
+    else:
+        n = 0
+    done = read_json(os.path.join(root, 'pairs', f"{m.get('exp')}_p{m.get('pair')}.done"), {})
+    in_done = name in set((done or {}).get('tags', {}).values())
+    return (in_done, n)
+
+
 def exp_summary(exp: str, root: str) -> dict:
     """원자료 루트의 <실험>_p<k>_* 갈래 metrics.json 을 모아 짝 표와 판정."""
     arms = collections.defaultdict(dict)
+    best = {}
     for name in sorted(os.listdir(root)):
         m = read_json(os.path.join(root, name, 'metrics.json'))
         if not m or m.get('exp') != exp:
             continue
-        arms[m['pair']][m['label']] = m          # 같은 짝 · 갈래의 다시 돈 시도는 이름순 마지막(유효한 것)
+        key = (m['pair'], m['label'])
+        rank = attempt_rank(root, name, m)
+        if key not in best or rank > best[key]:
+            # 같은 짝 · 갈래의 다시 돈 시도: 드라이버의 pairs/<실험>_p<k>.done 태그가 있으면 그것, 없으면 시도 번호(r<n>)가
+            # 가장 큰 것. (결과 전 결함 수정 2026-10-13: 이름순 마지막은 r10 이 r9 앞에 와서 틀린 시도를 고른다.)
+            best[key] = rank
+            arms[m['pair']][m['label']] = m
     labels = None
     pairs = []
     for k in sorted(arms):

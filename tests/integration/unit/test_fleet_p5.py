@@ -527,3 +527,34 @@ def test_driver_starts_no_pair_after_the_deadline(tmp_path):
     assert sorted(p.name for p in tmp_path.iterdir()) == ['driver.log', 'pairs']   # 갈래 없음
     log = (tmp_path / 'driver.log').read_text()
     assert '지남 — C2_p2 부터 시작하지 않고 끝' in log and '무효 3 번' not in log
+
+
+def _arm_metrics(root, name, exp, pair, label, valid, completed):
+    d = root / name
+    d.mkdir()
+    (d / 'metrics.json').write_text(json.dumps({
+        'exp': exp, 'pair': pair, 'label': label, 'valid': valid, 'completed': completed,
+        'mode': 'central' if label == 'central' else 'distributed'}))
+
+
+def test_exp_summary_picks_the_latest_attempt_numerically(tmp_path):
+    # 결과 전 결함 수정 (2026-10-13): 이름순이면 …r10 이 …r9 앞에 온다
+    for lab in ('central', 'distributed'):
+        _arm_metrics(tmp_path, f'p5_C1_p1_{lab}', 'C1', 1, lab, False, None)
+        for n in range(2, 11):
+            _arm_metrics(tmp_path, f'p5_C1_p1_{lab}r{n}', 'C1', 1, lab, n == 10,
+                         5 if lab == 'central' else 4)
+    res = A.exp_summary('C1', str(tmp_path))
+    assert res['n_pairs_valid'] == 1
+    assert res['compare']['completed']['diffs'] == [-1]
+
+
+def test_exp_summary_prefers_the_done_tags(tmp_path):
+    for lab, c in (('central', 5), ('distributed', 3)):
+        _arm_metrics(tmp_path, f'p5_C1_p1_{lab}r3', 'C1', 1, lab, True, c)
+        _arm_metrics(tmp_path, f'p5_C1_p1_{lab}r4', 'C1', 1, lab, False, None)
+    (tmp_path / 'pairs').mkdir()
+    (tmp_path / 'pairs' / 'C1_p1.done').write_text(json.dumps(
+        {'tags': {'0': 'p5_C1_p1_centralr3', '1': 'p5_C1_p1_distributedr3'}}))
+    res = A.exp_summary('C1', str(tmp_path))
+    assert res['n_pairs_valid'] == 1 and res['compare']['completed']['diffs'] == [-2]
