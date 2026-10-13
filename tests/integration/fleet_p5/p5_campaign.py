@@ -177,6 +177,8 @@ def run(a):
         log(raw, '본 실행 시작 안 함 (CAMPAIGN_HALT.txt)')
         return 3
     extra = ['--order', a.order, '--t-start', str(t_start)] + (['--concurrent'] if conc else [])
+    if a.no_new_pair_after:
+        extra += ['--no-new-pair-after', a.no_new_pair_after]
     return driver(a, extra)
 
 
@@ -189,6 +191,8 @@ def main(argv=None):
     ap.add_argument('--repo', default='/home/CAPYI_AI/wt/b4-p5')
     ap.add_argument('--order', default=','.join(p5_plan.ORDER))
     ap.add_argument('--skip-pilot', action='store_true', help='파일럿이 이미 끝났을 때 (재개)')
+    ap.add_argument('--no-new-pair-after', default='',
+                    help='드라이버에 넘긴다: 이 시각(ISO 8601) 뒤에는 새 짝을 시작하지 않는다 (줄이는 규칙)')
     ap.add_argument('--load-wait-max-s', type=float, default=10800.0,
                     help='짝 시작 전 loadavg(1 분) < 30 을 기다리는 상한 [s] — 넘으면 그대로 시작하고 기록')
     a = ap.parse_args(argv)
@@ -201,7 +205,8 @@ def main(argv=None):
                os.path.abspath(__file__),
                'run', '--raw', a.raw, '--ws-new', a.ws_new, '--ws-old', a.ws_old, '--repo', a.repo,
                '--order', a.order, '--load-wait-max-s', str(a.load_wait_max_s)] + (
-            ['--skip-pilot'] if a.skip_pilot else [])
+            ['--skip-pilot'] if a.skip_pilot else []) + (
+            ['--no-new-pair-after', a.no_new_pair_after] if a.no_new_pair_after else [])
         log(a.raw, 'exclusive: ' + ' '.join(cmd))
         return subprocess.run(cmd, env=dict(os.environ, CPU_SLOTS='0')).returncode
     return run(a)

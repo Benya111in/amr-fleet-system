@@ -9,6 +9,9 @@
 짝: 두 갈래를 동시에(--concurrent) 또는 차례로. 먼저 띄우는 갈래와 도메인을 짝마다 번갈아 (p5_plan.schedule).
 무효 짝(준비 시간 초과 · /clock 정지 · 감시 중단)은 새 태그(…r<n>)로 다시 돈다. 같은 짝 연속 무효 3 번이면 그 실험을 멈추고 진단.
 멈추려면: touch <원자료>/STOP (다음 짝 전에 멈춘다).
+순서 낱말: 'EXP' (모든 짝) 또는 'EXP:a-b' · 'EXP:k' (그 짝만 — 짝 번호의 먼저 띄울 갈래 · 도메인은 그대로).
+--no-new-pair-after <ISO 시각>: 그 시각 뒤에는 새 짝(재시도 포함)을 시작하지 않는다 — 진행 중인 짝은 끝낸다
+(줄이는 규칙, 노트 「이어받기」 2026-10-13).
 """
 
 import argparse
@@ -38,6 +41,49 @@ def load3():
 
 def sh(cmd, **kw):
     return subprocess.run(cmd, capture_output=True, text=True, **kw)
+
+
+def schedule_tokens(tokens):
+    """
+    순서 낱말 → p5_plan.schedule 항목. 'EXP' 는 모든 짝, 'EXP:a-b' · 'EXP:k' 는 그 짝만.
+
+    짝 번호에 묶인 값(먼저 띄울 갈래 · 도메인)은 p5_plan.schedule 이 정한 그대로 둔다 — 순서만 바뀐다.
+    같은 (실험, 짝) 이 두 번 나오면 거부한다.
+    """
+    out, seen = [], set()
+    for tok in tokens:
+        tok = tok.strip()
+        if not tok:
+            continue
+        exp, _, rng = tok.partition(':')
+        if exp not in p5_plan.EXPERIMENTS:
+            raise ValueError(f'모르는 실험: {exp}')
+        n = p5_plan.EXPERIMENTS[exp]['pairs']
+        if rng:
+            a, _, b = rng.partition('-')
+            lo, hi = int(a), int(b or a)
+        else:
+            lo, hi = 1, n
+        if not 1 <= lo <= hi <= n:
+            raise ValueError(f'짝 범위 밖: {tok} (짝 1–{n})')
+        for item in p5_plan.schedule([exp]):
+            if lo <= item[1] <= hi:
+                if item[:2] in seen:
+                    raise ValueError(f'같은 짝이 두 번: {exp} 짝 {item[1]}')
+                seen.add(item[:2])
+                out.append(item)
+    return out
+
+
+def past_deadline(deadline_iso, now=None):
+    """새 짝 시작 마감 (ISO 8601, 시간대 포함)이 지났는가. 마감이 없으면 False."""
+    if not deadline_iso:
+        return False
+    limit = dt.datetime.fromisoformat(deadline_iso)
+    if limit.tzinfo is None:
+        raise ValueError(f'마감에 시간대가 없다: {deadline_iso}')
+    now = now or dt.datetime.now().astimezone()
+    return now >= limit
 
 
 class Driver:
@@ -332,6 +378,8 @@ class Driver:
             return 'done'
         if os.path.exists(os.path.join(self.raw, 'STOP')):
             return 'stop'
+        if past_deadline(self.a.no_new_pair_after):
+            return 'deadline'
         e = p5_plan.EXPERIMENTS[exp]
         n = 1
         while any(os.path.exists(os.path.join(self.raw, self.tag(exp, k, n, a['label'])))
@@ -339,6 +387,8 @@ class Driver:
             n += 1
         if not self.wait_quiet(key):
             return 'stop'
+        if past_deadline(self.a.no_new_pair_after):      # 시작 조건을 기다리는 사이에 마감이 지났다
+            return 'deadline'
         order = [first, 1 - first]
         tags = {i: self.tag(exp, k, n, e['arms'][i]['label']) for i in (0, 1)}
         results = {0: {}, 1: {}}
@@ -390,10 +440,11 @@ class Driver:
     def run(self):
         self.log(f'드라이버 시작 pid {os.getpid()} EXCLUSIVE_HOLDER='
                  f'{os.environ.get("EXCLUSIVE_HOLDER")} load {load3()} 순서 {self.a.order} '
-                 f'동시={self.a.concurrent} t_start={self.a.t_start}')
+                 f'동시={self.a.concurrent} t_start={self.a.t_start} '
+                 f'새 짝 마감={self.a.no_new_pair_after or "없음"}')
         stopped_exp = set()
         lo, hi = (int(v) for v in self.a.pair_range.split('-'))
-        for exp, k, first, doms in p5_plan.schedule(self.a.order.split(',')):
+        for exp, k, first, doms in schedule_tokens(self.a.order.split(',')):
             if exp in stopped_exp or not lo <= k <= hi:
                 continue
             fails = 0
@@ -404,6 +455,10 @@ class Driver:
                 if r == 'stop':
                     self.log('STOP 파일 — 멈춤')
                     return 1
+                if r == 'deadline':
+                    self.log(f'새 짝 마감 {self.a.no_new_pair_after} 지남 — {exp}_p{k} 부터 시작하지 않고 끝 '
+                             f'(줄이는 규칙)')
+                    return 0
                 if r == 'load':
                     continue                    # 환경(다른 사용자 부하) 탓 — 시작 조건을 다시 기다린다
                 fails += 1
@@ -426,6 +481,8 @@ def main(argv=None):
     ap.add_argument('--order', default=','.join(p5_plan.ORDER))
     ap.add_argument('--t-start', type=float, default=p5_plan.T_START)
     ap.add_argument('--concurrent', action='store_true')
+    ap.add_argument('--no-new-pair-after', default='',
+                    help='이 시각(ISO 8601, 시간대 포함) 뒤에는 새 짝을 시작하지 않는다 (줄이는 규칙)')
     ap.add_argument('--pair-range', default='1-99', help='짝 번호 범위 a-b (파일럿 단독/동시 나누기)')
     ap.add_argument('--dryrun', action='store_true',
                     help='파이프라인 시험 (Gazebo 없음, 실험 dry): 스택 대신 가짜 /clock')
@@ -444,6 +501,8 @@ def main(argv=None):
                     help='갈래 중 loadavg(5 분)가 이 값을 load-abort-s 동안 넘으면 갈래 중단 · 짝 다시')
     ap.add_argument('--load-abort-s', type=float, default=600.0)
     a = ap.parse_args(argv)
+    schedule_tokens(a.order.split(','))      # 잘못된 순서 낱말은 시작 전에 거부
+    past_deadline(a.no_new_pair_after)
     return Driver(a).run()
 
 

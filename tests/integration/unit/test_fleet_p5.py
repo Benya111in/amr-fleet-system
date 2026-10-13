@@ -478,3 +478,52 @@ def test_invalid_concurrent_pilot_means_sequential_not_halt(tmp_path):
     _pilot_metrics(tmp_path, 2, 'central', 'central', 0.15, 30.0, valid=False)
     conc, t_start, problems, _ = C.decide(str(tmp_path))      # 짝 2 분산은 metrics 없음
     assert conc is False and problems == [] and t_start == 60.0
+
+
+# ---------------------------------------------------------------------- 이어받기 줄이는 규칙 (2026-10-13)
+RESUME_ORDER = ['C2', 'C3', 'P:1', 'S:1', 'X:1', 'P:2', 'S:2', 'X:2', 'R', 'C1', 'AA:3-6', 'F5L']
+
+
+def test_order_tokens_keep_pair_bound_arm_and_domain():
+    import p5_driver as D
+    full = {(x[0], x[1]): x for x in P.schedule(P.ORDER)}
+    s = D.schedule_tokens(RESUME_ORDER)
+    assert [x[:2] for x in s[:3]] == [('C2', 1), ('C2', 2), ('C2', 3)]
+    tech = [('P', 1), ('S', 1), ('X', 1), ('P', 2), ('S', 2), ('X', 2)]
+    assert [x[:2] for x in s[16:22]] == tech
+    assert all(full[x[:2]] == x for x in s)      # 짝 번호의 먼저 띄울 갈래 · 도메인은 그대로
+    keys = {x[:2] for x in s}
+    assert ('AA', 1) not in keys and ('AA', 2) not in keys and ('AA', 3) in keys
+    assert len(s) == 8 + 8 + 2 * 3 + 2 + 8 + 4 + 8
+    for bad in (['P:1', 'P'], ['C2:0-3'], ['C2:3-9'], ['C9']):
+        with pytest.raises(ValueError):
+            D.schedule_tokens(bad)
+
+
+def test_new_pair_deadline():
+    import datetime as dt
+    import p5_driver as D
+    t = dt.datetime(2026, 10, 15, 22, 0, tzinfo=dt.timezone(dt.timedelta(hours=9)))
+    assert D.past_deadline('', t) is False
+    assert D.past_deadline('2026-10-15T22:00:00+09:00', t - dt.timedelta(seconds=1)) is False
+    assert D.past_deadline('2026-10-15T22:00:00+09:00', t) is True
+    assert D.past_deadline('2026-10-15T13:00:00+00:00', t) is True       # 시간대 환산
+    with pytest.raises(ValueError):
+        D.past_deadline('2026-10-15T22:00:00', t)                         # 시간대 없음은 거부
+
+
+def test_driver_starts_no_pair_after_the_deadline(tmp_path):
+    import argparse
+    import p5_driver as D
+    a = argparse.Namespace(raw=str(tmp_path), repo=str(REPO), order='C2,AA:3-6',
+                           concurrent=False, t_start=60.0, pair_range='1-99',
+                           no_new_pair_after='2000-01-01T00:00:00+09:00')
+    (tmp_path / 'pairs').mkdir()
+    (tmp_path / 'pairs' / 'C2_p1.done').write_text('{}')
+    drv = D.Driver(a)
+    assert drv.run_pair('C2', 1, 0, (21, 23)) == 'done'          # 끝난 짝은 마감과 무관하게 건너뜀
+    assert drv.run_pair('C2', 2, 1, (25, 27)) == 'deadline'
+    assert drv.run() == 0
+    assert sorted(p.name for p in tmp_path.iterdir()) == ['driver.log', 'pairs']   # 갈래 없음
+    log = (tmp_path / 'driver.log').read_text()
+    assert '지남 — C2_p2 부터 시작하지 않고 끝' in log and '무효 3 번' not in log
