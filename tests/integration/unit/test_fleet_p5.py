@@ -621,14 +621,35 @@ def test_scheduled_fault_means_not_a_startup_failure(tmp_path):
     assert drv.pre_task('p5_C3_p1_dist_dead') is False
 
 
-def test_repeated_startup_failure_halts_and_load_abort_skips(tmp_path):
+def test_repeated_startup_failure_halts_and_load_abort_retries_the_arm(tmp_path):
     script = {f'p5_C2_p1_distributed{s}': (0, False, False)
               for s in ['', 'r2', 'r3', 'r4', 'r5', 'r6']}
     drv, launched = _fake_driver(tmp_path, script)
     assert drv.run_pair('C2', 1, 0, (21, 23)) == 'halt'
     assert launched.count('p5_C2_p1_central') == 1 and len(launched) == 7
     (tmp_path / 'x').mkdir()
-    drv2, launched2 = _fake_driver(tmp_path / 'x', {'p5_C2_p1_central': (5, False, True)})
-    assert drv2.run_pair('C2', 1, 0, (21, 23)) == 'load'
-    assert launched2 == ['p5_C2_p1_central']
-    assert (tmp_path / 'x' / 'p5_C2_p1_distributed' / 'ABORTED.txt').exists()
+    drv2, launched2 = _fake_driver(tmp_path / 'x', {'p5_C2_p1_distributed': (5, False, True)})
+    waits = []
+    drv2.wait_quiet = lambda key: waits.append(key) or True
+    # 부하 중단은 그 갈래만 시작 조건을 기다린 뒤 다시 (2026-10-14 04:10) — 첫 갈래(중앙) 결과는 둔다
+    assert drv2.run_pair('C2', 1, 0, (21, 23)) == 'ok'
+    assert launched2 == ['p5_C2_p1_central', 'p5_C2_p1_distributed', 'p5_C2_p1_distributedr2']
+    assert len(waits) == 2                                  # 짝 시작 + 부하 중단 뒤
+    done = json.loads((tmp_path / 'x' / 'pairs' / 'C2_p1.done').read_text())
+    assert set(done['tags'].values()) == {'p5_C2_p1_central', 'p5_C2_p1_distributedr2'}
+
+
+def test_reuse_arm_takes_only_a_valid_arm_of_the_same_pair(tmp_path):
+    drv, launched = _fake_driver(tmp_path, {})
+    for tag, pair, valid in (('p5_C2_p3_centralr2', 3, True), ('p5_C2_p3_centralr3', 3, False),
+                             ('p5_C2_p1_central', 1, True)):
+        (tmp_path / tag).mkdir()
+        (tmp_path / tag / 'metrics.json').write_text(json.dumps(
+            {'exp': 'C2', 'pair': pair, 'label': 'central', 'valid': valid}))
+    drv.a.reuse_arm = ['p5_C2_p1_central', 'p5_C2_p3_centralr3', 'p5_C2_p3_centralr2']
+    assert drv.reusable('C2', 3, 'central') == 'p5_C2_p3_centralr2'
+    assert drv.reusable('C2', 3, 'distributed') == ''
+    assert drv.run_pair('C2', 3, 0, (21, 23)) == 'ok'
+    assert launched == ['p5_C2_p3_distributed']
+    done = json.loads((tmp_path / 'pairs' / 'C2_p3.done').read_text())
+    assert set(done['tags'].values()) == {'p5_C2_p3_centralr2', 'p5_C2_p3_distributed'}

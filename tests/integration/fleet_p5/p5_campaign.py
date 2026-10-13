@@ -179,6 +179,8 @@ def run(a):
     extra = ['--order', a.order, '--t-start', str(t_start)] + (['--concurrent'] if conc else [])
     if a.no_new_pair_after:
         extra += ['--no-new-pair-after', a.no_new_pair_after]
+    for tag in a.reuse_arm:
+        extra += ['--reuse-arm', tag]
     return driver(a, extra)
 
 
@@ -191,6 +193,8 @@ def main(argv=None):
     ap.add_argument('--repo', default='/home/CAPYI_AI/wt/b4-p5')
     ap.add_argument('--order', default=','.join(p5_plan.ORDER))
     ap.add_argument('--skip-pilot', action='store_true', help='파일럿이 이미 끝났을 때 (재개)')
+    ap.add_argument('--reuse-arm', action='append', default=[],
+                    help='드라이버에 넘긴다: 이미 유효하게 끝난 갈래 태그를 짝의 한 갈래로 다시 쓴다')
     ap.add_argument('--no-new-pair-after', default='',
                     help='드라이버에 넘긴다: 이 시각(ISO 8601) 뒤에는 새 짝을 시작하지 않는다 (줄이는 규칙)')
     ap.add_argument('--load-wait-max-s', type=float, default=10800.0,
@@ -206,7 +210,8 @@ def main(argv=None):
                'run', '--raw', a.raw, '--ws-new', a.ws_new, '--ws-old', a.ws_old, '--repo', a.repo,
                '--order', a.order, '--load-wait-max-s', str(a.load_wait_max_s)] + (
             ['--skip-pilot'] if a.skip_pilot else []) + (
-            ['--no-new-pair-after', a.no_new_pair_after] if a.no_new_pair_after else [])
+            ['--no-new-pair-after', a.no_new_pair_after] if a.no_new_pair_after else []) + [
+            x for tag in a.reuse_arm for x in ('--reuse-arm', tag)]
         log(a.raw, 'exclusive: ' + ' '.join(cmd))
         return subprocess.run(cmd, env=dict(os.environ, CPU_SLOTS='0')).returncode
     return run(a)

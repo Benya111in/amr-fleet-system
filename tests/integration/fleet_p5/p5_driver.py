@@ -465,6 +465,26 @@ class Driver:
                         continue
         return True
 
+    def reusable(self, exp, k, label):
+        """
+        --reuse-arm 으로 준 태그 중 이 (실험, 짝, 갈래)의 유효한 것 (없으면 '').
+
+        드라이버를 다시 띄울 때 같은 코드로 이미 유효하게 끝난 갈래를 짝의 한 갈래로 쓴다 (수동 · 명시 — 노트에 근거).
+        """
+        base = f'p5_{exp}_p{k}_{label}'
+        for tag in getattr(self.a, 'reuse_arm', None) or []:
+            if tag != base and not (tag.startswith(base + 'r') and tag[len(base) + 1:].isdigit()):
+                continue
+            try:
+                with open(os.path.join(self.raw, tag, 'metrics.json'), encoding='utf-8') as f:
+                    m = json.load(f)
+            except (OSError, ValueError):
+                continue
+            if m.get('valid') and m.get('exp') == exp and m.get('pair') == k \
+                    and m.get('label') == label:
+                return tag
+        return ''
+
     def skip_arm(self, exp, k, i, why):
         """짝의 다른 갈래를 띄우지 않았음을 원자료 · 실행 목록에 남긴다."""
         e = p5_plan.EXPERIMENTS[exp]
@@ -481,7 +501,8 @@ class Driver:
 
         갈래가 작업 게시 · 예정 장애 전에 무효로 끝나면(/clock 정지 · 준비 시간 초과 등, pre_task) **그 갈래만** 새 태그로 다시
         띄운다 — 같은 갈래 연속 arm_retry_max 번이면 'halt' (그 실험을 멈추고 진단). 작업 게시 뒤 무효는 사전 등록대로 짝 무효
-        ('invalid', 짝째로 다시)이고, 첫 갈래가 그렇게 끝나면 둘째 갈래는 띄우지 않는다 (어차피 버릴 갈래). 부하 중단은 그대로.
+        ('invalid', 짝째로 다시)이고, 첫 갈래가 그렇게 끝나면 둘째 갈래는 띄우지 않는다 (어차피 버릴 갈래). 부하 중단은
+        그 갈래만 시작 조건을 기다린 뒤 다시 (2026-10-14 04:10, 연속 수에 넣지 않음).
         """
         order = [first, 1 - first]
         tags = {}
@@ -489,6 +510,11 @@ class Driver:
             f'{e["arms"][i]["label"]}(도메인 {doms[j]})' for j, i in enumerate(order)) + ' 차례로')
         for j, i in enumerate(order):
             arm = e['arms'][i]
+            reuse = self.reusable(exp, k, arm['label'])
+            if reuse:
+                tags[i] = reuse
+                self.log(f'{key} 갈래 {reuse} 다시 쓴다 (--reuse-arm, 유효 · 같은 코드)')
+                continue
             fails = 0
             while True:
                 tag = self.tag(exp, k, self.free_attempt(exp, k, arm['label']), arm['label'])
@@ -497,11 +523,15 @@ class Driver:
                 self.run_arm(exp, k, i, tag, doms[j], res)
                 valid = self.analyze(exp, k, tag, res, arm['label'], arm['mode'])
                 if res.get('load_abort'):
-                    if j == 0:
-                        self.log(f'{key}: 첫 갈래가 부하 중단 — 둘째 갈래를 띄우지 않는다')
-                        self.skip_arm(exp, k, order[1], '첫 갈래 부하 중단')
-                    self.log(f'{key} 부하 중단 — 짝 무효, 연속 실패 수에 넣지 않고 다시 돈다')
-                    return 'load'
+                    # 결과 뒤 변경 (운영, 노트 2026-10-14 04:10): 부하 중단은 환경 탓 — 짝째로가 아니라 그 갈래만,
+                    # 시작 조건을 다시 기다린 뒤 띄운다 (연속 수에 넣지 않는다). 다른 갈래의 유효 결과는 둔다.
+                    self.log(f'{tag} 부하 중단 — 시작 조건을 기다린 뒤 이 갈래만 다시 (연속 수에 넣지 않음)')
+                    if not self.wait_quiet(key):
+                        return 'stop'
+                    if past_deadline(self.a.no_new_pair_after):
+                        self.log(f'{key}: 새 짝 마감이 지나 갈래 재시도를 멈춘다 (짝 미완)')
+                        return 'deadline'
+                    continue
                 if valid:
                     tags[i] = tag
                     break
@@ -584,6 +614,8 @@ def main(argv=None):
     ap.add_argument('--concurrent', action='store_true')
     ap.add_argument('--arm-retry-max', type=int, default=6,
                     help='차례로 도는 짝에서 작업 게시 전 무효 갈래만 다시 띄우는 연속 상한 (0 = 짝째로, 옛 규칙)')
+    ap.add_argument('--reuse-arm', action='append', default=[],
+                    help='이미 유효하게 끝난 갈래 태그를 짝의 한 갈래로 다시 쓴다 (여러 번, 차례로 도는 짝만)')
     ap.add_argument('--no-new-pair-after', default='',
                     help='이 시각(ISO 8601, 시간대 포함) 뒤에는 새 짝을 시작하지 않는다 (줄이는 규칙)')
     ap.add_argument('--pair-range', default='1-99', help='짝 번호 범위 a-b (파일럿 단독/동시 나누기)')
