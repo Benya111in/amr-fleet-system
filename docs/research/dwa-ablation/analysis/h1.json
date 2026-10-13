@@ -1,0 +1,29 @@
+{
+ "statistic": "mean over held-out paths of log(T_noM3 / T_full), both succeeded",
+ "n_paths": 58,
+ "mean": 0.7034719564084723,
+ "ci95": [
+  0.642448606686864,
+  0.7622730525931102
+ ],
+ "time_ratio_pct": [
+  102.07565205194467,
+  90.11303050519774,
+  114.31421629810963
+ ],
+ "decision": "confirmed",
+ "success_noM3_full": [
+  58,
+  60,
+  60,
+  60
+ ],
+ "ideal_plant": {
+  "n_paths": 60,
+  "mean": 0.0,
+  "ci95": [
+   0.0,
+   0.0
+  ]
+ }
+}
