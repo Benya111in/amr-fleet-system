@@ -158,6 +158,10 @@ E3(b) 85 재생 ≈ 직렬 14 h → 동시 4 면 약 3.5 h (+ 부하 대기). E4
   True 수·False→True 전이(LOST 사건) 수, `kidnap_status` 마지막 상태, `amcl_pose` 수. 토픽이 없으면 None(미측정). 정의는 이 항목의 문구
   그대로이고 판정(L1·L2)에는 들어가지 않는 별도 셈이다. 시험 `test_loc_lost.py` 2 개. 파일럿 bag(P 데이터 밖) 배포 사슬 두 재생에서
   lost 1 메시지(False)·사건 0·마지막 상태 TRACKING·amcl_pose 513 으로 돈다 (`validate/` 와 같은 범주의 도구 확인).
+- **결과 표 도구 (E3(b)·E4 결과 전)**: `src/amr_slam3d/scripts/presults.py` — peval 출력(json·jsonl)을 마크다운 표로 옮기기만 한다
+  (판정·구간·p 는 peval 값 그대로). 더하는 해석 하나: **E4 의 사전 등록 3 bag 표시**(s1_seed2x 제외 — S1 규칙)에서 "바꾼다" =
+  **3 bag 모두 같은 방향 `differs`** (4 bag 규칙 "≥ 3/4" 의 비율을 3 bag 에 옮긴 것). 4 bag 판정이 주이고, 둘이 다르면 S1 규칙대로
+  3 bag 쪽을 주로 쓴다. 합성 자료(파일럿 기록의 bag 이름만 바꾼 것 — 결과 아님)로 표 모양만 확인했다.
 
 ## 결과
 
