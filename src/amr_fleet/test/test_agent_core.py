@@ -467,6 +467,52 @@ def test_failed_before_pickup_lets_another_robot_take_the_task():
     assert f.holders('task:T') == ['amr_03']
 
 
+def test_restarted_manager_cannot_make_the_lock_holder_redo_its_task():
+    """
+    P5 Gazebo C2 짝 1 (2026-10-14): 재기동한 관리자(epoch 2)가 게시판 이력으로 끝난 작업을 차례로 준다.
+
+    고치기 전: 남은 'task_taken' 으로 거부했으나 확정 보유자 amr_02 는 통과해 같은 작업을 다시 실행했다
+    (p5c2.00 · .01 · .02 · .03). 끝난 작업(완료 · 픽업 뒤 실패)은 보유자도 다시 받지 않는다.
+    """
+    f = _normal_fleet()
+    a, b = f.cores['amr_02'], f.cores['amr_03']
+    for task, status in (('T', 2), ('U', 3)):              # 완료, 픽업 뒤 실패
+        assert a.check_assignment(task, 1, LEADER, f.t) == (True, 'ok')
+        assert a.on_central_result(task, 'accepted', a.central_token(task), now=f.t) == \
+            'central_accept'
+        f._route('amr_02', a)
+        f.run(2.0)
+        assert _commit_until_held(f, 'amr_02', task) is not None
+        assert a.check_assignment(task, 1, LEADER, f.t) == (True, 'ok')   # 같은 중앙 작업 재전송은 그대로
+        a.on_task_status(task, status)
+        f._route('amr_02', a)
+        f.run(2.0)
+        assert a.central_task == '' and a.lock.is_held(task)
+    for task in ('T', 'U'):                                 # 재기동한 관리자 (epoch 2)
+        assert b.check_assignment(task, 2, '/fleet/new', f.t) == (False, 'task_taken')
+        assert a.check_assignment(task, 2, '/fleet/new', f.t) == (False, 'task_done')
+    assert a.check_assignment('V', 2, '/fleet/new', f.t) == (True, 'ok')   # 새 작업은 받는다
+    # 확정 없이 COMPLETED 를 보고한 중앙 작업 (잠금은 놓았지만 끝난 작업) — done 만으로도 거부
+    assert a.on_central_result('V', 'accepted', a.central_token('V'), now=f.t) == 'central_accept'
+    a.on_task_status('V', 2)
+    assert not a.lock.is_held('V') and 'V' in a.done
+    assert a.check_assignment('V', 2, '/fleet/new', f.t) == (False, 'task_done')
+
+
+def test_lock_held_after_restart_blocks_reassignment_to_the_holder():
+    """재기동한 에이전트는 done 을 잊지만 디스크의 확정 잠금이 남는다 — 그것만으로도 다시 받지 않는다."""
+    f, starts, _ = _degraded_run(seed=7, loss=0.1, crash=('amr_01', 25.0, 3.0), seconds=80.0)
+    c = f.cores['amr_01']
+    mine = [t for t, rs in starts.items() if rs == ['amr_01']]
+    assert mine
+    c.done.clear()                                          # 메모리 기록이 없어도
+    c.modes.base = NORMAL                                   # 시험: 서버가 돌아와 NORMAL 이라고 친다
+    assert c.check_assignment('new', 9, '/fleet/new', f.t) == (True, 'ok')
+    for t in mine:
+        assert c.lock.is_held(t) and t != c.central_task
+        assert c.check_assignment(t, 9, '/fleet/new', f.t) == (False, 'task_done')
+
+
 def _normal_lonely_core():
     c, t = _lonely_core()
     c.on_heartbeat(1, LEADER, 1, 0, t)
