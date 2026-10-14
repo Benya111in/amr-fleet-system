@@ -1,0 +1,363 @@
+# 보너스 2 결과 — 3D LiDAR SLAM 대 2D SLAM (P 단계 E1–E5)
+
+작성 2026-10-15, 에이전트 b2-eval, 브랜치 `feature/b2-eval` (분기 `feature/bonus2-slam3d` `3d0a17d`). 완료 정의는
+[`bonus2_completion_plan.md`](bonus2_completion_plan.md) 의 E1–E6. 사전 등록·실행 중 기록·결과의 원본은 노트 항목 둘이다:
+[`2026-10-09_0000_b2-eval_mapping-compare-prereg.md`](notebook/entries/2026-10-09_0000_b2-eval_mapping-compare-prereg.md) (E2·E3(a)·E5 매핑)과
+[`2026-10-09_0047_b2-eval_loc-ablation-prereg.md`](notebook/entries/2026-10-09_0047_b2-eval_loc-ablation-prereg.md) (E3(b)·E5 위치추정·E4).
+실행 목록 `notebook/runs/b2-eval.jsonl` (재생마다 한 줄), 원자료 `/home/CAPYI_AI/runs/b24/b2-eval/` (저장소 밖).
+
+표기: **[측정]** 명령·로그 있음 · **[계산]** 오프라인 스크립트 · **[추정]** 근거가 간접 · **[코드]** 소스로 정해진 값 · **미측정**.
+"주 결과" 는 사전 등록 규칙 그대로의 결과다. "보충" 은 사전 등록 밖이며, 언제(결과 전·뒤) 정했는지 함께 적는다.
+**모든 수치는 Gazebo 시뮬레이션 녹화의 오프라인 재생이고, 공유 서버 부하 하에서 쟀다** (재생 시작 loadavg 5–80, 재생 중 최대 약 220).
+
+## 0. 먼저 알아야 할 불리한 사실
+
+1. **사전 등록한 매핑 비교 다섯 개(E2·E3(a))가 모두 "가르지 못함" 이다.** 3D 행이 2D 행보다 지도·궤적이 낫다는 판정은
+   8 bag 에서도, 사전 등록 7 bag 에서도 나오지 않았다 (Holm p ≥ 0.23). 기각할 수 있는 설계였는데 bag 마다 부호가 갈렸다.
+2. **녹화 bag 8 개 중 3 개에 녹화 결함이 있었다 — 결과를 본 뒤에 찾았다.** `s1_seed3_a2`·`s1_seed2x_a1`·`s6_wall_a1` 의 녹화 때
+   `imu_filter_node` 가 기동 바이어스 추정을 포기해("motion detected during startup bias estimation; falling back to parameter bias")
+   시뮬 자이로 z 바이어스 0.01 rad/s 가 그대로 남았다. 그래서 bag 안의 휠-EKF odom 이 처음부터 0.01 rad/s 로 yaw 표류한다
+   (최대 xy 오차 12 m · 38 m · 1.6 m) [측정]. 휠-EKF 를 쓰는 행(slam_toolbox·RTAB-Map 2D·3D·배포 2D 위치추정·RTAB-Map 위치추정)이 모두
+   이 결함을 받는다. 녹화 공백 검사는 간격만 보고 odom 일관성은 보지 않아 놓쳤다. **사전 등록 주 결과는 이 bag 들을 포함한 그대로**이고,
+   결함 bag 을 뺀 표는 보충이다 (E2 는 결과 뒤, E3(b)·E4 는 그 결과를 보기 전에 규칙을 정했다).
+3. **S1(정상) 시나리오에 결함 없는 사전 등록 bag 은 하나(`s1_seed1_a1`)뿐이다.** 사전 등록 S1 bag 둘 중 `s1_seed3_a2` 가 결함 bag 이고,
+   셋째 bag `s1_seed2x_a1` 은 사전 등록 밖(녹화 프로토콜 변경 뒤) 이면서 결함 bag 이다. "S1 bag ≥ 3" 은 형식만 채웠다.
+4. **E3(b) 의 "3D 가 낫다" 판정(L2, SLAM 지도 위)은 크기 대부분을 결함 bag 의 2D 발산이 만든다.** 결함 없는 bag 에서 3D 의 이득은
+   정답 지도 위 0.1–0.6 cm, SLAM 지도 위 0.9–2.5 cm 다. 정답 지도 위(L1)는 주 결과(사전 등록 6 bag)에서 가르지 못했다.
+5. **3D 처리의 여유가 작다.** RTAB-Map 3D 는 처리 스캔 누락 실패가 매핑 11/24, 위치추정 19/42 재생이었고 (2D 위치추정 사슬은 메시지
+   필터 버림 6/42), 한 재생은 727 장을 잃었다. 스캔당 지연(공유 부하 하 예비값)은 icp_odometry p50 62 ms · p95 118 ms 로 2D 의 7 · 47 ms 보다
+   한 자릿수 크다. **실시간 운용은 주장할 수 없다.**
+6. **S6 가설("막힌 통로 끝에서 3D 가 축을 더 잘 구속")은 매핑에서 지지되지 않았고, 위치추정에서는 규칙상 지지지만 해석할 수 없다** —
+   벽(wall) bag 이 결함 bag 이라 2D 의 발산이 막힘 때문인지 가르지 못한다 (시간 분해로 본 방아쇠는 막힘 쪽 [추정], §7).
+7. 2D 격자 지도 지표에서 RTAB-Map 3D 는 2D 행보다 IoU·재현율이 낮다 (결함 없는 5 bag IoU 0.40 대 slam_toolbox 0.59, 표면 재현율 0.70 대
+   0.93). ADNN₀ 는 비슷하다 (4.15 대 4.43 cm).
+8. 진행 사고: 첫 인스턴스의 재생 구동기가 2026-10-09 07:07 에 세션과 함께 끊겼고(부분 재생 4 개는 옮겨 두고 다시 돌렸다), 다른 사용자 부하
+   (loadavg 60–190 이 수십 시간)로 사전 등록 부하 규칙에 막혀 재생 234 개에 약 52 시간이 걸렸다. E4 는 그 뒤에 돌았다.
+9. 모두 시뮬레이션이다. 시뮬 휠은 실기보다 1–2 자릿수 정확하고(오라클 수준), Gazebo 3D 점군은 순간 스캔이다. 실데이터는 미측정.
+
+## 1. 명세 3 줄 ↔ 완료 정의 판정
+
+판정 기준: **충족** = 완료 정의 문장을 그대로 채움 · **부분** = 측정은 했으나 정의의 일부가 빠지거나 해석을 막는 결함이 있음 ·
+**미달** = 정의를 채우지 못함. 3D 가 이겼는지는 판정 기준이 아니다 (완성 계획 §1: "결과가 3D 에 불리해도 완료").
+
+| 명세 (31_*.md 5장 보너스 2) | 정의 | 판정 | 근거 수치 |
+|---|---|---|---|
+| ① 3D LiDAR 센서 추가·3D SLAM(LIO-SAM 등) 적용 | E1 | **부분** | 끝까지 돈다: RTAB-Map 3D·LIO-SAM 평면·6DoF(·오라클) 각 8 bag × 3 재생 = 24/24 rc 0, 궤적 덮음 ≥ 0.993 [측정]. **누락 0 은 미달**: RTAB-Map 3D 누락 > 0 재생 11/24 (시작 첫 장 6 — bag 결정적, 주행 중 5 — 부하 130–190·85 때), LIO-SAM 3/24 (`s6_wall` 첫 장). 원인은 시작 장 = guess TF 버퍼 전 [추정], 주행 중 = 부하 [추정]. 판·설정 표 §3 |
+| ② 2D 대비 맵 품질 비교 분석 | E2 | **부분** | 4 주 행 + 6DoF·오라클 × 8 bag × 재생 3 = 144, 같은 2D 격자 지표·3D F-score·짝 비교·구간·실패 분리를 사전 등록대로 냈다. 결과: C4·C5 가르지 못함. 부분인 이유: S1 의 결함 없는 bag 1 개, S6 wall 결함 bag (§0-2·3) |
+| ② 2D 대비 위치 추정 정확도 비교 분석 | E3 | **부분** | (a) 매핑 ATE·RPE: C1–C3 가르지 못함. (b) 위치추정 모드 84 재생: L1 정답 지도 가르지 못함(주, 6 bag) · L2 SLAM 지도 `A<B` (3D 가 낫다, 6·7 bag), 명세 구간 RMSE·max·p95 표 §6.3. 부분인 이유: 결함 bag 3/7 이 크기를 지배 |
+| ② 의 핵심 가설 (S6) | E5 | **부분** | 매핑: 지지 안 됨 (3D 도 wall − open `differs`). 위치추정: 규칙상 지지 (2D wall − open +1064 cm `differs`, 3D `undecided`) 이나 wall bag 이 결함 bag 이라 해석 불가. queue(현실 막힘)는 2D·3D 모두 열림과 가르지 못함 |
+| ③ 3D 포인트 클라우드 처리·최적화 학습 | E4 | (E4 결과 뒤 채움) | 절제 손잡이 5 (행 9) × bag 4 × 재생 2 = 72 재생 — §8 |
+| 기록·보고 | E6 | **부분** | 재생 마다 실행 목록 한 줄 (E2 144 · E3(b) 84 + 정답 자세 DB 1 — E4 는 끝난 뒤 등록) 이 있고 노트 항목 둘에 사전 등록·실행 중 기록·결과가 있다. 이 문서. **과목 형식 요약은 미작성** (사용자 양식 확인 뒤 — 완성 계획 E6) |
+
+## 2. 무엇을 어떻게 쟀나 (조건표)
+
+| 항목 | 값 | 근거 |
+|---|---|---|
+| 입력 | Gazebo Fortress 녹화 bag 8 개 (한 번 기록 · 여러 번 재생). 5 대 플릿이 아니라 **로봇 1 대**(amr_01, 16 채널 3D LiDAR 마스트 0.90 m)만 띄운 녹화 | recordings.md §2–§3 |
+| bag | `s3_aisle_a1` (S3 좁은 통로 왕복 46.5 m) · `s1_seed1_a1` · `s1_seed3_a2` · `s1_seed2x_a1` (**사전 등록 밖**) (S1 정상, 61·80·97 m) · `s6_open_a3` · `s6_queue_a1` · `s6_wall_a1` (S6 통로 끝 막힘 열림·대기열·벽, 통로 안 5.6 m) · `map_long_a1` (긴 매핑 308.6 m) | recordings.md §3.1 |
+| 녹화 결함 | `s1_seed3_a2`·`s1_seed2x_a1`·`s6_wall_a1` = EKF yaw 표류 0.01 rad/s (§0-2). `s3_aisle_a1` 은 바이어스를 0.01048 rad/s 로 추정해 잔차 4.8e-4 rad/s (EKF yaw 최대 3.0°, xy 33 cm) — 결함으로 치지 않음 | `supp/odom_v2/odom_drift.json`, `supp/defect.json` |
+| 녹화 RTF | 0.49 (s3_aisle·s1_seed1 — 프로토콜 변경 전) / 0.20–0.25 (나머지 6) | recordings.md §0-2 |
+| 재생 배속 | 유효 sim 속도 E = 0.25 가 되게 bag 마다 배속 = 0.25 / 녹화 RTF (0.507 … 1.232) | E2 사전 등록 |
+| 매핑 행 (E2·E3(a)) | 주: `slam_toolbox` (2D, 휠 odom TF) · `rtabmap2d_noimu` (2D 스캔, 휠-EKF guess) · `rtabmap3d_noimu` (3D 점군, 휠-EKF guess, `Reg/Force3DoF`) · `liosam_planar` (3D, 휠 없음, madgwick 재계산 IMU, SE(2) clamp). 참고: `liosam_loop_re` (LIO-SAM 6DoF). 보조: `liosam_oracle` (정답 IMU 방위 — 순위 밖 상한) | rows.py, rtabmap.md §1, replay.md §1 |
+| 위치추정 행 (E3(b)) | `amcl_gt`·`amcl_slam` = **배포 2D 사슬** (map_server + nav2_amcl + map EKF + scan_matcher + kidnap_monitor), `rtabmap3d_loc_gt`·`rtabmap3d_loc_slam` = RTAB-Map 위치추정 모드 (구성 B 오도메트리 + 지도 DB, 증분 끔). `_gt` = 정답 지도 (2D: 0.01 m GT 의 완전한 0.05 m 지도, 3D: map_long 점군을 정답 자세에 놓은 DB), `_slam` = E2 map_long 의 SLAM 지도 (사전 등록 규칙으로 고른 r1 — 3D 는 깨끗한 후보가 없어 "실패 재생의 지도" = 누락 7 장) | E3(b) 사전 등록 |
+| 재생 수 | E2 144 (bag 8 × 행 6 × 3) · E3(b) 84 (bag 7 × 행 4 × 3) + 정답 자세 DB 1 · E4 72 (bag 4 × 절제 행 9 × 2) | plans/*.json |
+| 실행 | 컨테이너 `amr-ai/slam:0.1`·`amr-ai/liosam:0.1`, `ROS_LOCALHOST_ONLY=1`, DOMAIN 45·46·48, `cpu_slot.sh b2-eval` 슬롯 둘 × 슬롯당 동시 2 (사전 등록 규칙이 4 → 2 로 줄임), 새 재생은 (loadavg − 우리 몫) ≤ 48 일 때만. 재생 사본은 git archive 스냅샷 (E2 `ebf0cea`, E3(b)·E4 `a0850e1`) | 노트 항목 |
+| 주 지표 | 정렬 없는 SE(2) xy ATE RMSE (map = 월드). 지도: 같은 0.05 m 격자 공간에서 0.01 m GT 단면(z 0.20) 대비 ADNN₀ surface (주), 정밀도·재현율·F1·IoU. 3D 점 지도: F-score @5·10 cm (GT 움직임 키프레임을 행의 자세로 붙인 것, 영역 `roi=traj10m_z3`) | peval.py |
+| 판정 | 사전 등록 짝 비교만 검정: 같은 bag·같은 재생 번호 짝 → bag 차 → Wilcoxon 부호순위 정확 + Holm (가족 안) + 두 단계 bag 묶음 부트스트랩 95 % + δ 0.2 cm. `A<B`/`A>B` 는 셋 다 만족할 때만, 구간이 (−δ, δ) 안이면 `equiv`, 나머지는 "가르지 못함" | pstats.py |
+| S1 규칙 | 8 bag(S1 3 bag 포함)과 사전 등록 7 bag(S1 2 bag) 둘 다 낸다 — 판정이 다르면 사전 등록 쪽이 주 결과 (완성 계획 §6, 2026-10-08) | 완성 계획 |
+| 실패 | rc ≠ 0, 처리 스캔 판정 누락 > 0 (RTAB-Map·LIO-SAM), slam_toolbox·AMCL 은 "Message Filter dropping" > 0 (대용), 치명 패턴, 궤적 덮음 < 90 %, 위치추정은 발산(창 안 xy 최대 > 50 cm 또는 yaw > 10°)·LOST 도. 실패 재생은 따로 세고 **평균에서 빼지 않는다** | peval.fail_of·loc_fail_of |
+
+## 3. E1 — 3D SLAM 적용: 판·설정과 "끝까지 도는가"
+
+### 3.1 판·설정 표 [측정: 이미지 안 `dpkg -l`, 2026-10-13]
+
+| 구성 | 판 | 이미지 |
+|---|---|---|
+| RTAB-Map (rtabmap·rtabmap_odom·rtabmap_slam·rtabmap_util·rtabmap_ros) | 0.23.7 (apt jammy main, 2026-09-07/08 빌드) | `amr-ai/slam:0.1` (`sha256:4ce821f2…`) |
+| libpointmatcher | 1.3.1 | 같음 |
+| slam_toolbox | 2.6.10 | 같음 |
+| nav2_amcl · nav2_map_server | 1.1.20 | 같음 |
+| robot_localization (map EKF) | 3.5.4 | 같음 |
+| imu_filter_madgwick (파생 bag) | 2.1.5 | 같음 |
+| rosbag2 mcap | 0.15.17 | 같음 |
+| LIO-SAM | ros2 브랜치 `08af3f32` (소스 tar), GTSAM 4.1.1 (`69a3a751`) | `amr-ai/liosam:0.1` (`sha256:6154c8b5…`) |
+| 분석 | numpy 1.26.4, scipy 1.15.3 (slam 이미지 안) | |
+
+설정 값은 §8.1 (처리 사슬) 에 코드·설정 파일의 실제 값으로 적었다.
+
+### 3.2 끝까지 도는가 [측정]
+
+| 행 | 재생 | rc 0 | 궤적 덮음 최소 | 처리 판정 누락 > 0 재생 (bag: 재생별 장 수) |
+|---|---|---|---|---|
+| `rtabmap3d_noimu` | 24 | 24 | 0.994 | 11 — s3_aisle 1/1/1, s6_wall 3/3/3 (시작 첫 장, 결정적), map_long 10/7/12 (주행 중), s1_seed1 r2 6, s1_seed2x r2 11 (주행 중, 재생 시작 loadavg 130–190) |
+| `liosam_planar` | 24 | 24 | 0.993 | 3 — s6_wall 1/1/1 (첫 장) |
+| `liosam_loop_re` (6DoF) | 24 | 24 | 0.993 | 3 — s6_wall 1/1/1 |
+| `liosam_oracle` | 24 | 24 | 0.993 | 3 — s6_wall 1/1/1 |
+
+- 시작 첫 장 누락 (s3_aisle 11.5 s, s6_wall 10.7–10.9 s): 재생 r0·r1·r2 에서 같은 스탬프, 행을 가로질러 되풀이된다. 그 bag 들은 첫 점군
+  스탬프가 첫 EKF TF 와 같거나 0.1 s 안이라 (s6_wall 점군 10.700 / TF 10.715 s) guess TF 가 아직 버퍼에 없을 때의 장으로 본다 **[추정]**.
+  출발 전 ≥ 10 s 정지 구간 안이라 궤적에는 영향이 없지만 사전 등록 규칙대로 실패로 셌다.
+- 주행 중 누락은 공유 부하가 높을 때 났다 (map_long 은 동시 재생 k = 4 였던 첫 묶음). 사전 등록 규칙이 이것으로 k 를 4 → 2 로 줄였다.
+- 처리 사슬 전 단계(전처리 노드)의 지연은 sensor.md §7.1 (스캔당 0.6–0.9 ms). LIO-SAM 의 스캔당 지연은 **미측정**.
+
+## 4. E2 — 지도 품질
+
+### 4.1 사전 등록 비교 (가족 M) — 주 결과: 가르지 못함
+
+차 = A − B (ADNN₀ surface, 작을수록 A 가 낫다), 두 단계 bag 부트스트랩 95 %, Wilcoxon 정확 + Holm (가족 M 안 2 개).
+
+| 비교 | 8 bag | 사전 등록 7 bag |
+|---|---|---|
+| C4 RTAB-Map 3D − RTAB-Map 2D | +3.32 cm [−3.23, 14.06], 음 5/양 3, Holm p 1.0 → **가르지 못함** | +4.20 [−3.40, 16.31], 4/3, 1.0 → **가르지 못함** |
+| C5 RTAB-Map 3D − slam_toolbox | +4.14 [−1.75, 13.60], 3/5, 1.0 → **가르지 못함** | +4.16 [−2.33, 15.17], 3/4, 1.0 → **가르지 못함** |
+
+bag 별 차 (C4 / C5, cm): s3_aisle −0.05 / −1.58 · s1_seed1 +0.61 / −0.89 · s1_seed3 −1.81 / −5.26 · s1_seed2x −2.84 / +4.00 ·
+s6_open −8.14 / +0.16 · s6_queue +0.70 / +0.82 · s6_wall **+38.2 / +35.8** · map_long −0.13 / +0.08. 평균을 양으로 끈 것은 결함 bag
+`s6_wall` 이다 (RTAB-Map 3D 지도 ADNN₀ 52 cm — 방위가 6° 틀어진 궤적으로 20 m 사거리까지 투영).
+
+### 4.2 행별 지도 지표 (bag 평균의 평균, 괄호 = 재생 간 sd / bag 간 sd)
+
+| 행 | 8 bag ADNN₀ surf cm | 정밀도 | 재현율 | F1 | IoU | 결함 제외 5 bag ADNN₀ · IoU (보충) |
+|---|---|---|---|---|---|---|
+| slam_toolbox | 33.5 (0.00 / 50.6) | 0.462 | 0.667 | 0.541 | 0.418 | 4.43 · 0.590 |
+| RTAB-Map 2D | 34.3 (0.42 / 51.5) | 0.426 | 0.529 | 0.464 | 0.394 | 5.56 · 0.536 |
+| RTAB-Map 3D | 37.7 (0.11 / 50.6) | 0.462 | 0.452 | 0.452 | 0.261 | 4.15 · 0.402 |
+
+- 8 bag 평균은 결함 bag 두 개(ADNN₀ 99–132 cm)가 지배한다. 결함 없는 bag 에서는 세 행의 ADNN₀ 가 3.5–5.4 cm 로 비슷하고 (RTAB-Map 2D
+  s6_open 만 12 cm), **IoU·재현율은 RTAB-Map 3D 가 가장 낮다** (s6_open·queue IoU 0.26 대 2D 0.35–0.61). 3D 격자는 0.05–0.40 m 대역을
+  투영하고 정답은 z 0.20 단면이라 대역 안 다른 높이의 물체가 정밀도·IoU 계산에서 "틀린 점유" 가 된다 **[추정]** — 대역 GT
+  (0.05–2.0 m) 대비 재현율도 같은 값 (예: s3_aisle 0.724 대 단면 0.725) 이라 이 월드에서는 대역 차이가 재현율을 바꾸지 않았다.
+- **3D 점 지도 F-score @5 cm (같은 GT 움직임 키프레임을 각 행의 자세로 붙임 — 자세 품질만 가른다)**: RTAB-Map 3D 0.674 · LIO-SAM 평면
+  0.739 · LIO-SAM 6DoF 0.335 · 오라클 0.375 (8 bag), @10 cm 0.760 · 0.849 · 0.508 · 0.550. 결함 없는 5 bag: RTAB-Map 3D 0.742 · LIO-SAM 평면
+  0.740 · 6DoF 0.373. **LIO-SAM 6DoF 는 z 가 표류해** (bag 별 z 최대의 평균 57 cm) 점 지도가 들려 F-score 가 반 이하다 (평면 clamp 행은 4.4 cm).
+  정답 IMU 방위(오라클)도 이 z 표류를 줄이지 못했다 (51 cm) — 파일럿 결과(replay.md §0-4)와 같은 방향이다.
+- 재생 간 sd 는 bag 간 sd 보다 두 자릿수 이상 작다: 재생을 늘려도 결론이 바뀌지 않고, 바꾸려면 bag(장면·녹화)이 더 필요하다.
+
+## 5. E3(a) — 매핑 궤적의 위치 정확도
+
+### 5.1 사전 등록 비교 (가족 T) — 주 결과: 가르지 못함
+
+| 비교 (xy ATE RMSE, 정렬 없음) | 8 bag | 사전 등록 7 bag |
+|---|---|---|
+| C1 RTAB-Map 3D − RTAB-Map 2D (요인 A — 입력 차원만 다름) | −2.37 cm [−5.62, −0.07], 6/2, Holm p 0.23 → **가르지 못함** | −2.27 [−6.10, 0.21], 5/2, 0.47 → **가르지 못함** |
+| C2 RTAB-Map 3D − slam_toolbox (3D 대 현행 2D) | +0.00 [−3.71, 4.09], 6/2, 0.64 → **가르지 못함** | −1.52 [−4.67, 1.72], 6/1, 0.47 → **가르지 못함** |
+| C3 LIO-SAM 평면 − slam_toolbox (명세 3D SLAM 대 현행 2D) | −38.6 [−89.5, −0.85], 6/2, 0.23 → **가르지 못함** | −15.4 [−42.1, 0.68], 5/2, 0.47 → **가르지 못함** |
+
+bag 별 차 C1 / C2 / C3 (cm): s3_aisle −1.11 / −3.33 / −1.90 · s1_seed1 +0.37 / −0.14 / +3.90 · s1_seed3 +1.73 / +6.33 / **−92.1** ·
+s1_seed2x −3.07 / +10.67 / **−201.1** · s6_open **−12.80** / −1.36 / −0.41 · s6_queue −1.91 / −0.83 / +0.19 · s6_wall −0.38 / −8.99 / −17.2 ·
+map_long −1.80 / −2.34 / −0.40.
+
+S1 만 (3 bag·2 bag) 은 가능 최소 p 0.25·0.5 로 기각 불가능한 설계 — 기술만 (`analysis/tables/e2.md`).
+
+### 5.2 행별 (bag 평균의 평균; 괄호 = 재생 간 sd / bag 간 sd)
+
+| 행 | ATE RMSE 8 bag | ATE max | SE(2) 정렬 (보조) | yaw RMSE ° | RPE 1 m % | RPE 10 m % | 결함 제외 5 bag ATE · max (보충) |
+|---|---|---|---|---|---|---|---|
+| slam_toolbox | 42.2 (0.00 / 74.1) | 77.8 | 4.76 | 4.49 | 4.50 | 1.29 | 3.06 · 7.51 |
+| RTAB-Map 2D | 44.6 (0.19 / 78.8) | 82.3 | 2.93 | 2.41 | 2.10 | 0.24 | 4.91 · 14.69 |
+| RTAB-Map 3D | 42.2 (0.04 / 79.2) | 74.6 | **1.00** | 2.28 | **0.53** | **0.16** | **1.46** · 3.20 |
+| LIO-SAM 평면 | **3.60** (0.34 / 2.17) | 9.39 | 2.19 | 0.064 | 1.99 | 0.29 | 3.33 · 7.85 |
+| LIO-SAM 6DoF (참고) | 3.60 (0.16 / 2.46) | 8.85 | 2.30 | 0.063 | 1.94 | 0.34 | 2.98 · 6.75 |
+| LIO-SAM 오라클 (보조, 순위 밖) | 3.13 (0.24 / 1.68) | 8.53 | 2.26 | 0.067 | 1.88 | 0.33 | 3.08 · 6.93 |
+
+- 결함 bag 에서 휠-EKF 를 쓰는 세 행은 월드 기준 방위가 틀어졌다 (yaw RMSE 5.9–20°, ATE 1–2 m). **같은 bag 에서 RTAB-Map 두 행의
+  SE(2) 정렬 오차는 0.2–1.8 cm** 라 궤적 모양·국소 정확도는 유지됐다 (RPE 10 m 0.12–0.23 %). 틀어진 것은 출발 전 정지 구간에서 EKF
+  guess 가 돌아간 만큼의 전역 방위다 **[추정]**. 휠을 쓰지 않는 LIO-SAM 은 결함 bag 에서도 3–8 cm 였다.
+- 결함 없는 bag 에서 RTAB-Map 3D 는 4/5 bag 에서 RTAB-Map 2D 보다, 5/5 bag 에서 slam_toolbox 보다 ATE 가 작았다 (보충, 기술: C2 −1.60
+  [−2.56, −0.66] cm). 5 bag 의 가능 최소 p 는 0.0625 라 이 집합만으로는 기각할 수 없는 설계다 — "3D 가 낫다" 고 주장하지 않는다.
+- 국소 정확도(RPE)는 RTAB-Map 3D 가 모든 행 중 가장 작다 (RPE 1 m 0.53 % 대 2D 2.1–4.5 %, LIO-SAM 1.9–2.0 %) — 검정하지 않은 기술이다.
+- 정답 IMU 방위(오라클)는 LIO-SAM 의 xy 를 3.60 → 3.13 cm 로 줄였다 (8 bag; 7 bag 은 2.91 → 2.95 로 가르지 못함) — 방위 오라클을 걷어낸
+  비용은 이 규모에서 작다.
+
+## 6. E3(b) — 위치추정 모드 (2D 배포 사슬 대 RTAB-Map 3D 위치추정)
+
+7 bag (map_long 은 지도를 만든 bag 이라 뺌) × 행 4 × 재생 3 = 84 재생, 모두 rc 0. 평가 창은 처음 2.0 s 를 뺐다 (사전 등록 — 배포
+map EKF 는 첫 amcl_pose 전 원점). 표 원본 `analysis/tables/e3.md`, 보충 `analysis/supp/e3_clean.md`.
+
+### 6.1 사전 등록 비교 (가족 L1·L2, 차 = 3D − 2D, xy ATE RMSE)
+
+| 가족 | 7 bag | 사전 등록 6 bag | 주 결과 (S1 규칙) |
+|---|---|---|---|
+| L1 정답 지도 위 | −673.7 cm [−1580.7, −0.42], 음 6/양 1, p 0.031 → `A<B` | −785.8 [−1824.3, −0.25], 5/1, p 0.0625 → 가르지 못함 | **가르지 못함** |
+| L2 각자의 SLAM 지도 위 | −487.4 [−1459.4, −1.14], 7/0, p 0.0156 → `A<B` | −568.6 [−1702.4, −1.41], 6/0, p 0.031 → `A<B` | **`A<B` — 3D 가 낫다** |
+
+- bag 별 차 L1 / L2 (cm): s3_aisle **+0.11** / −2.45 · s1_seed1 −0.32 / −0.93 · s1_seed3 −1600.0 / −1.27 · s1_seed2x −1.40 / −0.50 ·
+  s6_open −0.56 / −2.09 · s6_queue −0.48 / −1.90 · s6_wall −3113.5 / −3402.9.
+- **크기는 결함 bag 의 2D 발산이 정한다.** 판정은 부호의 일관성으로 났고, 결함 없는 4 bag 의 차는 L1 −0.31 [−0.53, −0.03] cm (3/1),
+  L2 −1.84 [−2.32, −1.22] cm (4/0) 이다 (보충 — E3(b) 결과 전에 정한 규칙, 4 bag 은 가능 최소 p 0.125 라 기각 불가능한 설계, 기술).
+
+### 6.2 행별 (결함 제외 4 bag, 보충 — 7 bag 평균은 발산이 지배해 뜻이 없다)
+
+| 행 | xy ATE RMSE | max | p95 | SE(2) 정렬 | 실패 (7 bag, Wilson 95 %) | 발산 (7 bag) |
+|---|---|---|---|---|---|---|
+| 2D 배포 사슬, 정답 지도 (`amcl_gt`) | 1.15 cm | 3.80 | 1.94 | 1.02 | 6/21 [0.14, 0.50] | 6 (s1_seed3 3, s6_wall 3) |
+| 3D RTAB-Map, 정답 자세 DB (`rtabmap3d_loc_gt`) | **0.84** | 2.27 | 1.47 | 0.74 | 9/21 [0.24, 0.63] — 누락 | 0 |
+| 2D 배포 사슬, slam_toolbox 지도 (`amcl_slam`) | 2.78 | 5.68 | 4.50 | 1.09 | 3/21 [0.05, 0.35] | 3 (s6_wall 3) |
+| 3D RTAB-Map, RTAB-Map 지도 (`rtabmap3d_loc_slam`) | **0.94** | 2.34 | 1.55 | 0.75 | 10/21 [0.28, 0.68] — 누락 | 0 |
+
+- 발산(창 안 xy 최대 > 50 cm)은 2D 9/42, 3D 0/42. 발산 재생은 모두 결함 bag 이다 (s1_seed3 정답 지도 14.7–18.5 m, s6_wall 31–34 m).
+- 배포 kidnap_monitor 의 LOST 사건 (`loc_lost.py` — out_bag 의 `localization/lost` False→True): 정답 지도 63 사건 / 10 재생, SLAM 지도 18 / 9.
+  결함 없는 S1·S6 bag 은 0, s3_aisle 은 정답 지도 r0 의 1 건뿐. RTAB-Map null odom(LOST) 은 0.
+- 3D 의 실패는 모두 처리 스캔 누락이다: 시작 첫 장(s3_aisle 11.5 s, s6_wall 10.7–10.9 s — E2 와 같은 결정적 사건)과 주행 중 1–5 장,
+  그리고 `s1_seed3_a2` r1 의 두 행이 **727 장**을 잃었다 (정답 DB 행은 궤적 덮음 0.68) — 공유 부하 하에서 처리가 멈춘 사건이다.
+
+### 6.3 명세 구간 — 팀 기준 정지 3 / 직선 5 / 회전 8 cm 통과 재생 수 (RMSE · max · p95)
+
+회전 구간은 S6 bag 에 없다 (통로 안 직진·후진만) — 회전 분모는 회전이 있는 재생 수.
+
+| 행 | 정지 (7 bag, 21) | 직선 (21) | 회전 (12) | 결함 제외 4 bag: 정지 · 직선 · 회전 max 최악 |
+|---|---|---|---|---|
+| `amcl_gt` | 12 · 12 · 13 | 15 · 11 · 12 | 9 · 6 · 7 | 2.99 · **12.89** · 3.87 cm |
+| `rtabmap3d_loc_gt` | 21 · **15** · 15 | 21 · 21 · 21 | 12 · 12 · 12 | **3.24** · 3.84 · 3.23 cm |
+| `amcl_slam` | 6 · **0** · 0 | 18 · 3 · 12 | 12 · 12 · 12 | **5.48** · **6.36** · 5.23 cm |
+| `rtabmap3d_loc_slam` | 21 · 12 · 12 | 21 · 18 · 21 | 12 · 12 · 12 | **3.50** · 4.09 · 3.50 cm |
+
+- RTAB-Map 위치추정은 RMSE 로는 모든 재생이 기준 안이지만 **정지 max 가 정답 DB 6/21·SLAM 지도 9/21 재생에서 3 cm 를 넘었다** (최악 정답 DB 3.89 · SLAM 지도 5.09 cm).
+- 배포 2D 는 결함 없는 bag 의 정답 지도 위에서 RMSE 는 모두 통과, max 는 직선 1/12 재생이 넘었다 (s3_aisle r0 12.89 cm 한 번 —
+  kidnap LOST 1 건과 같은 재생). SLAM 지도 위에서는 정지 max 가 결함 없는 12 재생 모두 3 cm 를 넘었다 (5.0–5.5 cm).
+
+### 6.4 지도 품질이 위치추정에 주는 몫 (SLAM 지도 − 정답 지도, xy ATE RMSE, 기술)
+
+3D +0.38 cm [0.06, 0.90] (bag 별 0.00–1.82). 2D 는 결함 bag 의 발산 때문에 평균이 뜻이 없고 (−186 [−684, +124]), 결함 없는 4 bag 은
++2.58 · +1.01 · +1.53 · +1.42 cm (평균 +1.64). **2D 에서 지도의 몫이 3D 보다 크다** — slam_toolbox 지도의 국소 어긋남이 배포 사슬에 그대로
+더해진다 (기술, 검정하지 않음).
+
+## 7. E5 — S6 가설: 막힌 통로 끝에서 3D 가 통로 축을 더 잘 구속하는가
+
+통로 상자(x ±0.30, y −12…−8) 안 표본의 통로 축(y) 오차 RMSE [cm], bag 이 변형마다 하나라 재생 3 회 짝만
+(`pstats.replay_rule`: 평균 차 > max(2 × 합동 재생 sd, δ 0.2 cm) 이면 `differs`). 기하 계산 (evaluation.md §6.2, 통로 중앙 단일 스캔
+축 구속 점): 2D open 70 · queue 59 · wall 0, 16 채널 7 927 · 7 902 · 7 927.
+
+### 7.1 매핑 (E2 재생) — 지지 안 됨
+
+| 행 | open | queue | wall | queue − open | wall − open |
+|---|---|---|---|---|---|
+| slam_toolbox | 1.53 | 1.00 | 3.51 | −0.53 `differs` | +1.99 `differs` |
+| RTAB-Map 2D | 12.93 / 12.95 / 12.75 | 1.82 / 1.86 / 1.89 | 2.04 | −11.02 `differs` | −10.84 `differs` |
+| RTAB-Map 3D | 0.18 | 0.18 | 0.41 | −0.00 `undecided` | +0.23 `differs` |
+| LIO-SAM 평면 | 0.57 | 0.61 | 1.11 | +0.03 `undecided` | +0.55 `differs` |
+
+규칙("2D wall − open `differs`(+) 이고 3D `undecided`, 차의 차 > δ")으로 **지지 안 됨** — 3D 두 행도 wall 에서 커졌다 (+0.23·+0.55).
+차의 차 (2D − 3D, wall): slam_toolbox − RTAB-Map 3D +1.75, slam_toolbox − LIO-SAM +1.44 cm. RTAB-Map 2D 는 **열림**에서 12.9 cm 로 가장
+나빴다 (막힘과 무관한 사건, 원인 미조사). 매핑에서는 블로커가 스캔 대 스캔 정합의 표지가 되므로 2D 도 축을 잃지 않는다는 예측
+(evaluation.md §6.2 `--blockers-as landmark`) 과 결론이 같다. wall bag 이 결함 bag 이라 휠-EKF 행의 wall 값은 결함도 함께 받는다.
+
+### 7.2 위치추정 (E3(b), 사전 지도에 블로커 없음 — 주 = 정답 지도) — 규칙상 지지, 해석 불가
+
+| 행 | open | queue | wall | queue − open | wall − open |
+|---|---|---|---|---|---|
+| 2D 배포, 정답 지도 | 0.71 / 0.75 / 0.72 | 0.65 | 1059.6 / 1074.5 / 1059.6 | −0.08 `undecided` | **+1063.8 `differs`** |
+| 3D RTAB-Map, 정답 DB | 0.18 | 0.18 | 0.17 | −0.00 `undecided` | −0.01 `undecided` |
+| 2D 배포, SLAM 지도 (보조) | 2.14 / 2.15 / 2.12 | 1.93 | 2251.8 | −0.20 `differs` | +2249.7 `differs` |
+| 3D RTAB-Map, SLAM 지도 (보조) | 0.18 | 0.18 | 0.17 | −0.00 `undecided` | −0.01 `undecided` |
+
+- 사전 등록 규칙으로는 **"지지"** 다 (2D wall − open `differs`(+), 3D `undecided`, 차의 차 +1063.8 cm > δ).
+- 그러나 **wall bag 은 EKF 결함 bag** 이다 — 이 혼입은 E3(b) 결과를 보기 전에 노트에 적어 두었다. 시간 분해 [측정, `traj_online.tum`]:
+  2D 는 **출발(60.1 s) 전 정지 중, 시작 4 s 안에** 21 m 어긋났고 (t 15 s), kidnap_monitor 가 시작부터 LOST → RECOVERING 에 머물렀다.
+  그때 EKF yaw 표류는 약 2° 라, 방아쇠는 사전 지도에 없는 양끝 화물(북 0.85 m 앞)과 스캔의 불일치일 가능성이 크다 **[추정]**.
+  그렇다면 이것은 "축 구속" 이 아니라 배포 kidnap 감시가 지도에 없는 물체를 납치로 읽은 것이다. 같은 bag 에서 3D 는 EKF 표류(최대 48°)와
+  화물을 모두 견디고 0.17 cm 였다.
+- 현실적 막힘(queue — 결함 없는 bag)에서는 2D·3D 모두 열림과 가르지 못했다 (2D 0.65 대 0.72 cm).
+- **주장 범위**: "벽처럼 통로 양끝이 지도에 없는 물체로 막히면 배포 2D 사슬이 출발 전부터 위치를 잃을 수 있고 3D 위치추정은 잃지 않았다" 는
+  bag 하나·재생 3 의 관찰이다. "막힘이 2D 의 통로 축 구속을 깨뜨린다" 는 이 자료로 주장할 수 없다 (결함 혼입, 기제가 다름, n = 1 장면).
+
+## 8. E4 — 포인트 클라우드 처리·최적화: 절제 실험과 처리 사슬
+
+### 8.1 처리 사슬 (코드·설정의 실제 값) [코드]
+
+1. **센서** (Gazebo Fortress gpu_lidar, `amr_lidar3d.xacro`): 16 × 1800, ±15°, 10 Hz, 0.10–30 m, σ 0.03 m, 장착 0.90 m. 점별 time 없음
+   (순간 스캔 — deskew 효과는 평가할 수 없다). 범위 밖 빔 = +inf (스폰 자리 13.7 %).
+2. **전처리** (`amr_lidar3d::CloudPreprocessor`, `src/amr_lidar3d/src/cloud_filter.cpp`): x·y·z 가 모두 유한한 점만 남기고 (`std::isfinite`),
+   조직 16 × 1800 → height 1, `is_dense true`, 필드 배치·순서 유지, frame_id 그대로 (`amr_01/lidar3d_link`, 덮어쓰기 인자 있음).
+   E4 `raw` 행은 이 단계를 건너뛴 `points_raw` 를 준다.
+3. **RTAB-Map 3D (구성 B, `config/rtabmap.yaml`)**: `icp_odometry` 가 휠-EKF odom 을 guess 로 받아 (`guess_frame_id = amr_01/odom`)
+   `Icp/VoxelSize` 0.1 m 복셀 (`scan_voxel_size` 0.1) → 법선 k 20 (`Icp/PointToPlaneK`) → libpointmatcher 점-대-평면 ICP (`Icp/Iterations` 10,
+   `Icp/Epsilon` 0.001, `Icp/MaxCorrespondenceDistance` 1.0 m, `Icp/OutlierRatio` 0.7, `Icp/RangeMin` 0.2 m) → **평면 고정** `Reg/Force3DoF true`
+   (x, y, yaw 만) → 저복잡도 축은 guess 값 (`Icp/PointToPlaneLowComplexityStrategy 1`, 문턱 `Icp/PointToPlaneMinComplexity` 0.02).
+   `deskewing false`, `topic_queue_size 10`, IMU 없음. `rtabmap` 이 1 Hz 로 노드를 더하고 근접 루프(`RGBD/ProximityPathMaxNeighbors 1`)를
+   ICP 대응 비율 ≥ 0.3 (`Icp/CorrespondenceRatio`) 으로 받아 그래프 최적화, 최적화 뒤 오차 비율 > 0.3 (`RGBD/OptimizeMaxError`) 인 루프는 거부.
+   격자: `Grid/MaxGroundHeight` 0.05 – `Grid/MaxObstacleHeight` 0.40 m 대역 passthrough (`Grid/NormalsSegmentation false`), 레이 추적, 0.05 m
+   셀, 사거리 0.2–20 m.
+4. **RTAB-Map 2D**: 같은 설정 파일, 입력만 `scan_filtered` (2D 720 빔, 높이 0.20 m) — 시험 `test_rtabmap_launch_2d_3d_share_everything_but_input`.
+5. **LIO-SAM 평면 (`config/liosam.yaml` + 런치 인자)**: 파생 bag 의 madgwick 재계산 IMU (gain 0.1, 자력계 없음, 잠금 단계 재계산 —
+   replay.md §1.2) + 전처리 점군. 링 16 · 열 1800, 거리 0.2–30 m, 복셀 odometrySurf 0.2 / mappingCorner 0.1 / mappingSurf 0.2 m,
+   `mappingProcessInterval` 0.15 s, `extrinsicTrans` (−0.27, 0, −0.62), 루프 on. **평면 고정** = 런치 인자 `z_tol:=0.0 rot_tol:=0.0
+   rpy_weight:=0.0` (6DoF 참고 행 `liosam_loop_re` 는 설정값 1000 / 1000 / 0.01). 휠을 쓰지 않는다.
+6. **madgwick 방위 — 오라클 차단**: Gazebo `imu/data_raw` 방위는 정답 (sensor.md §6) → 모든 SLAM IMU 입력은 madgwick 재추정
+   (`imu/data` 의 방위는 항등이라 정답이 아니다 — rtabmap.md §1.1). 정답 방위 행 `liosam_oracle` 은 순위·검정 밖 상한 참고.
+7. **휠·EKF 는 그대로다**: RTAB-Map 두 행·slam_toolbox·두 위치추정 사슬은 bag 의 휠-EKF (시뮬 휠은 오라클 수준, evaluation.md §5) 를
+   guess·odom 으로 받는다 — 그래서 EKF 결함 bag 의 영향을 받는다 (§0-2). "LIO-SAM 대 RTAB-Map" 의 차이는 차원이 아니라 **휠 사전값 유무**와
+   섞여 있다.
+
+### 8.2 절제 결과
+
+(E4 재생 진행 중 — 72 중 일부. 끝난 뒤 이 절을 채운다.)
+
+## 9. 실패·재생 잡음·분산 성분
+
+- **재생 잡음은 작고 bag 차이가 크다**: E2 의 모든 행·지표에서 bag 안 재생 간 sd 가 bag 간 sd 보다 두 자릿수 이상 작다 (예: ATE RMSE
+  RTAB-Map 3D 0.04 대 79.2 cm, 결함 제외해도 0.05 대 1.49 cm). slam_toolbox 는 재생 간 sd 가 0.00 이다 (동기 노드, 같은 입력 → 같은 출력).
+  재생 산포를 만든 것은 연속 잡음이 아니라 누락·메시지 버림 같은 **사건**이다 (파일럿 replay.md §0-5 와 같은 관찰).
+- **실패율** (Wilson 95 %): 매핑 slam_toolbox 6/24 [0.12, 0.45] · RTAB-Map 2D 11/24 [0.28, 0.65] · RTAB-Map 3D 11/24 [0.28, 0.65] ·
+  LIO-SAM 세 행 각 3/24 [0.04, 0.31]. 위치추정 2D 정답 6/21 · 2D SLAM 3/21 (모두 발산) · 3D 정답 9/21 · 3D SLAM 10/21 (모두 누락).
+  누락 실패의 절반 이상은 bag 시작 첫 장(결정적 사건)이다 — 보충 분류: 매핑 RTAB-Map 2D 9/11, 3D 6/11, LIO-SAM 3/3 이 시작 장만.
+- 실패 재생을 평균에서 빼지 않았다. 빼면 결함 bag 이 대부분 남는다 (결함은 실패 규칙으로 잡히지 않는다 — 처리는 정상이고 입력 odom 이 틀렸다).
+
+## 10. 주장할 수 없는 것
+
+| 주장 | 가능 여부 | 이유 |
+|---|---|---|
+| 3D LiDAR·3D SLAM(RTAB-Map, LIO-SAM)을 시뮬레이션에 적용했고 기록된 시나리오에서 끝까지 돈다 | **가능** | E1 24/24 × 4 행 |
+| 3D SLAM 의 지도·궤적이 2D 보다 낫다 (매핑) | **불가** | 사전 등록 비교 다섯 개 모두 가르지 못함 (§4·§5) |
+| 정상 조건(결함 없는 bag)에서 RTAB-Map 3D 매핑 궤적이 2D 보다 작다 | **불가 (기술만)** | 보충 5 bag, 가능 최소 p 0.0625 — 기각 불가능한 설계, 결과 뒤 정한 집합 |
+| SLAM 지도 위 위치추정에서 RTAB-Map 3D 가 배포 2D 사슬보다 정확하다 | **조건부 가능** | L2 `A<B` (6·7 bag 모두 같은 부호). 단 크기는 결함 bag 의 2D 발산이 정하고, 결함 없는 bag 의 차는 0.9–2.5 cm |
+| 정답 지도 위 위치추정에서 3D 가 낫다 | **불가** | L1 주 결과 가르지 못함 |
+| 막힌 통로 끝에서 3D 가 통로 축을 더 잘 구속한다 | **불가** | 매핑 지지 안 됨, 위치추정은 결함 혼입·기제 다름·장면 1 개 (§7) |
+| 3D 위치추정이 지도에 없는 물체·틀린 odom 에 더 강건하다 | **관찰만** | 발산 2D 9/42 대 3D 0/42 — 모두 결함 bag 3 개에서, 사전 등록 비교 아님 |
+| 3D 가 2D 격자 지도(Nav2 용)를 더 좋게 만든다 | **불가** | IoU·재현율은 3D 가 낮고 ADNN₀ 는 비슷하다 (§4.2) |
+| 3D 처리가 실시간으로 돈다 | **불가** | 유효 sim 0.25 재생에서도 누락 실패 11/24·19/42, 지연 p95 118 ms (공유 부하 하) |
+| LIO-SAM 이 RTAB-Map 보다 낫다/나쁘다 | **불가** | 휠 사전값 유무와 섞임 (요인 B), LIO-SAM 지연 미측정 |
+| 정답 IMU 방위를 걷어낸 비용이 크다 | **불가 (작다는 관찰)** | 오라클 행 xy 3.13 대 6DoF 3.60 cm (8 bag), 7 bag 은 가르지 못함 — 검정하지 않음 |
+| 결과가 실기·다른 월드에 일반화된다 | **불가** | 시뮬레이션 1 월드, 오라클 수준 휠, 순간 스캔 |
+
+## 11. 한계
+
+- **시뮬레이션만**: Gazebo Fortress, 창고 월드 하나, 로봇 1 대 녹화. 실데이터(IILABS 등) 교차 확인은 미측정.
+- **오라클 수준 휠**: 시뮬 휠·EKF 는 실기보다 1–2 자릿수 정확하다 (결함 bag 제외). 휠 열화 요인(D)은 미측정 — 휠을 쓰는 행이 유리할 수 있다.
+- **녹화 결함 3/8 bag**: 결과 뒤 발견 (§0-2). 다시 녹화하지 않았다 (Gazebo 금지 — 보너스 4 P5 가 사용 중).
+- **녹화 프로토콜 변경**: s3_aisle·s1_seed1 은 RTF 0.5, 나머지는 0.25 (결과 뒤 변경, recordings.md §0-2). 재생 배속으로 유효 sim 속도를
+  맞췄지만 녹화 중 센서·EKF 의 타이밍은 다르다.
+- **`s1_seed2x_a1`**: 사전 등록 밖 bag (S1 규칙으로 7 bag 결과를 함께 냈다). 그 bag 도 결함 bag 이다.
+- **공유 부하**: 재생은 다른 사용자 부하(loadavg 5–220) 아래에서 돌았다. 누락·지연은 부하에 따라 바뀐다 — 지연은 예비값.
+- **표본**: bag 8 (장면 다양성) × 재생 3. 재생 간 산포가 작아 재생을 늘려도 검정력이 늘지 않는다. bag 이 더 필요하다.
+- **E3(b) 정답 지도의 비대칭**: 2D 는 기하 래스터(잡음 없음), 3D 는 센서 장들(σ 3 cm)을 정답 자세에 놓은 DB 다 (사전 등록에 적음).
+- **범위 밖 — 미측정**: S2 동적 장면, S4 점대칭 별칭, S5 납치, Nav2 폐루프(8 단계), 예비 행(RKO-LIO·MOLA·Kinematic-ICP), 실데이터,
+  LIO-SAM 스캔당 지연, CPU·메모리 자원, 퇴화 감지 일치율, 동적 물체 제거 절제.
+
+## 12. 열린 문제와 다른 소유자에게 요청
+
+1. **(요청, `src/amr_localization` 소유자)** `imu_filter_node` 의 기동 바이어스 추정이 기동 0.4 s 안에 "motion detected" 로 포기하면
+   파라미터 바이어스(기본 0)로 떨어진다 (`imu_filter_node.cpp` 의 startup 경로, 녹화 3/8 에서 발생). 시뮬 자이로 바이어스 평균 0.01 rad/s
+   (`amr_description` sensors.yaml `gyro_bias_mean`) 가 그대로 EKF 에 들어가 odom 이 0.57 °/s 로 돈다. 배포에서도 기동 때 흔들리면 같은 일이
+   생길 수 있다 — 포기 대신 정지를 기다려 다시 추정하거나, 실패를 진단 토픽·LOST 로 알리는 것이 필요해 보인다 [추정].
+2. **(요청, 녹화 도구)** `recgate` 에 odom 일관성 검사(EKF odom 대 정답의 yaw 표류율, 또는 imu_filter 의 바이어스 상태 줄)를 더하면 이번
+   결함을 녹화 때 잡을 수 있었다.
+3. 결함 bag 을 다시 녹화하거나, 같은 bag 에서 EKF 대신 `wheel_odom` 을 guess 로 쓰는 행을 더해 "결함이 없었다면" 의 비교를 하면
+   S1·S6 wall 결론을 다시 볼 수 있다 (재생만으로 가능, 사전 등록 필요).
+4. RTAB-Map 2D 가 `s6_open_a3` 에서 통로 축 12.9 cm 로 틀린 원인 (재생 3 회 모두, 결정적) — 미조사.
+5. 3D 위치추정 `s1_seed3_a2` r1 의 727 장 누락 — 부하 아래 처리가 멈춘 사건으로 보이나 기제 미확인.
+6. LIO-SAM 6DoF 의 z 표류 (bag 별 최대 평균 57 cm) 는 정답 방위로도 줄지 않았다 — 원인 1(퇴화 + IMU 예측) 직접 확인(R5) 은 여전히 미측정.
+
+## 13. 기록 지도
+
+| 무엇 | 어디 |
+|---|---|
+| 사전 등록·실행 중 기록·결과 (E2·E3(a)·E5 매핑) | `notebook/entries/2026-10-09_0000_b2-eval_mapping-compare-prereg.md` (「이어받기」·「EKF 결함 bag」 절 포함) |
+| 사전 등록·결과 (E3(b)·E5 위치추정·E4) | `notebook/entries/2026-10-09_0047_b2-eval_loc-ablation-prereg.md` |
+| 실행 목록 (재생마다 한 줄, 실패 포함) | `notebook/runs/b2-eval.jsonl` — `B2eval-e2-*` 144, `B2eval-e3-*` 84 + DB 1, `B2eval-e4-*` 72, 분석·보충 |
+| 원자료 | `/home/CAPYI_AI/runs/b24/b2-eval/{e2,e3,e4}/<bag>/<행>/r<k>/` (job.json·HEAD.txt·DONE·row.log·traj_online.tum·지도·DB·out_bag) |
+| 분석 산출물 | `/home/CAPYI_AI/runs/b24/b2-eval/analysis/{e2,e3,e4}/` (replays.jsonl·compare*.json), 표 `analysis/tables/`, 보충 `analysis/supp/` |
+| 녹화 결함 진단 | `/home/CAPYI_AI/runs/b24/b2-eval/supp/odom_v2/odom_drift.json`, `supp/defect.json` (녹화 launch.log 의 바이어스 줄) |
+| 재생 구동기 기록 | `/home/CAPYI_AI/runs/b24/b2-eval/driver.log`, `control.json`, `load_wait.log`, `cpu_samples.jsonl`, `resume/inventory_before.jsonl` |
+| 녹화 bag | `/home/CAPYI_AI/runs/b24/b2-rec/rec/<태그>/` (recordings.md §3·§4) |
+| 스크립트 | `src/amr_slam3d/scripts/` — `eval_driver.py` (구동기), `peval.py` (사전 등록 분석), `presults.py` (표), `loc_lost.py` (kidnap LOST 셈), `odom_drift.py`·`psupp.py` (보충), `src/amr_evaluation/amr_evaluation/slam3d/{pstats,pmetrics}.py` |
