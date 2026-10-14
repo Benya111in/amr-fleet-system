@@ -229,8 +229,74 @@ rtabmap.md §4.3 의 4.62 / 0.746 / 0.548 과 같다. 이 검증은 공개된 �
 
 ## 결과
 
-(E2 끝난 뒤 채운다)
+2026-10-15 02:20 최종 분석 (144 재생 모두 rc 0, 재생 기간 2026-10-09 00:30 – 2026-10-15 01:46, 재생 시작 loadavg 5–80) [측정·계산, 공유 부하 하].
+원자료 `runs/b24/b2-eval/e2/`, 지표 `analysis/e2/replays.jsonl`·`compare.json`, 표 `analysis/tables/e2.md` (presults.py), 보충
+`analysis/supp/e2_clean.md`. 분석 HEAD `db8cea2` (peval.py 사전 등록 판 그대로). 평가 창은 오라클 행 전 중간 분석과 같았다
+(`replays_windows.json` 동일) — 중간 분석의 수치가 최종과 같다.
+
+**불리한 것 먼저**
+- **사전 등록 가족 T·M 의 다섯 비교가 모두 "가르지 못함"** 이다 (8 bag·사전 등록 7 bag 둘 다, Holm p ≥ 0.23). 기각 가능한 설계였지만
+  bag 사이 부호가 갈렸다.
+- **녹화 결함 3 bag** (위 「EKF 결함 bag」): 휠-EKF 를 쓰는 세 행이 `s1_seed3_a2` 96–102 cm, `s1_seed2x_a1` 208–222 cm, `s6_wall_a1`
+  10–19 cm 로 틀렸다. 이 bag 들에서 RTAB-Map 두 행의 SE(2) 정렬 오차는 0.2–1.8 cm (slam_toolbox 2.9–12.4 cm) 라 궤적 모양은 거의 맞고 **틀어진 것은 주로 월드 기준 방위**다
+  (yaw RMSE 5.9–20°). 사전 등록 주 결과는 이 bag 을 포함한다.
+- **실패 재생** (Wilson 95 %): slam_toolbox 6/24 [0.12, 0.45] (메시지 필터 버림 — s3_aisle·s6_wall 결정적), RTAB-Map 2D 11/24 [0.28, 0.65],
+  RTAB-Map 3D 11/24 [0.28, 0.65], LIO-SAM 평면·6DoF·오라클 각 3/24 (s6_wall 첫 장). 누락 재생 중 "시작 장만"(첫 점군 + 1 s 안,
+  보충 분류) — RTAB-Map 2D 9/11, 3D 6/11, LIO-SAM 3/3. 주행 중 누락은 RTAB-Map 3D 5 재생 (map_long 7·10·12 장 — 부하 85→50 때,
+  s1_seed1 r2 6 장·s1_seed2x r2 11 장 — 부하 130–190 때), 2D 2 재생.
+- 예측 P-E1 ("3D 세 행 누락 > 0 재생 ≤ 3/24") 은 RTAB-Map 3D 에서 **틀렸다** (11/24). LIO-SAM 은 3/24 로 맞았다.
+- 예측 P-C1·P-C2 (`A<B`) 는 **틀렸다** (가르지 못함). P-C3·C4·C5 (`undecided`) 는 맞았다.
+- 2D 격자 지도에서 RTAB-Map 3D 의 IoU 가 2D 두 행보다 낮다 (결함 없는 5 bag 평균 0.40 대 slam_toolbox 0.59·RTAB-Map 2D 0.54,
+  표면 재현율 3D 0.70 대 slam_toolbox 0.93) — 3D 가 2D 격자 지표에서 앞서지 않는다.
+
+**사전 등록 가족 판정** (차 = A − B, 작을수록 A 가 낫다; 두 단계 bag 부트스트랩 95 %):
+
+| 비교 | 8 bag | 사전 등록 7 bag |
+|---|---|---|
+| C1 RTAB-Map 3D − 2D, ATE | −2.37 [−5.62, −0.07] cm, 음 6/양 2, Holm p 0.23 → 가르지 못함 | −2.27 [−6.10, 0.21], 5/2, 0.47 → 가르지 못함 |
+| C2 RTAB-Map 3D − slam_toolbox, ATE | 0.00 [−3.71, 4.09], 6/2, 0.64 → 가르지 못함 | −1.52 [−4.67, 1.72], 6/1, 0.47 → 가르지 못함 |
+| C3 LIO-SAM 평면 − slam_toolbox, ATE | −38.6 [−89.5, −0.85], 6/2, 0.23 → 가르지 못함 | −15.4 [−42.1, 0.68], 5/2, 0.47 → 가르지 못함 |
+| C4 RTAB-Map 3D − 2D, 지도 ADNN₀ surface | +3.32 [−3.23, 14.06], 5/3, 1.0 → 가르지 못함 | +4.20 [−3.40, 16.31], 4/3, 1.0 → 가르지 못함 |
+| C5 RTAB-Map 3D − slam_toolbox, ADNN₀ | +4.14 [−1.75, 13.60], 3/5, 1.0 → 가르지 못함 | +4.16 [−2.33, 15.17], 3/4, 1.0 → 가르지 못함 |
+
+S1 만 (3 bag·2 bag) 은 기각 불가능한 설계 — 기술만 (`analysis/tables/e2.md`).
+
+**보충(사전 등록 외, 결과 뒤) — EKF 결함 bag 제외 5 bag** (기각 불가능한 설계, 기술): C1 −3.45 [−8.28, −0.49] cm (4/1), C2 −1.60
+[−2.56, −0.66] cm (**5/0**), C3 +0.27 [−1.18, 2.19] (3/2), C4 −1.41 [−4.86, 0.53] (3/2), C5 −0.28 [−1.07, 0.42] (2/3). 행별 xy ATE RMSE
+(bag 평균의 평균): RTAB-Map 3D 1.46 · LIO-SAM 6DoF 2.98 · slam_toolbox 3.06 · LIO-SAM 오라클 3.08 · LIO-SAM 평면 3.33 · RTAB-Map 2D 4.91 cm.
+지도 ADNN₀ surface: RTAB-Map 3D 4.15 · slam_toolbox 4.43 · RTAB-Map 2D 5.56 cm, IoU 0.40 · 0.59 · 0.54.
+
+**행별 (8 bag, bag 평균의 평균 — 재생 간 sd / bag 간 sd)** — xy ATE RMSE: slam_toolbox 42.2 (0.00/74.1), RTAB-Map 2D 44.6 (0.19/78.8),
+RTAB-Map 3D 42.2 (0.04/79.2), LIO-SAM 평면 3.60 (0.34/2.17), 6DoF 3.60 (0.16/2.46), 오라클 3.13 (0.24/1.68) cm. SE(2) 정렬(보조):
+4.76 · 2.93 · **1.00** · 2.19 · 2.30 · 2.26 cm. RPE 10 m: 1.29 · 0.24 · **0.16** · 0.29 · 0.34 · 0.33 %. 3D 점 지도 F@5 cm: RTAB-Map 3D 0.674,
+LIO-SAM 평면 0.739, 6DoF 0.335 (z 최대 57 cm 표류), 오라클 0.375. **재생 간 sd 는 bag 간 sd 보다 두 자릿수 이상 작다** — 같은 bag 을
+다시 돌려도 거의 같은 값이 나오고 (slam_toolbox 는 재생 간 sd 0.00), 차이는 bag(장면·녹화)에서 온다.
+
+**E5 (매핑) — 통로 축 RMSE [cm], 재생 3** (`pstats.replay_rule`, δ 0.2):
+
+| 행 | open | queue | wall | queue − open | wall − open |
+|---|---|---|---|---|---|
+| slam_toolbox | 1.53 ×3 | 1.00 ×3 | 3.51 ×3 | −0.53 differs | +1.99 differs |
+| RTAB-Map 2D | 12.93 / 12.95 / 12.75 | 1.82 / 1.86 / 1.89 | 2.04 ×3 | −11.02 differs | −10.84 differs |
+| RTAB-Map 3D | 0.18 ×3 | 0.18 ×3 | 0.41 ×3 | −0.00 undecided | +0.23 differs |
+| LIO-SAM 평면 | 0.57 / 0.58 / 0.57 | 0.61 / 0.60 / 0.61 | 1.11 / 1.13 / 1.11 | +0.03 undecided | +0.55 differs |
+
+- 사전 등록 규칙(2D wall − open `differs`(+) **이고 3D `undecided`**, 차의 차 > δ): 3D 두 행도 wall − open 이 `differs`(+0.23·+0.55)
+  라 **지지 안 됨**. 차의 차 (2D − 3D, wall): slam_toolbox − RTAB-Map 3D +1.75, slam_toolbox − LIO-SAM +1.44, RTAB-Map 2D − 3D −11.08 cm.
+- 혼입: **wall bag 은 EKF 결함 bag** 이다 (휠-EKF 행의 wall 값은 결함을 함께 받는다; 횡 오차 slam_toolbox 18.8·RTAB-Map 10.2 cm).
+  RTAB-Map 2D 는 **열림(open)** 에서 통로 축 12.9 cm 로 가장 나빴다 — 막힘과 무관한 사건이다 (원인 미조사).
+- 기하 계산(evaluation.md §6.2: 2D 축 구속 점 open 70 · queue 59 · wall 0)이 예측하는 "wall 에서 2D 축 오차 급증" 은 매핑에서 나타나지
+  않았다 (slam_toolbox +2.0 cm, RTAB-Map 2D 는 오히려 open 이 최악). P-E5 의 예측("매핑 쪽 지지되지 않음") 은 결론이 맞았고, 근거로 든
+  "모든 행 `undecided`" 는 틀렸다.
+
+**E1 (끝까지 도는가)**: RTAB-Map 3D·LIO-SAM 평면·6DoF·오라클 네 3D 행이 8 bag × 3 재생 모두 rc 0, 궤적 덮음 ≥ 0.993, 런치 깨끗한 종료.
+처리 스캔 누락 > 0 재생은 위 실패와 같다.
+
+**스캔당 지연 (공유 부하 하 예비값, 재생 p50·p95 의 평균)**: RTAB-Map 3D icp_odometry 62.5 · 117.6 ms (최대 852), rtabmap 149 · 274 ms;
+RTAB-Map 2D icp 7.3 · 47.0 ms, rtabmap 40.5 · 94.2 ms. LIO-SAM·slam_toolbox 미측정.
 
 ## 해석
+
+- E2 결과의 해석은 결과 문서 `bonus2_results.md` §4–§5 에 모은다 (E3(b)·E4 와 함께 읽어야 해서).
 
 ## 다음
