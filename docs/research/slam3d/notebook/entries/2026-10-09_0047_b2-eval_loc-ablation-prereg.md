@@ -162,6 +162,18 @@ E3(b) 85 재생 ≈ 직렬 14 h → 동시 4 면 약 3.5 h (+ 부하 대기). E4
   (판정·구간·p 는 peval 값 그대로). 더하는 해석 하나: **E4 의 사전 등록 3 bag 표시**(s1_seed2x 제외 — S1 규칙)에서 "바꾼다" =
   **3 bag 모두 같은 방향 `differs`** (4 bag 규칙 "≥ 3/4" 의 비율을 3 bag 에 옮긴 것). 4 bag 판정이 주이고, 둘이 다르면 S1 규칙대로
   3 bag 쪽을 주로 쓴다. 합성 자료(파일럿 기록의 bag 이름만 바꾼 것 — 결과 아님)로 표 모양만 확인했다.
+- **E3(b)·E4 결과 전에 더하는 보충 분석 규칙 (2026-10-14 11:40, 사전 등록 외 — E2 중간 결과를 본 뒤 정함)**: E2 중간 분석에서
+  휠-EKF guess 를 쓰는 행의 오차가 세 bag 에서 1–2 m 로 커진 것을 보고 원인을 찾았다 (E2 항목 「EKF 결함 bag」). 녹화 때
+  `imu_filter_node` 가 기동 바이어스 추정에서 **"motion detected during startup bias estimation; falling back to parameter bias"** 를
+  낸 bag (`s1_seed3_a2`·`s1_seed2x_a1`·`s6_wall_a1`, 녹화 `launch.log`) 은 자이로 z 바이어스(시뮬 ±0.01 rad/s)가 빠지지 않아 bag 의
+  EKF `odometry/filtered`·odom TF 가 0.01 rad/s 로 yaw 표류한다 [측정]. E3(b) 의 두 사슬(배포 2D 는 EKF odom TF·`odometry/filtered`,
+  RTAB-Map 위치추정은 EKF guess)과 E4 의 모든 행이 그 odom 을 쓴다. 그래서 **E3(b)·E4 결과를 보기 전에** 다음을 정한다:
+  - 주 결과는 사전 등록 그대로 (E3(b) 7·6 bag, E4 4·3 bag). 바꾸지 않는다.
+  - **보충 표**: 같은 지표·판정 규칙을 "EKF 결함 bag 제외" 집합으로도 낸다 — E3(b) 4 bag (`s3_aisle_a1`·`s1_seed1_a1`·`s6_open_a3`·
+    `s6_queue_a1`, 가능 최소 p 0.125 → **기각 불가능한 설계, 기술만**), E4 2 bag (`s3_aisle_a1`·`s1_seed1_a1`, 기술만), E5(위치추정) 는
+    wall 이 결함 bag 이라 **wall − open 비교가 EKF 결함과 섞인다**고 표시한다 (queue − open 은 영향 없음).
+  - 결함 판정 기준은 위 로그 한 줄 (SLAM 결과와 무관한 녹화 기록) 이다. s3_aisle 은 바이어스를 추정했지만 0.01048 rad/s (다른 통과 bag
+    0.00999–0.01001) 로 잔차 4.8e-4 rad/s → EKF yaw 오차 최대 3.0° (EKF xy 33 cm) 라 "부분" 으로 표시만 하고 제외하지 않는다.
 
 ## 결과
 

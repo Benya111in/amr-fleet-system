@@ -208,6 +208,25 @@ rtabmap.md §4.3 의 4.62 / 0.746 / 0.548 과 같다. 이 검증은 공개된 �
   그대로 둔다(주 결과). 결과 문서에 **보충**으로 누락 재생을 "시작 장만"(모든 누락 스탬프 ≤ 그 bag 첫 점군 스탬프 + 1.0 s) / "주행 중
   포함" 으로 나눠 함께 적는다 (`presults.py failures`). 이 정의는 누락 위치를 본 뒤 정했으므로 사전 등록 외다.
 
+### EKF 결함 bag — E2 중간 결과를 본 뒤 찾은 녹화 결함 (2026-10-14 11:30, 결과 뒤 — 보충)
+
+- **경위**: E2 주 행·참고 행(120 재생)이 끝난 10:46 에 오라클 보조 행 전 **중간 분석**(`analysis/e2_interim/`, 커밋된 peval.py 그대로,
+  창은 오라클 행 없이 — 최종은 오라클 뒤 다시 계산)을 돌렸다. `s1_seed3_a2`·`s1_seed2x_a1` 에서 휠-EKF 를 쓰는 세 행(slam_toolbox·
+  RTAB-Map 2D·3D)의 ATE 가 96–221 cm, `s6_wall_a1` 에서 10–19 cm 였고 휠을 쓰지 않는 LIO-SAM 두 행은 같은 bag 에서 2–8 cm 였다.
+- **원인** [측정]: bag 의 EKF `odometry/filtered` 를 정답과 첫 자세에서 맞춰 비교했다 (`tmp/odom_drift.py`, `supp/odom/odom_drift.json`):
+  EKF yaw 오차가 **처음부터 일정한 0.573 °/s (= 0.0100 rad/s)** 로 자란다 — s1_seed3 −0.0100, s1_seed2x −0.0100, s6_wall +0.0100 rad/s
+  (정지 중에도). 최대 xy 오차 12.0 m · 37.9 m · 1.63 m, yaw 128° · 149° · 48°. 같은 bag 의 `wheel_odom` 은 21 · 98 · 0.5 cm 로 멀쩡하다.
+  녹화 `launch.log` 의 `imu_filter_node` 가 이 세 bag 에서만 기동 0.4 s 안에 **"motion detected during startup bias estimation; falling
+  back to parameter bias"** (파라미터 바이어스 = 0) 를 냈다. 시뮬 IMU 의 자이로 바이어스 평균은 0.01 rad/s (`amr_description` sensors.yaml
+  `gyro_bias_mean`) 이고 다른 다섯 bag 은 바이어스를 ±0.0100 (s3_aisle 만 0.01048) 으로 추정했다. 그래서 세 bag 의 EKF odom 은 자이로
+  바이어스가 그대로 적분된 것이다. 녹화 공백 검사(`recgate`)는 간격만 보고 odom 일관성은 보지 않아 놓쳤다.
+- **해석의 범위**: 휠-EKF guess 를 쓰는 RTAB-Map 2D·3D 와 odom TF 를 쓰는 slam_toolbox 가 같은 결함을 받는다. LIO-SAM 은 휠·EKF 를 쓰지
+  않고 IMU 바이어스를 스스로 추정한다. 이 bag 들의 차이는 2D 대 3D 가 아니라 **휠-EKF 사전값 유무(요인 B)** 의 차이다. 배포 스택의
+  실제 결함 후보이기도 하다 (기동 때 흔들리면 바이어스 0 으로 떨어짐) — `amr_localization` 소유자에게 요청할 일 (결과 문서).
+- **분석 처리**: 사전 등록 주 결과(8·7 bag)는 그대로 낸다. **보충(사전 등록 외, 결과 뒤)** 으로 결함 bag 셋을 뺀 5 bag (`s3_aisle_a1`·
+  `s1_seed1_a1`·`s6_open_a3`·`s6_queue_a1`·`map_long_a1`) 의 같은 표를 기술로 낸다 (5 bag 가능 최소 p 0.0625 → 기각 불가능한 설계).
+  E3(b)·E4 의 보충 규칙은 그 결과를 보기 전에 그 항목에 적었다.
+
 ## 결과
 
 (E2 끝난 뒤 채운다)
