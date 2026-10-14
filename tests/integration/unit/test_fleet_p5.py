@@ -534,7 +534,7 @@ def _arm_metrics(root, name, exp, pair, label, valid, completed):
     d.mkdir()
     (d / 'metrics.json').write_text(json.dumps({
         'exp': exp, 'pair': pair, 'label': label, 'valid': valid, 'completed': completed,
-        'mode': 'central' if label == 'central' else 'distributed'}))
+        'mode': 'central' if label == 'central' else 'distributed', 'raw': f'/raw/{name}'}))
 
 
 def test_exp_summary_picks_the_latest_attempt_numerically(tmp_path):
@@ -558,6 +558,7 @@ def test_exp_summary_prefers_the_done_tags(tmp_path):
         {'tags': {'0': 'p5_C1_p1_centralr3', '1': 'p5_C1_p1_distributedr3'}}))
     res = A.exp_summary('C1', str(tmp_path))
     assert res['n_pairs_valid'] == 1 and res['compare']['completed']['diffs'] == [-2]
+    assert res['tags'] == {'1': ['p5_C1_p1_centralr3', 'p5_C1_p1_distributedr3']}
 
 
 # ------------------------------------------------------- 갈래별 기동 재시도 (2026-10-13 23:50)

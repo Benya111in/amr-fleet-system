@@ -833,7 +833,11 @@ def exp_summary(exp: str, root: str) -> dict:
             continue
         pairs.append((d[a], d[b]))
     res = {'exp': exp, 'labels': labels, 'n_pairs_valid': len(pairs),
-           'pairs_seen': sorted(arms), 'invalid': [
+           'pairs_seen': sorted(arms),
+           'tags': {str(a.get('pair')): [os.path.basename(str(a.get('raw', ''))),
+                                         os.path.basename(str(b.get('raw', '')))]
+                    for a, b in pairs},
+           'invalid': [
                {'pair': k, 'label': lab, 'why': m.get('why'), 'aborted': m.get('aborted')}
                for k, d in sorted(arms.items()) for lab, m in d.items() if not m.get('valid')]}
     if not pairs:
