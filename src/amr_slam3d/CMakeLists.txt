@@ -18,6 +18,7 @@ install(PROGRAMS
   scripts/make_routes.py
   scripts/replay_row.sh
   scripts/madg_lockstep.py
+  scripts/gt_odom_tf.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

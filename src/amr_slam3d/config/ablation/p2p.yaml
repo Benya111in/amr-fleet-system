@@ -1,0 +1,4 @@
+# E4 절제 (b2-eval): ICP 오차 척도 점-대-평면 → 점-대-점 (Icp/PointToPlane true → false) — 한 손잡이.
+/**:
+  ros__parameters:
+    Icp/PointToPlane: 'false'

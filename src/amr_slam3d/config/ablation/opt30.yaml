@@ -1,0 +1,4 @@
+# E4 절제 (b2-eval): 그래프 최적화 후 루프 거부 문턱 RGBD/OptimizeMaxError 0.3 → 3.0 — 한 손잡이 (루프 검증).
+/**/rtabmap:
+  ros__parameters:
+    RGBD/OptimizeMaxError: '3.0'

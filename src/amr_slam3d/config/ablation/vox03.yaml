@@ -1,0 +1,9 @@
+# E4 절제 (b2-eval): Icp/VoxelSize 0.1 → 0.3 m — 한 손잡이 (다운샘플링). config/rtabmap.yaml 뒤에 덧붙인다.
+# icp_odometry 는 Icp/VoxelSize 를 ROS 파라미터 scan_voxel_size 로 옮기므로(rtabmap.md §2) 같은 값을 그 이름으로도 준다.
+# OdomF2M/ScanSubtractRadius·Icp/MaxCorrespondenceDistance 는 기준값 그대로 둔다 (한 손잡이만).
+/**:
+  ros__parameters:
+    Icp/VoxelSize: '0.3'
+/**/icp_odometry:
+  ros__parameters:
+    scan_voxel_size: 0.3
