@@ -70,8 +70,14 @@ def read_imu(path):
 
 
 #: bag 의 처음·끝에서 짝 imu/data_raw 가 없어도 되는 imu/data 수 (b2-rec 녹화: 기록기가 imu/data 를 imu/data_raw 보다
-#: 먼저 구독하면 첫 imu/data 의 입력 raw 는 기록 전에 나갔다 — s3_aisle_a1 의 sim 11.415 s [측정])
-EDGE_UNPAIRED_MAX = 10
+#: 먼저 구독하면 첫 imu/data 의 입력 raw 는 기록 전에 나갔다 — s3_aisle_a1 의 sim 11.415 s [측정]).
+#: 10 → 100 (b2-rerec, 2026-10-16 — 재녹화 bag `rr_s1_seed3_a1` 의 파생이 앞 49 개로 멈춘 것을 본 뒤,
+#: 재생·SLAM 결과 전): 기록기가 imu/data_raw 를 0.245 s 늦게 구독했다 [측정 gate.json cover head 0.248 s].
+#: 공백 검사(recgate 규칙 2)는 토픽마다 bag 처음·끝 0.5 s 까지의 덮음 부족을 통과시키므로 파생도 같은 0.5 s
+#: (200 Hz 에서 100 개)까지 받는다. 짝 없는 끝 표본에서는 오라클 방위 토픽만 쓰지 않는다 (재계산 madgwick 은 모든
+#: imu/data 에서 낸다). 기존 녹화 8 bag 의 끝 짝 없음은 0–1 개라 그 파생 결과는 바뀌지 않는다. 가운데의 짝 없음은
+#: 계속 오류다.
+EDGE_UNPAIRED_MAX = 100
 
 
 def edge_unpaired(paired):
