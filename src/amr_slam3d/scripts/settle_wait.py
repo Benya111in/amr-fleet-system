@@ -16,6 +16,8 @@ startup bias estimation; falling back to parameter bias" 를 냈다 → 바이�
 80 % 이상이며 recgate.imu_still (자이로 σ ≤ 0.005 rad/s, 가속도 σ ≤ 0.1 m/s², |‖ā‖ − 9.8| ≤ 0.25 m/s²
 — imu_filter 정지 판정의 절반 문턱) 을 만족하면 0. --timeout (벽시계 s) 안에 못 만나면 1. 결과·마지막 판정은 --out JSON 에.
 use_sim_time 은 쓰지 않는다 — sim 시각은 IMU header 스탬프로 본다 (/clock 구독 없음).
+진단 (판정 밖): 받은 첫 표본 20 개(imu_filter 의 첫 판정 크기, min_startup_samples)·100 개의 imu_still 결과를
+'first20'·'first100' 에 남긴다 — 기동 바이어스 결함의 원인 가설(스폰 정착 중 기동)을 확인하려고.
 """
 
 import argparse
@@ -49,12 +51,15 @@ def main(argv=None) -> int:
     rclpy.init()
     node = Node('b2rerec_settle_wait')
     buf = collections.deque()
+    first = []
     state = {'n_total': 0, 'first_sim': None}
 
     def on_imu(m):
         st = m.header.stamp.sec + m.header.stamp.nanosec * 1e-9
         av, la = m.angular_velocity, m.linear_acceleration
         buf.append((st, (av.x, av.y, av.z), (la.x, la.y, la.z)))
+        if len(first) < 100:
+            first.append(buf[-1])
         state['n_total'] += 1
         if state['first_sim'] is None:
             state['first_sim'] = st
@@ -86,8 +91,16 @@ def main(argv=None) -> int:
         if res['ok']:
             rc = 0
             break
+    diag = {}
+    for k in (20, 100):
+        part = first[:k]
+        if len(part) >= 2:
+            d = recgate.imu_still([w[1] for w in part], [w[2] for w in part])
+            d.update({'sim_from': part[0][0], 'sim_to': part[-1][0]})
+            diag[f'first{k}'] = d
     out = {'ok': rc == 0, 'wall_s': round(time.monotonic() - t0, 2), 'checks': checks,
            'n_total': state['n_total'], 'first_imu_sim': state['first_sim'], 'last': last,
+           **diag,
            'rule': {'min_sim_s': ns.min_sim, 'window_s': ns.window, 'rate_hz': ns.rate,
                     'gyro_std_max': recgate.SETTLE_GYRO_STD,
                     'accel_std_max': recgate.SETTLE_ACCEL_STD,
