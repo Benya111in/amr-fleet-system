@@ -28,7 +28,8 @@ sys.path.insert(0, HERE)
 import p5_plan  # noqa: E402
 
 IMG = 'amr-ai/rl:0.3'
-AGENT = 'b4-p5'
+AGENT = 'b4-p5'          # 컨테이너 이름 · gz 슬롯 id · 실행 목록 agent (--agent 로 바꾼다 — P5b 는 b4-p5b)
+RUN_PREFIX = 'P5'        # 실행 목록 run_id 머리 (--run-prefix — 같은 태그를 다른 원자료 루트에서 다시 돌 때 겹치지 않게)
 
 
 def now_iso():
@@ -73,6 +74,23 @@ def schedule_tokens(tokens):
                 seen.add(item[:2])
                 out.append(item)
     return out
+
+
+def mem_avail_gb():
+    """`free -b` 의 available (= MemAvailable) [GB]. 읽지 못하면 무한 — 조건을 막지 않는다."""
+    try:
+        out = subprocess.run(['free', '-b'], capture_output=True, text=True, timeout=10).stdout
+        for line in out.split('\n'):
+            if line.startswith('Mem:'):
+                return int(line.split()[6]) / 1024.0 ** 3
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+        pass
+    return float('inf')
+
+
+def mem_ok(min_gb):
+    """COORDINATION §12: 무거운 실행 전 MemAvailable ≥ min_gb (0 이면 보지 않는다 — P5 동작)."""
+    return min_gb <= 0 or mem_avail_gb() >= min_gb
 
 
 def past_deadline(deadline_iso, now=None):
@@ -141,6 +159,7 @@ class Driver:
                     f't_start={self.a.t_start} comm={arm["comm"]} faults={arm["faults"]}\n')
         self.snap(os.path.join(d, 'start.txt'))
         stack = f'amr-ai-{AGENT}-gz-{tag}'
+        mem = ['--memory', self.a.stack_mem] if getattr(self.a, 'stack_mem', '') else []
         rawc = f'/raw/{tag}'
         envs = ['-e', f'P5_TAG={tag}', '-e', f'P5_MODE={arm["mode"]}', '-e', f'P5_DOMAIN={domain}',
                 '-e', f'P5_OUT={rawc}', '-e', f'P5_PLAN={rawc}/plan.json']
@@ -151,7 +170,7 @@ class Driver:
             envs += ['-e', 'P5_DRYRUN=1']
             slot = []                       # Gazebo 없음 — 슬롯을 쥐지 않는다
         cmd = slot + [
-            'docker', 'run', '--rm', '--name', stack, '--gpus', 'all', '--shm-size=8g',
+            'docker', 'run', '--rm', '--name', stack, '--gpus', 'all', '--shm-size=8g'] + mem + [
             '--ipc', 'shareable', '-v', f'{ws}:/ros2_ws', '-v', f'{self.raw}:/raw'] + envs + [
             '-w', '/ros2_ws', IMG, 'bash', '/ros2_ws/tests/integration/fleet_p5/p5_container.sh']
         out = open(os.path.join(d, 'runner.out'), 'w', encoding='utf-8')
@@ -173,9 +192,10 @@ class Driver:
             if comm_path:
                 senv += ['-e', f'P5_COMM={rawc}/comm.yaml']
             so = open(os.path.join(d, f'srv{k}.out'), 'w', encoding='utf-8')
-            p = subprocess.Popen(['docker', 'run', '--rm', '--name', name, '--network',
-                                  f'container:{stack}', '--ipc', f'container:{stack}',
-                                  '-v', f'{ws}:/ros2_ws', '-v', f'{self.raw}:/raw'] + senv + [
+            smem = ['--memory', self.a.server_mem] if getattr(self.a, 'server_mem', '') else []
+            p = subprocess.Popen(['docker', 'run', '--rm', '--name', name] + smem + [
+                '--network', f'container:{stack}', '--ipc', f'container:{stack}',
+                '-v', f'{ws}:/ros2_ws', '-v', f'{self.raw}:/raw'] + senv + [
                 '-w', '/ros2_ws', IMG, 'bash', '/ros2_ws/tests/integration/fleet_p5/p5_server.sh'],
                 stdout=so, stderr=subprocess.STDOUT)
             servers[k] = (name, p)
@@ -304,7 +324,8 @@ class Driver:
     # ------------------------------------------------------------------ 분석 · 등록
     def analyze(self, exp, pair, tag, res, label, mode):
         d = os.path.join(self.raw, tag)
-        info = {'run_id': f'P5_{tag}', 'stage': f'P5-{exp}', 'agent': AGENT, 'kind': 'gazebo',
+        info = {'run_id': f'{RUN_PREFIX}_{tag}', 'stage': f'{RUN_PREFIX}-{exp}', 'agent': AGENT,
+                'kind': 'gazebo',
                 'sim': 'gazebo', 'commit': str(res.get('commit', '?'))[:7], 'dirty': False,
                 'config': f'tests/integration/fleet_p5 실험 {exp} 짝 {pair} 갈래 {label} ({mode}), '
                           f'plan {d}/plan.json, 도메인 {res.get("domain")}',
@@ -354,7 +375,8 @@ class Driver:
         while True:
             l1, l5, l15 = os.getloadavg()
             ok = ok + 1 if (l1 < self.a.load_max and l5 < self.a.load5_max
-                            and l15 < self.a.load15_max) else 0
+                            and l15 < self.a.load15_max
+                            and mem_ok(getattr(self.a, 'mem_min_gb', 0.0))) else 0
             if ok >= 2 or time.time() - t0 > self.a.load_wait_max_s:
                 break
             if os.path.exists(os.path.join(self.raw, 'STOP')):
@@ -367,7 +389,8 @@ class Driver:
             f.write(f'{now_iso()} waited {time.time() - t0:.0f} s, load {load3()} (기준 load1 < '
                     f'{self.a.load_max} · load5 < {self.a.load5_max} · load15 < '
                     f'{self.a.load15_max} 두 번 연속, 상한 '
-                    f'{self.a.load_wait_max_s:.0f} s)\n'
+                    f'{self.a.load_wait_max_s:.0f} s, MemAvailable {mem_avail_gb():.1f} GB '
+                    f'(기준 ≥ {getattr(self.a, "mem_min_gb", 0.0):g}))\n'
                     + '\n'.join(top) + '\n--- 컨테이너\n' + cont)
         self.log(f'{key} 시작 조건 (대기 {time.time() - t0:.0f} s, load {load3()})')
         return True
@@ -604,6 +627,7 @@ class Driver:
 
 
 def main(argv=None):
+    global AGENT, RUN_PREFIX
     ap = argparse.ArgumentParser()
     ap.add_argument('--raw', default='/home/CAPYI_AI/runs/b24/b4-p5/raw')
     ap.add_argument('--ws-new', required=True)
@@ -635,7 +659,15 @@ def main(argv=None):
     ap.add_argument('--load-abort', type=float, default=120.0,
                     help='갈래 중 loadavg(5 분)가 이 값을 load-abort-s 동안 넘으면 갈래 중단 · 짝 다시')
     ap.add_argument('--load-abort-s', type=float, default=600.0)
+    # P5b 더하기 (기본값 = P5 동작): 실행 목록 agent · run_id 머리, 컨테이너 메모리 상한, 짝 시작 메모리 조건
+    ap.add_argument('--agent', default=AGENT, help='컨테이너 이름 · gz 슬롯 id · 실행 목록 agent')
+    ap.add_argument('--run-prefix', default=RUN_PREFIX, help='실행 목록 run_id · stage 머리')
+    ap.add_argument('--stack-mem', default='', help="스택 컨테이너 docker --memory (예 '28g', '' = 안 줌)")
+    ap.add_argument('--server-mem', default='', help="서버 컨테이너 docker --memory ('' = 안 줌)")
+    ap.add_argument('--mem-min-gb', type=float, default=0.0,
+                    help='짝 시작 조건에 MemAvailable ≥ 이 값 [GB] 도 (0 = 보지 않음, COORDINATION §12)')
     a = ap.parse_args(argv)
+    AGENT, RUN_PREFIX = a.agent, a.run_prefix
     schedule_tokens(a.order.split(','))      # 잘못된 순서 낱말은 시작 전에 거부
     past_deadline(a.no_new_pair_after)
     return Driver(a).run()

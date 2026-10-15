@@ -125,6 +125,14 @@ EXPERIMENTS = {
                    arm('distributed', comm='stress', label='dist_x_b')],
           'tasks': batch(0, 5, 0.0, 'p5x'), 'horizon_s': HORIZON, 'lead_s': 0.0},
 }
+# P5b (b4-p5b — 구역 진입 몸체 판정 뒤 안전 재확인, 노트 「P5b 사전 등록」): C2 의 분산 갈래를 짝 안 복제로 (중앙 갈래 없이).
+# 갈래 정의는 C2 분산 갈래와 같다 (장애 · 작업 · 상한). P5 의 C2 분산 8 갈래와 노출을 맞추려고 4 짝 = 8 갈래.
+_C2D = EXPERIMENTS['C2']['arms'][1]
+EXPERIMENTS['SC2'] = {
+    'pairs': 4, 'question': 'P5b 안전 재확인: C2 분산 갈래 (서버 kill @60 · 새 서버 @300) 복제',
+    'arms': [dict(_C2D, label='dist_s2a'), dict(_C2D, label='dist_s2b')],
+    'tasks': EXPERIMENTS['C2']['tasks'], 'horizon_s': EXPERIMENTS['C2']['horizon_s'],
+    'min_end_s': EXPERIMENTS['C2']['min_end_s'], 'lead_s': 0.0}
 # 파이프라인 시험 전용 (Gazebo 없음, p5_driver.py --dryrun): 장애 주입 경로 전부를 짧게
 EXPERIMENTS['dry'] = {
     'pairs': 1, 'question': '파이프라인 시험 (셈 밖)',
