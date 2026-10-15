@@ -17,6 +17,14 @@ P_d를 계산하고, 허가 상태는 같은 프로세스의 투표 모듈이 �
 - body     : 몸체(중심 + 외접 반경 네 점, traffic_manager._body_zones 와 같은 규칙)가 걸친 구역.
 움직이는 단계(active)가 아니면 경로를 보지 않는다 (사슬 없음 → 진행 중 요청 취소 · 보유 해제 후보). 자세를 모르는데
 움직이는 단계면 blocking = (UNKNOWN_POSE,) — 구역을 판정할 수 없으면 움직이지 않는다 (fail-closed).
+
+몸체 판정 (body_entry, b4-p5b — p5.md §0-0 · §5-1): 위 규칙은 구역 진입을 경로 **중심점**으로 쟀다. 그래서 경로가 구역 변을
+따라가거나 모서리를 비스듬히 지나면 (1) 중심이 들어가지 않는 구역은 요청하지 않고 몸체가 경계를 스쳤고 (P5 사건 13 건),
+(2) 막힘 거리(사슬 첫 입구까지)가 중심 진입까지라 막혀 선 자리에서 몸체가 이미 구역 안이었다 (2 건, 결정점 정지 −0.11 ·
+−0.23 m). body_entry 면: 방문 · 요청 거리를 원판(robot_radius)이 구역에 처음 닿는 곳으로 재고 (zone_visits radius),
+body 는 원판-다각형 겹침으로 재며, 허가 없이 이미 걸친 구역은 거리 0 으로 요청 · 막는다 (request_chain held — fail-closed).
+traffic.yaml zones.body_entry 가 켠다 (load_path_gate — 키가 없으면 켬, 중앙 TrafficConfig 기본값과 같다).
+PathGateConfig 를 직접 만들 때의 기본값 False 는 옛 중심점 판정 그대로다 (기존 단위 시험 · 비교용).
 """
 
 from __future__ import annotations
@@ -49,6 +57,10 @@ class PathGateConfig:
     max_path_m: float = 60.0        # 남은 경로를 이만큼만 본다 (traffic.yaml max_path_m)
     goal_tolerance_m: float = 0.3   # 남은 경로가 이보다 짧으면 도착 (사슬 없음)
     step_m: float = 0.2             # 경로 표본 간격
+    # 구역 진입을 몸체 원판(robot_radius)으로 판정 (모듈 설명). 클래스 기본값은 옛 중심점 판정 — 기존 단위
+    # 시험의 기대값을 그대로 두려고. 노드는 load_path_gate 로 traffic.yaml zones.body_entry (배포 true, 키가
+    # 없으면 true — 중앙 TrafficConfig 기본값과 같다)를 쓴다
+    body_entry: bool = False
 
     def __post_init__(self):
         for name in ('prerequest_m', 'chain_gap_m', 'robot_radius', 'goal_tolerance_m'):
@@ -100,8 +112,10 @@ class PathGate:
         return {zone_resource(z.zone_id): z.polygon for z in self.zone_map.zones()}
 
     def body_zones(self, x: float, y: float, yaw: float) -> FrozenSet[str]:
-        """몸체가 걸친 구역 id (중심 + 외접 반경 네 점)."""
+        """몸체가 걸친 구역 id — body_entry 면 원판(robot_radius)-다각형 겹침, 아니면 중심 + 외접 반경 네 점."""
         r = self.cfg.robot_radius
+        if self.cfg.body_entry:
+            return self.zone_map.zones_touching(x, y, r)
         pts = [(x, y)] + [(x + r * math.cos(yaw + k * math.pi / 2),
                            y + r * math.sin(yaw + k * math.pi / 2)) for k in range(4)]
         return frozenset(z for z in self.zone_map.zones_at(np.array(pts)) if z)
@@ -129,14 +143,20 @@ class PathGate:
         rem_path, remaining = remaining_path(path, x, y, self.cfg.max_path_m, self.cfg.step_m)
         if remaining <= self.cfg.goal_tolerance_m or len(rem_path) < 2:
             return GateDecision(body=body, remaining_m=remaining)
-        visits = zone_visits(rem_path, self.zone_map, self.cfg.step_m)
+        held = set(held)
+        if self.cfg.body_entry:
+            visits = zone_visits(rem_path, self.zone_map, self.cfg.step_m,
+                                 radius=self.cfg.robot_radius)
+            have = {h[len(ZONE_PREFIX):] for h in held if h.startswith(ZONE_PREFIX)}
+            chain = request_chain(visits, self._pre, self.cfg.chain_gap_m, body_ids, held=have)
+        else:
+            visits = zone_visits(rem_path, self.zone_map, self.cfg.step_m)
+            chain = request_chain(visits, self._pre, self.cfg.chain_gap_m, body_ids)
         ahead = frozenset(zone_resource(v.zone_id) for v in visits)
-        chain = request_chain(visits, self._pre, self.cfg.chain_gap_m, body_ids)
         if not chain:
             return GateDecision(ahead=ahead, body=body, remaining_m=remaining)
         request = tuple(zone_resource(v.zone_id) for v in chain)
         first = chain[0]
-        held = set(held)
         blocking: Tuple[str, ...] = ()
         if first.s_in <= self.approach[first.zone_id]:
             blocking = tuple(r for r in request if r not in held)
@@ -150,7 +170,7 @@ def load_path_gate(zones_file: str, traffic_params_file: str,
     traffic_zones.yaml(구역) + traffic.yaml(요청 거리 · 사슬 간격 · 반경)으로 경로 게이트를 만든다.
 
     서버 traffic_manager 와 같은 파일 · 같은 값을 쓴다 (approach_distance_m · corridor_approach_m · 항목별
-    approach_m · chain_gap_m · robot_radius · max_path_m · goal_tolerance_m).
+    approach_m · chain_gap_m · robot_radius · max_path_m · goal_tolerance_m · body_entry).
     """
     import yaml
 
@@ -167,11 +187,15 @@ def load_path_gate(zones_file: str, traffic_params_file: str,
     zones, _ = load_layout(zones_file, bool(z.get('corridor_same_direction', True)))
     approach = approach_map(zones, float(z.get('approach_distance_m', 2.0)),
                             float(z.get('corridor_approach_m', 2.5)))
+    body_entry = z.get('body_entry', True)        # 중앙 TrafficConfig.zones.body_entry 기본값과 같게
+    if not isinstance(body_entry, bool):
+        raise ValueError(f'{traffic_params_file}: zones.body_entry 는 true/false: {body_entry!r}')
     cfg = PathGateConfig(prerequest_m=float(prerequest_m),
                          chain_gap_m=float(z.get('chain_gap_m', 1.5)),
                          robot_radius=float(params.get('robot_radius', 0.36)),
                          max_path_m=float(params.get('max_path_m', 60.0)),
-                         goal_tolerance_m=float(params.get('goal_tolerance_m', 0.3)))
+                         goal_tolerance_m=float(params.get('goal_tolerance_m', 0.3)),
+                         body_entry=body_entry)
     return PathGate(zones, approach, cfg)
 
 

@@ -122,6 +122,33 @@ def points_in_polygon(points: np.ndarray, polygon: np.ndarray) -> np.ndarray:
     return inside
 
 
+def discs_touch_polygon(points: np.ndarray, polygon: np.ndarray, radius: float) -> np.ndarray:
+    """
+    원판(중심 points, 반경 radius)이 다각형과 겹치는지 (M,) bool.
+
+    중심이 다각형 안이거나 어느 변까지 거리가 radius 미만이면 겹친다. 경계에 정확히 닿기만 하면(거리 = radius)
+    겹치지 않는다 — P5 분석(tests/integration/fleet_p5/p5_analyze.disc_overlaps)의 실제 자세 원판 판정과 같은 정의.
+    radius ≤ 0 이면 points_in_polygon 과 같다.
+    """
+    pts = np.asarray(points, dtype=float).reshape(-1, 2)
+    hit = points_in_polygon(pts, polygon)
+    if radius <= 0.0 or len(pts) == 0:
+        return hit
+    poly = np.asarray(polygon, dtype=float).reshape(-1, 2)
+    lo, hi = poly.min(axis=0) - radius, poly.max(axis=0) + radius
+    near = np.all((pts >= lo) & (pts <= hi), axis=1) & ~hit      # 둘레 상자 밖은 볼 필요 없다
+    if not near.any():
+        return hit
+    q = pts[near]
+    ab = np.roll(poly, -1, axis=0) - poly
+    ap = q[:, None, :] - poly[None, :, :]
+    ab2 = np.maximum(np.einsum('ij,ij->i', ab, ab), 1e-12)
+    t = np.clip(np.einsum('mij,ij->mi', ap, ab) / ab2, 0.0, 1.0)
+    d = np.linalg.norm(ap - ab[None, :, :] * t[:, :, None], axis=2).min(axis=1)
+    hit[np.flatnonzero(near)[d < radius]] = True
+    return hit
+
+
 def polygon_area(polygon: np.ndarray) -> float:
     """다각형 넓이 [m^2] (신발끈 공식, 부호 없음)."""
     x, y = polygon[:, 0], polygon[:, 1]

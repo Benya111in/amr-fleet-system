@@ -40,6 +40,11 @@
       corridor_approach_m: 2.5     # 1차선 통로(corridor)의 요청 거리: 입구에서 더 멀리 기다려 나오는 로봇이 비켜 갈 자리를 남긴다
       chain_gap_m: 1.5             # 출구-다음 입구가 이보다 가까운 구역은 묶어 한 번에 받는다 (교차로 안에서 서지 않기)
       spacing_check: reject        # 구역 간격이 chain_gap_m 초과 · 요청 거리(구역별) + robot_radius 미만인 쌍 → reject(시작 거부) | warn(경고만)
+      body_entry: true             # 구역 진입을 몸체 원판(robot_radius)으로 판정 (b4-p5b, p5.md §0-0 · §5-1) — 요청 구역 · 요청(결정점)
+                                   # 거리는 원판이 구역에 처음 닿는 곳까지, 허가 없이 이미 걸친 구역은 거리 0 으로 요청한다. 중앙
+                                   # traffic_manager 와 분산 경로 게이트(fleet_agent, load_path_gate)가 이 값을 함께 읽는다.
+                                   # false = 옛 중심점 판정 (경계를 스치는 경로가 요청 없이 지나가고, 막힌 자리에서 몸체가 구역 안일 수 있다)
+                                   # 몸체 기준이면 결정점 거리 식에서 차체 앞 절반(0.30)이 빠져 1.55 m ≤ 2.0 (도크 사이 몸체 간격 1.78 m 도 넘는다)
       max_bypass: 2                # 먼저 기다린 로봇을 나중 요청이 이만큼 추월하면 그 구역을 기아 로봇에 예약
       corridor_same_direction: true  # 1차선 통로에 같은 방향 추종 진입 허용 (yaml 항목별 same_direction 우선)
       narrow_width_m: 1.5          # map 유도: 이 폭보다 좁은 통과 가능 영역 = 1차선 통로

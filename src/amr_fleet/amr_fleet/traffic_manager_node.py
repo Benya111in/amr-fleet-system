@@ -219,6 +219,7 @@ class TrafficManagerNode(Node):
         self.get_logger().info(
             f'traffic_manager 시작: mode={self.cfg.mode}, robots={sorted(self._robots)}, '
             f'rate={rate:g} Hz, hold 재발행 {self.hold_republish_s:g} s, '
+            f'body_entry={self.cfg.zones.body_entry}, '
             f'zones={self.tm.describe_zones()}, pockets={len(self.tm.pockets)} '
             f'({self.cfg.zones_file or "파일 없음"})')
         self._warned = 0

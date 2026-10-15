@@ -279,7 +279,9 @@ class FleetAgentNode(Node):
             f'fleet_agent {self.me}: members={members}, store={self._store_dir}, '
             f'comm={self._comm.describe()}, sim_execution={p("sim_execution")}, '
             f'proxy={p("proxy_assign_task")}, release_gate={self.cfg.release_gate}, '
-            f'path_gate={self._path_gate is not None}, stale_lock_gc={self.cfg.stale_lock_gc}')
+            f'path_gate={self._path_gate is not None}'
+            f'{f" (body_entry={self._path_gate.cfg.body_entry})" if self._path_gate else ""}, '
+            f'stale_lock_gc={self.cfg.stale_lock_gc}')
 
     def _p(self, name: str):
         return self.get_parameter(name).value

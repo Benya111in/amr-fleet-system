@@ -108,6 +108,11 @@ class ZonesConfig:
     corridor_approach_m: float = 2.5      # 1차선 통로: 입구에서 더 멀리 기다린다 (나오는 로봇이 비켜 갈 자리)
     chain_gap_m: float = 1.5
     spacing_check: str = 'reject'         # 구역 간격 검사 (spacing_conflicts): reject | warn
+    # 구역 진입을 몸체 원판(robot_radius)으로 판정 (b4-p5b, p5.md §5-1): 요청 구역 · 요청 거리는 원판이 처음
+    # 닿는 곳, 몸체 점유는 원판-다각형 겹침, 허가 없이 이미 걸친 구역은 거리 0 으로 요청 (traffic_zones.zone_visits
+    # radius · request_chain held). False = 옛 중심점 판정 (비교용). traffic.yaml 과 같은 값 — 분산 경로
+    # 게이트(load_path_gate)도 같은 파일을 읽는다
+    body_entry: bool = True
     max_bypass: int = 2
     corridor_same_direction: bool = True
     narrow_width_m: float = 1.5
@@ -519,9 +524,15 @@ class TrafficManager:
         if not len(self.zone_map):
             return frozenset()
         r = self.cfg.robot_radius
+        if self.cfg.zones.body_entry:
+            return self.zone_map.zones_touching(x, y, r)
         pts = [(x, y)] + [(x + r * math.cos(yaw + k * math.pi / 2),
                            y + r * math.sin(yaw + k * math.pi / 2)) for k in range(4)]
         return frozenset(z for z in self.zone_map.zones_at(np.array(pts)) if z)
+
+    def _entry_radius(self) -> float:
+        """구역 방문 판정 반경: body_entry 면 robot_radius (몸체), 아니면 0 (중심점)."""
+        return self.cfg.robot_radius if self.cfg.zones.body_entry else 0.0
 
     def _stale_view(self, ob: RobotObservation) -> RobotView:
         """관측이 끊긴 로봇: 마지막 자세에 멈춘 장애물 (주행 · 유휴 아님, 움직일 수 없음)."""
@@ -693,7 +704,8 @@ class TrafficManager:
             key = (inc.incident_id, pocket.pocket_id)
             if self._yield_tokens.get(rid, (None,))[0] == key:
                 continue
-            visits = [vi for vi in zone_visits(np.array(pocket.route), self.zone_map, 0.2)
+            visits = [vi for vi in zone_visits(np.array(pocket.route), self.zone_map, 0.2,
+                                               radius=self._entry_radius())
                       if vi.zone_id not in views[rid].zones]
             want = list(dict.fromkeys(vi.zone_id for vi in visits))
             dirs = {vi.zone_id: vi.direction() for vi in visits}
@@ -738,12 +750,13 @@ class TrafficManager:
             upcoming[rid] = set(self._yield_tokens[rid][1]) if rid in self._yield_tokens else set()
             if v.path is None or not v.active:
                 continue
-            visits = zone_visits(v.path, self.zone_map, 0.2)
+            visits = zone_visits(v.path, self.zone_map, 0.2, radius=self._entry_radius())
             upcoming[rid] |= {vi.zone_id for vi in visits}
             dirs[rid] = {vi.zone_id: vi.direction() for vi in visits if vi.s_in <= 1e-6}
             if rid in yielding:
                 continue
-            chain = request_chain(visits, self._approach, cfg.zones.chain_gap_m, v.zones)
+            held = self.tokens.held_by(rid) if cfg.zones.body_entry else None
+            chain = request_chain(visits, self._approach, cfg.zones.chain_gap_m, v.zones, held)
             if chain:
                 requests[rid] = TokenRequest(rid, tuple(c.zone_id for c in chain),
                                              {c.zone_id: c.direction() for c in chain},

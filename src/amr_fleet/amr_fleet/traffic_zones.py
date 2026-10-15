@@ -39,7 +39,8 @@ import dataclasses
 import math
 import re
 from typing import (
-    Any, Collection, Deque, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple, Union,
+    Any, Collection, Deque, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set,
+    Tuple, Union,
 )
 
 import numpy as np
@@ -47,7 +48,8 @@ from scipy import ndimage
 import yaml
 
 from amr_fleet.traffic_geometry import (
-    GridSpec, cumulative_length, points_at, points_in_polygon, polygon_area, polygon_distance,
+    discs_touch_polygon, GridSpec, cumulative_length, points_at, points_in_polygon, polygon_area,
+    polygon_distance,
 )
 
 INTERSECTION = 'intersection'
@@ -292,6 +294,35 @@ class ZoneMap:
         """한 점의 구역."""
         return self.zones_at(np.array([[x, y]]))[0]
 
+    def touch_masks(self, xy: np.ndarray, radius: float) -> Dict[str, np.ndarray]:
+        """
+        구역 id → 점마다 그 점이 중심인 원판(반경 radius)이 구역과 겹치는지 (M,) bool (정의 순).
+
+        다각형 구역은 원판-다각형 겹침으로 정확히 잰다 (discs_touch_polygon). 지도 유도(라벨 격자) 구역은 중심 +
+        원 위 8 점이 그 라벨 셀에 드는지로 근사한다. zones_at 과 달리 한 점이 여러 구역에 걸칠 수 있다.
+        """
+        pts = np.asarray(xy, dtype=float).reshape(-1, 2)
+        out: Dict[str, np.ndarray] = {}
+        for z in self._polys:
+            out[z.zone_id] = discs_touch_polygon(pts, z.polygon, radius)
+        if self._labels is not None and len(self._label_ids) > 1:
+            offs = [(0.0, 0.0)] + [(radius * math.cos(k * math.pi / 4),
+                                    radius * math.sin(k * math.pi / 4)) for k in range(8)]
+            for zid in self._label_ids[1:]:
+                out.setdefault(zid, np.zeros(len(pts), dtype=bool))
+            for dx, dy in offs:
+                vals = self._spec.lookup(self._labels, pts + np.array([dx, dy]), 0)
+                for k in np.flatnonzero(vals):
+                    zid = self._label_ids[int(vals[k])]
+                    if zid is not None:
+                        out[zid][k] = True
+        return out
+
+    def zones_touching(self, x: float, y: float, radius: float) -> FrozenSet[str]:
+        """원판(중심 (x, y), 반경 radius)이 겹치는 구역 id 집합 — 몸체 판정."""
+        return frozenset(z for z, m in self.touch_masks(np.array([[x, y]]), radius).items()
+                         if m[0])
+
     def mask(self, spec: GridSpec, zone_ids: Optional[Iterable[str]] = None) -> np.ndarray:
         """격자 셀 중심이 (지정한 / 모든) 구역에 드는지 (height, width) bool."""
         gx, gy = spec.centers()
@@ -401,11 +432,24 @@ class ZoneVisit:
         return None if n < 0.2 else (dx / n, dy / n)
 
 
+BODY_SCAN_STEP_M = 0.05     # 몸체 방문 훑기 간격 상한 — 모서리 스침을 놓칠 수 있는 깊이 ≤ h²/(8r) ≈ 0.001 m
+
+
 def zone_visits(path: np.ndarray, zone_map: ZoneMap, step: float = 0.2,
-                max_s: float = math.inf) -> List[ZoneVisit]:
-    """경로(첫 점 = 로봇 위치)를 step 간격으로 훑어 구역 방문 목록을 만든다."""
+                max_s: float = math.inf, radius: float = 0.0) -> List[ZoneVisit]:
+    """
+    경로(첫 점 = 로봇 위치)를 step 간격으로 훑어 구역 방문 목록을 만든다 (s_in 순).
+
+    radius ≤ 0 (기본): 경로 **중심점**이 구역에 드는 구간 — 한 점은 한 구역에만 속한다 (옛 판정, 비트 같음).
+    radius > 0 (몸체 판정, b4-p5b): 그 점이 중심인 원판(반경 radius)이 구역과 겹치는 구간 — 경계를 스치기만 하는 경로도
+    그 구역을 지나는 것으로 보고, s_in 은 몸체가 처음 닿는 곳이다 (P5 동시 점유 사건의 기제 — p5.md §0-0 · §5-1).
+    훑기 간격은 min(step, BODY_SCAN_STEP_M), 닿기 시작 · 끝은 앞 · 뒤 표본으로 잡는다 (보수적: s_in 은 실제보다 ≤ 한
+    간격 이르고 s_out 은 ≤ 한 간격 늦다). 한 점이 여러 구역에 걸칠 수 있어 방문 구간이 겹칠 수 있다.
+    """
     if path is None or len(path) == 0 or len(zone_map) == 0:
         return []
+    if radius > 0.0:
+        return _body_visits(path, zone_map, min(step, BODY_SCAN_STEP_M), max_s, radius)
     cum = cumulative_length(path)
     end = min(float(cum[-1]), max_s)
     s = np.arange(0.0, end + 0.5 * step, step) if end > 0.0 else np.zeros(1)
@@ -427,8 +471,35 @@ def zone_visits(path: np.ndarray, zone_map: ZoneMap, step: float = 0.2,
     return visits
 
 
+def _body_visits(path: np.ndarray, zone_map: ZoneMap, h: float, max_s: float,
+                 radius: float) -> List[ZoneVisit]:
+    """zone_visits 의 몸체 판정 (radius > 0): 원판이 구역과 겹치는 표본의 연속 구간마다 방문 하나."""
+    cum = cumulative_length(path)
+    end = min(float(cum[-1]), max_s)
+    s = np.arange(0.0, end, h) if end > 0.0 else np.zeros(0)
+    s = np.append(s, end)                           # 끝점은 늘 표본 (끝 조각을 빼먹지 않게)
+    xy, _ = points_at(path, cum, s)
+    order = {z: k for k, z in enumerate(zone_map.ids())}
+    visits: List[ZoneVisit] = []
+    for zid, mask in zone_map.touch_masks(xy, radius).items():
+        idx = np.flatnonzero(mask)
+        if len(idx) == 0:
+            continue
+        cut = np.flatnonzero(np.diff(idx) > 1)
+        for lo, hi in zip(np.concatenate(([idx[0]], idx[cut + 1])),
+                          np.concatenate((idx[cut], [idx[-1]]))):
+            a = max(int(lo) - 1, 0)                 # 닿기 시작은 앞 표본과 이 표본 사이 — 앞 표본으로
+            b = min(int(hi) + 1, len(s) - 1)        # 완전히 나옴은 이 표본과 뒤 표본 사이 — 뒤 표본으로
+            visits.append(ZoneVisit(zid, float(s[a]), float(s[b]),
+                                    (float(xy[a, 0]), float(xy[a, 1])),
+                                    (float(xy[b, 0]), float(xy[b, 1]))))
+    visits.sort(key=lambda v: (v.s_in, order.get(v.zone_id, len(order))))
+    return visits
+
+
 def request_chain(visits: Sequence[ZoneVisit], approach_m: Approach,
-                  chain_gap_m: float, occupied: Collection[str] = ()) -> List[ZoneVisit]:
+                  chain_gap_m: float, occupied: Collection[str] = (),
+                  held: Optional[Collection[str]] = None) -> List[ZoneVisit]:
     """
     지금 요청할 구역 묶음 (같은 구역의 재방문은 한 번만).
 
@@ -437,8 +508,17 @@ def request_chain(visits: Sequence[ZoneVisit], approach_m: Approach,
     occupied = 몸체가 지금 걸친 구역. 그중 첫 방문이 아닌 구역 k 가 있으면 첫 방문이 k 와 묶일 때
     (k 출구 → 첫 방문 입구 ≤ chain_gap_m, 중심이 이미 k 를 나왔으면 첫 방문 입구까지 거리로 본다)만
     요청한다 — 묶이지 않은 다음 구역은 k 를 빠져나온 뒤에 요청해서 k 안에서 기다리지 않는다.
+    held = 지금 허가(토큰)를 가진 구역 id (몸체 판정과 함께 쓴다, b4-p5b). 주면 이미 걸친(s_in ≤ 0) 방문이라도 그 구역을
+    쥐고 있지 않으면 거리 0 으로 요청한다 — 몸체 방문은 원판이 닿는 순간 "이미 안" 이 되므로, 허가 없이 걸친 구역을
+    요청 대상에서 빼면 허가 없이 더 들어간다 (fail-closed). None(기본)이면 옛 동작 그대로.
+    방문 구간이 겹칠 수 있어(몸체 판정) 사슬 간격은 지금까지 묶은 방문의 가장 먼 출구에서 잰다 (겹치지 않으면 옛 동작과 같다).
     """
-    upcoming = [v for v in visits if v.s_in > 1e-6]
+    if held is None:
+        upcoming = [v for v in visits if v.s_in > 1e-6]
+    else:
+        have = set(held)
+        upcoming = sorted((v for v in visits if v.s_in > 1e-6 or v.zone_id not in have),
+                          key=lambda v: v.s_in)
     if not upcoming or upcoming[0].s_in > _approach(approach_m, upcoming[0].zone_id):
         return []
     first = upcoming[0]
@@ -449,10 +529,12 @@ def request_chain(visits: Sequence[ZoneVisit], approach_m: Approach,
         if first.s_in - exit_s > chain_gap_m:
             return []
     chain = [first]
+    reach = first.s_out
     for v in upcoming[1:]:
-        if v.s_in - chain[-1].s_out > chain_gap_m:
+        if v.s_in - reach > chain_gap_m:
             break
         chain.append(v)
+        reach = max(reach, v.s_out)
     out: List[ZoneVisit] = []
     for v in chain:
         if all(v.zone_id != o.zone_id for o in out):
