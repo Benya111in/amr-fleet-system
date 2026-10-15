@@ -76,7 +76,25 @@ def summary(d):
         res['bag_mb'] = round(sum(t['bytes'] for t in meta['topics'].values()) / 1e6, 1)
         pts = meta['topics'].get('/amr_01/lidar3d/points', {})
         res['n_points'] = pts.get('count')
-    for k in ('record_subscribed', 'record_stop_clean', 'gate_rc', 'derive_rc'):
+    if gate is not None and gate.get('bias') is not None:          # 규칙 5 (b2-rerec)
+        b = gate['bias']
+        res['bias_ok'] = b.get('ok')
+        res['bias_kind'] = b.get('kind')
+        res['bias_samples'] = b.get('samples')
+        gb = b.get('gyro_bias') or []
+        res['gyro_bias_z'] = gb[2] if len(gb) == 3 else None
+    if gate is not None and gate.get('odom_drift') is not None:    # 규칙 6 (b2-rerec)
+        od = gate['odom_drift']
+        res['drift_ok'] = od.get('ok')
+        res['ekf_yaw_drift_rad_s'] = od.get('rate_rad_s')
+        res['ekf_yaw_err_max_deg'] = od.get('yaw_err_max_deg')
+    settle = _load(os.path.join(d, 'settle.json'))
+    if settle is not None:
+        res['settle_ok'] = settle.get('ok')
+        res['settle_wall_s'] = settle.get('wall_s')
+        res['settle_sim_s'] = (settle.get('last') or {}).get('sim_now')
+    for k in ('record_subscribed', 'record_stop_clean', 'gate_rc', 'derive_rc',
+              'loc_after_settle', 'bias_pre_record'):
         if k in env:
             res[k] = env[k]['value']
     derive = _load(os.path.join(d, 'derive', 'derive.json'))
@@ -104,12 +122,16 @@ def cmd_registry(ns) -> int:
     m_var = re.search(r'variant=(\S+)', text)
     m_rtf = re.search(r'^rtf_target: (\S+)', text, re.M)
     route = os.path.splitext(os.path.basename(m_route.group(1)))[0] if m_route else '?'
-    rec = {'run_id': ns.run_id, 'stage': 'G', 'agent': 'b2-rec', 'kind': 'gazebo', 'sim': 'gazebo',
+    las = res.get('loc_after_settle')
+    proto = (' · 정착 뒤 위치추정 기동 + 기동 바이어스·EKF yaw 표류 검사 (b2-rerec)' if las == '1'
+             else '')
+    rec = {'run_id': ns.run_id, 'stage': ns.stage, 'agent': ns.agent, 'kind': 'gazebo',
+           'sim': 'gazebo',
            'commit': head[:7], 'dirty': bool(status),
            'config': f'scenario={ns.scenario} attempt={ns.attempt} route={route} '
                      f"world={m_var.group(1) if m_var else '?'} "
                      f"rtf_target={m_rtf.group(1) if m_rtf else '?'} "
-                     f'(record_bag.sh, 원시 IMU 만, 공백 검사 recgate)',
+                     f'(record_bag.sh, 원시 IMU 만, 공백 검사 recgate{proto})',
            'seed': ns.seed, 'started': started,
            'ended': dt.datetime.now().astimezone().isoformat(timespec='seconds'),
            'raw_dir': d, 'result': res,
@@ -205,6 +227,8 @@ def main(argv=None) -> int:
     r.add_argument('--rc', type=int, required=True)
     r.add_argument('--seed', default='n/a (경로 고정)')
     r.add_argument('--out', required=True)
+    r.add_argument('--agent', default='b2-rec', help='실행 목록 에이전트 (runs/<agent>.jsonl)')
+    r.add_argument('--stage', default='G')
     t = sub.add_parser('table')
     t.add_argument('root')
     t.add_argument('--out', required=True)

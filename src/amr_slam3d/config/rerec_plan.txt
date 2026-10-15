@@ -1,0 +1,7 @@
+# 보너스 2 결함 bag 재녹화 계획 (b2-rerec, 사전 등록 — docs/research/slam3d/notebook/entries/*_b2-rerec_*.md).
+# rec_driver.sh 가 위에서부터 돈다. 열: <id> <route 이름> <월드 변형> <spawn 이름 | -> <경로 씨드 | ->
+# 경로·월드 변형·스폰은 원래 사전 등록(rec_plan.txt)의 s6_wall·s1_seed3·s1_seed2 와 같다. 짧은 것(S6 벽)부터 —
+# 바뀐 기동 절차의 문제가 일찍 드러나게. 시도 상한 3 (원래 규칙 그대로).
+rr_s6_wall    s6_inside  s6-wall   s6_inside  -
+rr_s1_seed3   s1_seed3   s1        -          3
+rr_s1_seed2   s1_seed2   s1        -          2

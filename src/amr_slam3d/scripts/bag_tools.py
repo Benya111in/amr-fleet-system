@@ -9,8 +9,10 @@ bag·지도 파일 도구 — 파일럿 bag 메타데이터, 정답 궤적(TUM),
         [--tail-exempt 2]
     bag_tools.py poses <poses.txt> <out.tum> --tf x,y,z,qx,qy,qz,qw     (SLAM map 프레임 → 월드)
     bag_tools.py assemble <bag> --topic /amr_01/lidar3d/points --poses p.tum --base F --out c.ply
-    bag_tools.py gate <bag> --out gate.json [--depart-at 60]
-        녹화 직후 공백 검사 (recgate.py, 실패면 종료 코드 1)
+    bag_tools.py gate <bag> --out gate.json [--depart-at 60] [--launch-log L ...] [--odom-check]
+        녹화 직후 공백 검사 (recgate.py, 실패면 종료 코드 1). --launch-log 를 주면 imu_filter 기동 바이어스 줄,
+        --odom-check 면 bag 의 EKF odom(/amr_01/odometry/filtered) 대 정답 yaw 표류율도 판정한다
+        (b2-rerec 규칙 5·6)
 
 match 는 "처리 스캔 누락 0" 판정이다: 입력 bag 의 header 스탬프마다 출력 bag 에 같은 스탬프가 있는지 본다.
 출력 bag 은 C++ 기록기(ros2 bag record)라 Python 측정 노드처럼 뒤처져 버리지 않는다.
@@ -292,9 +294,41 @@ def read_gate_series(path: str, robot: str = recgate.ROBOT):
     return series, gt, order
 
 
+def read_odom_yaw(path: str, topic: str):
+    """녹화 bag 의 nav_msgs/Odometry 토픽 → (header 스탬프 [s] 목록, yaw [rad] 목록). 토픽이 없으면 None."""
+    from nav_msgs.msg import Odometry
+    from rclpy.serialization import deserialize_message
+    import rosbag2_py
+    reader, types = _reader(path)
+    if topic not in types:
+        return None
+    reader.set_filter(rosbag2_py.StorageFilter(topics=[topic]))
+    t, yaw = [], []
+    while reader.has_next():
+        _, raw, _ = reader.read_next()
+        m = deserialize_message(raw, Odometry)
+        q = m.pose.pose.orientation
+        t.append(m.header.stamp.sec + m.header.stamp.nanosec * 1e-9)
+        yaw.append(yaw_from_quat(q.x, q.y, q.z, q.w))
+    return t, yaw
+
+
 def cmd_gate(ns) -> int:
     series, gt, order = read_gate_series(ns.bag)
-    res = recgate.evaluate(series, gt if gt[0] else None, ns.depart_at)
+    bias_log = None
+    if ns.launch_log:
+        parts = []
+        for p in ns.launch_log:
+            with open(p, encoding='utf-8', errors='replace') as f:
+                parts.append(f.read())
+        bias_log = '\n'.join(parts)
+    odom = None
+    if ns.odom_check:
+        odom = read_odom_yaw(ns.bag, ns.odom_topic) or ([], [])
+    res = recgate.evaluate(series, gt if gt[0] else None, ns.depart_at, bias_log=bias_log,
+                           odom=odom)
+    if ns.launch_log:
+        res['launch_logs'] = [os.path.abspath(p) for p in ns.launch_log]
     res['bag'] = os.path.abspath(ns.bag)
     res['clock_lead'] = recgate.clock_lead(order)
     raw_n = len(series.get(f'/{recgate.ROBOT}/lidar3d/points_raw', []))
@@ -303,7 +337,12 @@ def cmd_gate(ns) -> int:
     with open(ns.out, 'w', encoding='utf-8') as f:
         json.dump(res, f, ensure_ascii=False, indent=1)
     print(json.dumps({'pass': res['pass'], 'reasons': res['reasons'],
-                      'protocol': res['protocol']}, ensure_ascii=False))
+                      'protocol': res['protocol'],
+                      'bias': {k: (res.get('bias') or {}).get(k)
+                               for k in ('ok', 'kind', 'samples')},
+                      'odom_drift': {k: (res.get('odom_drift') or {}).get(k)
+                                     for k in ('ok', 'rate_rad_s', 'yaw_err_max_deg')}},
+                     ensure_ascii=False, default=float))
     return 0 if res['pass'] else 1
 
 
@@ -347,6 +386,11 @@ def main(argv=None) -> int:
     s.add_argument('--out', required=True)
     s.add_argument('--depart-at', type=float, default=None,
                    help='[s, sim] 출발 시각 확인 (S6 변형 짝 — recgate.DEPART_WINDOW_S 안)')
+    s.add_argument('--launch-log', nargs='+', default=None,
+                   help='imu_filter_node 기동 바이어스 줄을 찾을 런치 로그 (규칙 5)')
+    s.add_argument('--odom-check', action='store_true',
+                   help='EKF odom 대 정답 yaw 표류율 (규칙 6, recgate.DRIFT_MAX_RAD_S)')
+    s.add_argument('--odom-topic', default=f'/{recgate.ROBOT}/odometry/filtered')
     ns = ap.parse_args(argv)
     return {'stats': cmd_stats, 'tum': cmd_tum, 'cloud': cmd_cloud, 'match': cmd_match,
             'poses': cmd_poses, 'assemble': cmd_assemble, 'gate': cmd_gate}[ns.cmd](ns)

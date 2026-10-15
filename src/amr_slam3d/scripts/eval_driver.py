@@ -19,6 +19,10 @@
   `<출력>.attempt<n>` 로 남긴다). 재생이 돈 뒤의 결과(누락 > 0 등)는 다시 돌리지 않는다 — 분석이 실패로 센다.
 - 의존: 작업의 `requires` 경로가 모두 있어야 집는다 (E3(b) 가 E2 의 지도를 기다린다).
 - 재생 배속 = 목표 유효 sim 속도 E / 그 bag 의 녹화 RTF (recordings.md §4). E = 0.25 (사전 등록).
+- (b2-rerec, 2026-10-16) 환경 변수 B2_AGENT 로 에이전트 id(컨테이너 이름·cpu_slot id·docker stats 대상)를
+  바꾼다 (기본 b2-eval).
+  작업에 'bagdir' 가 있으면 그 bag 디렉터리를 쓴다 (없으면 예전대로 REC/<bag>/<kind>) — 재녹화 bag 은 다른 녹화 루트에 있다.
+  작업 목록은 rerec_plan.py 가 같은 job()·행 목록으로 만든다. 기본 동작(환경 변수·bagdir 없음)은 예전과 같다.
 """
 
 import argparse
@@ -33,7 +37,7 @@ import sys
 import threading
 import time
 
-AGENT = 'b2-eval'
+AGENT = os.environ.get('B2_AGENT', 'b2-eval')
 PREFIX = f'amr-ai-{AGENT}-'
 CPU_SLOT = '/home/CAPYI_AI/env/cpu_slot.sh'
 REC = '/home/CAPYI_AI/runs/b24/b2-rec/rec'
@@ -375,7 +379,7 @@ def start_job(root, wt, j):
         json.dump(dict(j, started=now(), load_start=loadavg(), head=head,
                        dirty_src=sum(1 for ln in st.splitlines() if ' src/' in ln)), f,
                   ensure_ascii=False, indent=1)
-    bagdir = os.path.join(REC, j['bag'], j['kind'])
+    bagdir = j.get('bagdir') or os.path.join(REC, j['bag'], j['kind'])
     cmd = ['docker', 'run', '--rm', '--name', cname(j), '--shm-size=2g',
            '-e', f'ROS_DOMAIN_ID={j["domain"]}', '-e', 'ROS_LOCALHOST_ONLY=1',
            '-e', f'GIT_HEAD={head}', '-e', f'IMAGE={j["image"]}',

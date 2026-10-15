@@ -25,7 +25,20 @@
 #  7) 사후: bag info, stats(토픽별 수·sim 주기), gate(공백 검사 — 통과 못 하면 종료 코드 3), gt.tum, 스폰 파일 사본
 #     (<bag>/b2rec_spawn.yaml — replay_row.sh 가 anchor 로 쓴다), (gate 통과면) madgwick 잠금 단계 파생 bag(bag_madg)
 #
-# 종료 코드: 0 = 통과, 3 = 공백 검사 실패, 4 = 기록기 구독 확인 실패, 5 = 기록기 마무리 실패, 6 = 주행 실패, 그 밖 = 도구 오류
+#
+# 재녹화 프로토콜 (b2-rerec, 2026-10-16 — 결과 전, 사전 등록 notebook/entries/*_b2-rerec_*.md). 녹화 3/8 bag 에서
+# imu_filter_node 가 기동 직후 "falling back to parameter bias" (바이어스 0) 로 떨어져 bag 의 EKF odom 이 0.01 rad/s 로
+# yaw 표류했다 (bonus2_results.md §0-2). 그래서 LOC_AFTER_SETTLE=1 (기본) 이면:
+#  1') multi_robot.launch.py 를 with_localization:=false 로 띄우고 (월드·로봇·브리지·전처리만), 로봇이 스폰 뒤 정지했는지
+#      settle_wait.py 가 원시 IMU 로 확인한 뒤 (settle.json), localization.launch.py 를 bringup 과 같은 인자
+#      (loc_stack_args.py — amr_bringup.launch_utils 를 그대로 부름)·같은 DDS 프로파일로 따로 띄운다 (launch_loc.log)
+#  3') 기록 전에 launch_loc.log 에 "falling back to parameter bias" 가 있으면 녹화하지 않고 종료 코드 8
+#  7') 공백 검사에 규칙 5 (기동 바이어스 성공 줄, --launch-log) 와 규칙 6 (EKF odom 대 정답 yaw 표류율 < 0.002 rad/s,
+#      --odom-check) 를 더한다 — recgate.py
+# LOC_AFTER_SETTLE=0 이면 예전 한 번 기동 (규칙 5·6 은 그대로 launch.log 로 검사한다).
+#
+# 종료 코드: 0 = 통과, 3 = 공백 검사 실패, 4 = 기록기 구독 확인 실패, 5 = 기록기 마무리 실패, 6 = 주행 실패,
+#   8 = 기록 전 기동 바이어스 실패(파라미터 바이어스), 9 = 정착 대기 실패, 그 밖 = 도구 오류
 # 환경: ROS_DOMAIN_ID·IGN_PARTITION·ROS_LOCALHOST_ONLY 는 호출자가 준다. GIT_HEAD 를 주면 env.txt 에 남긴다.
 set -eo pipefail
 
@@ -107,14 +120,36 @@ fi
 echo "rtf_target: $RTF_TARGET" >> "$OUT/env.txt"
 echo "used (rtf_target $RTF_TARGET): $(sha256sum < "$OUT/world/warehouse.sdf")" >> "$OUT/world.log"
 
+LOC_AFTER_SETTLE=${LOC_AFTER_SETTLE:-1}
+echo "loc_after_settle: $LOC_AFTER_SETTLE" >> "$OUT/env.txt"
+if [ "$LOC_AFTER_SETTLE" = 1 ]; then WITH_LOC=false; LOCLOG="$OUT/launch_loc.log"; else WITH_LOC=true; LOCLOG="$OUT/launch.log"; fi
 stamp launch_start
 "${SIGDFL[@]}" ros2 launch amr_bringup multi_robot.launch.py robots_file:="$ROBOTS" num_robots:=1 \
   world:="$OUT/world/warehouse.sdf" localization_mode:=odom \
-  with_localization:=true with_navigation:=false with_perception:=false with_behavior:=false \
+  with_localization:=$WITH_LOC with_navigation:=false with_perception:=false with_behavior:=false \
   with_fleet:=false with_dashboard:=false with_evaluation:=false lifecycle_watchdog_grace:=0 \
   > "$OUT/launch.log" 2>&1 &
 LAUNCH=$!
 PIDS+=("$LAUNCH")
+if [ "$LOC_AFTER_SETTLE" = 1 ]; then
+  wait_for_topic /amr_01/imu/data_raw 900
+  stamp settle_start
+  if ! python3 "$SCRIPTS/settle_wait.py" --robot amr_01 --out "$OUT/settle.json" > "$OUT/settle.log" 2>&1; then
+    echo "정착 대기 실패 (settle.json)" >&2
+    exit 9
+  fi
+  stamp settled
+  # bringup 이 자기 자식에게만 준 DDS 프로파일을 위치추정 런치에도 같게 준다 (기록기·주행기는 예전처럼 주지 않는다)
+  DDS=$(grep -o 'FASTRTPS_DEFAULT_PROFILES_FILE=[^ ]*' "$OUT/launch.log" | head -1 | cut -d= -f2-)
+  eval "LOC_ARGS=($(python3 "$SCRIPTS/loc_stack_args.py" "$ROBOTS" --mode odom))"
+  echo "loc_args: ${LOC_ARGS[*]} dds: ${DDS:-}" >> "$OUT/env.txt"
+  if [ -z "$DDS" ]; then echo "bringup DDS 프로파일 줄을 못 찾았다" >&2; exit 9; fi
+  case " ${LOC_ARGS[*]} " in *" mode:=odom "*) ;; *) echo "위치추정 인자 이상: ${LOC_ARGS[*]}" >&2; exit 9 ;; esac
+  stamp loc_launch
+  "${SIGDFL[@]}" env FASTRTPS_DEFAULT_PROFILES_FILE="$DDS" ros2 launch amr_localization localization.launch.py \
+    "${LOC_ARGS[@]}" > "$LOCLOG" 2>&1 &
+  PIDS+=("$!")
+fi
 wait_for_topic /amr_01/odometry/filtered 900
 wait_for_topic /amr_01/lidar3d/points 300
 wait_for_topic /amr_01/ground_truth/odom 300
@@ -129,6 +164,18 @@ DRIVER=$!
 PIDS+=("$DRIVER")
 wait_file "$M/ready" 600 "$DRIVER"
 stamp driver_ready
+# 기록 전 기동 바이어스 확인 (b2-rerec): imu_filter 가 떠 있고 파라미터 바이어스로 떨어지지 않았어야 녹화한다
+if ! grep -q 'imu_filter_node.*startup bias estimation' "$LOCLOG"; then
+  echo "imu_filter 기동 줄 없음 ($LOCLOG)" >&2
+  echo "bias_pre_record: no_startup_line" >> "$OUT/env.txt"
+  exit 8
+fi
+if grep -q 'falling back to parameter bias' "$LOCLOG"; then
+  echo "기동 바이어스 추정 실패 — 녹화하지 않는다 ($LOCLOG)" >&2
+  echo "bias_pre_record: fallback" >> "$OUT/env.txt"
+  exit 8
+fi
+echo "bias_pre_record: ok" >> "$OUT/env.txt"
 
 TOPICS=$(python3 -c "from amr_slam3d.rows import RECORD_TOPICS; print(' '.join(RECORD_TOPICS))")
 NT=$(echo "$TOPICS" | wc -w)
@@ -186,7 +233,7 @@ GATE_ARGS=()
 if [ -n "$DEPART" ]; then GATE_ARGS=(--depart-at "$DEPART"); fi
 set +e
 python3 "$SCRIPTS/bag_tools.py" gate "$OUT/bag" --out "$OUT/gate.json" "${GATE_ARGS[@]}" \
-  > "$OUT/gate.txt" 2>&1
+  --launch-log "$LOCLOG" --odom-check > "$OUT/gate.txt" 2>&1
 GATE_RC=$?
 set -e
 echo "gate_rc: $GATE_RC" >> "$OUT/env.txt"

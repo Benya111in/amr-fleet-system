@@ -13,7 +13,9 @@
 #     rec_report.py registry → notebook.py register. rc 75 (슬롯 대기 초과)는 시도로 세지 않고 같은 k 를 다시 한다
 #   - rc 0 (공백 검사 통과) 이면 state/<id>.ok ← 태그. 아니면 다음 시도. MAX 회 모두 실패면 state/<id>.failed
 # 로그: <루트>/driver.log. 같은 구동기를 두 개 띄우지 않게 <루트>/driver.lock (flock -n) 을 잡는다.
-# 환경: DOMAIN (기본 47), MAX_ATTEMPTS (3), IMAGE (amr-ai/slam:0.1), AGENT (b2-rec), NB (노트 경로, 저장소 기준)
+# 환경: DOMAIN (기본 47), MAX_ATTEMPTS (3), IMAGE (amr-ai/slam:0.1), AGENT (b2-rec), NB (노트 경로, 저장소 기준),
+#   RUN_PREFIX (실행 id 앞붙이, 기본 B2rec), STAGE (실행 목록 단계, 기본 G), NB_TOOL (notebook.py — 기본 <worktree>/scripts/
+#   notebook.py; <worktree> 가 git archive 사본이면 작업 worktree 의 것을 준다 — 실행 목록은 작업 worktree 에 쌓는다)
 set -uo pipefail
 WT=${1:?worktree}; ROOT=${2:?녹화 루트}; PLAN=${3:?계획 파일}
 DOMAIN=${DOMAIN:-47}; MAX=${MAX_ATTEMPTS:-3}; IMAGE=${IMAGE:-amr-ai/slam:0.1}; AGENT=${AGENT:-b2-rec}
@@ -21,6 +23,7 @@ export DOMAIN IMAGE AGENT
 # gz 슬롯 대기 상한 (gz_slot.sh 기본 3 h — 다른 과제의 exclusive 가 길면 75 로 끝나 시도를 낭비한다)
 export GZ_MAX_WAIT=${GZ_MAX_WAIT:-172800}
 NB=${NB:-docs/research/slam3d/notebook}
+RUN_PREFIX=${RUN_PREFIX:-B2rec}; STAGE=${STAGE:-G}; NB_TOOL=${NB_TOOL:-$WT/scripts/notebook.py}
 CFG=$WT/src/amr_slam3d/config
 mkdir -p "$ROOT/state" "$ROOT/rec"
 exec 9> "$ROOT/driver.lock"
@@ -63,10 +66,10 @@ while read -r id route variant spawn seed _rest; do
     echo "$rc" > "$d/rc.txt"
     load > "$d/loadavg_end.txt"
     say "END $tag rc=$rc load=$(load)"
-    python3 "$WT/src/amr_slam3d/scripts/rec_report.py" registry "$d" --run-id "B2rec-$tag" \
+    python3 "$WT/src/amr_slam3d/scripts/rec_report.py" registry "$d" --run-id "$RUN_PREFIX-$tag" \
       --scenario "$id" --attempt "$k" --rc "$rc" --seed "$seedtxt" --out "$d/registry.json" \
-      >> "$LOG" 2>&1 \
-      && python3 "$WT/scripts/notebook.py" --nb "$NB" register --file "$d/registry.json" >> "$LOG" 2>&1 \
+      --agent "$AGENT" --stage "$STAGE" >> "$LOG" 2>&1 \
+      && python3 "$NB_TOOL" --nb "$NB" register --file "$d/registry.json" >> "$LOG" 2>&1 \
       || say "REGISTER-FAIL $tag"
     if [ "$rc" = 0 ]; then passed=$tag; break; fi
   done

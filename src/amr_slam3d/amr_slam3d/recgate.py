@@ -16,11 +16,22 @@
   4. (선택) 출발 시각: depart_at 을 주면 처음 움직인 sim 시각이 [depart_at, depart_at + 0.5 s] 안 (S6 변형끼리 actor
      위치를 맞추는 짝 비교용).
 진단 (판정에 넣지 않음): bag 기록 순서상 직전 `/clock` 대비 센서 스탬프가 앞선 정도(clock lead), 점군 원본·전처리 수 차.
+
+녹화 결함 검사 (b2-rerec, 2026-10-16 — 재녹화 결과 전에 더함, 사전 등록 notebook/entries/*_b2-rerec_*.md):
+  5. (선택, 런치 로그를 주면) 기동 바이어스: imu_filter_node 의 첫 기동 결과 줄이 성공 문구(BIAS_OK_*)이고 표본
+     ≥ BIAS_MIN_SAMPLES, "falling back to parameter bias" 가 어디에도 없다. 녹화 3/8 bag 이 이 줄 없이
+     기동 0.1 s(sim) 안에 파라미터 바이어스(0)로 떨어져 EKF odom 이 0.01 rad/s 로 yaw 표류했다
+     (bonus2_results.md §0-2).
+  6. (선택, EKF odom 을 주면) yaw 표류율: EKF odom yaw 와 정답 yaw 를 첫 표본에서 맞춘 오차의 일차 기울기
+     |rate| < DRIFT_MAX_RAD_S (0.002 rad/s). 결함 bag 은 0.0100, 결함 없는 bag 은 ≤ 0.0004 였다
+     [측정 runs/b24/b2-eval/supp/odom_v2/odom_drift.json — 같은 정의, scripts/odom_drift.py].
+  정착 판정 imu_still (settle_wait.py 가 쓴다 — 위치추정 스택을 로봇이 정지한 뒤에 띄우려고).
 """
 
 from __future__ import annotations
 
 import math
+import re
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -144,11 +155,16 @@ def evaluate(series: Dict[str, Sequence[int]], gt: Optional[Tuple[Sequence[float
              depart_at: Optional[float] = None,
              periods: Optional[Dict[str, int]] = None,
              start_still_s: float = START_STILL_S,
-             end_still_s: float = END_STILL_S) -> Dict[str, object]:
+             end_still_s: float = END_STILL_S,
+             bias_log: Optional[str] = None,
+             odom: Optional[Tuple[Sequence[float], Sequence[float]]] = None
+             ) -> Dict[str, object]:
     """
     검사 토픽 스탬프 열(기록 순서, 정수 ns)과 정답 자세 (t, x, y, yaw) → 판정 dict ('pass', 'reasons', 토픽별 결과).
 
     series 에 없는 검사 토픽은 실패다 (기록 토픽 목록이 바뀌었으면 조용히 통과시키지 않는다).
+    bias_log (런치 로그 텍스트) 를 주면 규칙 5 (기동 바이어스), odom (EKF odom 의 t, yaw) 를 주면 규칙 6 (yaw 표류율)을
+    더한다 — 결과 dict 의 'bias'·'odom_drift'. 주지 않으면 예전 규칙 1–4 그대로다.
     """
     periods = dict(GATE_PERIODS_NS if periods is None else periods)
     reasons: List[str] = []
@@ -193,10 +209,169 @@ def evaluate(series: Dict[str, Sequence[int]], gt: Optional[Tuple[Sequence[float
             if not proto['depart_ok']:
                 hi = depart_at + DEPART_WINDOW_S
                 reasons.append(f'출발 {dep:.3f} s ∉ [{depart_at:g}, {hi:g}]')
+    extra: Dict[str, object] = {}
+    rule_extra: Dict[str, object] = {}
+    if bias_log is not None:
+        b = bias_outcome(bias_log)
+        extra['bias'] = b
+        rule_extra['bias_min_samples'] = BIAS_MIN_SAMPLES
+        if not b['ok']:
+            reasons.append(f"기동 바이어스: {b.get('why')}")
+    if odom is not None:
+        if gt is None or len(gt[0]) < 2:
+            d: Dict[str, object] = {'ok': False, 'why': '정답 자세 없음'}
+        else:
+            d = yaw_drift(odom[0], odom[1], gt[0], gt[3])
+        extra['odom_drift'] = d
+        rule_extra['drift_max_rad_s'] = DRIFT_MAX_RAD_S
+        if not d['ok']:
+            reasons.append(f"EKF yaw 표류: {d.get('why')}")
     return {'pass': not reasons, 'reasons': reasons, 'topics': topics, 'protocol': proto,
-            'rule': {'gap_factor': GAP_FACTOR, 'tol_ns': TOL_NS,
+            **extra,
+            'rule': {**rule_extra, 'gap_factor': GAP_FACTOR, 'tol_ns': TOL_NS,
                      'periods_s': {k: v * 1e-9 for k, v in periods.items()},
                      'cover_min_s': COVER_MIN_NS * 1e-9, 'start_still_s': start_still_s,
                      'end_still_s': end_still_s, 'move_xy_m': MOVE_XY,
                      'move_yaw_deg': math.degrees(MOVE_YAW),
                      'depart_window_s': DEPART_WINDOW_S}}
+
+
+# ======================================================================== 녹화 결함 검사 (b2-rerec)
+#: imu_filter_node 기동 바이어스 결과 문구
+#: — amr_localization `src/imu_filter.cpp` `ImuFilter::finishStartup` 원문
+BIAS_NODE = 'imu_filter_node'
+BIAS_OK_FULL = 'startup bias estimated from'
+BIAS_OK_BEFORE_MOTION = 'samples collected before motion'
+BIAS_FALLBACK = 'falling back to parameter bias'
+#: 성공 줄의 표본 하한 (200 Hz 에서 5 s). 결함 없는 녹화 5 bag 은 4 845–12 001 [측정 rec/*/launch.log]
+BIAS_MIN_SAMPLES = 1000
+#: EKF odom 대 정답 yaw 표류율 상한 [rad/s] (과제 지시 값)
+DRIFT_MAX_RAD_S = 0.002
+#: 정착 판정 — imu_filter 의 정지 판정(자이로 σ ≤ 0.01 rad/s, 가속도 σ ≤ 0.2 m/s², |‖ā‖ − g| ≤ 0.5 m/s²,
+#: amr_localization config/imu_filter.yaml)의 절반 문턱. 정지한 로봇의 가속도 x σ 는 0.043–0.056 m/s² 였다
+#: [계산: s6_open_a3·s6_queue_a1 launch.log 의 SE × √12001]
+SETTLE_GYRO_STD = 0.005
+SETTLE_ACCEL_STD = 0.1
+SETTLE_NORM_TOL = 0.25
+SETTLE_G = 9.8
+
+_N_RE = re.compile(r'(?:from|using) (\d+) samples')
+_GB_RE = re.compile(r'gyro_bias \[([^\]]*)\]')
+_DUR_RE = re.compile(r'over ([0-9.]+) s')
+
+
+def bias_outcome(text: str, min_samples: int = BIAS_MIN_SAMPLES) -> Dict[str, object]:
+    """
+    런치 로그 텍스트 → imu_filter_node 기동 바이어스 추정 판정 dict ('ok', 'kind', 'samples', 'gyro_bias', 'why').
+
+    결과 줄 = imu_filter_node 줄 중 성공 문구(BIAS_OK_FULL·BIAS_OK_BEFORE_MOTION) 또는 BIAS_FALLBACK 을 담은 줄.
+    통과 = 결과 줄이 있고, 첫 결과 줄이 성공이고, 그 표본 ≥ min_samples, BIAS_FALLBACK 줄이 하나도 없다.
+    """
+    outs = [ln.strip() for ln in text.splitlines() if BIAS_NODE in ln and (
+        BIAS_OK_FULL in ln or BIAS_OK_BEFORE_MOTION in ln or BIAS_FALLBACK in ln)]
+    fallback = sum(1 for ln in outs if BIAS_FALLBACK in ln)
+    res: Dict[str, object] = {'n_outcome': len(outs), 'fallback': fallback, 'kind': None,
+                              'samples': None, 'gyro_bias': None, 'duration_s': None,
+                              'min_samples': min_samples}
+    why: List[str] = []
+    if not outs:
+        why.append('기동 바이어스 결과 줄 없음')
+    else:
+        first = outs[0]
+        if BIAS_FALLBACK in first:
+            res['kind'] = 'fallback'
+        elif BIAS_OK_FULL in first:
+            res['kind'] = 'full'
+        else:
+            res['kind'] = 'before_motion'
+        m = _N_RE.search(first)
+        res['samples'] = int(m.group(1)) if m else None
+        gb = _GB_RE.search(first)
+        if gb:
+            try:
+                res['gyro_bias'] = [float(v) for v in gb.group(1).split(',')]
+            except ValueError:
+                res['gyro_bias'] = None
+        d = _DUR_RE.search(first)
+        res['duration_s'] = float(d.group(1)) if d else None
+        res['line'] = first[:400]
+        if res['kind'] == 'fallback':
+            why.append('첫 결과가 파라미터 바이어스로 떨어짐')
+        elif res['samples'] is None or res['samples'] < min_samples:
+            why.append(f"표본 {res['samples']} < {min_samples}")
+    if fallback:
+        why.append(f'파라미터 바이어스 줄 {fallback} 개')
+    res['ok'] = not why
+    if why:
+        res['why'] = '; '.join(why)
+    return res
+
+
+def yaw_drift(t: Sequence[float], yaw: Sequence[float], gt_t: Sequence[float],
+              gt_yaw: Sequence[float], max_rate: float = DRIFT_MAX_RAD_S) -> Dict[str, object]:
+    """
+    EKF odom (t, yaw) 대 정답 (gt_t, gt_yaw) → yaw 표류율 판정 dict ('ok', 'rate_rad_s' 등).
+
+    정답 구간 안의 odom 표본에서 정답 yaw(펼친 것)를 선형 보간하고, 두 yaw 를 각자 첫 표본에서 0 으로 맞춘 오차의
+    최소제곱 일차 기울기가 rate (scripts/odom_drift.py 와 같은 정의). 통과 = |rate| < max_rate.
+    """
+    t = np.asarray(t, dtype=float)
+    yaw = np.asarray(yaw, dtype=float)
+    o = np.argsort(t, kind='stable')
+    t, yaw = t[o], yaw[o]
+    gt_t = np.asarray(gt_t, dtype=float)
+    gt_yaw = np.asarray(gt_yaw, dtype=float)
+    res: Dict[str, object] = {'n': 0, 'rate_rad_s': math.nan, 'yaw_err_max_deg': math.nan,
+                              'max_rate_rad_s': max_rate, 'ok': False}
+    if len(gt_t) < 2 or len(t) < 3:
+        res['why'] = f'표본 부족 (odom {len(t)}, 정답 {len(gt_t)})'
+        return res
+    m = (t >= gt_t[0]) & (t <= gt_t[-1])
+    t, yaw = t[m], yaw[m]
+    res['n'] = int(len(t))
+    if len(t) < 3:
+        res['why'] = f'정답 구간 안 odom 표본 {len(t)}'
+        return res
+    g = np.interp(t, gt_t, np.unwrap(gt_yaw))
+    oy = np.unwrap(yaw)
+    err = (oy - oy[0]) - (g - g[0])
+    rate = float(np.polyfit(t - t[0], err, 1)[0])
+    res.update({'rate_rad_s': rate, 'yaw_err_max_deg': float(np.degrees(np.abs(err).max())),
+                'span_s': float(t[-1] - t[0])})
+    res['ok'] = bool(math.isfinite(rate) and abs(rate) < max_rate)
+    if not res['ok']:
+        res['why'] = f'|yaw 표류율| {abs(rate):.5f} ≥ {max_rate:g} rad/s'
+    return res
+
+
+def imu_still(gyro, accel, gyro_std_max: float = SETTLE_GYRO_STD,
+              accel_std_max: float = SETTLE_ACCEL_STD, g: float = SETTLE_G,
+              norm_tol: float = SETTLE_NORM_TOL) -> Dict[str, object]:
+    """
+    원시 IMU 표본 (n×3 자이로 [rad/s], n×3 가속도 [m/s²]) → 정지 판정 dict ('ok', 표준편차·평균 크기).
+
+    정지 = 축별 표본 표준편차의 최대가 문턱 이하이고 평균 가속도 크기가 g ± norm_tol 안 (imu_filter 의 정지 판정과
+    같은 꼴, 문턱은 그 절반 — 위 상수).
+    """
+    gy = np.asarray(gyro, dtype=float).reshape(-1, 3)
+    ac = np.asarray(accel, dtype=float).reshape(-1, 3)
+    n = int(min(len(gy), len(ac)))
+    res: Dict[str, object] = {'n': n, 'ok': False}
+    if n < 2:
+        res['why'] = f'표본 {n} 개'
+        return res
+    gs = float(gy[:n].std(axis=0, ddof=1).max())
+    acs = float(ac[:n].std(axis=0, ddof=1).max())
+    norm = float(np.linalg.norm(ac[:n].mean(axis=0)))
+    res.update({'gyro_std_max': gs, 'accel_std_max': acs, 'accel_norm': norm})
+    why = []
+    if gs > gyro_std_max:
+        why.append(f'자이로 σ {gs:.4f} > {gyro_std_max:g}')
+    if acs > accel_std_max:
+        why.append(f'가속도 σ {acs:.3f} > {accel_std_max:g}')
+    if abs(norm - g) > norm_tol:
+        why.append(f'|‖ā‖ − g| {abs(norm - g):.3f} > {norm_tol:g}')
+    res['ok'] = not why
+    if why:
+        res['why'] = '; '.join(why)
+    return res
