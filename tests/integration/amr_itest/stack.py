@@ -17,6 +17,7 @@ safety_node → cmd_vel. 체인을 넣은 스택에서 시나리오가 주행 �
 
 import os
 import sys
+import time
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from amr_itest import config
@@ -66,11 +67,42 @@ SYSTEM_GLOBALS = ('with_fleet', 'with_dashboard', 'with_evaluation')
 SYSTEM_ARGS = ('use_sim_time', 'robot_name', 'prefix', 'world', 'headless', 'x', 'y', 'yaw',
                'localization_mode', 'map_yaml') + tuple(SYSTEM_SUBLAUNCH) + SYSTEM_GLOBALS
 MULTI_ARGS = ('num_robots', 'use_sim_time', 'world', 'headless', 'localization_mode',
-              'map_yaml') + tuple(SYSTEM_SUBLAUNCH) + SYSTEM_GLOBALS
+              'map_yaml', 'fleet_mode') + tuple(SYSTEM_SUBLAUNCH) + SYSTEM_GLOBALS
+# 분산 플릿 (보너스 4 P5, docs/research/fleet-distributed/p5.md). fleet_mode 는 multi_robot.launch.py 가
+# 선언하고, 아래 둘은 하위 런치가 선언해 launch 인자 상속으로 받는다 (multi_robot.launch.py 는 선언하지 않는다 — 소유 밖).
+# 단위 시험(unit/test_launch_contract.py)이 표의 런치 파일에 선언이 있는지 대조한다.
+FLEET_MODES = ('central', 'distributed')
+FLEET_INHERITED_ARGS = {'fleet_store_dir': ('amr_behavior', 'behavior.launch.py'),
+                        'epoch_file': ('amr_fleet', 'fleet_manager.launch.py')}
 
 
 def _bool(v: bool) -> str:
     return 'true' if v else 'false'
+
+
+def fleet_launch_args(environ, run_root, stamp: str) -> Dict[str, str]:
+    """
+    ITEST_FLEET_MODE → multi_robot.launch.py 인자 (보너스 4 분산 플릿 — p3.md §10.6-1·2).
+
+    ITEST_FLEET_MODE 가 없거나 비면 **빈 dict** — 예전과 같은 인자(런치 기본 central)로 뜬다. 값이 있으면
+    fleet_mode 를 넘기고, distributed 면 실행마다 새 에이전트 저장소(fleet_store_dir)와 관리자 epoch 파일(epoch_file)을
+    준다: 옛 저장소의 펜스가 남으면 새 관리자의 epoch 1 이 거부된다 (fleet/SUPERSEDED). ITEST_FLEET_STORE_DIR ·
+    ITEST_FLEET_EPOCH_FILE 로 경로를 직접 줄 수 있다 (재기동 실험처럼 같은 저장소를 이어 쓸 때). 기본 경로는
+    run_root/fleet_<stamp>/{store, epoch.txt} — stamp 는 실행마다 다른 값(시각 · pid)을 호출자가 준다.
+    """
+    mode = str(environ.get('ITEST_FLEET_MODE', '') or '').strip().lower()
+    if not mode:
+        return {}
+    if mode not in FLEET_MODES:
+        raise ValueError(f'ITEST_FLEET_MODE={mode!r}: {FLEET_MODES} 중 하나')
+    args = {'fleet_mode': mode}
+    if mode == 'distributed':
+        base = os.path.join(str(run_root), f'fleet_{stamp}')
+        args['fleet_store_dir'] = (str(environ.get('ITEST_FLEET_STORE_DIR', '') or '').strip()
+                                   or os.path.join(base, 'store'))
+        args['epoch_file'] = (str(environ.get('ITEST_FLEET_EPOCH_FILE', '') or '').strip()
+                              or os.path.join(base, 'epoch.txt'))
+    return args
 
 
 def system_flags(use_localization: bool = True, use_navigation: bool = True,
@@ -453,13 +485,18 @@ class Stack:
                 'map_yaml': str(self.map_yaml), 'with_fleet': 'true', 'with_dashboard': 'false',
                 'with_evaluation': 'false'}
         args.update({k: 'true' for k in SYSTEM_SUBLAUNCH})
+        fleet = fleet_launch_args(os.environ, self.settings.log_root,
+                                  time.strftime('%Y%m%d_%H%M%S') + f'_{os.getpid()}')
+        args.update(fleet)
         args.update(extra_args or {})
-        unknown = sorted(set(args) - set(MULTI_ARGS))
+        unknown = sorted(set(args) - set(MULTI_ARGS) - set(FLEET_INHERITED_ARGS))
         if unknown:
             raise ValueError(f'multi_robot.launch.py 가 선언하지 않은 인자: {unknown}')
         self.include('amr_bringup', 'multi_robot.launch.py', args)
         self.system_args = dict(args)
         self.components.update({'simulator': REAL, 'description': REAL, 'robots': str(robots)})
+        if fleet:
+            self.components['fleet_mode'] = fleet['fleet_mode']
         for flag in tuple(SYSTEM_SUBLAUNCH) + SYSTEM_GLOBALS:
             self.components[flag[len('with_'):]] = REAL if args[flag] == 'true' else 'off'
         self.components['map'] = args['map_yaml']

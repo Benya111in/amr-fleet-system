@@ -595,7 +595,11 @@ class FleetAgentCore:
         """
         중앙 assign_task 펜싱 (실행기 앞 프록시가 부른다). 거부면 실행기까지 가지 않는다. 검사만 한다.
 
-        순서: 에포크 펜스(낮은 (epoch, leader_id) 거부) → 모드(NORMAL 만) → 작업 잠금이 이미 남에게 확정.
+        순서: 에포크 펜스(낮은 (epoch, leader_id) 거부) → 모드(NORMAL 만) → 내가 이미 끝냈거나 확정(HELD)한 작업
+        (지금 맡은 중앙 작업이 아니면) → 작업 잠금이 이미 남에게 확정.
+        내 확정 작업 거부 (P5 Gazebo C2 에서 발견, 2026-10-14): 재기동한 관리자는 게시판(TRANSIENT_LOCAL) 이력으로 끝난
+        작업을 다시 받아 로봇마다 차례로 준다 — 남은 'task_taken' 으로 거부하지만 확정 보유자 자신은 잠금 검사를 통과해
+        같은 작업을 다시 실행했다. 확정 잠금은 끝나도 풀지 않으므로(픽업 뒤 실패도 끝난 작업) 보유자도 다시 받지 않는다.
         잠정 잠금은 실행기가 받은 뒤에 시작한다 (on_central_result) — 먼저 잡으면 실행기가 거부(예: busy)했을 때
         진행 중인 다른 작업의 잠정 시도를 이미 포기시킨 뒤라 되돌릴 수 없다.
         남이 잠정으로 쫓는 작업(peer_pursuing)은 거부 사유가 아니다: 관리자는 거부를 받으면 곧바로 다음 로봇에
@@ -606,6 +610,8 @@ class FleetAgentCore:
             return False, f'stale_epoch ({epoch}, {leader_id}) < {self.fence.max}'
         if not self.modes.accepts_central_tasks():
             return False, f'mode {self.modes.mode}'
+        if task_id != self.central_task and (task_id in self.done or self.lock.is_held(task_id)):
+            return False, 'task_done'
         if self.lock.is_denied(task_id) or (task_id in self.taken and task_id != self.central_task
                                             and not self.lock.is_held(task_id)):
             return False, 'task_taken'

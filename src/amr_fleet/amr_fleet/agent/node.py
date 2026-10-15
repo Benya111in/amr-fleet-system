@@ -76,6 +76,10 @@ LATCHED_QOS = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
 EVENTS_QOS = QoSProfile(depth=100, reliability=ReliabilityPolicy.RELIABLE)
 
 DEFAULT_MEMBERS = 'amr_01,amr_02,amr_03,amr_04,amr_05'
+# 통신 모의 설정 파일의 환경 변수 대체값 (보너스 4 P5 — 로봇 스택 런치를 고치지 않고 다섯 에이전트에 같은 장애 일정을 준다).
+# 파라미터 comm_model_file 이 비었을 때만 쓰고, 쓰면 모의를 켠다 (simulate_latency 파라미터와 무관 — 파일이 정한
+# 링크 규칙 · 분할 · 단절이 효과를 내려면 모의가 켜져 있어야 한다). 기본(변수 없음)은 예전과 같다.
+COMM_MODEL_ENV = 'AMR_FLEET_COMM_MODEL_FILE'
 PARAMS: Dict[str, Any] = {
     'robot_id': '',                       # '' = 네임스페이스에서 (/amr_01 → amr_01)
     'members': DEFAULT_MEMBERS,           # 정적 멤버 (쉼표 문자열 또는 배열) — 정족수는 그 과반
@@ -132,6 +136,23 @@ def _share_file(name: str) -> str:
     except Exception:  # noqa: B902 — 색인이 없으면 소스 트리
         pass
     return str(pathlib.Path(__file__).resolve().parents[2] / 'config' / name)
+
+
+def comm_settings(simulate: bool, model_file: str, environ=None):
+    """
+    (모의 켬, 설정 파일 경로): 파라미터 comm_model_file 이 우선.
+
+    파라미터가 비었고 환경 변수 COMM_MODEL_ENV 가 경로를 주면 (True, 그 경로) — 모의를 켠다. 둘 다 없으면 파라미터
+    그대로 (simulate, '').
+    """
+    value = str(model_file or '').strip()
+    if value:
+        return bool(simulate), value
+    env = os.environ if environ is None else environ
+    path = str(env.get(COMM_MODEL_ENV, '') or '').strip()
+    if path:
+        return True, path
+    return bool(simulate), ''
 
 
 def parse_members(value: Any) -> List[str]:
@@ -198,9 +219,10 @@ class FleetAgentNode(Node):
         self._polygons = polygons
         root = p('store_dir') or os.path.join(os.environ.get('ROS_WS', '.'), 'var', 'fleet_agent')
         self._store_dir = pathlib.Path(root) / self.me
-        self._comm = from_node_params(bool(p('simulate_latency')), p('comm_latency_ms'),
-                                      float(p('drop_rate')), int(p('seed')),
-                                      str(p('comm_model_file')))
+        simulate, model_file = comm_settings(bool(p('simulate_latency')),
+                                             str(p('comm_model_file')))
+        self._comm = from_node_params(simulate, p('comm_latency_ms'), float(p('drop_rate')),
+                                      int(p('seed')), model_file)
         pose = list(p('initial_pose'))
         self._initial_pose = (None if len(pose) < 2 or any(math.isnan(float(v)) for v in pose[:2])
                               else (float(pose[0]), float(pose[1])))

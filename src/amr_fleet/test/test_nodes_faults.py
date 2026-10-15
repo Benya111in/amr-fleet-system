@@ -97,6 +97,9 @@ class FakeRobot:
         if self.mode == 'reject':
             resp.success, resp.message = False, 'busy'
             return resp
+        if self.mode == 'task_done':                # 분산 에이전트: 확정 보유자가 이미 끝낸 작업
+            resp.success, resp.message = False, 'task_done'
+            return resp
         if self.mode in ('slow', 'silent'):
             fut = Future()
             self.waiting.append(fut)
@@ -233,6 +236,29 @@ def test_rejection_reassigns_to_next_candidate(fleet):
     assert fleet['spin'](lambda: _running(fleet['got'], 'rej_1', 'amr_f2'))
     assert 'rej_1' in f1.requests and f2.requests.count('rej_1') == 1
     _finish(fleet, 'rej_1', 'amr_f2')
+
+
+def test_task_done_rejection_closes_the_task_instead_of_cycling(fleet):
+    """
+    task_done 거부는 다음 후보로 돌리지 않고 그 로봇이 끝낸 작업으로 닫는다.
+
+    P5 Gazebo C2 (2026-10-14): 재기동한 관리자가 끝난 작업을 다시 받아 확정 보유자에게 주면 에이전트가
+    task_done 으로 거부한다. 고치기 전: 관리자가 다음 후보로 끝없이 돌려(1.5 s 마다) 남은 작업이 굶었다.
+    """
+    f1, f2, f3 = (fleet['fakes'][r] for r in ROBOTS)
+    f1.mode, f3.status = 'task_done', MOVING       # f1 이 가장 가깝고 보유자, f3 는 후보 아님
+    fleet['submit'](_task('done_1', x=0.0, priority=90))
+    assert fleet['spin'](
+        lambda: (Task.STATUS_COMPLETED, 'amr_f1') in _events(fleet['got'], 'done_1'))
+    m = fleet['manager']
+    assert m._sm.get('done_1').result == 'ended_by_lock_holder'
+    assert 'done_1' not in f2.requests                      # 다른 로봇에 다시 주지 않는다
+    fleet['spin_for'](0.5)
+    assert f1.requests.count('done_1') == 1
+    f1.mode = 'accept'                                       # 다음 작업은 그대로 할당된다
+    fleet['submit'](_task('after_1', x=0.0, priority=10))
+    assert fleet['spin'](lambda: _running(fleet['got'], 'after_1', 'amr_f1'))
+    _finish(fleet, 'after_1', 'amr_f1')
 
 
 def test_assign_task_requests_carry_authority_stamp_from_event_counter(fleet):

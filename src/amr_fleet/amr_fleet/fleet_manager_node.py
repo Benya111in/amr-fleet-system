@@ -107,6 +107,9 @@ from std_msgs.msg import String
 ROBOT_STATE_RE = re.compile(r'^/([A-Za-z0-9_]+)/robot_state$')
 ROBOT_STATE_TYPE = 'amr_msgs/msg/RobotState'
 TASK_ID_HINT_RE = re.compile(r'"task_id"\s*:\s*"([A-Za-z0-9_.:-]{1,64})"')
+# 분산 에이전트(agent/core.py check_assignment)의 거부 사유: 그 로봇이 작업 잠금을 확정한 채 이미 끝낸 작업.
+# 중앙 모드 실행기는 이 사유를 내지 않는다.
+TASK_DONE_REASON = 'task_done'
 ALLOCATION_LOG_HEADER = [
     'time', 'strategy', 'n_tasks', 'n_robots', 'n_assigned', 'total_travel_distance_m',
     'approach_distance_m', 'makespan_s', 'compute_time_ms', 'assignments',
@@ -901,6 +904,9 @@ class FleetManagerNode(Node):
             self._abort_dispatch(task_id, robot_id, f'호출 실패: {exc}')
             return
         if not resp.success:
+            if str(resp.message).strip() == TASK_DONE_REASON:
+                self._settle_ended_by_holder(task_id, robot_id, now)
+                return
             self._abort_dispatch(task_id, robot_id, f'거절: {safe_text(resp.message, 80)}')
             return
         if d.unconfirmed:
@@ -909,6 +915,25 @@ class FleetManagerNode(Node):
         if rec is not None and rec.status == STATUS_PENDING:
             self._scheduler.remove(task_id)
             self._start_task(task_id, robot_id, now)
+
+    def _settle_ended_by_holder(self, task_id: str, robot_id: str, now: float) -> None:
+        """
+        분산 에이전트가 'task_done' 으로 거부했다: 그 로봇이 작업 잠금을 확정한 채 이미 끝낸 작업이다.
+
+        재기동한 관리자는 게시판(TRANSIENT_LOCAL) 이력으로 끝난 작업을 PENDING 으로 다시 받는다 (완료 대조 없음).
+        거부를 받을 때마다 다음 후보로 돌리면, 높은 우선순위의 끝난 작업이 계속 다시 할당되어 남은 작업이 굶는다
+        (P5 Gazebo C2, 2026-10-14). 다시 주지 않고 그 로봇이 끝낸 것으로 닫는다 — 결과 'ended_by_lock_holder',
+        KPI 완료에는 넣지 않는다 (이 관리자가 맡긴 일이 아니다).
+        """
+        rec = self._sm.get(task_id)
+        if rec is None or rec.status != STATUS_PENDING:
+            return
+        self._scheduler.remove(task_id)
+        self._start_task(task_id, robot_id, now)
+        self._sm.complete(task_id, now, result='ended_by_lock_holder')
+        self.get_logger().warn(f'{task_id} → {robot_id}: 확정 보유자가 이미 끝낸 작업 (task_done) — '
+                               f'다시 주지 않고 닫는다')
+        self._allocate_round()
 
     def _on_late_response(self, task_id: str, robot_id: str, future, now: float) -> None:
         """예약을 푼(또는 이미 확인된) 호출의 응답. 거절이면 할 일이 없고, 수락이면 소유권을 따진다."""
