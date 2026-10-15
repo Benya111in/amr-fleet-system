@@ -217,8 +217,8 @@ rtabmap.md §4.3 의 4.62 / 0.746 / 0.548 과 같다. 이 검증은 공개된 �
   EKF yaw 오차가 **처음부터 일정한 0.573 °/s (= 0.0100 rad/s)** 로 자란다 — s1_seed3 −0.0100, s1_seed2x −0.0100, s6_wall +0.0100 rad/s
   (정지 중에도). 최대 xy 오차 12.0 m · 37.9 m · 1.63 m, yaw 128° · 149° · 48°. 같은 bag 의 `wheel_odom` 은 21 · 98 · 0.5 cm 로 멀쩡하다.
   녹화 `launch.log` 의 `imu_filter_node` 가 이 세 bag 에서만 기동 0.4 s 안에 **"motion detected during startup bias estimation; falling
-  back to parameter bias"** (파라미터 바이어스 = 0) 를 냈다. 시뮬 IMU 의 자이로 바이어스 평균은 0.01 rad/s (`amr_description` sensors.yaml
-  `gyro_bias_mean`) 이고 다른 다섯 bag 은 바이어스를 ±0.0100 (s3_aisle 만 0.01048) 으로 추정했다. 그래서 세 bag 의 EKF odom 은 자이로
+  back to parameter bias"** (파라미터 바이어스 = 0) 를 냈다. 시뮬 IMU 의 자이로 바이어스 평균은 0.01 rad/s (루트 `config/sensors.yaml`
+  129행 `gyro_bias_mean` 〔리뷰 반영 2026-10-15 경로 정정 — 처음 판 "`amr_description` sensors.yaml"〕) 이고 다른 다섯 bag 은 바이어스를 ±0.0100 (s3_aisle 만 0.01048) 으로 추정했다. 그래서 세 bag 의 EKF odom 은 자이로
   바이어스가 그대로 적분된 것이다. 녹화 공백 검사(`recgate`)는 간격만 보고 odom 일관성은 보지 않아 놓쳤다.
 - **해석의 범위**: 휠-EKF guess 를 쓰는 RTAB-Map 2D·3D 와 odom TF 를 쓰는 slam_toolbox 가 같은 결함을 받는다. LIO-SAM 은 휠·EKF 를 쓰지
   않고 IMU 바이어스를 스스로 추정한다. 이 bag 들의 차이는 2D 대 3D 가 아니라 **휠-EKF 사전값 유무(요인 B)** 의 차이다. 배포 스택의
@@ -243,7 +243,8 @@ rtabmap.md §4.3 의 4.62 / 0.746 / 0.548 과 같다. 이 검증은 공개된 �
 - **실패 재생** (Wilson 95 %): slam_toolbox 6/24 [0.12, 0.45] (메시지 필터 버림 — s3_aisle·s6_wall 결정적), RTAB-Map 2D 11/24 [0.28, 0.65],
   RTAB-Map 3D 11/24 [0.28, 0.65], LIO-SAM 평면·6DoF·오라클 각 3/24 (s6_wall 첫 장). 누락 재생 중 "시작 장만"(첫 점군 + 1 s 안,
   보충 분류) — RTAB-Map 2D 9/11, 3D 6/11, LIO-SAM 3/3. 주행 중 누락은 RTAB-Map 3D 5 재생 (map_long 7·10·12 장 — 부하 85→50 때,
-  s1_seed1 r2 6 장·s1_seed2x r2 11 장 — 부하 130–190 때), 2D 2 재생.
+  s1_seed1 r2 6 장·s1_seed2x r2 11 장 — 재생 중 1 분 loadavg 최대 204·186, 시작 39.3·38.4 〔리뷰 반영 2026-10-15 — 처음 "부하
+  130–190 때" 는 시작 값처럼 읽혔다〕), 2D 2 재생.
 - 예측 P-E1 ("3D 세 행 누락 > 0 재생 ≤ 3/24") 은 RTAB-Map 3D 에서 **틀렸다** (11/24). LIO-SAM 은 3/24 로 맞았다.
 - 예측 P-C1·P-C2 (`A<B`) 는 **틀렸다** (가르지 못함). P-C3·C4·C5 (`undecided`) 는 맞았다.
 - 2D 격자 지도에서 RTAB-Map 3D 의 IoU 가 2D 두 행보다 낮다 (결함 없는 5 bag 평균 0.40 대 slam_toolbox 0.59·RTAB-Map 2D 0.54,
