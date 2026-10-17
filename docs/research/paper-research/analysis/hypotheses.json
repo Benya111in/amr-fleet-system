@@ -1,0 +1,82 @@
+{
+ "H1r": {
+  "hypothesis": "H1r",
+  "statistic": "mean log(T_no_m3/T_full), 두 팔 모두 성공한 경로",
+  "condition": "chain_sim_x 20 Hz, held-out B, 잡음 없음, stateful false",
+  "n_paths": 58,
+  "mean": 0.6945427546065591,
+  "ci95": [
+   0.627666455494428,
+   0.7590386614836944
+  ],
+  "time_ratio_pct": [
+   100.27930966264825,
+   87.32341996377517,
+   113.62216009582392
+  ],
+  "rule": "95 % 하한 > 0",
+  "decision": "confirmed",
+  "success_noM3_full": [
+   58,
+   60,
+   60,
+   60
+  ]
+ },
+ "H2": {
+  "hypothesis": "H2",
+  "statistic": "12 경로의 (seed 짝 log(T_R/T_full) 평균) 의 평균",
+  "condition": "ROS C3: 오도메트리 σ 0.02, seed 1–5, stateful false",
+  "n_paths": 12,
+  "mean": -0.05681890731181677,
+  "ci95": [
+   -0.10055929463753865,
+   -0.021089516731363864
+  ],
+  "time_ratio_pct": [
+   -5.523485606450384,
+   -9.566851118485387,
+   -2.0868687988294443
+  ],
+  "rule": "95 % 상한 < 0",
+  "decision": "confirmed",
+  "run_success_R_full": [
+   60,
+   60,
+   59,
+   60
+  ],
+  "sensitivity_orig_formula": {
+   "n_paths": 12,
+   "mean": -0.0649194416620719,
+   "ci95": [
+    -0.1173293087057326,
+    -0.02355645337356902
+   ]
+  }
+ },
+ "H3": {
+  "hypothesis": "H3",
+  "statistic": "mean log(T_R/T_RPP_R00), 두 팔 모두 성공한 경로",
+  "condition": "ROS C1: 잡음 없음, stateful false, held-out B 60",
+  "n_paths": 60,
+  "mean": 0.015344070837393853,
+  "ci95": [
+   0.010546176148201138,
+   0.020827486966555737
+  ],
+  "time_ratio_pct": [
+   1.5462395511751437,
+   1.0601983074564503,
+   2.104589271887214
+  ],
+  "rule": "95 % 상한 < log(1.005)",
+  "decision": "not confirmed",
+  "success_R_RPP": [
+   60,
+   60,
+   60,
+   60
+  ]
+ }
+}

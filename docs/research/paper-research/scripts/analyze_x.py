@@ -776,6 +776,7 @@ def rate_report(sets):
              '참값 트랙 구독자 (≠0 실행) | commit · dirty |',
              '| --- | --- | --- | --- | --- | --- | --- |']
     for name, recs in sets:
+        recs = [r for r in recs if r['arm'] not in ('DWB_tuned', 'MPPI_tuned', 'RPP_tuned')]  # 복제 제외
         if not recs:
             continue
         rates = [r['cmd_rate_hz'] for r in recs]
