@@ -16,10 +16,13 @@ paper_research 실행 조율 (prereg.md §3·§4·§5·§7, contract.md). 원본
 
     python3 orchestrate_x.py paths   --commit <sha> --dirty <n> --ws /home/CAPYI_AI/wt/dwa-abl
     python3 orchestrate_x.py ros <dryrun|equiv|tuning|c1|c2|c3|o> --commit <sha> --dirty <n> [--lanes 10]
-    python3 orchestrate_x.py select  (= analyze_x.py select, 결과를 /runs/tuning/selection.json 에)
+    python3 analyze_x.py select --raw /runs/tuning/raw > /runs/tuning/selection.json   (선택 J')
     python3 orchestrate_x.py chain   --commit <sha> --dirty <n> [--procs 24]
 
-단계별 팔·경로·조건은 prereg 그대로다 (아래 STAGES 주석).
+단계별 팔·경로·조건은 prereg 그대로다 (ros_stage 의 단계별 주석).
+- equiv (prereg §3.3): dwa_full 대 dwa_x_X00, 튜닝 4 경로, 실시간 반복 5 회 (판정은 analyze_x.py equiv).
+- tuning (prereg §4): 작업 = (조건 s ∈ {잡음 없음, seed 1–3}, 번호 k) 의 DWB_k·MPPI_k·RPP_k·X_k 넷.
+- c1·c2·c3·o (prereg §5): 팔 = dwa_full·dwa_textbook·pp·DWB_D00·MPPI_P00·RPP_R00 + 선택 셋 + dwa_R.
 """
 import argparse
 import concurrent.futures
