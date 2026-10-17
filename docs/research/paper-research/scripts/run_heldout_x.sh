@@ -3,9 +3,12 @@
 #   줄 A (레인 0–6) : c1 → c3 → o → m
 #   줄 B (레인 7–13): c2 → c4 → m_clr
 # 각 단계는 orchestrate_x.py ros <단계> (끝난 실행은 건너뛰므로 다시 부르면 이어서 돈다).
-#   run_heldout_x.sh <commit> <dirty>
+#   run_heldout_x.sh <commit> <dirty> ["<줄 A 단계들>" "<줄 B 단계들>"]
+# 줄을 직접 주면 그 단계들만 돈다 (중단 뒤 이어 돌기·줄 균형 맞추기). 세션이 끝나도 살아 있게
+# setsid -w 로 부르는 것을 권한다.
 set -u
 C=$1; D=$2
+TA=${3:-"c1 c3 o m"}; TB=${4:-"c2 c4 m_clr"}
 H=$(cd "$(dirname "$0")" && pwd)
 R=/home/CAPYI_AI/paper_research/runs
 J=/home/CAPYI_AI/paper_research/bin/jlog
@@ -19,9 +22,9 @@ run() {   # run <단계> <레인 시작>
   local n; n=$(cat "$R/$st"/raw/*.jsonl 2>/dev/null | wc -l)
   $J pr-harness "STAGE $st END run_dir=$R/$st n=$n rc=$rc"
 }
-( run c1 0; run c3 0; run o 0; run m 0 ) &
+( for st in $TA; do run "$st" 0; done ) &
 A=$!
-( run c2 7; run c4 7; run m_clr 7 ) &
+( for st in $TB; do run "$st" 7; done ) &
 B=$!
 wait $A; wait $B
 echo done
