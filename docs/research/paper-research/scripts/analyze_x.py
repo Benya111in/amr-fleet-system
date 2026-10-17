@@ -563,6 +563,82 @@ def first_entry(trace, end):
     return None
 
 
+def path_goals(paths_dir):
+    g = {}
+    for fn in ('heldout_smooth.json', 'heldout_narrow.json', 'heldout_astar.json'):
+        p = os.path.join(paths_dir, fn)
+        if os.path.exists(p):
+            with open(p, encoding='utf-8') as f:
+                for e in json.load(f):
+                    g[e['id']] = e['points'][-1]
+    return g
+
+
+def chain_decomp(chain, chain_root, paths_dir, arms=('dwa_full', 'dwa_no_m3', 'dwa_R')):
+    """
+    chain_sim_x 잡음 없음: 첫 진입(참값 0.10 m)까지와 그 뒤로 시간 분해 (원본 results.md §4 시간 분해와 같은 정의),
+    stateful false/true 별. 지나침 = 첫 진입 뒤 목표 접선 방향 최대 위치.
+    """
+    goals = path_goals(paths_dir)
+    rows = {}
+    for r in chain:
+        if r['nseed'] != 0 or r['arm'] not in arms or not r['success']:
+            continue
+        fn = os.path.join(chain_root, 'traces', r['_call'],
+                          f"{r['arm']}__{r['scene']}__s{r.get('seed', 1)}.csv")
+        if not os.path.exists(fn) or r['scene'] not in goals:
+            continue
+        gx, gy, gth = goals[r['scene']]
+        tr = read_trace(fn)
+        tf = vf = None
+        over = 0.0
+        for row in tr:
+            if tf is None and math.hypot(row['x'] - gx, row['y'] - gy) <= 0.10:
+                tf, vf = row['t'], row['v']
+            if tf is not None:
+                over = max(over, (row['x'] - gx) * math.cos(gth) + (row['y'] - gy) * math.sin(gth))
+        if tf is None:
+            continue
+        rows[(r['arm'], r['stateful'], r['scene'])] = {'t_first': tf, 'v_first': vf, 'over': over,
+                                                     't_reach': r['t_reach']}
+    lines = ['### 표 3c. chain_sim_x 시간 분해 — 첫 진입(0.10 m)까지 / 그 뒤 (잡음 없음)', '',
+             '| 팔 | stateful | 경로 | 첫 진입 [s] 중앙 | 첫 진입 뒤 [s] 중앙 [p90] | 첫 진입 속도 중앙 [m/s] | 0.10 m 넘게 지나친 경로 |',
+             '| --- | --- | --- | --- | --- | --- | --- |']
+    for arm in arms:
+        for st in (0, 1):
+            g = [v for (a, s_, _), v in rows.items() if a == arm and s_ == st]
+            if not g:
+                continue
+            post = [v['t_reach'] - v['t_first'] for v in g]
+            lines.append(f'| {arm} | {st} | {len(g)} | {med([v["t_first"] for v in g], nd=2)} | '
+                         f'{med(post, nd=2)} [{np.percentile(post, 90):.2f}] | '
+                         f'{med([v["v_first"] for v in g], nd=2)} | {sum(1 for v in g if v["over"] > 0.10)} |')
+    lines += ['', '팔 − dwa_full 짝 차 (log 비 → %): 첫 진입 시각 · 판정 통과 시각, 추가 시간 중 첫 진입 뒤 몫 (합):', '',
+              '| 팔 | stateful | 첫 진입 % (n) | 판정 통과 % (n) | 추가 시간 합 중 첫 진입 뒤 몫 |',
+              '| --- | --- | --- | --- | --- |']
+    for arm in arms:
+        if arm == 'dwa_full':
+            continue
+        for st in (0, 1):
+            common = [sc for (a, s_, sc) in rows if a == arm and s_ == st and
+                      ('dwa_full', st, sc) in rows]
+            if not common:
+                continue
+            d1 = [math.log(rows[(arm, st, sc)]['t_first'] / rows[('dwa_full', st, sc)]['t_first'])
+                  for sc in common]
+            d2 = [math.log(rows[(arm, st, sc)]['t_reach'] / rows[('dwa_full', st, sc)]['t_reach'])
+                  for sc in common]
+            extra = sum(rows[(arm, st, sc)]['t_reach'] - rows[('dwa_full', st, sc)]['t_reach']
+                        for sc in common)
+            extra_post = sum((rows[(arm, st, sc)]['t_reach'] - rows[(arm, st, sc)]['t_first']) -
+                             (rows[('dwa_full', st, sc)]['t_reach'] - rows[('dwa_full', st, sc)]['t_first'])
+                             for sc in common)
+            share = f'{100 * extra_post / extra:.0f} %' if abs(extra) > 1e-6 else '–'
+            lines.append(f'| {arm} | {st} | {fmt_pct(*boot(d1))} ({len(d1)}) | '
+                         f'{fmt_pct(*boot(d2))} ({len(d2)}) | {share} |')
+    return '\n'.join(lines) + '\n'
+
+
 def read_resets(fn):
     """reset_log CSV → 장면별 행 목록. 장면 열(scene)이 있으면 그것으로, 없으면 전체를 '' 로."""
     out = collections.defaultdict(list)
@@ -1055,6 +1131,7 @@ def tables(args):
                                    arms=('dwa_full', 'dwa_x_X02', 'dwa_R'))
         md.append(txt)
         md.append(reset_counts(chain, os.path.join(R, 'chain'), arms_c))
+        md.append(chain_decomp(chain, os.path.join(R, 'chain'), paths_dir))
         # M3 끔의 stateful 의존 (prereg §6.2-5 예상)
         for st in (0, 1):
             sub = [r for r in chain if r['nseed'] == 0 and r['stateful'] == st]

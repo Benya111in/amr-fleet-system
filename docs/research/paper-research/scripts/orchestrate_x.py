@@ -459,8 +459,9 @@ def chain_call(args, arm, scenes, seed, stateful):
     n_exp = sum(1 for line in open(scenes, encoding='utf-8') if line.startswith('scene '))
     if nlines(out) >= n_exp:
         return cid, 'skip'
-    if os.path.exists(out):
-        os.remove(out)          # 끊긴 호출은 처음부터 (한 호출 = 한 경로 묶음, 결정적)
+    for fn in (out, rlog):      # 끊긴 호출은 처음부터 (한 호출 = 한 경로 묶음, 결정적)
+        if os.path.exists(fn):
+            os.remove(fn)
     cmd = [CHAIN_X, scenes, out, f'cfg={cfg}', f'arm={arm}', f'stateful={stateful}',
            f'reset_log={rlog}', f'trace_dir={tdir}']
     if seed:
