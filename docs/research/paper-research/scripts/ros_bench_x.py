@@ -11,6 +11,11 @@ paper_research ROS 시험대 구동기 (prereg.md §3·§5·§6). 원본 dwa-abl
 - 목표 첫 진입 (참값이 목표 0.10 m 안에 처음 든 시각·속도)과 그 뒤 최대 지나침 (stateful 분석용).
 - 참값 트랙 차단 확인: 시작 때 <ns>/perception/tracked_obstacles 와 /pr_unused_tracks 의 구독자 수.
 - 팔 순서 회전은 걸러낸 목록 안 순번이 아니라 전체 경로 목록 안 순번(+ rep)으로 한다 (작업 분할과 무관).
+- prereg §8 A2 궤적 기록 (--trace-dir): 실행마다 20 Hz CSV — 참값 자세·속도, 측정 속도(odometry/filtered),
+  제어기 출력(cmd_vel_nav), 프로파일러 출력(cmd_vel_smoothed), 원판 이격. 실행이 끝난 뒤 쓴다 (구독만 늘고
+  제어 루프에는 끼어들지 않는다). 수락 시각 t_acc_abs (ROS 시계) 를 남겨 플러그인 재설정 기록과 맞춘다.
+- prereg §8 A4 움직이는 원판 (sim/obstacle_clearance, kinematic_sim_x): 최소 이격, 접촉 횟수 두 정의
+  (로봇 |v| > 0.05 일 때만 / 정지 중 포함), 주행 중 정지 횟수.
 
 이하 원본 설명: ROS 시험대 구동기: 같은 controller_server 에 올린 여러 제어기 팔로 같은 경로들을 FollowPath 로 돈다.
 
@@ -107,6 +112,12 @@ class Bench(Node):
         self.create_subscription(Float64MultiArray, 'velocity_profiler/state', self.on_prof, 100)
         self.create_subscription(Twist, 'cmd_vel_nav', self.on_cmd, 100)
         self.create_subscription(Float64, 'sim/footprint_clearance', self.on_clear, 100)
+        self.odom = []
+        self.smooth = []
+        self.oclr = []
+        self.create_subscription(Odometry, 'odometry/filtered', self.on_odom, 100)
+        self.create_subscription(Twist, 'cmd_vel_smoothed', self.on_smooth, 100)
+        self.create_subscription(Float64, 'sim/obstacle_clearance', self.on_oclr, 100)
         for topic in ('dwa/stats', 'pure_pursuit/stats', 'dwa_x/stats'):
             self.create_subscription(Float64MultiArray, topic, self.on_stats, 100)
         self.pub_pose = self.create_publisher(PoseWithCovarianceStamped, 'initialpose', 10)
@@ -134,6 +145,15 @@ class Bench(Node):
 
     def on_clear(self, m):
         self.clear.append((self.now(), m.data))
+
+    def on_odom(self, m):
+        self.odom.append((self.now(), m.twist.twist.linear.x, m.twist.twist.angular.z))
+
+    def on_smooth(self, m):
+        self.smooth.append((self.now(), m.linear.x, m.angular.z))
+
+    def on_oclr(self, m):
+        self.oclr.append((self.now(), m.data))
 
     def spin_for(self, seconds):
         end = time.monotonic() + seconds
@@ -190,6 +210,34 @@ def rect_disc_clear(x, y, th, ox, oy, r, half_l=0.30, half_w=0.20):
     return math.hypot(dx, dy) - r
 
 
+def hold(series, tq, col):
+    """시각 tq 에서 마지막 값 유지 (없으면 nan)."""
+    if not series:
+        return np.full(len(tq), np.nan)
+    a = np.array(series)
+    idx = np.searchsorted(a[:, 0], tq, side='right') - 1
+    out = np.where(idx >= 0, a[np.clip(idx, 0, None), col], np.nan)
+    return out
+
+
+def write_trace(ev, args, entry, arm, t_acc, gt):
+    """A2: 20 Hz 궤적 CSV (t = 수락 뒤 시각). 실행이 끝난 뒤 쓴다."""
+    if not len(gt):
+        return
+    os.makedirs(args.trace_dir, exist_ok=True)
+    tq = np.arange(t_acc - 0.5, gt[-1, 0] + 1e-9, 0.05)
+    gts = [tuple(g) for g in gt]
+    cols = [hold(gts, tq, k) for k in (1, 2, 3, 4, 5)] + \
+        [hold(ev.odom, tq, 1), hold(ev.odom, tq, 2), hold(ev.cmd, tq, 1), hold(ev.cmd, tq, 2),
+         hold(ev.smooth, tq, 1), hold(ev.smooth, tq, 2), hold(ev.oclr, tq, 1)]
+    fn = os.path.join(args.trace_dir, f"{arm}__{entry['id']}__s{args.noise_seed}__r{args.rep}.csv")
+    with open(fn, 'w', encoding='utf-8') as f:
+        f.write('t,x,y,yaw,v_gt,w_gt,v_meas,w_meas,v_cmd,w_cmd,v_prof,w_prof,obs_clear\n')
+        for i, t in enumerate(tq):
+            f.write(f'{t - t_acc:.3f},' + ','.join(
+                '' if np.isnan(c[i]) else f'{c[i]:.4f}' for c in cols) + '\n')
+
+
 def parse_obstacles(spec):
     out = []
     for item in [t for t in spec.split(';') if t.strip()]:
@@ -210,7 +258,7 @@ def run_one(ev, entry, arm, args, proc, idle_cpu_rate):
     for p in path.poses:
         p.header.stamp = path.header.stamp
     ev.teleport(x0, y0, th0)
-    for buf in (ev.gt, ev.prof, ev.cmd, ev.stats, ev.clear):
+    for buf in (ev.gt, ev.prof, ev.cmd, ev.stats, ev.clear, ev.odom, ev.smooth, ev.oclr):
         buf.clear()
     t_pred = path_metrics.predict_travel_time(xy, LIMITS)
     timeout = args.timeout_scale * max(60.0, 3.0 * t_pred + 30.0)
@@ -286,6 +334,31 @@ def run_one(ev, entry, arm, args, proc, idle_cpu_rate):
         for ox, oy, orad in obstacles:
             obs_end = min(obs_end, rect_disc_clear(gt[-1][1], gt[-1][2], gt[-1][3], ox, oy, orad))
     obs_collision = bool(obstacles) and obs_min <= 0.0
+    # 움직이는 원판 (A4): kinematic_sim_x 의 sim/obstacle_clearance
+    oc = np.array([o for o in ev.oclr if t_acc <= o[0] <= t_res]) if ev.oclr else np.zeros((0, 2))
+    m_stats = {'mov_min_clear': -1.0, 'contact_moving': 0, 'contact_any': 0,
+               'contact_moving_s': 0.0, 'contact_any_s': 0.0}
+    if len(oc) and len(run_gt):
+        vg = np.interp(oc[:, 0], run_gt[:, 0], np.abs(run_gt[:, 4]))
+        inside = oc[:, 1] <= 0.0
+        mov = inside & (vg > 0.05)
+        dt_o = np.diff(oc[:, 0], append=oc[-1, 0])
+        m_stats = {'mov_min_clear': float(np.min(oc[:, 1])),
+                   'contact_moving': int(np.sum(mov[1:] & ~mov[:-1]) + int(mov[0])),
+                   'contact_any': int(np.sum(inside[1:] & ~inside[:-1]) + int(inside[0])),
+                   'contact_moving_s': float(np.sum(dt_o[mov])),
+                   'contact_any_s': float(np.sum(dt_o[inside]))}
+        if not obstacles:
+            obs_collision = bool(np.any(inside))
+    n_stops = 0
+    if len(run_gt):
+        moving = False
+        for g in run_gt[run_gt[:, 0] <= t_res - 0.5]:
+            if abs(g[4]) >= 0.2:
+                moving = True
+            elif moving and abs(g[4]) < 0.05:
+                n_stops += 1
+                moving = False
     t_first = -1.0
     v_first = -1.0
     overshoot = -1.0
@@ -315,7 +388,10 @@ def run_one(ev, entry, arm, args, proc, idle_cpu_rate):
         cpu_cycle_ms = 1000.0 * max(0.0, (cpu1 - cpu0) - idle_cpu_rate * dur) / n_cmd
     allv = seg[0] + seg[1]
     rate_hz = n_cmd / dur
+    if args.trace_dir:
+        write_trace(ev, args, entry, arm, t_acc, gt)
     return {
+        't_acc_abs': t_acc, 't_res_abs': t_res, 'n_stops': n_stops, **m_stats,
         'commit': args.commit, 'dirty': args.dirty, 'rep': args.rep,
         'stateful': args.stateful, 'condition': args.condition,
         'rate_low': int(rate_hz < 18.0),
@@ -378,6 +454,7 @@ def main(argv=None):
     ap.add_argument('--stateful', type=int, default=0, help='기록용 (실제 값은 params 파일)')
     ap.add_argument('--condition', default='')
     ap.add_argument('--obstacles', default='', help='정적 원판 "x,y,r;…" (O 장면 지표)')
+    ap.add_argument('--trace-dir', default='', help='A2 궤적 CSV 디렉터리 (빈 값 = 끔)')
     args, ros_args = ap.parse_known_args(argv)
     entries = []
     for f in args.paths.split(','):

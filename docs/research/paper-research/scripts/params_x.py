@@ -12,6 +12,12 @@ DWB·MPPI·RPP 의 기본·12 설정 격자)은 **한 글자도 바꾸지 않았
   costmap_scan_filter_node 의 tracks_topic 을 /pr_unused_tracks 로 돌린다 — 어느 팔도 kinematic_sim 의
   참값 트랙(perception/tracked_obstacles)을 받지 못한다. 구독자 수는 ros_bench_x.py 가 실행마다 기록한다.
 - chain_sim_x cfg: 연구 키는 `research.` 를 뺀 이름 (contract §1).
+- prereg §8 A1 교과서 DWA 격자 T00–T11 (dwa_textbook 위에 덮음). 대응 (일지에도 적음):
+  α = heading_weight, β = clearance_weight, γ = velocity_weight, L = textbook_lookahead [m].
+  팔 이름 dwa_textbook_T00…T11, 선택된 것 dwa_textbook_tuned.
+- prereg §8 A4 dwa_no_m67: dwa_full 에 교과서 팔과 같은 M6·M7 끔 값 (use_velocity_obstacles false,
+  dynamic_weight 0, yield_crossing false) 만 덮는다 (원본 플러그인·원본 파라미터).
+- 재설정 기록: 연구 플러그인 팔(dwa_x_*, dwa_R)에 research.log_resets 를 작업·팔마다 다른 파일로 준다.
 
 이하 원본 설명: 제어기 설정 원천: 배포 nav2_params.yaml 의 블록 + 팔(arm) 정의 (prereg.md §3).
 
@@ -193,6 +199,24 @@ DWA_X_GRID = {
     'X10': {R1: 4, R2: True, R3: True, R4: 0.25},
     'X11': {R1: 6, R2: True, R3: True, R4: 0.25},
 }
+# --- prereg §8 A1 교과서 DWA 격자 (α, β, γ, L) → (heading_weight, clearance_weight, velocity_weight,
+#     textbook_lookahead). T00 = 기존 교과서 팔 (배포 가중치 0.6/1.0/0.4, L 1.2) ---
+TB_GRID_RAW = {
+    'T00': (0.6, 1.0, 0.4, 1.2), 'T01': (0.8, 1.0, 0.4, 1.2), 'T02': (0.4, 1.0, 0.4, 1.2),
+    'T03': (0.6, 0.5, 0.4, 1.2), 'T04': (0.6, 2.0, 0.4, 1.2), 'T05': (0.6, 1.0, 0.2, 1.2),
+    'T06': (0.6, 1.0, 0.8, 1.2), 'T07': (0.6, 1.0, 0.4, 0.8), 'T08': (0.6, 1.0, 0.4, 1.6),
+    'T09': (0.8, 0.5, 0.4, 1.2), 'T10': (0.8, 1.0, 0.2, 0.8), 'T11': (0.4, 2.0, 0.8, 1.6),
+}
+TB_GRID = {k: {'heading_weight': a, 'clearance_weight': b, 'velocity_weight': g,
+               'textbook_lookahead': L} for k, (a, b, g, L) in TB_GRID_RAW.items()}
+# prereg §8 A4: M6·M7 만 끈 팔 (교과서 팔과 같은 값)
+NO_M67 = {'use_velocity_obstacles': False, 'dynamic_weight': 0.0, 'yield_crossing': False}
+
+
+def tb_arm(tid):
+    return f'dwa_textbook_{tid}'
+
+
 # chain_sim 단독 스위치 팔 (prereg §5 "R1–R4 단독" 의 대표 설정: K = 4, R2, R3, t_c 0.25)
 CHAIN_SINGLE = {'R1': 'X02', 'R2': 'X04', 'R3': 'X05', 'R4': 'X06'}
 
@@ -266,7 +290,7 @@ def ours_arm_blocks(nav2):
 
 
 def ros_params_file(fname, arm_ids, extra_blocks=None, nav2=None, stateful=False,
-                    block_tracks=True, selected_x=None):
+                    block_tracks=True, selected_x=None, selected_t=None, resets_prefix=None):
     """
     배포 nav2_params.yaml 에 비교 팔 블록을 더하고 controller_plugins 를 arm_ids 로 바꾼다.
 
@@ -281,6 +305,13 @@ def ros_params_file(fname, arm_ids, extra_blocks=None, nav2=None, stateful=False
         blocks[x_arm(xid)] = dwa_x_block(nav2, xid)
     if selected_x:
         blocks['dwa_R'] = dwa_x_block(nav2, selected_x)
+    tb_base = dict(controller_block(nav2, 'DWA'))
+    tb_base.update(DWA_ARMS['dwa_textbook'])
+    for tid, over in TB_GRID.items():
+        blocks[tb_arm(tid)] = dict(tb_base, **over)
+    if selected_t:
+        blocks['dwa_textbook_tuned'] = dict(tb_base, **TB_GRID[selected_t])
+    blocks['dwa_no_m67'] = dict(controller_block(nav2, 'DWA'), **NO_M67)
     blocks.update(extra_blocks or {})
     for k in ('DWA', 'PurePursuit', 'DWB', 'RPP'):
         cs.pop(k, None)
@@ -289,6 +320,8 @@ def ros_params_file(fname, arm_ids, extra_blocks=None, nav2=None, stateful=False
         cs[a] = copy.deepcopy(blocks[a])
         if block_tracks and cs[a].get('plugin') in ('amr_navigation::DWAController', X_PLUGIN):
             cs[a]['tracked_obstacles_topic'] = UNUSED_TRACKS
+        if resets_prefix and cs[a].get('plugin') == X_PLUGIN:
+            cs[a].setdefault('research', {})['log_resets'] = f'{resets_prefix}__{a}.csv'
     cs['general_goal_checker']['stateful'] = bool(stateful)
     if block_tracks:
         nav2['costmap_scan_filter_node']['ros__parameters']['tracks_topic'] = UNUSED_TRACKS

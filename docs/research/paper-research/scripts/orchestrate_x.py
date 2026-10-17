@@ -48,6 +48,7 @@ HELDOUT_JSON = [f'{P}/heldout_smooth.json', f'{P}/heldout_narrow.json', f'{P}/he
 HELDOUT_SCENES = [f'{P}/scenes_heldout_smooth.txt', f'{P}/scenes_heldout_narrow.txt',
                   f'{P}/scenes_heldout_astar.txt']
 OBST_JSON = f'{P}/scenes_obstacles.json'
+MOV_JSON = '/runs/scenes_m/scenes_moving.json'
 CHAIN_X = '/ros2_ws/install/amr_nav_research/lib/amr_nav_research/chain_sim_x'
 NOISE_CHAIN = ['odom_noise_v=0.02', 'odom_noise_w=0.02', 'pose_noise_xy=0.01',
                'pose_noise_yaw=0.005', 'pose_noise_tau=1.0', 'lidar=1']   # 원본 chain 잡음 조건
@@ -124,11 +125,12 @@ def selection():
 
 
 def heldout_arms():
-    """ROS held-out 팔 (prereg §3.4): 기존 비교군 + 튜닝 선택 셋 + DWA-R."""
+    """ROS held-out 팔 (prereg §3.4 + §8 A1): 기존 비교군 + 튜닝 선택 셋 + DWA-R + 교과서 튜닝."""
     sel = selection()
     arms = list(BASE_ARMS)
     arms += [sel[f]['chosen'] for f in ('DWB', 'MPPI', 'RPP') if sel[f]['chosen'] not in arms]
-    return arms + ['dwa_R'], sel['DWA_R']['chosen_x']
+    return (arms + ['dwa_R', 'dwa_textbook_tuned'], sel['DWA_R']['chosen_x'],
+            sel['TB']['chosen_t'])
 
 
 # ---------------------------------------------------------------------------------------------
@@ -151,9 +153,12 @@ def lane_cmd(lane, job, args):
         '--out', job['out'], '--worker', ns, '--ns', '/@NS@', '--skip-done',
         '--commit', args.commit, '--dirty', str(args.dirty),
         '--ros-args', '-r', '__ns:=/@NS@', '--log-level', 'warn']
+    envs = []
+    for k, v in job.get('env', {}).items():
+        envs += ['-e', f'{k}={v}']
     cmd = ['docker', 'run', '--rm', '--name', cname, '--cpus', str(args.cpus),
            '--memory', args.memory, '--shm-size', '2g',
-           '-e', f'ROS_DOMAIN_ID={dom}', '-e', 'ROS_LOCALHOST_ONLY=1', '-e', 'ROS_WS=/ros2_ws',
+           '-e', f'ROS_DOMAIN_ID={dom}', '-e', 'ROS_LOCALHOST_ONLY=1', '-e', 'ROS_WS=/ros2_ws'] + envs + [
            '-v', f'{args.ws}:/ros2_ws:ro', '-v', f'{WS_HOST}:/pr_ws:ro', '-v', f'{RUNS_HOST}:/runs',
            IMAGE, 'bash', f'{SCRIPTS_C}/ros_worker_x.sh', str(dom), ns, h2c(job['params']),
            job['launch_log']] + job['largs'] + ['--'] + bench
@@ -168,7 +173,7 @@ def run_lanes(jobs, args, stage):
     last_start = 0.0
     failed = []
     while pending or active:
-        for lane in range(args.lanes):
+        for lane in range(args.lane0, args.lane0 + args.lanes):
             if lane in active or not pending or time.time() - last_start < args.stagger:
                 continue
             job = pending.pop(0)
@@ -197,6 +202,7 @@ def run_lanes(jobs, args, stage):
                      'commit': args.commit, 'dirty': args.dirty,
                      'config': {'arms': job['arms'], 'params_sha': sha(job['params']),
                                 'domain': dom, 'container': cname, 'largs': job['largs'],
+                                'env': job.get('env', {}),
                                 'rc': rc, 'ws': args.ws},
                      'paths': job['ids'], 'seed': job.get('seed', 0), 'rep': job.get('rep', 0),
                      'start': t0, 'end': time.time(), 'raw': job['out'], 'result': res,
@@ -224,18 +230,34 @@ def job_done(job):
     return need <= have
 
 
-def make_job(stage_dir, jid, arms, ids, paths, params_file, est_s, seed=0, rep=0, largs=(),
-             extra_bench=()):
+def make_job(stage_dir, jid, arms, ids, paths, est_s, seed=0, rep=0, largs=(),
+             extra_bench=(), pose_noise=False, launch_x=False, **pf_kw):
+    """
+    작업 하나. params 파일은 작업마다 따로 만든다 (연구 플러그인 재설정 기록이 작업·팔마다 다른 파일이어야 해서).
+    궤적(A2)은 /runs/<단계>/traces/<작업>/ 에 남긴다. launch_x/pose_noise 면 사본 런치(kinematic_sim_x).
+    """
+    st = os.path.basename(stage_dir)
+    pf = os.path.join(stage_dir, 'params', f'{jid}.yaml')
+    params.ros_params_file(pf, arms, resets_prefix=f'/runs/{st}/resets/{jid}', **pf_kw)
+    os.makedirs(os.path.join(stage_dir, 'resets'), exist_ok=True)
+    os.makedirs(os.path.join(stage_dir, 'traces'), exist_ok=True)
     bench = ['--paths', ','.join(paths), '--ids', ','.join(ids), '--arms', ','.join(arms),
-             '--tag', os.path.basename(stage_dir), '--rep', str(rep)] + list(extra_bench)
+             '--tag', st, '--rep', str(rep), '--trace-dir', f'/runs/{st}/traces/{jid}'] + \
+        list(extra_bench)
+    largs = list(largs)
     if seed:
         bench += ['--noise-seed', str(seed), '--odom-noise-v', '0.02', '--odom-noise-w', '0.02']
-        largs = list(largs) + [f'noise_seed:={seed}', 'odom_noise_v:=0.02', 'odom_noise_w:=0.02']
+        largs += [f'noise_seed:={seed}', 'odom_noise_v:=0.02', 'odom_noise_w:=0.02']
+    if pose_noise:   # prereg §8 A3: chain_sim 과 같은 값
+        largs += ['pose_noise_xy:=0.01', 'pose_noise_yaw:=0.005', 'pose_noise_tau:=1.0']
+    env = {}
+    if pose_noise or launch_x:
+        env['PR_LAUNCH'] = f'{SCRIPTS_C}/kinematic_sim_x.launch.py'
     return {'id': jid, 'arms': list(arms), 'ids': list(ids), 'seed': seed, 'rep': rep,
-            'params': params_file, 'largs': list(largs), 'bench': bench,
-            'out': f'/runs/{os.path.basename(stage_dir)}/raw/{jid}.jsonl',
-            'launch_log': f'/runs/{os.path.basename(stage_dir)}/logs/{jid}.launch.log',
-            'bench_log': f'/runs/{os.path.basename(stage_dir)}/logs/{jid}.bench.log',
+            'params': pf, 'largs': largs, 'bench': bench, 'env': env,
+            'out': f'/runs/{st}/raw/{jid}.jsonl',
+            'launch_log': f'/runs/{st}/logs/{jid}.launch.log',
+            'bench_log': f'/runs/{st}/logs/{jid}.bench.log',
             'timeout': 2.0 * est_s + 600.0}
 
 
@@ -254,86 +276,103 @@ def est_seconds(entries, ids, arms):
 def ros_stage(args):
     st = args.stage
     stage_dir = os.path.join(RUNS_HOST, st)
-    for d in ('raw', 'logs', 'params'):
-        os.makedirs(os.path.join(stage_dir, d), exist_ok=True)
     if os.path.exists(os.path.join(stage_dir, 'SEALED')):
         print(f'{stage_dir} 는 봉인됐다', file=sys.stderr)
         return 2
+    for d in ('raw', 'logs', 'params'):
+        os.makedirs(os.path.join(stage_dir, d), exist_ok=True)
     jobs = []
+    tun = load_json(TUNING_JSON)
+    tids = [e['id'] for e in tun]
     if st == 'dryrun':
         # 원본 팔로 튜닝 4 경로, 잡음 없음 1 회: 사본 ros_bench_x 가 원본 튜닝 수치를 재현하는지 (하네스 확인)
-        tun = load_json(TUNING_JSON)
-        ids = [e['id'] for e in tun]
         groups = [[f'DWB_{d}', f'MPPI_{m}', f'RPP_{r}'] for d, m, r in
                   zip(params.DWB_GRID, params.MPPI_GRID, params.RPP_GRID)]
         groups.append(['dwa_full', 'pp', 'dwa_textbook'])
         for k, arms in enumerate(groups):
-            pf = os.path.join(stage_dir, 'params', f'g{k:02d}.yaml')
-            params.ros_params_file(pf, arms)
-            jobs.append(make_job(stage_dir, f'g{k:02d}', arms, ids, [TUNING_JSON], pf,
-                                 est_seconds(tun, ids, arms)))
+            jobs.append(make_job(stage_dir, f'g{k:02d}', arms, tids, [TUNING_JSON],
+                                 est_seconds(tun, tids, arms)))
     elif st == 'equiv_ros':
         # prereg §3.3: 플러그인 X(스위치 끔) 대 원본 dwa_full, 튜닝 4 경로, 실시간 반복 5 회
-        tun = load_json(TUNING_JSON)
-        ids = [e['id'] for e in tun]
         arms = ['dwa_full', 'dwa_x_X00']
-        pf = os.path.join(stage_dir, 'params', 'equiv.yaml')
-        params.ros_params_file(pf, arms)
         for rep in range(1, args.reps + 1):
-            jobs.append(make_job(stage_dir, f'rep{rep}', arms, ids, [TUNING_JSON], pf,
-                                 est_seconds(tun, ids, arms), rep=rep))
+            jobs.append(make_job(stage_dir, f'rep{rep}', arms, tids, [TUNING_JSON],
+                                 est_seconds(tun, tids, arms), rep=rep))
+    elif st in ('trace_check', 'simx_check'):
+        # prereg §8 A2: 궤적 기록이 동작을 바꾸지 않는가 (X00 반복, equiv_ros 의 기록 없는 X00 과 비교).
+        # simx_check: 사본 kinematic_sim_x(위치 잡음 0, 장애물 시계 motion) 이 원본 시뮬레이터와 같은가.
+        arms = ['dwa_x_X00']
+        for rep in range(1, args.reps + 1):
+            jobs.append(make_job(stage_dir, f'rep{rep}', arms, tids, [TUNING_JSON],
+                                 est_seconds(tun, tids, arms), rep=rep,
+                                 launch_x=(st == 'simx_check'),
+                                 largs=(['obstacle_clock:=motion'] if st == 'simx_check' else [])))
     elif st == 'tuning':
-        # prereg §4: 팔마다 12 설정 × 튜닝 4 경로 × (잡음 없음, seed 1–3). 작업 하나 = 같은 번호 k 의
-        # DWB·MPPI·RPP·X 설정 넷 (제어기 종류가 레인에 고르게 섞이게)
-        tun = load_json(TUNING_JSON)
-        ids = [e['id'] for e in tun]
+        # prereg §4 + §8 A1: 팔마다 12 설정 × 튜닝 4 경로 × (잡음 없음, seed 1–3). 작업 하나 = 같은 번호 k 의
+        # DWB·MPPI·RPP·X·T 설정 다섯 (제어기 종류가 레인에 고르게 섞이게)
         for seed in (0, 1, 2, 3):
-            for k, (d, m, r, x) in enumerate(zip(params.DWB_GRID, params.MPPI_GRID,
-                                                 params.RPP_GRID, params.DWA_X_GRID)):
-                arms = [f'DWB_{d}', f'MPPI_{m}', f'RPP_{r}', params.x_arm(x)]
-                pf = os.path.join(stage_dir, 'params', f'k{k:02d}.yaml')
-                if seed == 0:
-                    params.ros_params_file(pf, arms)
-                jobs.append(make_job(stage_dir, f's{seed}_k{k:02d}', arms, ids, [TUNING_JSON], pf,
-                                     est_seconds(tun, ids, arms), seed=seed))
+            for k, (d, m, r, x, t) in enumerate(zip(params.DWB_GRID, params.MPPI_GRID,
+                                                    params.RPP_GRID, params.DWA_X_GRID,
+                                                    params.TB_GRID)):
+                arms = [f'DWB_{d}', f'MPPI_{m}', f'RPP_{r}', params.x_arm(x), params.tb_arm(t)]
+                jobs.append(make_job(stage_dir, f's{seed}_k{k:02d}', arms, tids, [TUNING_JSON],
+                                     est_seconds(tun, tids, arms), seed=seed))
     elif st in ('c1', 'c2'):
-        arms, xsel = heldout_arms()
+        arms, xsel, tsel = heldout_arms()
         stateful = st == 'c2'
-        pf = os.path.join(stage_dir, 'params', f'{st}.yaml')
-        params.ros_params_file(pf, arms, stateful=stateful, selected_x=xsel)
         ent = heldout_entries()
         ids = [e['id'] for e in ent]
         nj = args.jobs or 20
         for j in range(nj):
             sub = ids[j::nj]
-            jobs.append(make_job(stage_dir, f'j{j:02d}', arms, sub, HELDOUT_JSON, pf,
+            jobs.append(make_job(stage_dir, f'j{j:02d}', arms, sub, HELDOUT_JSON,
                                  est_seconds(ent, sub, arms),
                                  extra_bench=['--stateful', str(int(stateful)),
-                                              '--condition', st.upper()]))
-    elif st == 'c3':
-        arms, xsel = heldout_arms()
-        pf = os.path.join(stage_dir, 'params', 'c3.yaml')
-        params.ros_params_file(pf, arms, selected_x=xsel)
+                                              '--condition', st.upper()],
+                                 stateful=stateful, selected_x=xsel, selected_t=tsel))
+    elif st in ('c3', 'c4'):
+        # C3 (prereg §5) · C4 (§8 A3, + 위치 잡음): + dwa_x_X00 (원본과 동치, 재설정 기록용 — §8 A2)
+        arms, xsel, tsel = heldout_arms()
+        arms = arms + ['dwa_x_X00']
         ent = heldout_entries()
         ids = noise_subset()
         for seed in range(1, 6):
             for j in range(4):
                 sub = ids[j::4]
-                jobs.append(make_job(stage_dir, f's{seed}_j{j}', arms, sub, HELDOUT_JSON, pf,
+                jobs.append(make_job(stage_dir, f's{seed}_j{j}', arms, sub, HELDOUT_JSON,
                                      est_seconds(ent, sub, arms), seed=seed,
-                                     extra_bench=['--condition', 'C3']))
+                                     pose_noise=(st == 'c4'),
+                                     extra_bench=['--condition', st.upper()],
+                                     selected_x=xsel, selected_t=tsel))
     elif st == 'o':
-        arms, xsel = heldout_arms()
-        pf = os.path.join(stage_dir, 'params', 'o.yaml')
-        params.ros_params_file(pf, arms, selected_x=xsel)
+        arms, xsel, tsel = heldout_arms()
         scenes = load_json(OBST_JSON)
         for rep in (1, 2, 3):
             for sc in scenes:
                 jobs.append(make_job(
-                    stage_dir, f'{sc["id"]}_r{rep}', arms, [sc['id']], [OBST_JSON], pf,
+                    stage_dir, f'{sc["id"]}_r{rep}', arms, [sc['id']], [OBST_JSON],
                     est_seconds(scenes, [sc['id']], arms), rep=rep,
                     largs=[f'moving_obstacles:={sc["moving_obstacles"]}'],
-                    extra_bench=['--obstacles', sc['bench_obstacles'], '--condition', 'O']))
+                    extra_bench=['--obstacles', sc['bench_obstacles'], '--condition', 'O'],
+                    selected_x=xsel, selected_t=tsel))
+    elif st in ('m', 'm_clr'):
+        # prereg §8 A4: 움직이는 원판, DWA 팔만 추적 참값 허용 (block_tracks False). Nav2 선택 팔은 참고.
+        # m_clr (사전 등록과 다름, 실행 전 결정): 빈 마당에서 맞지 않은 빔을 11.99 m 로 내 지나간 원판 자국을
+        # 지역 코스트맵이 지울 수 있게 한다 (kinematic_sim_x nohit_range). 연기 시험에서 등록 그대로(m)는
+        # 원판을 기다린 DWA 팔이 지워지지 않은 자국 앞에서 멈춰 진행 검사로 중단됐다.
+        sel = selection()
+        xsel = sel['DWA_R']['chosen_x']
+        arms = ['dwa_full', 'dwa_no_m67', 'dwa_R'] + [sel[f]['chosen'] for f in ('DWB', 'MPPI', 'RPP')]
+        scenes = load_json(MOV_JSON)
+        for rep in (1, 2, 3):
+            for sc in scenes:
+                jobs.append(make_job(
+                    stage_dir, f'{sc["id"]}_r{rep}', arms, [sc['id']], [MOV_JSON],
+                    est_seconds(scenes, [sc['id']], arms), rep=rep, launch_x=True,
+                    largs=[f'moving_obstacles:={sc["moving_obstacles"]}', 'obstacle_clock:=motion',
+                           f'obstacle_period:={sc["obstacle_period"]}'] +
+                    (['nohit_range:=11.99'] if st == 'm_clr' else []),
+                    extra_bench=['--condition', 'M'], block_tracks=False, selected_x=xsel))
     else:
         raise SystemExit(f'알 수 없는 단계 {st}')
     with open(os.path.join(stage_dir, 'jobs.json'), 'w', encoding='utf-8') as f:
@@ -496,6 +535,7 @@ def main():
     ap.add_argument('--dirty', type=int, required=True)
     ap.add_argument('--ws', default=WS_HOST, help='/ros2_ws 로 붙일 빌드된 작업공간 (호스트 경로)')
     ap.add_argument('--lanes', type=int, default=10)
+    ap.add_argument('--lane0', type=int, default=0, help='첫 레인 번호 (단계 둘을 동시에 돌릴 때 겹치지 않게)')
     ap.add_argument('--cpus', type=float, default=3.0, help='레인 컨테이너 하나의 CPU 상한')
     ap.add_argument('--memory', default='8g')
     ap.add_argument('--stagger', type=float, default=15.0, help='작업 시작 간격 [s] (기동 부하 분산)')

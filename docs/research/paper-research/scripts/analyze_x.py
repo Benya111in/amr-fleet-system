@@ -18,7 +18,8 @@ paper_research 분석 (prereg.md §4·§6, contract.md §2). 원본 dwa-ablation
 - 성공 수도 같은 꼴로 센다: S' = S_0 + mean(S_1, S_2, S_3) (S_c = 조건 c 의 성공 경로 수, 0–4).
   prereg 는 "성공 경로 수 최대가 먼저" 라고만 적었다 — 네 조건을 합치는 방식은 J' 와 같은 가중으로 정했다
   (results.md 「사전 등록과 다르게 한 것」에 해석으로 적는다).
-- 순서: S' 최대 → J' 최소 → 이름 순. DWB·MPPI·RPP·DWA-R(dwa_x_*) 네 격자 모두 같은 함수.
+- 순서: S' 최대 → J' 최소 → 이름 순. DWB·MPPI·RPP·DWA-R(dwa_x_*)·교과서(dwa_textbook_T*, prereg §8 A1)
+  다섯 격자 모두 같은 함수.
 - 네 조건 × 4 경로 중 하나라도 기록이 없으면 그 설정은 'incomplete' 로 표시하고 순위에서 뺀다 (재실행으로 채운다).
 
 ## 확증 가설 (prereg §6.1)
@@ -49,13 +50,14 @@ B = 10000
 SEED = 12345
 V_MAX, A_MAX, J_MAX = 1.0, 1.0, 2.0
 HELDOUT = ('smooth', 'narrow', 'astar')
-TABLE1_ARMS = ['dwa_full', 'dwa_R', 'dwa_textbook', 'DWB_D00', 'DWB_tuned', 'MPPI_P00',
-               'MPPI_tuned', 'RPP_R00', 'RPP_tuned', 'pp']
+TABLE1_ARMS = ['dwa_full', 'dwa_R', 'dwa_textbook', 'dwa_textbook_tuned', 'DWB_D00', 'DWB_tuned',
+               'MPPI_P00', 'MPPI_tuned', 'RPP_R00', 'RPP_tuned', 'pp']
 CHAIN_ARMS = ['dwa_x_X02', 'dwa_x_X04', 'dwa_x_X05', 'dwa_x_X06', 'dwa_R', 'dwa_no_m3']
 CHAIN_LABEL = {'dwa_x_X02': 'R1 K = 4 (X02)', 'dwa_x_X04': 'R2 저크 일관 (X04)',
                'dwa_x_X05': 'R3 PP 후보 (X05)', 'dwa_x_X06': 'R4 t_c 0.25 (X06)',
                'dwa_R': 'DWA-R (선택)', 'dwa_no_m3': 'M3 끔 (H1r)'}
-FAMILY_PREFIX = {'DWB': 'DWB_', 'MPPI': 'MPPI_', 'RPP': 'RPP_', 'DWA_R': 'dwa_x_'}
+FAMILY_PREFIX = {'DWB': 'DWB_', 'MPPI': 'MPPI_', 'RPP': 'RPP_', 'DWA_R': 'dwa_x_',
+                 'TB': 'dwa_textbook_T'}
 TUNING_SETTINGS = (0, 1, 2, 3)
 LOG_1005 = math.log(1.005)
 
@@ -167,6 +169,8 @@ def select(raw):
                     'ranking': ranked + [c for c in cands if not c['complete']]}
     if out['DWA_R']['chosen']:
         out['DWA_R']['chosen_x'] = out['DWA_R']['chosen'].replace('dwa_x_', '')
+    if out['TB']['chosen']:
+        out['TB']['chosen_t'] = out['TB']['chosen'].replace('dwa_textbook_', '')
     return out
 
 
@@ -708,6 +712,160 @@ def rate_report(sets):
     return '\n'.join(lines) + '\n'
 
 
+def table_decomp_ros(recs, arms, title, family=None):
+    """prereg §8 A2: ROS 첫 진입(참값 0.10 m)·지나침·복귀 분해 (chain 표 3 과 같은 정의)."""
+    fam = family or HELDOUT
+    lines = [f'### {title}', '',
+             '| 팔 | 성공 실행 | 첫 진입 [s] 중앙 | 첫 진입 뒤 판정까지 [s] 중앙 [p90] | 첫 진입 속도 중앙 [m/s] | '
+             '0.10 m 넘게 지나친 실행 | 지나침 중앙 [cm] (지나친 실행) |',
+             '| --- | --- | --- | --- | --- | --- | --- |']
+    for arm in arms:
+        rs = [r for r in recs if r['arm'] == arm and r['family'] in fam and r['success'] and
+              r.get('t_first_entry', -1) >= 0]
+        if not rs:
+            continue
+        post = [r['t_reach'] - r['t_first_entry'] for r in rs]
+        over = [r['overshoot_max'] for r in rs if r['overshoot_max'] > 0.10]
+        lines.append(f'| {arm} | {len(rs)} | {med([r["t_first_entry"] for r in rs], nd=2)} | '
+                     f'{med(post, nd=2)} [{np.percentile(post, 90):.2f}] | '
+                     f'{med([r["v_first_entry"] for r in rs], nd=2)} | {len(over)} | '
+                     f'{med(over, 100)} |')
+    for ref in ('dwa_full', 'dwa_R'):
+        if not any(r['arm'] == ref for r in recs):
+            continue
+        lines += ['', f'첫 진입 시각 짝 차 (팔 − {ref}, log 비 → %, 두 팔 모두 성공):', '',
+                  '| 팔 | 첫 진입 시간 비 % (n) | 첫 진입 뒤 시간 차 [s] (n) |', '| --- | --- | --- |']
+        for arm in arms:
+            if arm == ref:
+                continue
+            d1 = paired(recs, arm, ref, 't_first_entry', logratio, family=fam)
+            d2 = paired(recs, arm, ref, lambda r: r['t_reach'] - r['t_first_entry']
+                        if r.get('t_first_entry', -1) >= 0 else None, family=fam)
+            if d1:
+                lines.append(f'| {arm} | {fmt_pct(*boot(d1.values()))} ({len(d1)}) | '
+                             f'{fmt_ci(*boot(d2.values()), nd=2)} ({len(d2)}) |')
+    return '\n'.join(lines) + '\n'
+
+
+def read_plugin_resets(runs_root, stage, rec):
+    """플러그인 재설정 기록 (작업·팔마다 한 파일): 이 실행 시간 창의 행."""
+    jid = rec['_file'][:-6]
+    fn = os.path.join(runs_root, stage, 'resets', f'{jid}__{rec["arm"]}.csv')
+    if not os.path.exists(fn):
+        return None
+    t0 = rec['t_acc_abs']
+    t1 = t0 + rec['t_end']
+    out = []
+    with open(fn, encoding='utf-8') as f:
+        for row in csv.DictReader(f):
+            t = float(row['t'])
+            if t0 - 0.1 <= t <= t1 + 0.1:
+                row['t_rel'] = t - t0
+                out.append(row)
+    return out
+
+
+def ros_reset_analysis(noise_recs, clean_recs, runs_root, stage, title, window=3.0):
+    """
+    prereg §8 A2: C3(C4) 느린 실행(같은 경로 잡음 없는 C1 대비 +30 % 초과 또는 실패)에서 첫 진입 전 3 s 안
+    재설정 수 — X00(원본과 동치, 기준 C1 은 dwa_full)·dwa_R(기준 C1 dwa_R).
+    """
+    ref_arm = {'dwa_x_X00': 'dwa_full', 'dwa_R': 'dwa_R'}
+    clean = {(r['arm'], r['scene']): r for r in clean_recs}
+    lines = [f'### {title}', '',
+             '| 팔 | 묶음 | 실행 | 창 안 재설정 ≥ 1 | 창 안 재설정 평균 | 창 안 국면 (상위) | 실행당 재설정 (전체) |',
+             '| --- | --- | --- | --- | --- | --- | --- |']
+    rows = []
+    for arm, ref in ref_arm.items():
+        for r in noise_recs:
+            if r['arm'] != arm:
+                continue
+            c = clean.get((ref, r['scene']))
+            if c is None or not c['success']:
+                continue
+            rs = read_plugin_resets(runs_root, stage, r)
+            if rs is None:
+                continue
+            slow = (not r['success']) or r['t_reach'] / c['t_reach'] > 1.30
+            tf = r['t_first_entry'] if r.get('t_first_entry', -1) >= 0 else r['t_end']
+            win = [x for x in rs if tf - window <= x['t_rel'] <= tf]
+            rows.append({'arm': arm, 'slow': slow, 'n_win': len(win), 'n_all': len(rs),
+                         'ph': collections.Counter(x.get('phase', '?') for x in win)})
+        for grp, sel in (('느린', True), ('나머지', False)):
+            g = [x for x in rows if x['arm'] == arm and x['slow'] == sel]
+            if not g:
+                lines.append(f'| {arm} | {grp} | 0 | – | – | – | – |')
+                continue
+            ph = collections.Counter()
+            for x in g:
+                ph.update(x['ph'])
+            top = ', '.join(f'{k} {v}' for k, v in ph.most_common(3)) or '–'
+            lines.append(f'| {arm} | {grp} | {len(g)} | {sum(1 for x in g if x["n_win"] > 0)}/{len(g)} | '
+                         f'{np.mean([x["n_win"] for x in g]):.2f} | {top} | '
+                         f'{np.mean([x["n_all"] for x in g]):.2f} |')
+    return '\n'.join(lines) + '\n'
+
+
+def table_cond_diff(a_recs, b_recs, arms, title, name_a, name_b):
+    """같은 팔의 조건 a − 조건 b 경로별 짝 차 (seed 평균 먼저)."""
+    lines = [f'### {title}', '',
+             f'| 팔 | 성공 실행 {name_a} · {name_b} | 시간 비 % (n) | CTE 곡선 평균 차 [cm] | |정지 오차| 차 [cm] |',
+             '| --- | --- | --- | --- | --- |']
+    for arm in arms:
+        a = [dict(r, arm='x_a') for r in a_recs if r['arm'] == arm]
+        b = [dict(r, arm='x_b') for r in b_recs if r['arm'] == arm]
+        if not a or not b:
+            continue
+        both = a + b
+        d_t = paired(both, 'x_a', 'x_b', 't_reach', logratio)
+        d_c = paired(both, 'x_a', 'x_b', 'cte_curve_mean')
+        d_e = paired(both, 'x_a', 'x_b', 'stop_err')
+        lines.append(f'| {arm} | {sum(r["success"] for r in a)}/{len(a)} · '
+                     f'{sum(r["success"] for r in b)}/{len(b)} | {fmt_pct(*boot(d_t.values()))} '
+                     f'({len(d_t)}) | {fmt_ci(*boot(d_c.values()), 100)} | '
+                     f'{fmt_ci(*boot(d_e.values()), 100)} |')
+    return '\n'.join(lines) + '\n'
+
+
+def table_m(m, arms, title):
+    """prereg §8 A4: 움직이는 원판 장면 — 기술만 (판정 없음). DWA 팔만 추적 참값을 받는다."""
+    fam = ('moving',)
+    lines = [f'### {title}', '',
+             '| 팔 | 목표 도달 실행 | 접촉 실행 (|v|>0.05 만) | 접촉 실행 (정지 중 포함) | 접촉 횟수 합 (이동/전체) | '
+             '최소 이격 중앙 [p10] [cm] | 최소 이격 최솟값 [cm] | T/T_ref 중앙 (도달) | 주행 중 정지 횟수 중앙 |',
+             '| --- | --- | --- | --- | --- | --- | --- | --- | --- |']
+    for arm in arms:
+        rs = [r for r in m if r['arm'] == arm and r['family'] in fam]
+        if not rs:
+            continue
+        mc = [r['mov_min_clear'] for r in rs if r.get('mov_min_clear', -1) > -0.99 or
+              r.get('contact_any', 0)]
+        tr = [r['t_reach'] / t_lb(r['length']) for r in rs if r['reached']]
+        lines.append(
+            f'| {arm} | {sum(r["reached"] for r in rs)}/{len(rs)} | '
+            f'{sum(1 for r in rs if r.get("contact_moving", 0) > 0)}/{len(rs)} | '
+            f'{sum(1 for r in rs if r.get("contact_any", 0) > 0)}/{len(rs)} | '
+            f'{sum(r.get("contact_moving", 0) for r in rs)}/{sum(r.get("contact_any", 0) for r in rs)} | '
+            + (f'{100 * np.median(mc):.1f} [{100 * np.percentile(mc, 10):.1f}] | {100 * min(mc):.1f} | '
+               if mc else '– | – | ') +
+            f'{med(tr, nd=3)} | {med([r.get("n_stops", 0) for r in rs], nd=0)} |')
+    lines += ['', '짝 차 (팔 − dwa_full, 장면별 반복 평균):', '',
+              '| 팔 | 최소 이격 차 [cm] (n) | 시간 비 % (도달한 반복, n) | 접촉(정지 포함) 실행 비율 차 [%p] (n) |',
+              '| --- | --- | --- | --- |']
+    mm = [dict(r, success=r['reached']) for r in m]
+    for arm in arms:
+        if arm == 'dwa_full':
+            continue
+        d_c = paired(mm, arm, 'dwa_full', 'mov_min_clear', only_success=False, family=fam)
+        d_t = paired(mm, arm, 'dwa_full', 't_reach', logratio, family=fam)
+        d_k = paired(mm, arm, 'dwa_full', lambda r: float(r.get('contact_any', 0) > 0),
+                     only_success=False, family=fam)
+        lines.append(f'| {arm} | {fmt_ci(*boot(d_c.values()), 100)} ({len(d_c)}) | '
+                     f'{fmt_pct(*boot(d_t.values()))} ({len(d_t)}) | '
+                     f'{fmt_ci(*boot(d_k.values()), 100)} ({len(d_k)}) |')
+    return '\n'.join(lines) + '\n'
+
+
 # ---------------------------------------------------------------------------------------------
 # 하네스 확인 (dryrun) · 동치 (equiv)
 
@@ -770,13 +928,16 @@ EQUIV_TIME_PCT = 1.0     # prereg §3.3: 시간 ±1 %
 EQUIV_CTE_CM = 0.2       # prereg §3.3: CTE ±0.2 cm (경로 평균 CTE, 반복 평균끼리)
 
 
-def equiv_report(raw, arm_a='dwa_x_X00', arm_b='dwa_full'):
+def equiv_report(raw, arm_a='dwa_x_X00', arm_b='dwa_full', raw_b=None):
     """
     prereg §3.3 ROS 동치: 튜닝 4 경로마다 실시간 반복(rep) 평균끼리 비교.
     통과 = 모든 경로에서 성공이 같고 |시간 차| ≤ 1 % 이고 |경로 평균 CTE 차| ≤ 0.2 cm.
     CTE 최대·정지 오차는 기술로만 낸다.
     """
     recs = load_dir(raw)
+    if raw_b:   # 다른 실행 묶음의 같은 팔과 비교 (trace_check·simx_check: 기록 없는 equiv_ros 의 X00 대비)
+        recs = [r for r in recs if r['arm'] == arm_a] + \
+            [dict(r, arm=arm_b) for r in load_dir(raw_b) if r['arm'] == arm_a]
     out = {'criterion': f'경로마다 반복 평균: |ΔT|/T ≤ {EQUIV_TIME_PCT} %, |Δ cte_mean| ≤ '
                         f'{EQUIV_CTE_CM} cm, 성공 동일', 'paths': {}}
     ok_all = True
@@ -827,6 +988,12 @@ def tables(args):
     c1 = substitute_tuned(load_dir(os.path.join(R, 'c1', 'raw')), sel)
     c2 = substitute_tuned(load_dir(os.path.join(R, 'c2', 'raw')), sel)
     c3 = substitute_tuned(load_dir(os.path.join(R, 'c3', 'raw')), sel)
+    c4 = substitute_tuned(load_dir(os.path.join(R, 'c4', 'raw')), sel) \
+        if os.path.isdir(os.path.join(R, 'c4', 'raw')) else []
+    mm = substitute_tuned(load_dir(os.path.join(R, 'm', 'raw')), sel) \
+        if os.path.isdir(os.path.join(R, 'm', 'raw')) else []
+    mc = substitute_tuned(load_dir(os.path.join(R, 'm_clr', 'raw')), sel) \
+        if os.path.isdir(os.path.join(R, 'm_clr', 'raw')) else []
     o = substitute_tuned(load_dir(os.path.join(R, 'o', 'raw')), sel)
     chain = load_chain(os.path.join(R, 'chain', 'raw'))
     paths_dir = os.path.join(R, 'paths')
@@ -849,7 +1016,30 @@ def tables(args):
                             ref='dwa_full', extra_ref='dwa_R'))
     md.append(table_stateful(c1, c2, TABLE1_ARMS, '표 1d. stateful true 효과 (같은 팔 C2 − C1, ROS)'))
     md.append(table_o(o, TABLE1_ARMS, '표 5. 정적 미지 장애물 장면 O — ROS, 20 장면 × 반복 3'))
-    md.append(rate_report([('C1', c1), ('C2', c2), ('C3', c3), ('O', o)]))
+    if c4:
+        md.append(table_summary(c4, TABLE1_ARMS + ['dwa_x_X00'], '표 1e. ROS C4 — 오도메트리 σ 0.02 + 위치 잡음 '
+                                '(σ 0.01 m · 0.005 rad · τ 1 s), 12 경로 × seed 1–5 (prereg §8 A3)',
+                                ref='dwa_full', extra_ref='dwa_R'))
+        md.append(table_cond_diff(c4, c3, TABLE1_ARMS, '표 1f. 위치 잡음 효과 (같은 팔 C4 − C3)', 'C4', 'C3'))
+    md.append(table_cond_diff(c3, c1, TABLE1_ARMS + ['dwa_x_X00'],
+                              '표 1g. 오도메트리 잡음 효과 (같은 팔 C3 − C1, C3 12 경로)', 'C3', 'C1'))
+    md.append(table_decomp_ros(c1, TABLE1_ARMS, '표 3r. ROS 첫 진입·지나침 분해 — C1 (prereg §8 A2)'))
+    md.append(table_decomp_ros(c2, TABLE1_ARMS, '표 3r-2. ROS 첫 진입·지나침 분해 — C2 stateful true'))
+    md.append(table_decomp_ros(c3, TABLE1_ARMS + ['dwa_x_X00'], '표 3r-3. ROS 첫 진입·지나침 분해 — C3'))
+    md.append(ros_reset_analysis(c3, c1, R, 'c3', '표 6r. ROS 재설정 기제 — C3 느린 실행의 첫 진입 전 3 s '
+                                 '재설정 (prereg §8 A2; X00 의 잡음 없는 기준은 C1 dwa_full)'))
+    if c4:
+        md.append(ros_reset_analysis(c4, c1, R, 'c4', '표 6r-2. ROS 재설정 기제 — C4'))
+    if mm:
+        sel_m = ['dwa_full', 'dwa_no_m67', 'dwa_R', 'DWB_tuned', 'MPPI_tuned', 'RPP_tuned']
+        md.append(table_m(mm, sel_m, '표 7. 움직이는 원판 장면 M — ROS, 20 장면 × 반복 3 (prereg §8 A4, 기술). '
+                          'DWA 팔만 추적 참값을 받는다 — Nav2 팔은 코스트맵만 쓰는 참고값'))
+    if mc:
+        sel_m = ['dwa_full', 'dwa_no_m67', 'dwa_R', 'DWB_tuned', 'MPPI_tuned', 'RPP_tuned']
+        md.append(table_m(mc, sel_m, '표 7b. M_clr — 같은 장면, 맞지 않은 빔을 11.99 m 로 (코스트맵 자국 지움; '
+                          '사전 등록과 다름, 실행 전 결정)'))
+    md.append(rate_report([('C1', c1), ('C2', c2), ('C3', c3), ('C4', c4), ('O', o), ('M', mm),
+                           ('M_clr', mc)]))
     if chain:
         for nz, st, name in ((0, 0, '잡음 없음, stateful false'), (0, 1, '잡음 없음, stateful true'),
                              (1, 0, '잡음 seed 1–5, stateful false'),
@@ -876,6 +1066,8 @@ def tables(args):
     md.append(table_failures(c2, '부록 B2. 실패 목록 — ROS C2'))
     md.append(table_failures(c3, '부록 B3. 실패 목록 — ROS C3'))
     md.append(table_failures(o, '부록 B4. 실패 목록 — ROS O', family=('obstacle',)))
+    if c4:
+        md.append(table_failures(c4, '부록 B5. 실패 목록 — ROS C4'))
     with open(os.path.join(args.out, 'tables.md'), 'w', encoding='utf-8') as f:
         f.write('\n'.join(md))
     with open(os.path.join(args.out, 'hypotheses.json'), 'w', encoding='utf-8') as f:
@@ -891,12 +1083,14 @@ def main(argv=None):
     ap.add_argument('--orig', default='/home/CAPYI_AI/runs/dwa-abl/raw')
     ap.add_argument('--runs', default='/runs')
     ap.add_argument('--out', default='')
+    ap.add_argument('--raw-b', default='', help='equiv: 다른 묶음의 같은 팔 (trace_check·simx_check)')
     args = ap.parse_args(argv)
     if args.cmd == 'select':
         print(json.dumps(select(args.raw), indent=1, ensure_ascii=False))
         return 0
     if args.cmd == 'equiv':
-        print(json.dumps(equiv_report(args.raw), indent=1, ensure_ascii=False))
+        print(json.dumps(equiv_report(args.raw, raw_b=args.raw_b or None), indent=1,
+                         ensure_ascii=False))
         return 0
     if args.cmd == 'dryrun':
         res = dryrun_report(args.raw, args.orig)
