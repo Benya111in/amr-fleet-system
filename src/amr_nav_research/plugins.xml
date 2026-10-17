@@ -1,0 +1,5 @@
+<library path="amr_nav_research_plugins">
+  <class type="amr_nav_research::DwaControllerX" base_class_type="nav2_core::Controller">
+    <description>amr_navigation::DWAController 의 연구 사본: 창 재설정 지속(R1), 저크 일관 방출(R2), 순수 추종 후보(R3), 재설정 기록. 연구 스위치 기본값이면 원본과 같은 명령</description>
+  </class>
+</library>
