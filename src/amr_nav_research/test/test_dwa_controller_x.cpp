@@ -193,32 +193,47 @@ TEST(DwaControllerXPlugin, ReadsResearchParametersAndLogsResets)
   node->declare_parameter("DWAR.research.jerk_consistent", true);
   node->declare_parameter("DWAR.research.pp_candidate", true);
   node->declare_parameter("DWAL.research.log_resets", fn);   // 기록만 켠 팔 (명령은 원본과 같다)
+  // 2 라운드 스위치 (F1·F2·F3) 를 켠 팔
+  declareDeployed(node, "DWAF");
+  node->declare_parameter("DWAF.research.reset_persist_cycles", 6);
+  node->declare_parameter("DWAF.research.reset_model", true);
+  node->declare_parameter("DWAF.research.reset_model_theta", 0.15);
+  node->declare_parameter("DWAF.research.goal_extension_dist", 1.0);
+  node->declare_parameter("DWAF.research.blocked_detour_shift", 0.6);
   auto cm = makeCostmap("dwa_x_research_costmap");
   auto tf = std::make_shared<tf2_ros::Buffer>(node->get_clock());
   Loop a(0.4);
   Loop r(0.4);
   Loop l(0.4);
+  Loop lf(0.4);
   a.ctrl = loader.createSharedInstance("amr_navigation::DWAController");
   r.ctrl = loader.createSharedInstance("amr_nav_research::DwaControllerX");
   l.ctrl = loader.createSharedInstance("amr_nav_research::DwaControllerX");
+  lf.ctrl = loader.createSharedInstance("amr_nav_research::DwaControllerX");
   a.ctrl->configure(node, "DWA", tf, cm);
   r.ctrl->configure(node, "DWAR", tf, cm);
   l.ctrl->configure(node, "DWAL", tf, cm);
-  for (auto * p : {&a, &r, &l}) {
+  lf.ctrl->configure(node, "DWAF", tf, cm);
+  for (auto * p : {&a, &r, &l, &lf}) {
     p->ctrl->activate();
     p->ctrl->setPlan(plan());
   }
   int differ = 0;
+  int differ_f = 0;
   for (int k = 0; k < 120; ++k) {
     const auto ca = a.step();
     const auto cr = r.step();
     const auto cl = l.step();
+    const auto cf = lf.step();
     differ += !sameBits(ca.linear.x, cr.linear.x) || !sameBits(ca.angular.z, cr.angular.z);
+    differ_f += !sameBits(ca.linear.x, cf.linear.x) || !sameBits(ca.angular.z, cf.angular.z);
     ASSERT_TRUE(sameBits(ca.linear.x, cl.linear.x)) << "기록만 켠 팔이 원본과 다르다 " << k;
     ASSERT_TRUE(sameBits(ca.angular.z, cl.angular.z)) << "cycle " << k;
   }
   EXPECT_GT(differ, 0);   // 연구 스위치가 실제로 연결돼 있다
-  for (auto * p : {&a, &r, &l}) {
+  EXPECT_GT(differ_f, 0);   // 2 라운드 스위치도
+  EXPECT_GT(lf.x, 5.0);      // 켠 팔도 정상 주행
+  for (auto * p : {&a, &r, &l, &lf}) {
     p->ctrl->deactivate();
     p->ctrl->cleanup();   // 기록 파일을 닫는다
   }
@@ -229,12 +244,12 @@ TEST(DwaControllerXPlugin, ReadsResearchParametersAndLogsResets)
   EXPECT_EQ(
     header,
     "t,v_last,v_meas,w_last,w_meas,gap_v,gap_w,persist_count,reason,d_goal,phase,plan_id,"
-    "controller");
+    "controller,v_hat,w_hat");
   // 느린 서보(τ 0.4 s)라 정지 출발 가속 중 명령–측정 차가 임계를 넘어 재설정이 난다
   int rows = 0;
   std::string line;
   while (std::getline(f, line)) {
-    EXPECT_NE(line.find(",1,DWAL"), std::string::npos) << line;
+    EXPECT_NE(line.find(",1,DWAL,nan,nan"), std::string::npos) << line;
     ++rows;
   }
   EXPECT_GT(rows, 0);

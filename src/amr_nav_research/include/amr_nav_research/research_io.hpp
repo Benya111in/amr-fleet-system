@@ -4,15 +4,18 @@
 //    창 중심이 직전 명령에서 측정값으로 돌아간 주기마다 한 줄:
 //      t, v_last, v_meas, w_last, w_meas, gap_v, gap_w, persist_count, reason, d_goal, phase
 //    뒤에 쓰는 쪽의 식별 열을 덧붙인다 (chain_sim_x: scene, arm, seed /
-//    플러그인: plan_id, controller). gap 은 부호 있는 차 (v_last − v_meas).
+//    플러그인: plan_id, controller). 2 라운드부터 맨 끝에 v_hat, w_hat (F1 사슬 모형의 예상
+//    측정, 모형이 꺼져 있으면 nan). gap 은 부호 있는 차 (v_last − v_meas).
 //    d_goal 은 남은 경로 거리 (없으면 -1). 기록하지 않는 것: 직전 명령이 없는 주기,
 //    M3 절제(window_center_measured), R1 이 미룬 주기 (DwaResultX::center.suppressed 로 센다).
 //
 // 2) 국면 phase (재설정 순간의 명령·측정 관계로 정한다)
-//    - 선속도 차가 임계를 넘은 재설정(|gap_v| > window_reset_v):
+//    - 선속도 재설정이란: |gap_v| > window_reset_v 이거나 hard. F1(사슬 모형)이면 원래 임계로
+//      정규화한 모형 괴리 |v_meas − v̂|/window_reset_v ≥ |w_meas − ŵ|/window_reset_w 일 때.
+//    - 선속도 재설정:
 //        gap_v > 0 (명령이 측정보다 위, 로봇이 가속 명령을 못 따라옴) → accel
 //        gap_v ≤ 0 (명령이 측정보다 아래, 감속 명령을 못 따라옴)      → decel
-//    - 각속도 차만 넘은 재설정:
+//    - 그 밖 (각속도 재설정):
 //        제자리 회전 명령(|v_last| < 0.05 m/s) 또는 |w_last| ≥ 0.3 rad/s → turn
 //        그 밖 (거의 직진인데 ω 측정이 튐)                            → cruise
 //
@@ -36,7 +39,8 @@ namespace amr_nav_research
 
 /// 재설정 국면 (위 2) 의 규칙).
 const char * resetPhase(
-  const WindowCenterX & c, double v_last, double w_last, double window_reset_v);
+  const WindowCenterX & c, double v_last, double w_last, double window_reset_v,
+  double window_reset_w);
 
 /// 재설정 기록 CSV. 빈 경로면 아무것도 하지 않는다. 덧붙이기로 열고, 빈 파일이면 머리줄을 쓴다.
 class ResetLogger
@@ -55,7 +59,7 @@ public:
   /// 재설정 사건이면 한 줄 쓰고 true. extra: 식별 열 값 (쉼표로 이은 문자열).
   bool write(
     double t, const DwaInput & in, const WindowCenterX & c, double d_goal,
-    double window_reset_v, const std::string & extra);
+    double window_reset_v, double window_reset_w, const std::string & extra);
 
 private:
   std::FILE * f_{nullptr};

@@ -28,6 +28,22 @@
 //      κ_pp = core::PurePursuit::curvatureToPoint(x_L, y_L) = 2·y_L / (x_L² + y_L²).
 //      ω 는 표본 창으로 자르고, 다른 후보와 같은 충돌 검사·비용으로 평가한다.
 //
+// 2 라운드 스위치 (prereg_r2.md §0, 기본 끔 — 끄면 1 라운드 85e66cb 와 비트 동일):
+//   F1 reset_model, reset_model_theta θ (+ reset_model_theta_w, model_delay, model_tau)
+//      직전 명령 이력을 하류 사슬 모형(chain_model.hpp)에 통과시킨 예상 측정 v̂·ŵ 와 측정의 차로
+//      재설정 후보를 정한다: |v_meas − v̂| > θ 또는 |w_meas − ŵ| > θ_w.
+//      θ_w 는 reset_model_theta_w > 0 이면 그 값, 아니면 θ·window_reset_w/window_reset_v.
+//      R1 의 K 지속 규칙은 그대로. hard 규칙은 원래대로 |v_last − v_meas| > reset_hard_v 로
+//      판정하되 (K > 0 일 때) 후보 여부와 무관하게 즉시 재설정한다 (막힘·와인드업 방지).
+//   F2 goal_extension_dist D
+//      d_goal < D 이면 방향 항·경로 추종 항(J_path·J_off 의 투영)·R3 목표점이 쓰는 경로를
+//      경로 끝 자세(목표 yaw)의 가상 연장선까지 늘린다. 목표점은 원래 lookahead 를 그대로
+//      유지한 채 연장선 위로 간다. 목표 접근 상한(M2)·d_goal·목표 판정·여유 항 기준·충돌 검사
+//      구간은 원래 경로 그대로다.
+//   F3 blocked_detour_shift S, blocked_lookahead
+//      로봇 앞 경로 점(접선 자세)의 발자국이 충돌이면 막혔다고 보고, 막힌 구간 ± 여유를 옆으로
+//      d ≤ S 만큼 민 우회 경로를 이번 주기 기준 경로로 쓴다 (detourPath).
+//
 // 주의: 원본에서 옮긴 주석의 "R1/R2" 는 sustained_sampling (dynamic-avoidance 브리프)
 // 이야기다. 이 사본이 더한 연구 스위치 R1–R3 (paper-research prereg §2) 와 다르다.
 //
@@ -43,6 +59,7 @@
 #include <utility>
 #include <vector>
 
+#include "amr_nav_research/chain_model.hpp"
 #include "amr_navigation/core/dwa.hpp"
 
 namespace amr_nav_research
@@ -66,6 +83,15 @@ struct ResearchConfig
   bool jerk_consistent{false};   ///< R2
   double jerk_lim{2.0};          ///< R2 [m/s³] (하류 velocity_profiler 선저크와 같은 값)
   bool pp_candidate{false};      ///< R3
+  // --- 2 라운드 ---
+  bool reset_model{false};           ///< F1
+  double reset_model_theta{0.15};    ///< F1 θ [m/s]
+  double reset_model_theta_w{-1.0};  ///< F1 θ_w [rad/s]. ≤ 0 이면 θ·window_reset_w/window_reset_v
+  double model_delay{0.04};          ///< F1 서보 순수 지연 [s]
+  double model_tau{0.08};            ///< F1 서보 1차 시간 상수 [s]
+  double goal_extension_dist{0.0};   ///< F2 D [m] (0 = 끔)
+  double blocked_detour_shift{0.0};  ///< F3 S [m] (0 = 끔)
+  double blocked_lookahead{3.0};     ///< F3 [m]
 };
 
 /// 주기 사이에 이어지는 상태 (호출자가 DwaResultX::next 를 다음 입력으로 넘긴다).
@@ -77,6 +103,28 @@ struct ResearchState
   double a_last{0.0};
   /// R2: 직전 방출 각가속 (w_emit − w_c)/Δt_c [rad/s²].
   double alpha_last{0.0};
+  /// F1: 하류 사슬 모형 상태 (reset_model 일 때만 쓴다).
+  ChainModelState model;
+  /// F3: 직전 주기 우회 쪽 (+1 왼쪽, −1 오른쪽, 0 없음) — 쪽이 주기마다 뒤집히지 않게.
+  int detour_side{0};
+  /// F3: 우회 기억. 경로 창(path_horizon)은 로봇 바로 뒤부터라 막힌 점이 로봇 옆·뒤로 가면
+  /// 창에서 사라진다 — 마지막 막힌 점(세계 좌표)과 이동량을 기억해 되돌아오는 램프를 끝까지 잇는다.
+  bool detour_mem{false};
+  double detour_shift{0.0};
+  double detour_end_x{0.0};
+  double detour_end_y{0.0};
+};
+
+/// F3 판정 결과.
+struct DetourInfo
+{
+  bool blocked{false};      ///< 이번 주기 창 안 경로가 막혔다
+  bool active{false};       ///< 우회 경로를 만들었다
+  bool from_memory{false};  ///< 막힌 점은 창 밖이고 기억으로 되돌아오는 중
+  int side{0};              ///< +1 왼쪽, −1 오른쪽
+  double shift{0.0};        ///< 옆 이동 d [m] (부호 = 쪽)
+  double end_x{0.0};        ///< 막힌 구간 끝 점 (세계 좌표)
+  double end_y{0.0};
 };
 
 /// 창 중심이 측정값으로 돌아간 이유 (재설정 사건만. 직전 명령이 없거나 M3 절제는 사건 아님).
@@ -101,6 +149,9 @@ struct WindowCenterX
   double gap_v{0.0};        ///< v_last − v_meas (부호 있음)
   double gap_w{0.0};        ///< w_last − w_meas
   int persist_count{0};     ///< 이번 주기까지 차가 임계를 넘은 연속 주기 수
+  /// F1 예상 측정 (모형이 꺼져 있으면 NaN)
+  double v_hat{std::numeric_limits<double>::quiet_NaN()};
+  double w_hat{std::numeric_limits<double>::quiet_NaN()};
 };
 
 struct DwaInputX : public DwaInput
@@ -123,6 +174,8 @@ struct DwaResultX : public DwaResult
   double pp_v{0.0};
   double pp_w{0.0};
   double pp_kappa{0.0};
+  bool goal_ext{false};         ///< F2 연장선을 썼다
+  DetourInfo detour;            ///< F3 (active 면 우회 경로를 썼다)
 };
 
 class DwaPlannerX
@@ -177,8 +230,32 @@ public:
   std::vector<std::pair<double, double>> sampleVelocitiesX(
     const DwaWindow & grid, const DwaWindow & brake, double v_c, double w_c,
     const std::pair<double, double> * pp = nullptr) const;
+  /// F1 모형 설정 (limits·연구 파라미터에서).
+  ChainModelConfig modelConfig() const;
+  /// F1: 직전 명령으로 한 제어 주기 전진한 모형 (직전 명령이 없거나 첫 주기면 측정값으로 초기화).
+  ChainModelState modelStep(const DwaInput & in, const ChainModelState & m) const;
+  /// F3: 막힘 판정과 우회 경로. 우회를 만들었으면 true 와 *out. 막히지 않았거나(기억도
+  /// 없음) 양쪽 모두 불가하면 false. st: 직전 주기 상태 (쪽 유지·기억).
+  bool detourPath(
+    const std::vector<Pose2D> & path, const std::vector<double> & cum, const Pose2D & robot,
+    bool end_is_goal, const FootprintCostFn & footprint_cost, const PointCostFn & point_cost,
+    const ResearchState & st, std::vector<Pose2D> * out, DetourInfo * info) const;
 
 private:
+  /// F3 를 이번 주기 경로·상태에 적용한다 (compute 의 단계).
+  void applyDetour(
+    const DwaInput & in, const FootprintCostFn & footprint_cost, const PointCostFn & point_cost,
+    std::vector<Pose2D> * path, std::vector<double> * cum, ResearchState * st,
+    DetourInfo * info) const;
+  /// F2: 경로 끝에서 goal_yaw 방향으로 늘린 경로와 누적 호길이.
+  void goalExtension(
+    const std::vector<Pose2D> & path, double goal_yaw, std::vector<Pose2D> * ext,
+    std::vector<double> * cum) const;
+  /// R3: 순수 추종 후보 (v*, v*·κ). kappa_out 에 κ.
+  std::pair<double, double> ppCandidate(
+    const std::vector<Pose2D> & path, const std::vector<double> & cum, double s_robot,
+    const Pose2D & pose, double v_des, const DwaWindow & swin, double * kappa_out) const;
+
   DwaConfig config_;
   ResearchConfig research_;
 };

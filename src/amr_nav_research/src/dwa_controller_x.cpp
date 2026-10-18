@@ -253,6 +253,15 @@ void DwaControllerX::configure(
   r.jerk_consistent = param(node, p + "research.jerk_consistent", false);
   r.jerk_lim = param(node, p + "research.jerk_lim", 2.0);
   r.pp_candidate = param(node, p + "research.pp_candidate", false);
+  // 2 라운드 (prereg_r2.md): F1 사슬 모형 재설정, F2 목표 연장, F3 막힌 경로 우회
+  r.reset_model = param(node, p + "research.reset_model", false);
+  r.reset_model_theta = param(node, p + "research.reset_model_theta", 0.15);
+  r.reset_model_theta_w = param(node, p + "research.reset_model_theta_w", -1.0);
+  r.model_delay = param(node, p + "research.model_delay", 0.04);
+  r.model_tau = param(node, p + "research.model_tau", 0.08);
+  r.goal_extension_dist = param(node, p + "research.goal_extension_dist", 0.0);
+  r.blocked_detour_shift = param(node, p + "research.blocked_detour_shift", 0.0);
+  r.blocked_lookahead = param(node, p + "research.blocked_lookahead", 3.0);
   const std::string log_resets = param(node, p + "research.log_resets", std::string(""));
   research_ = r;
   research_state_ = ResearchState{};
@@ -296,6 +305,12 @@ void DwaControllerX::configure(
     "pp_candidate %d, log_resets '%s'",
     r.reset_persist_cycles, r.reset_hard_v, r.jerk_consistent, r.jerk_lim, r.pp_candidate,
     log_resets.c_str());
+  RCLCPP_INFO(
+    logger_,
+    "  2 라운드: reset_model %d (θ %.3f, θ_w %.3f, delay %.3f, tau %.3f), goal_extension_dist "
+    "%.2f, blocked_detour_shift %.2f, blocked_lookahead %.2f",
+    r.reset_model, r.reset_model_theta, r.reset_model_theta_w, r.model_delay, r.model_tau,
+    r.goal_extension_dist, r.blocked_detour_shift, r.blocked_lookahead);
 }
 
 void DwaControllerX::cleanup()
@@ -574,7 +589,7 @@ geometry_msgs::msg::TwistStamped DwaControllerX::computeVelocityCommands(
   if (reset_log_.isOpen()) {
     reset_log_.write(
       clock_->now().seconds(), in, res.center, res.d_goal, base_config_.window_reset_v,
-      std::to_string(plan_id_) + "," + name_);
+      base_config_.window_reset_w, std::to_string(plan_id_) + "," + name_);
   }
   if (gate_enable_) {
     gate_state_ = res.gate.next;
@@ -671,7 +686,11 @@ geometry_msgs::msg::TwistStamped DwaControllerX::computeVelocityCommands(
       // R1 이 재설정을 미룸, R3 후보 선택
       static_cast<double>(static_cast<int>(res.center.reason)),
       static_cast<double>(res.center.persist_count), res.center.suppressed ? 1.0 : 0.0,
-      res.pp_selected ? 1.0 : 0.0};
+      res.pp_selected ? 1.0 : 0.0,
+      // [46]~[49] 2 라운드: F3 우회 옆 이동 [m] (0 = 우회 안 함), F3 앞 경로 막힘,
+      // F2 목표 연장 사용, F1 예상 측정 v̂ (모형 꺼짐이면 −1e9)
+      res.detour.active ? res.detour.shift : 0.0, res.detour.blocked ? 1.0 : 0.0,
+      res.goal_ext ? 1.0 : 0.0, std::isfinite(res.center.v_hat) ? res.center.v_hat : -1e9};
     stats_pub_->publish(st);
   }
   return cmd;

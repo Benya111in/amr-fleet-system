@@ -50,6 +50,7 @@ set(ROS_DEPS
 add_library(amr_nav_research_core SHARED
   src/dwa_x.cpp
   src/research_io.cpp
+  src/chain_model.cpp
 )
 target_include_directories(amr_nav_research_core PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -78,7 +79,7 @@ install(TARGETS amr_nav_research_core amr_nav_research_plugins
   RUNTIME DESTINATION bin
 )
 install(TARGETS chain_sim_x DESTINATION lib/${PROJECT_NAME})
-install(PROGRAMS scripts/compare_chain_jsonl.py scripts/run_equiv_chain.py
+install(PROGRAMS scripts/compare_chain_jsonl.py scripts/run_equiv_chain.py scripts/run_equiv_x.py
   DESTINATION lib/${PROJECT_NAME})
 
 # --- 테스트 ---
@@ -98,6 +99,9 @@ if(BUILD_TESTING)
   # 2) 연구 스위치 단위 시험 (R1 지속, R2 저크 띠, R3 후보, stateful 잠금, 기록)
   ament_add_gtest(test_dwa_x_research test/test_dwa_x_research.cpp TIMEOUT 120)
   target_link_libraries(test_dwa_x_research amr_nav_research_core)
+  # 2b) 2 라운드 스위치 (F1 사슬 모형 재설정, F2 목표 연장, F3 막힌 경로 우회)
+  ament_add_gtest(test_dwa_x_round2 test/test_dwa_x_round2.cpp TIMEOUT 300)
+  target_link_libraries(test_dwa_x_round2 amr_nav_research_core)
   # 3) 플러그인: 원본 DWAController 와 DwaControllerX 를 **pluginlib 으로 한 프로세스에** 올려
   #    (시험대의 controller_server 와 같은 상황) 같은 입력에 같은 명령을 내는지 본다.
   #    플러그인 라이브러리는 링크하지 않는다 — 링크하면 class_loader 등록이 엉킨다.

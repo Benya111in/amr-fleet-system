@@ -135,6 +135,42 @@ WindowCenterX DwaPlannerX::windowCenterX(const DwaInput & in, const ResearchStat
     c.measured = true;
     return c;
   }
+  if (research_.reset_model) {
+    // F1: 재설정 후보 = 측정이 사슬 모형의 예상과 θ 넘게 다르다.
+    // hard 는 원래 차로, 후보와 무관하게 판정한다.
+    c.v_hat = st.model.sv;
+    c.w_hat = st.model.sw;
+    const double th = research_.reset_model_theta;
+    const double th_w = research_.reset_model_theta_w > 0.0 ? research_.reset_model_theta_w :
+      th * config_.window_reset_w / std::max(1e-9, config_.window_reset_v);
+    const bool over = !(std::abs(in.v_meas - c.v_hat) <= th &&
+      std::abs(in.w_meas - c.w_hat) <= th_w);
+    const int K = research_.reset_persist_cycles;
+    const bool hard = K > 0 && std::abs(c.gap_v) > research_.reset_hard_v;
+    if (!over && !hard) {
+      c.v_c = in.v_last;
+      c.w_c = in.w_last;
+      return c;
+    }
+    c.persist_count = over ? st.persist_count + 1 : 0;
+    if (hard) {
+      c.reason = ResetReason::kHard;
+    } else if (K <= 0) {
+      c.reason = ResetReason::kThreshold;
+    } else if (c.persist_count >= K) {
+      c.reason = ResetReason::kPersist;
+    }
+    if (c.reason == ResetReason::kNone) {
+      c.v_c = in.v_last;
+      c.w_c = in.w_last;
+      c.suppressed = true;
+      return c;
+    }
+    c.v_c = in.v_meas;
+    c.w_c = in.w_meas;
+    c.measured = true;
+    return c;
+  }
   // 원본 조건을 그대로 쓴다 (NaN 이면 원본처럼 측정값 쪽)
   const bool within = std::abs(in.v_last - in.v_meas) <= config_.window_reset_v &&
     std::abs(in.w_last - in.w_meas) <= config_.window_reset_w;
@@ -205,6 +241,277 @@ DwaWindow DwaPlannerX::jerkWindow(
     *angular = rot;
   }
   return out;
+}
+
+ChainModelConfig DwaPlannerX::modelConfig() const
+{
+  const auto & L = config_.limits;
+  ChainModelConfig c;
+  c.delay = research_.model_delay;
+  c.tau = research_.model_tau;
+  // 배포 velocity_profiler 는 limits.max_linear_acceleration·max_linear_jerk·max_angular_* 를
+  // 읽는다 — 플러그인 acc_lim_x·jerk_lim_x·acc_lim_theta·jerk_lim_theta 의 기본값과 같은 출처
+  c.lin.a_max = L.acc_lim_x;
+  c.lin.j_max = L.jerk_lim_x;
+  c.ang.v_min = -L.max_vel_theta;
+  c.ang.v_max = L.max_vel_theta;
+  c.ang.a_max = L.acc_lim_theta;
+  c.ang.j_max = config_.jerk_lim_theta;
+  c.curvature_min_speed = amr_navigation::core::VelocityProfilerConfig().curvature_min_speed;
+  // 서보 가속 제한 (kinematic_sim max_linear_accel 1.0 · max_angular_accel 2.0, chain_sim 같음)
+  c.servo_accel_v = L.acc_lim_x;
+  c.servo_accel_w = L.acc_lim_theta;
+  return c;
+}
+
+ChainModelState DwaPlannerX::modelStep(const DwaInput & in, const ChainModelState & m) const
+{
+  ChainModelState s = m;
+  const ChainModelConfig c = modelConfig();
+  if (!in.has_last || !s.init) {
+    chainModelInit(&s, c, in.v_meas, in.w_meas);
+    return s;
+  }
+  // 직전 명령은 지난 제어 주기 동안 유지됐다 → 지금 시각의 예상 측정
+  chainModelAdvance(&s, c, in.v_last, in.w_last, config_.control_period);
+  return s;
+}
+
+namespace
+{
+double smoothStep(double x)
+{
+  x = std::clamp(x, 0.0, 1.0);
+  return x * x * (3.0 - 2.0 * x);
+}
+
+// 이웃 점 방향 (전역 경로 자세가 비었거나 거친 경우 대비 — recenterPath 와 같은 방식)
+std::vector<double> tangents(const std::vector<Pose2D> & p)
+{
+  const std::size_t n = p.size();
+  std::vector<double> th(n, 0.0);
+  for (std::size_t i = 0; i < n; ++i) {
+    const Pose2D & a = p[i > 0 ? i - 1 : i];
+    const Pose2D & b = p[i + 1 < n ? i + 1 : i];
+    th[i] = std::atan2(b.y - a.y, b.x - a.x);
+  }
+  return th;
+}
+}  // namespace
+
+bool DwaPlannerX::detourPath(
+  const std::vector<Pose2D> & path, const std::vector<double> & cum, const Pose2D & robot,
+  bool end_is_goal, const FootprintCostFn & footprint_cost, const PointCostFn & point_cost,
+  const ResearchState & st, std::vector<Pose2D> * out, DetourInfo * info) const
+{
+  *info = DetourInfo{};
+  const std::size_t n = path.size();
+  const double S = research_.blocked_detour_shift;
+  if (n < 3 || S <= 0.0) {
+    return false;
+  }
+  constexpr double kMargin = 0.3;   // [m] 막힌 구간 앞뒤 여유 (로봇 반길이)
+  constexpr double kStep = 0.05;    // [m] 옆 이동 탐색 간격
+  const std::vector<double> th = tangents(path);
+  const Projection pr = projectOntoPath(path, {robot.x, robot.y}, 0, 0, &cum);
+  const double s_robot = pr.s;
+  const double s_end = cum.back();
+  // 1) 막힘: 로봇 앞 blocked_lookahead 안 경로 점의 접선 자세 발자국이 충돌
+  std::ptrdiff_t i0 = -1;
+  std::ptrdiff_t i1 = -1;
+  for (std::size_t i = 0; i < n; ++i) {
+    if (cum[i] < s_robot - kMargin) {
+      continue;
+    }
+    if (cum[i] > s_robot + research_.blocked_lookahead) {
+      break;
+    }
+    if (footprint_cost(Pose2D{path[i].x, path[i].y, th[i]}) < 0.0) {
+      if (i0 < 0) {
+        i0 = static_cast<std::ptrdiff_t>(i);
+      }
+      i1 = static_cast<std::ptrdiff_t>(i);
+    }
+  }
+  info->blocked = i0 >= 0;
+  // 막힌 구간 [s_a, s_b] — 창 안에 막힌 점이 없으면 직전 주기의 기억(끝 점)으로 되돌아오는 램프만
+  double s_a = 0.0;
+  double s_b = 0.0;
+  bool memory = false;
+  if (info->blocked) {
+    s_a = cum[static_cast<std::size_t>(i0)] - kMargin;
+    s_b = cum[static_cast<std::size_t>(i1)] + kMargin;
+    info->end_x = path[static_cast<std::size_t>(i1)].x;
+    info->end_y = path[static_cast<std::size_t>(i1)].y;
+  } else if (st.detour_mem && st.detour_side != 0) {
+    // 기억한 끝 점의 경로 방향 위치 (로봇 투영점의 접선 기준, 창 밖 뒤쪽이면 음수 쪽)
+    const Pose2D g = interpolateAt(path, cum, s_robot);
+    const double tr = th[std::min(n - 1, pr.segment)];
+    const double s_mem = s_robot + (st.detour_end_x - g.x) * std::cos(tr) +
+      (st.detour_end_y - g.y) * std::sin(tr);
+    s_a = -1e9;
+    s_b = s_mem + kMargin;
+    if (s_b + std::max(1.0, 2.0 * std::abs(st.detour_shift)) < s_robot - kMargin) {
+      return false;   // 되돌아오는 램프가 로봇 뒤에서 끝났다 → 기억을 지운다
+    }
+    info->end_x = st.detour_end_x;
+    info->end_y = st.detour_end_y;
+    memory = true;
+  } else {
+    return false;
+  }
+  if (end_is_goal && s_b >= s_end - 0.05) {
+    return false;   // 목표 자체가 막혔다 — 옆으로 밀어 풀 수 없다
+  }
+  // 2) 옆 이동 d 의 우회 경로: 막힌 구간 ± 여유는 d, 앞뒤 램프 r = max(1, 2d) m 로 매끈하게 합류
+  auto build = [&](double d_signed, std::vector<Pose2D> * q, std::vector<double> * w) {
+      const double r = std::max(1.0, 2.0 * std::abs(d_signed));
+      const double r_out = end_is_goal ? std::min(r, s_end - s_b) : r;
+      q->assign(path.begin(), path.end());
+      w->assign(n, 0.0);
+      for (std::size_t i = 0; i < n; ++i) {
+        const double s = cum[i];
+        double wi = 0.0;
+        if (s >= s_a && s <= s_b) {
+          wi = 1.0;
+        } else if (s < s_a) {
+          wi = smoothStep((s - (s_a - r)) / r);
+        } else if (r_out > 1e-6) {
+          wi = smoothStep((s_b + r_out - s) / r_out);
+        }
+        (*w)[i] = wi;
+        const double o = d_signed * wi;
+        (*q)[i].x = path[i].x - std::sin(th[i]) * o;
+        (*q)[i].y = path[i].y + std::cos(th[i]) * o;
+      }
+      const std::vector<double> tq = tangents(*q);
+      for (std::size_t i = 0; i < n; ++i) {
+        (*q)[i].theta = (*w)[i] > 0.0 ? tq[i] : path[i].theta;
+      }
+    };
+  // 가능 = 로봇 앞(지난 점 제외)에서 옮긴 점의 발자국이 모두 비충돌. 점수 = 옮긴 점 중심 비용 최대
+  auto evaluate = [&](double d_signed, double * score) {
+      std::vector<Pose2D> q;
+      std::vector<double> w;
+      build(d_signed, &q, &w);
+      double sc = 0.0;
+      for (std::size_t i = 0; i < n; ++i) {
+        if (w[i] <= 0.0 || cum[i] < s_robot - kMargin) {
+          continue;
+        }
+        if (footprint_cost(q[i]) < 0.0) {
+          return false;
+        }
+        sc = std::max(sc, point_cost(q[i].x, q[i].y));
+      }
+      *score = sc;
+      return true;
+    };
+  double d_pick = 0.0;
+  if (memory) {
+    // 되돌아오는 중: 기억한 이동을 그대로 (램프가 끊기지 않게). 앞이 막히면 그만둔다.
+    double sc = 0.0;
+    if (!evaluate(st.detour_shift, &sc)) {
+      return false;
+    }
+    d_pick = st.detour_shift;
+  } else {
+    // 쪽마다 비용(중심선 최대)이 가장 낮은 d (같으면 작은 d)
+    bool ok[2] = {false, false};
+    double best_sc[2] = {0.0, 0.0};
+    double best_d[2] = {0.0, 0.0};
+    const int kmax = static_cast<int>(std::floor(S / kStep + 1e-9));
+    for (int sd = 0; sd < 2; ++sd) {
+      const double sign = sd == 0 ? -1.0 : 1.0;
+      for (int k = 1; k <= kmax; ++k) {
+        const double d = sign * k * kStep;
+        double sc = 0.0;
+        if (evaluate(d, &sc) && (!ok[sd] || sc < best_sc[sd] - 1e-9)) {
+          ok[sd] = true;
+          best_sc[sd] = sc;
+          best_d[sd] = d;
+        }
+      }
+    }
+    if (!ok[0] && !ok[1]) {
+      return false;   // 양쪽 모두 막힘 → 원래 경로 (정지·제동은 DWA 가 한다)
+    }
+    int pick = ok[1] ? 1 : 0;
+    if (st.detour_side != 0 && ok[st.detour_side > 0 ? 1 : 0]) {
+      pick = st.detour_side > 0 ? 1 : 0;   // 직전 쪽 유지 (주기마다 뒤집히지 않게)
+    } else if (ok[0] && ok[1]) {
+      pick = best_sc[0] < best_sc[1] - 1e-9 ||
+        (std::abs(best_sc[0] - best_sc[1]) <= 1e-9 && -best_d[0] < best_d[1] - 1e-9) ? 0 : 1;
+    }
+    d_pick = best_d[pick];
+  }
+  std::vector<double> w;
+  build(d_pick, out, &w);
+  info->active = true;
+  info->from_memory = memory;
+  info->side = d_pick > 0.0 ? 1 : -1;
+  info->shift = d_pick;
+  return true;
+}
+
+void DwaPlannerX::applyDetour(
+  const DwaInput & in, const FootprintCostFn & footprint_cost, const PointCostFn & point_cost,
+  std::vector<Pose2D> * path, std::vector<double> * cum, ResearchState * st,
+  DetourInfo * info) const
+{
+  std::vector<Pose2D> detour;
+  if (detourPath(
+      *path, *cum, in.pose, in.path_end_is_goal, footprint_cost, point_cost, *st, &detour, info))
+  {
+    *path = std::move(detour);
+    *cum = cumulativeLength(*path);
+  }
+  st->detour_side = info->active ? info->side : 0;
+  st->detour_mem = info->active;
+  st->detour_shift = info->shift;
+  st->detour_end_x = info->end_x;
+  st->detour_end_y = info->end_y;
+}
+
+void DwaPlannerX::goalExtension(
+  const std::vector<Pose2D> & path, double goal_yaw, std::vector<Pose2D> * ext,
+  std::vector<double> * cum) const
+{
+  const auto & L = config_.limits;
+  *ext = path;
+  const Pose2D g = path.back();
+  // 연장 길이: lookahead 최대 + 롤아웃이 목표를 넘을 수 있는 최대 거리 (+ 여유), 간격 0.05 m
+  const double len = config_.heading_lookahead_max +
+    config_.sim_time_max * std::max(std::abs(L.max_vel_x), std::abs(L.min_vel_x)) + 0.5;
+  const int m = static_cast<int>(std::ceil(len / 0.05));
+  for (int k = 1; k <= m; ++k) {
+    ext->push_back(
+      Pose2D{g.x + std::cos(goal_yaw) * 0.05 * k, g.y + std::sin(goal_yaw) * 0.05 * k, goal_yaw});
+  }
+  *cum = cumulativeLength(*ext);
+}
+
+std::pair<double, double> DwaPlannerX::ppCandidate(
+  const std::vector<Pose2D> & path, const std::vector<double> & cum, double s_robot,
+  const Pose2D & pose, double v_des, const DwaWindow & swin, double * kappa_out) const
+{
+  // v* = 표본 범위로 자른 목표 속도 (접근 상한·헤딩 감속·정렬을 모두 반영한 v_des)
+  const double lo = config_.sustained_sampling ? config_.limits.min_vel_x : swin.v_lo;
+  const double hi = config_.sustained_sampling ? swin.v_cap : swin.v_hi;
+  const double v_star = std::clamp(v_des, lo, hi);
+  // lookahead 는 헤딩 항과 같은 식 ℓ(v) = clip(gain·|v| + offset, min, max)
+  const double ell = std::clamp(
+    config_.heading_lookahead_gain * std::abs(v_star) + config_.heading_lookahead_offset,
+    config_.heading_lookahead_min, config_.heading_lookahead_max);
+  const Pose2D tgt = interpolateAt(path, cum, s_robot + ell);
+  const double dx = tgt.x - pose.x;
+  const double dy = tgt.y - pose.y;
+  const double ct = std::cos(pose.theta);
+  const double sn = std::sin(pose.theta);
+  // 로봇 좌표의 목표점 → κ = 2·y / (x² + y²) (core::PurePursuit 와 같은 식)
+  const double kappa = PurePursuit::curvatureToPoint(ct * dx + sn * dy, -sn * dx + ct * dy);
+  *kappa_out = kappa;
+  return {v_star, v_star * kappa};
 }
 
 DwaWindow DwaPlannerX::dynamicWindow(double v_c, double w_c, double v_cap) const
@@ -553,9 +860,10 @@ void fillDiag(
 
 /// 다음 주기 연구 상태. 방출 가속은 창 중심 기준 (v_emit − v_c)/Δt — 재설정 주기가 아니면
 /// v_c = v_last 라 (v_k − v_{k−1})/Δt 와 같고, 재설정 주기에는 측정값으로 다시 잡은 중심에서 잰다.
-ResearchState nextState(const WindowCenterX & ctr, double v, double w, double dt)
+ResearchState nextState(
+  const ResearchState & base, const WindowCenterX & ctr, double v, double w, double dt)
 {
-  ResearchState s;
+  ResearchState s = base;   // F1 모형·F3 우회 쪽은 compute 가 채운 값을 그대로 넘긴다
   s.persist_count = ctr.persist_count;
   const double h = std::max(1e-9, dt);
   s.a_last = (v - ctr.v_c) / h;
@@ -612,13 +920,19 @@ DwaResultX DwaPlannerX::compute(
   // --- 경로 기준량 (0 단계: 좁은 곳 재중심) ---
   static const std::vector<Pose2D> kEmpty;
   const std::vector<Pose2D> & path_in = in.path != nullptr ? *in.path : kEmpty;
-  const std::vector<Pose2D> path = config_.recenter_narrow ?
+  std::vector<Pose2D> path = config_.recenter_narrow ?
     recenterPath(path_in, point_cost, in.path_end_is_goal, &res.n_recentered) : path_in;
-  const std::vector<double> cum_s = cumulativeLength(path);
+  std::vector<double> cum_s = cumulativeLength(path);
   const Point2D robot_pt{in.pose.x, in.pose.y};
   Projection robot_proj;
   double d_goal = kInf;
   double goal_yaw = in.pose.theta;
+  // 직전 명령이 없으면 연구 상태도 없다 (연속 주기 수 0, 직전 가속 0, 모형·우회 쪽 초기화)
+  ResearchState st = in.has_last ? in.research : ResearchState{};
+  // --- F3: 앞 경로가 막혔으면 옆으로 민 우회 경로를 이번 주기 기준으로 쓴다 ---
+  if (research_.blocked_detour_shift > 0.0 && path.size() >= 3) {
+    applyDetour(in, footprint_cost, point_cost, &path, &cum_s, &st, &res.detour);
+  }
   if (!path.empty()) {
     robot_proj = projectOntoPath(path, robot_pt, 0, 0, &cum_s);
     if (in.path_end_is_goal) {
@@ -631,6 +945,18 @@ DwaResultX DwaPlannerX::compute(
   }
   res.d_goal = d_goal;
   const bool aligning = std::isfinite(d_goal) && d_goal <= config_.goal_align_distance;
+  // --- F2: 목표 근처에서 방향·추종 기준 경로를 경로 끝 자세(목표 yaw)의 가상 연장선까지 늘린다.
+  //     목표점 = 투영 + ℓ 그대로 → 경로 끝을 넘으면 연장선 위. d_goal·접근 상한·판정은 그대로.
+  std::vector<Pose2D> path_ext;
+  std::vector<double> cum_ext;
+  const bool ext_on = research_.goal_extension_dist > 0.0 && !path.empty() &&
+    std::isfinite(d_goal) && d_goal < research_.goal_extension_dist;
+  if (ext_on) {
+    goalExtension(path, goal_yaw, &path_ext, &cum_ext);
+    res.goal_ext = true;
+  }
+  const std::vector<Pose2D> & hpath = ext_on ? path_ext : path;    // 방향·추종 항 기준
+  const std::vector<double> & hcum = ext_on ? cum_ext : cum_s;
 
   // 동적 장애물 선별 (VO·TTC·양보 공용)
   std::vector<DynamicObstacle> dyn;
@@ -643,8 +969,10 @@ DwaResultX DwaPlannerX::compute(
   }
 
   // --- 1) 동적 창 (횡단 양보 정지선이 외부 속도 제한과 같은 자리에 들어간다) ---
-  // 직전 명령이 없으면 연구 상태도 없다 (연속 주기 수 0, 직전 가속 0)
-  const ResearchState st = in.has_last ? in.research : ResearchState{};
+  // F1: 직전 명령으로 사슬 모형을 한 주기 전진해 예상 측정 v̂·ŵ 를 만든다
+  if (research_.reset_model) {
+    st.model = modelStep(in, st.model);
+  }
   const WindowCenterX ctr = windowCenterX(in, st);   // R1 (K = 0 이면 원본 windowCenter 와 같다)
   res.center = ctr;
   const double v_c = ctr.v_c;
@@ -815,7 +1143,7 @@ DwaResultX DwaPlannerX::compute(
     res.best.is_brake = true;
     res.best.poses = {in.pose};
     res.sample_window = res.window;
-    res.next = nextState(ctr, res.v, res.w, config_.control_period);
+    res.next = nextState(st, ctr, res.v, res.w, config_.control_period);
     return res;
   }
 
@@ -858,24 +1186,8 @@ DwaResultX DwaPlannerX::compute(
   std::pair<double, double> pp_cand{0.0, 0.0};
   const bool pp_on = research_.pp_candidate && !path.empty();
   if (pp_on) {
-    // v* = 표본 범위로 자른 목표 속도 (접근 상한·헤딩 감속·정렬을 모두 반영한 v_des)
-    const double lo = config_.sustained_sampling ? L.min_vel_x : swin.v_lo;
-    const double hi = config_.sustained_sampling ? swin.v_cap : swin.v_hi;
-    const double v_star = std::clamp(v_des, lo, hi);
-    // lookahead 는 헤딩 항과 같은 식 ℓ(v) = clip(gain·|v| + offset, min, max)
-    const double ell = std::clamp(
-      config_.heading_lookahead_gain * std::abs(v_star) + config_.heading_lookahead_offset,
-      config_.heading_lookahead_min, config_.heading_lookahead_max);
-    const Pose2D tgt = interpolateAt(path, cum_s, robot_proj.s + ell);
-    const double dx = tgt.x - in.pose.x;
-    const double dy = tgt.y - in.pose.y;
-    const double ct = std::cos(in.pose.theta);
-    const double sn = std::sin(in.pose.theta);
-    // 로봇 좌표의 목표점 → κ = 2·y / (x² + y²) (core::PurePursuit 와 같은 식)
-    const double kappa = PurePursuit::curvatureToPoint(ct * dx + sn * dy, -sn * dx + ct * dy);
-    pp_cand = {v_star, v_star * kappa};
+    pp_cand = ppCandidate(hpath, hcum, robot_proj.s, in.pose, v_des, swin, &res.pp_kappa);
     res.pp_added = true;
-    res.pp_kappa = kappa;
   }
 
   // --- 2) 샘플링 ---
@@ -1000,11 +1312,11 @@ DwaResultX DwaPlannerX::compute(
         c.terms.heading = std::abs(wrapAngle(goal_yaw - end.theta)) / kPi;
       } else {
         std::size_t hint = robot_proj.segment;
-        const Projection pe = windowProjection(path, cum_s, {end.x, end.y}, hint);
+        const Projection pe = windowProjection(hpath, hcum, {end.x, end.y}, hint);
         const double ell = std::clamp(
           config_.heading_lookahead_gain * std::abs(c.v) + config_.heading_lookahead_offset,
           config_.heading_lookahead_min, config_.heading_lookahead_max);
-        const Pose2D tgt = interpolateAt(path, cum_s, pe.s + ell);
+        const Pose2D tgt = interpolateAt(hpath, hcum, pe.s + ell);
         const double dx = tgt.x - end.x;
         const double dy = tgt.y - end.y;
         if (std::hypot(dx, dy) > 1e-3) {
@@ -1030,7 +1342,7 @@ DwaResultX DwaPlannerX::compute(
         const Pose2D g = interpolateAt(path, cum_s, s_ref);
         cg = point_cost(g.x, g.y);
         if (k <= k_eval) {
-          const Projection pk = windowProjection(path, cum_s, {p.x, p.y}, hint);
+          const Projection pk = windowProjection(hpath, hcum, {p.x, p.y}, hint);
           path_sum += std::min(std::abs(pk.cte) / config_.path_band, 1.0);
           cte_max = std::max(cte_max, std::abs(pk.cte));
         }
@@ -1278,7 +1590,7 @@ DwaResultX DwaPlannerX::compute(
 
   fillDiag(
     &res.diag, cands, in.pose, in.obstacles, W, escaping, leave_lane_diag);
-  res.next = nextState(ctr, res.v, res.w, config_.control_period);
+  res.next = nextState(st, ctr, res.v, res.w, config_.control_period);
   return res;
 }
 

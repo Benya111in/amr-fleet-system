@@ -9,8 +9,14 @@
 // 코어는 amr_nav_research::DwaPlannerX (dwa_x.hpp). 주기 사이 연구 상태는 이 플러그인이
 // 들고 있다가 다음 주기 입력으로 넘긴다 (activate·예외로 has_last 가 풀리면 코어가 0 으로 본다).
 // 재설정 기록 CSV: research_io.hpp 의 11 열 + plan_id (setPlan 호출 순번), controller (이름).
-// dwa/stats 는 원본 42 개 뒤에 4 개를 더한다: [42] 재설정 이유 (0 없음 · 1 threshold · 2 hard ·
-//   3 persist), [43] 차 초과 연속 주기 수, [44] R1 이 미룸, [45] R3 후보 선택.
+// dwa/stats 는 원본 42 개 뒤에 8 개를 더한다: [42] 재설정 이유 (0 없음 · 1 threshold · 2 hard ·
+//   3 persist), [43] 차 초과 연속 주기 수, [44] R1 이 미룸, [45] R3 후보 선택,
+//   2 라운드 [46] F3 우회 옆 이동 [m] (0 = 안 함), [47] F3 앞 경로 막힘, [48] F2 목표 연장 사용,
+//   [49] F1 예상 측정 v̂ (모형 꺼짐이면 −1e9).
+// 2 라운드 파라미터: research.reset_model (bool, false), research.reset_model_theta (0.15),
+//   research.reset_model_theta_w (−1 = θ·window_reset_w/window_reset_v), research.model_delay
+//   (0.04), research.model_tau (0.08), research.goal_extension_dist (0 = 끔),
+//   research.blocked_detour_shift (0 = 끔), research.blocked_lookahead (3.0).
 //
 // 아래는 원본 머리 주석이다.
 // amr_navigation::DWAController — nav2_core::Controller 플러그인
