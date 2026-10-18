@@ -135,6 +135,9 @@ WindowCenterX DwaPlannerX::windowCenterX(const DwaInput & in, const ResearchStat
     c.measured = true;
     return c;
   }
+  // G1: 가속 국면 (a) 명령 증가 (b) 명령 > 측정 (c) 차 ≤ hard 이면 선속도 후보를 세지 않는다
+  const bool hold = research_.accel_hold && st.has_v_last_prev && in.v_last > st.v_last_prev &&
+    in.v_last > in.v_meas && std::abs(c.gap_v) <= research_.reset_hard_v;
   if (research_.reset_model) {
     // F1: 재설정 후보 = 측정이 사슬 모형의 예상과 θ 넘게 다르다.
     // hard 는 원래 차로, 후보와 무관하게 판정한다.
@@ -143,10 +146,13 @@ WindowCenterX DwaPlannerX::windowCenterX(const DwaInput & in, const ResearchStat
     const double th = research_.reset_model_theta;
     const double th_w = research_.reset_model_theta_w > 0.0 ? research_.reset_model_theta_w :
       th * config_.window_reset_w / std::max(1e-9, config_.window_reset_v);
-    const bool over = !(std::abs(in.v_meas - c.v_hat) <= th &&
-      std::abs(in.w_meas - c.w_hat) <= th_w);
+    const bool v_ok = std::abs(in.v_meas - c.v_hat) <= th;
+    const bool w_ok = std::abs(in.w_meas - c.w_hat) <= th_w;
+    const bool over = !((v_ok || hold) && w_ok);   // G1 이 꺼져 있으면 !(v_ok && w_ok) 그대로
+    c.accel_held = hold && !v_ok && w_ok;
     const int K = research_.reset_persist_cycles;
-    const bool hard = K > 0 && std::abs(c.gap_v) > research_.reset_hard_v;
+    const bool hard = (K > 0 || research_.accel_hold) &&
+      std::abs(c.gap_v) > research_.reset_hard_v;
     if (!over && !hard) {
       c.v_c = in.v_last;
       c.w_c = in.w_last;
@@ -171,9 +177,12 @@ WindowCenterX DwaPlannerX::windowCenterX(const DwaInput & in, const ResearchStat
     c.measured = true;
     return c;
   }
-  // 원본 조건을 그대로 쓴다 (NaN 이면 원본처럼 측정값 쪽)
-  const bool within = std::abs(in.v_last - in.v_meas) <= config_.window_reset_v &&
-    std::abs(in.w_last - in.w_meas) <= config_.window_reset_w;
+  // 원본 조건을 그대로 쓴다 (NaN 이면 원본처럼 측정값 쪽). G1 이 꺼져 있으면 hold = false 라
+  // within = v_in && w_in 그대로다.
+  const bool v_in = std::abs(in.v_last - in.v_meas) <= config_.window_reset_v;
+  const bool w_in = std::abs(in.w_last - in.w_meas) <= config_.window_reset_w;
+  const bool within = (v_in || hold) && w_in;
+  c.accel_held = hold && !v_in && w_in;
   if (within) {
     c.v_c = in.v_last;
     c.w_c = in.w_last;
@@ -182,7 +191,9 @@ WindowCenterX DwaPlannerX::windowCenterX(const DwaInput & in, const ResearchStat
   // 연속 주기 수는 K 와 무관하게 센다 (K = 0 이면 기록에만 쓰인다)
   c.persist_count = st.persist_count + 1;
   const int K = research_.reset_persist_cycles;
-  if (K <= 0) {
+  if (research_.accel_hold && std::abs(c.gap_v) > research_.reset_hard_v) {
+    c.reason = ResetReason::kHard;   // G1: hard 는 K 와 무관하게 즉시
+  } else if (K <= 0) {
     c.reason = ResetReason::kThreshold;
   } else if (std::abs(c.gap_v) > research_.reset_hard_v) {
     c.reason = ResetReason::kHard;
@@ -861,9 +872,13 @@ void fillDiag(
 /// 다음 주기 연구 상태. 방출 가속은 창 중심 기준 (v_emit − v_c)/Δt — 재설정 주기가 아니면
 /// v_c = v_last 라 (v_k − v_{k−1})/Δt 와 같고, 재설정 주기에는 측정값으로 다시 잡은 중심에서 잰다.
 ResearchState nextState(
-  const ResearchState & base, const WindowCenterX & ctr, double v, double w, double dt)
+  const ResearchState & base, const DwaInput & in, const WindowCenterX & ctr, double v, double w,
+  double dt)
 {
   ResearchState s = base;   // F1 모형·F3 우회 쪽은 compute 가 채운 값을 그대로 넘긴다
+  // G1: 다음 주기의 v_last 는 이번 방출 v, 그 직전 값은 이번 입력의 v_last
+  s.v_last_prev = in.v_last;
+  s.has_v_last_prev = in.has_last;
   s.persist_count = ctr.persist_count;
   const double h = std::max(1e-9, dt);
   s.a_last = (v - ctr.v_c) / h;
@@ -1148,7 +1163,7 @@ DwaResultX DwaPlannerX::compute(
     res.best.is_brake = true;
     res.best.poses = {in.pose};
     res.sample_window = res.window;
-    res.next = nextState(st, ctr, res.v, res.w, config_.control_period);
+    res.next = nextState(st, in, ctr, res.v, res.w, config_.control_period);
     return res;
   }
 
@@ -1595,7 +1610,7 @@ DwaResultX DwaPlannerX::compute(
 
   fillDiag(
     &res.diag, cands, in.pose, in.obstacles, W, escaping, leave_lane_diag);
-  res.next = nextState(st, ctr, res.v, res.w, config_.control_period);
+  res.next = nextState(st, in, ctr, res.v, res.w, config_.control_period);
   return res;
 }
 

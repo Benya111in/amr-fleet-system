@@ -49,10 +49,11 @@ bool ResetLogger::open(const std::string & path, const std::string & extra_heade
   std::fseek(f_, 0, SEEK_END);
   if (std::ftell(f_) == 0) {
     // 2 라운드: 맨 끝에 F1 예상 측정 v_hat,w_hat (모형이 꺼져 있으면 nan) — 앞 열은 그대로
+    // 3 라운드: 그 뒤에 g1_held (이 실행에서 이 줄까지 G1 이 유예한 주기 수)
     std::fprintf(
       f_,
       "t,v_last,v_meas,w_last,w_meas,gap_v,gap_w,persist_count,reason,d_goal,phase%s%s,"
-      "v_hat,w_hat\n", extra_header.empty() ? "" : ",", extra_header.c_str());
+      "v_hat,w_hat,g1_held\n", extra_header.empty() ? "" : ",", extra_header.c_str());
     std::fflush(f_);
   }
   return true;
@@ -68,17 +69,17 @@ void ResetLogger::close()
 
 bool ResetLogger::write(
   double t, const DwaInput & in, const WindowCenterX & c, double d_goal, double window_reset_v,
-  double window_reset_w, const std::string & extra)
+  double window_reset_w, int g1_held, const std::string & extra)
 {
   if (f_ == nullptr || c.reason == ResetReason::kNone) {
     return false;
   }
   std::fprintf(
-    f_, "%.3f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%d,%s,%.4f,%s%s%s,%.4f,%.4f\n", t, in.v_last,
+    f_, "%.3f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%d,%s,%.4f,%s%s%s,%.4f,%.4f,%d\n", t, in.v_last,
     in.v_meas, in.w_last, in.w_meas, c.gap_v, c.gap_w, c.persist_count, resetReasonName(c.reason),
     std::isfinite(d_goal) ? d_goal : -1.0,
     resetPhase(c, in.v_last, in.w_last, window_reset_v, window_reset_w),
-    extra.empty() ? "" : ",", extra.c_str(), c.v_hat, c.w_hat);
+    extra.empty() ? "" : ",", extra.c_str(), c.v_hat, c.w_hat, g1_held);
   std::fflush(f_);
   return true;
 }

@@ -41,6 +41,12 @@
 //      경로 끝 자세(목표 yaw)의 가상 연장선까지 늘린다. 목표점은 원래 lookahead 를 그대로
 //      유지한 채 연장선 위로 간다. 목표 접근 상한(M2)·d_goal·목표 판정·여유 항 기준·충돌 검사
 //      구간은 원래 경로 그대로다.
+//   G1 accel_hold (3 라운드, prereg_r3.md §1)
+//      (a) v_last > v_last_prev (직전 두 주기 방출 명령이 증가 중), (b) v_last > v_meas,
+//      (c) |v_last − v_meas| ≤ reset_hard_v 가 모두 성립하면 선속도 쪽 재설정 후보(임계 규칙의
+//      |v_last − v_meas| > window_reset_v, F1 의 |v_meas − v̂| > θ)를 세지 않는다 — K 연속
+//      계수도 늘지 않고 0 으로 돌아간다 (후보가 아닌 주기). ω 쪽 후보는 기존 규칙 그대로 센다.
+//      hard (|v_last − v_meas| > reset_hard_v) 는 G1 이 켜져 있으면 K 와 무관하게 즉시 재설정이다.
 //   F3 blocked_detour_shift S, blocked_lookahead
 //      로봇 앞 경로 점(접선 자세)의 발자국이 충돌이면 막혔다고 보고, 막힌 구간 ± 여유를 옆으로
 //      d ≤ S 만큼 민 우회 경로를 이번 주기 기준 경로로 쓴다 (detourPath).
@@ -93,6 +99,8 @@ struct ResearchConfig
   double goal_extension_dist{0.0};   ///< F2 D [m] (0 = 끔)
   double blocked_detour_shift{0.0};  ///< F3 S [m] (0 = 끔)
   double blocked_lookahead{3.0};     ///< F3 [m]
+  // --- 3 라운드 ---
+  bool accel_hold{false};            ///< G1 가속 국면 재설정 유예
 };
 
 /// 주기 사이에 이어지는 상태 (호출자가 DwaResultX::next 를 다음 입력으로 넘긴다).
@@ -114,6 +122,9 @@ struct ResearchState
   double detour_shift{0.0};
   double detour_end_x{0.0};
   double detour_end_y{0.0};
+  /// G1: 두 주기 전 방출 명령 (= 다음 주기에서 본 v_last 의 직전 값).
+  double v_last_prev{0.0};
+  bool has_v_last_prev{false};
 };
 
 /// F3 판정 결과.
@@ -150,6 +161,8 @@ struct WindowCenterX
   double gap_v{0.0};        ///< v_last − v_meas (부호 있음)
   double gap_w{0.0};        ///< w_last − w_meas
   int persist_count{0};     ///< 이번 주기까지 차가 임계를 넘은 연속 주기 수
+  /// G1 이 선속도 후보를 유예했다 (유예가 없었다면 재설정 후보였다)
+  bool accel_held{false};
   /// F1 예상 측정 (모형이 꺼져 있으면 NaN)
   double v_hat{std::numeric_limits<double>::quiet_NaN()};
   double w_hat{std::numeric_limits<double>::quiet_NaN()};

@@ -102,6 +102,9 @@ if(BUILD_TESTING)
   # 2b) 2 라운드 스위치 (F1 사슬 모형 재설정, F2 목표 연장, F3 막힌 경로 우회)
   ament_add_gtest(test_dwa_x_round2 test/test_dwa_x_round2.cpp TIMEOUT 300)
   target_link_libraries(test_dwa_x_round2 amr_nav_research_core)
+  # 2c) 3 라운드 스위치 (G1 가속 국면 재설정 유예)
+  ament_add_gtest(test_dwa_x_round3 test/test_dwa_x_round3.cpp TIMEOUT 300)
+  target_link_libraries(test_dwa_x_round3 amr_nav_research_core)
   # 3) 플러그인: 원본 DWAController 와 DwaControllerX 를 **pluginlib 으로 한 프로세스에** 올려
   #    (시험대의 controller_server 와 같은 상황) 같은 입력에 같은 명령을 내는지 본다.
   #    플러그인 라이브러리는 링크하지 않는다 — 링크하면 class_loader 등록이 엉킨다.

@@ -3,11 +3,11 @@
 chain_sim_x 두 빌드의 동치 시험 (prereg_r2.md §4): 기준 빌드(85e66cb) 대 새 빌드(새 스위치 끔).
 
     run_equiv_x.py run --bin <chain_sim_x> --label <ref|new|newlog> --out <dir>
-        --cfg-dir <dir> [--paths /abl/paths] [--workers 12] [--log-resets]
+        --cfg-dir <dir> [--arm NAME=CFG ...] [--paths /abl/paths] [--workers 12] [--log-resets]
     run_equiv_x.py compare --out <dir> --a ref --b new [--b newlog]
 
-held-out A 60 경로 (scenes_heldout_{smooth,narrow,astar}.txt) x 팔 dwa_full·X03
-(cfg-dir 의 dwa_full.cfg·dwa_x_X03.cfg) x 조건 잡음 없음·잡음 seed 1 (원본 NOISE 인자).
+held-out A 60 경로 (scenes_heldout_{smooth,narrow,astar}.txt) x 팔 (기본 dwa_full·X03 =
+cfg-dir 의 dwa_full.cfg·dwa_x_X03.cfg, --arm 으로 바꾼다) x 조건 잡음 없음·잡음 seed 1.
 두 빌드는 둘 다 컨테이너의 /ros2_ws 에 올려야 하므로 (RPATH) label 마다 따로 돈다.
 비교는 compare_chain_jsonl.py 규칙: 기준(a) 줄의 필드 전부를 출력 원문 그대로 비교하고
 cycle_us_* 만 뺀다. b 가 끝에 더한 필드는 비교하지 않는다.
@@ -45,13 +45,20 @@ def run_one(cmd, log):
     return {'cmd': cmd, 'rc': rc, 'sec': round(time.time() - t0, 2)}
 
 
+def arms_of(args):
+    if not args.arm:
+        return dict(ARMS)
+    return dict(a.split('=', 1) for a in args.arm)
+
+
 def do_run(args):
+    arms = arms_of(args)
     d = os.path.join(args.out, args.label)
     os.makedirs(os.path.join(d, 'logs'), exist_ok=False)
     if args.log_resets:
         os.makedirs(os.path.join(d, 'resets'), exist_ok=False)
     jobs = []
-    for arm, cfg in ARMS.items():
+    for arm, cfg in arms.items():
         for cond, extra in CONDS.items():
             for fam in FAMILIES:
                 sc = os.path.join(args.paths, f'scenes_heldout_{fam}.txt')
@@ -66,7 +73,7 @@ def do_run(args):
     load0 = os.getloadavg()
     with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
         results = list(ex.map(lambda j: run_one(*j), jobs))
-    for arm in ARMS:
+    for arm in arms:
         for cond in CONDS:
             with open(os.path.join(d, f'{arm}__{cond}.jsonl'), 'w', encoding='utf-8') as f:
                 for fam in FAMILIES:
@@ -77,7 +84,7 @@ def do_run(args):
         'label': args.label, 'bin': args.bin, 'bin_sha256': sha256(args.bin),
         'commit': args.commit, 'start': t0, 'end': time.time(),
         'loadavg': [load0, os.getloadavg()],
-        'cfg': {arm: sha256(os.path.join(args.cfg_dir, cfg)) for arm, cfg in ARMS.items()},
+        'cfg': {arm: [cfg, sha256(os.path.join(args.cfg_dir, cfg))] for arm, cfg in arms.items()},
         'scenes': {fam: sha256(os.path.join(args.paths, f'scenes_heldout_{fam}.txt'))
                    for fam in FAMILIES},
         'noise_args': NOISE, 'runs': results,
@@ -92,8 +99,10 @@ def do_run(args):
 def do_compare(args):
     groups = []
     ok = True
+    with open(os.path.join(args.out, args.a, 'manifest.json'), encoding='utf-8') as f:
+        arms = list(json.load(f)['cfg'])
     for b in args.b:
-        for arm in ARMS:
+        for arm in arms:
             for cond in CONDS:
                 fa = os.path.join(args.out, args.a, f'{arm}__{cond}.jsonl')
                 fb = os.path.join(args.out, b, f'{arm}__{cond}.jsonl')
@@ -127,6 +136,7 @@ def main():
     r.add_argument('--label', required=True)
     r.add_argument('--out', required=True)
     r.add_argument('--cfg-dir', required=True)
+    r.add_argument('--arm', action='append', default=[], help='NAME=CFG (cfg-dir 기준)')
     r.add_argument('--paths', default='/abl/paths')
     r.add_argument('--workers', type=int, default=12)
     r.add_argument('--commit', default='')

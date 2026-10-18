@@ -244,7 +244,7 @@ TEST(DwaControllerXPlugin, ReadsResearchParametersAndLogsResets)
   EXPECT_EQ(
     header,
     "t,v_last,v_meas,w_last,w_meas,gap_v,gap_w,persist_count,reason,d_goal,phase,plan_id,"
-    "controller,v_hat,w_hat");
+    "controller,v_hat,w_hat,g1_held");
   // 느린 서보(τ 0.4 s)라 정지 출발 가속 중 명령–측정 차가 임계를 넘어 재설정이 난다
   int rows = 0;
   std::string line;

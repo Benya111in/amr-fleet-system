@@ -262,6 +262,8 @@ void DwaControllerX::configure(
   r.goal_extension_dist = param(node, p + "research.goal_extension_dist", 0.0);
   r.blocked_detour_shift = param(node, p + "research.blocked_detour_shift", 0.0);
   r.blocked_lookahead = param(node, p + "research.blocked_lookahead", 3.0);
+  // 3 라운드 (prereg_r3.md): G1 가속 국면 재설정 유예
+  r.accel_hold = param(node, p + "research.accel_hold", false);
   const std::string log_resets = param(node, p + "research.log_resets", std::string(""));
   research_ = r;
   research_state_ = ResearchState{};
@@ -311,6 +313,7 @@ void DwaControllerX::configure(
     "%.2f, blocked_detour_shift %.2f, blocked_lookahead %.2f",
     r.reset_model, r.reset_model_theta, r.reset_model_theta_w, r.model_delay, r.model_tau,
     r.goal_extension_dist, r.blocked_detour_shift, r.blocked_lookahead);
+  RCLCPP_INFO(logger_, "  3 라운드: accel_hold %d", r.accel_hold);
 }
 
 void DwaControllerX::cleanup()
@@ -328,6 +331,7 @@ void DwaControllerX::activate()
   stats_pub_->on_activate();
   has_last_ = false;
   research_state_ = ResearchState{};
+  g1_held_count_ = 0;
   gate_state_ = core::GateState{};
   gate_hist_.clear();
   gate_hist_stamp_ = -1.0;
@@ -344,6 +348,7 @@ void DwaControllerX::setPlan(const nav_msgs::msg::Path & path)
   std::lock_guard<std::mutex> lock(mutex_);
   plan_.setPlan(path);
   ++plan_id_;
+  g1_held_count_ = 0;
 }
 
 void DwaControllerX::setSpeedLimit(const double & speed_limit, const bool & percentage)
@@ -586,10 +591,11 @@ geometry_msgs::msg::TwistStamped DwaControllerX::computeVelocityCommands(
   }
   yield_limit_last_ = res.yield.speed_limit;
   research_state_ = res.next;
+  g1_held_count_ += res.center.accel_held ? 1 : 0;
   if (reset_log_.isOpen()) {
     reset_log_.write(
       clock_->now().seconds(), in, res.center, res.d_goal, base_config_.window_reset_v,
-      base_config_.window_reset_w, std::to_string(plan_id_) + "," + name_);
+      base_config_.window_reset_w, g1_held_count_, std::to_string(plan_id_) + "," + name_);
   }
   if (gate_enable_) {
     gate_state_ = res.gate.next;
@@ -690,7 +696,9 @@ geometry_msgs::msg::TwistStamped DwaControllerX::computeVelocityCommands(
       // [46]~[49] 2 라운드: F3 우회 옆 이동 [m] (0 = 우회 안 함), F3 앞 경로 막힘,
       // F2 목표 연장 사용, F1 예상 측정 v̂ (모형 꺼짐이면 −1e9)
       res.detour.active ? res.detour.shift : 0.0, res.detour.blocked ? 1.0 : 0.0,
-      res.goal_ext ? 1.0 : 0.0, std::isfinite(res.center.v_hat) ? res.center.v_hat : -1e9};
+      res.goal_ext ? 1.0 : 0.0, std::isfinite(res.center.v_hat) ? res.center.v_hat : -1e9,
+      // [50] G1 이 이번 주기 선속도 후보를 유예함, [51] setPlan 이후 G1 유예 주기 수
+      res.center.accel_held ? 1.0 : 0.0, static_cast<double>(g1_held_count_)};
     stats_pub_->publish(st);
   }
   return cmd;

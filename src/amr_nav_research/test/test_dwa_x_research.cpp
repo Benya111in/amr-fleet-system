@@ -558,21 +558,21 @@ TEST(ResetLog, WritesOnlyResetEventsWithPhase)
     // 가속 중 재설정: 명령이 측정보다 0.33 위
     const DwaInput acc = gapInput(0.80, 0.47);
     const WindowCenterX c1 = p.windowCenterX(acc, ResearchState{});
-    EXPECT_TRUE(log.write(1.25, acc, c1, 12.5, 0.3, 0.5, "S01,dwa_full,1"));
+    EXPECT_TRUE(log.write(1.25, acc, c1, 12.5, 0.3, 0.5, 0, "S01,dwa_full,1"));
     // 재설정 아님 → 쓰지 않는다
     const DwaInput ok = gapInput(0.80, 0.70);
     EXPECT_FALSE(
-      log.write(1.30, ok, p.windowCenterX(ok, ResearchState{}), 12.4, 0.3, 0.5, "x"));
+      log.write(1.30, ok, p.windowCenterX(ok, ResearchState{}), 12.4, 0.3, 0.5, 0, "x"));
     // 감속 중 (명령 < 측정), 목표 거리 없음 → -1
     const DwaInput dec = gapInput(0.20, 0.55);
     EXPECT_TRUE(
       log.write(
         9.0, dec, p.windowCenterX(dec, ResearchState{}),
-        std::numeric_limits<double>::infinity(), 0.3, 0.5, "S01,dwa_full,1"));
+        std::numeric_limits<double>::infinity(), 0.3, 0.5, 0, "S01,dwa_full,1"));
     // 각속도 차만: 제자리 회전 → turn
     const DwaInput turn = gapInput(0.0, 0.0, 0.9, 0.2);
     EXPECT_TRUE(
-      log.write(10.0, turn, p.windowCenterX(turn, ResearchState{}), 0.05, 0.3, 0.5, "S"));
+      log.write(10.0, turn, p.windowCenterX(turn, ResearchState{}), 0.05, 0.3, 0.5, 0, "S"));
   }
   {   // 다시 열면 머리줄을 또 쓰지 않는다 (덧붙이기)
     ResetLogger log;
@@ -588,12 +588,12 @@ TEST(ResetLog, WritesOnlyResetEventsWithPhase)
   EXPECT_EQ(
     lines[0],
     "t,v_last,v_meas,w_last,w_meas,gap_v,gap_w,persist_count,reason,d_goal,phase,scene,arm,seed,"
-    "v_hat,w_hat");
+    "v_hat,w_hat,g1_held");
   EXPECT_EQ(
     lines[1], "1.250,0.8000,0.4700,0.0000,0.0000,0.3300,0.0000,1,threshold,12.5000,accel,"
-    "S01,dwa_full,1,nan,nan");
+    "S01,dwa_full,1,nan,nan,0");
   EXPECT_NE(lines[2].find(",threshold,-1.0000,decel,"), std::string::npos) << lines[2];
-  EXPECT_NE(lines[3].find(",turn,S,nan,nan"), std::string::npos) << lines[3];
+  EXPECT_NE(lines[3].find(",turn,S,nan,nan,0"), std::string::npos) << lines[3];
   std::remove(fn.c_str());
 }
 

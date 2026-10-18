@@ -12,7 +12,9 @@
 // dwa/stats 는 원본 42 개 뒤에 8 개를 더한다: [42] 재설정 이유 (0 없음 · 1 threshold · 2 hard ·
 //   3 persist), [43] 차 초과 연속 주기 수, [44] R1 이 미룸, [45] R3 후보 선택,
 //   2 라운드 [46] F3 우회 옆 이동 [m] (0 = 안 함), [47] F3 앞 경로 막힘, [48] F2 목표 연장 사용,
-//   [49] F1 예상 측정 v̂ (모형 꺼짐이면 −1e9).
+//   [49] F1 예상 측정 v̂ (모형 꺼짐이면 −1e9),
+//   3 라운드 [50] G1 이 이번 주기 선속도 후보를 유예함, [51] setPlan 이후 G1 유예 주기 수.
+// 3 라운드 파라미터: research.accel_hold (bool, false).
 // 2 라운드 파라미터: research.reset_model (bool, false), research.reset_model_theta (0.15),
 //   research.reset_model_theta_w (−1 = θ·window_reset_w/window_reset_v), research.model_delay
 //   (0.04), research.model_tau (0.08), research.goal_extension_dist (0 = 끔),
@@ -148,6 +150,7 @@ private:
   ResearchState research_state_;     ///< 주기 사이 연구 상태 (DwaResultX::next)
   ResetLogger reset_log_;            ///< research.log_resets (빈 경로면 끔)
   int plan_id_{0};                   ///< setPlan 호출 순번 (재설정 기록 식별 열)
+  int g1_held_count_{0};             ///< setPlan 이후 G1 유예 주기 수 (기록·stats [51])
   PlanWindow plan_;
   double path_horizon_{6.0};
   double transform_tolerance_{0.2};

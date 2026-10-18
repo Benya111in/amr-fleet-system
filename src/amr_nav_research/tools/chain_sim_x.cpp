@@ -17,6 +17,8 @@
 //     blocked_lookahead (F3). JSONL 끝에 2 라운드 설정과 n_detour, n_detour_blocked,
 //     n_goal_ext, t_entry·yaw_err_entry (참값 자세가 목표 0.10 m 안에 처음 든 시각과 그때
 //     |yaw 오차|, 100 Hz 플랜트 스텝 기준, 없으면 -1) 를 더한다.
+//   - 3 라운드 (prereg_r3.md): 키 accel_hold (G1). JSONL 끝에 accel_hold, n_g1_held (G1 이
+//     선속도 재설정 후보를 유예한 주기 수), 재설정 기록 끝 열 g1_held (장면 안 누적).
 //
 // 아래는 원본 머리 주석이다.
 //
@@ -586,6 +588,8 @@ bool applyResearch(Options & o, const std::string & k, const std::string & v)
     o.research.blocked_detour_shift = d;
   } else if (k == "blocked_lookahead") {
     o.research.blocked_lookahead = d;
+  } else if (k == "accel_hold") {
+    o.research.accel_hold = toBool(v);
   } else {
     return false;
   }
@@ -629,6 +633,7 @@ struct Metrics
   int n_detour{0};
   int n_detour_blocked{0};
   int n_goal_ext{0};
+  int n_g1_held{0};
   double t_entry{-1.0};
   double yaw_err_entry{-1.0};
   double t_xy_latch{-1.0};
@@ -822,13 +827,15 @@ Metrics runScene(const Scene & sc, const Options & o, FILE * trace, rx::ResetLog
           m.n_horizon_varied += dwa.simTime(r.window.v_hi) > o.dwa.sim_time_min + 1e-12;
           m.n_recentered += r.n_recentered > 0;
           rstate = r.next;
+          m.n_g1_held += r.center.accel_held;
           if (r.center.reason != rx::ResetReason::kNone) {
             ++m.n_resets;
             m.n_resets_hard += r.center.reason == rx::ResetReason::kHard;
             m.n_resets_persist += r.center.reason == rx::ResetReason::kPersist;
             if (rlog != nullptr) {
               rlog->write(
-                t, in, r.center, r.d_goal, o.dwa.window_reset_v, o.dwa.window_reset_w, rlog_tag);
+                t, in, r.center, r.d_goal, o.dwa.window_reset_v, o.dwa.window_reset_w,
+                m.n_g1_held, rlog_tag);
             }
           }
           m.n_r1_suppressed += r.center.suppressed;
@@ -995,7 +1002,8 @@ void writeJson(FILE * f, const Scene & sc, const Options & o, const Metrics & m)
     "\"t_xy_latch\": %.3f, "
     "\"reset_model\": %d, \"reset_model_theta\": %.3f, \"goal_extension_dist\": %.3f, "
     "\"blocked_detour_shift\": %.3f, \"n_detour\": %d, \"n_detour_blocked\": %d, "
-    "\"n_goal_ext\": %d, \"t_entry\": %.3f, \"yaw_err_entry\": %.5f}\n",
+    "\"n_goal_ext\": %d, \"t_entry\": %.3f, \"yaw_err_entry\": %.5f, "
+    "\"accel_hold\": %d, \"n_g1_held\": %d}\n",
     sc.id.c_str(), sc.family.c_str(), o.arm.c_str(), o.ctrl.c_str(), o.ideal ? "ideal" : "chain",
     o.rate, o.lidar ? 1 : 0, o.seed, o.odom_noise_v, o.odom_noise_w, o.pose_noise_xy,
     o.pose_noise_yaw, success ? 1 : 0, m.reached ? 1 : 0, m.fail.c_str(), m.collision ? 1 : 0,
@@ -1012,7 +1020,7 @@ void writeJson(FILE * f, const Scene & sc, const Options & o, const Metrics & m)
     m.n_jerk_applied, m.t_xy_latch,
     o.research.reset_model ? 1 : 0, o.research.reset_model_theta, o.research.goal_extension_dist,
     o.research.blocked_detour_shift, m.n_detour, m.n_detour_blocked, m.n_goal_ext, m.t_entry,
-    m.yaw_err_entry);
+    m.yaw_err_entry, o.research.accel_hold ? 1 : 0, m.n_g1_held);
 }
 
 void applyKey(Options & o, const std::string & k, const std::string & v)

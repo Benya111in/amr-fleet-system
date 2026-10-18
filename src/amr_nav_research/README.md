@@ -22,6 +22,8 @@ pluginlib 등록이 엉킬 수 있다. 시험대는 원본 팔과 연구 팔을 
   - 무작위 폐루프 24 × 400 주기
 - `test_dwa_controller_x`: 두 플러그인을 pluginlib 으로 한 프로세스에 올려 220 주기 명령을 비교한다.
 - 2 라운드: `test_dwa_x_round2` (F1·F2·F3). 새 스위치를 모두 끈 chain_sim_x 는 1 라운드 빌드(85e66cb)와 비트 동일하다.
+- 3 라운드: `test_dwa_x_round3` (G1). G1 을 끈 chain_sim_x 는 2 라운드 빌드(47feeaa)와 비트 동일하다.
+  - 시험: `run_equiv_x.py`, held-out A 60 × dwa_full·X03·Y11 × 잡음 없음·seed 1
   - 시험: `scripts/run_equiv_x.py`, held-out A 60 × dwa_full·X03 × 잡음 없음·seed 1
   - 증거: `/home/CAPYI_AI/paper_research/runs/equiv/<UTC>_r2chain/`
 - chain_sim 동치 시험 (prereg §3.3): `scripts/run_equiv_chain.py`, 증거는 `/home/CAPYI_AI/paper_research/runs/equiv/`.
@@ -44,6 +46,7 @@ pluginlib 등록이 엉킬 수 있다. 시험대는 원본 팔과 연구 팔을 
 | `<plugin>.research.goal_extension_dist` | `goal_extension_dist` | double | 0 (끔) | F2 D [m] |
 | `<plugin>.research.blocked_detour_shift` | `blocked_detour_shift` | double | 0 (끔) | F3 S [m] |
 | `<plugin>.research.blocked_lookahead` | `blocked_lookahead` | double | 3.0 | F3 막힘 탐색 거리 [m] |
+| `<plugin>.research.accel_hold` | `accel_hold` | bool | false | G1 가속 국면 재설정 유예 (3 라운드) |
 
 R4(접근 지연)는 기존 파라미터 `approach_latency` 를 그대로 쓴다.
 `reset_model_theta_w` 는 조정자 지시 목록에 없던 이름이라 더했다 (기본 −1 이면 θ 에서 유도하므로 격자 Y01–Y11 은 θ 만 바꾸면 된다).
@@ -121,10 +124,36 @@ R4(접근 지연)는 기존 파라미터 `approach_latency` 를 그대로 쓴다
   - chain_sim_x JSONL: `n_detour`(우회 경로를 쓴 주기 수), `n_detour_blocked`(막힘을 본 주기 수)
   - dwa/stats: [46] 우회 옆 이동, [47] 막힘
 
+### G1 — 가속 국면 재설정 유예 (3 라운드, `prereg_r3.md` §1, `windowCenterX`)
+- 다음 셋이 모두 성립하면 **선속도 쪽 재설정 후보를 세지 않는다.**
+  - (a) 직전 두 주기 방출 명령이 증가 중 (`v_last > v_last_prev`)
+  - (b) `v_last > v_meas`
+  - (c) `|v_last − v_meas| ≤ reset_hard_v`
+- 세지 않는 후보는 두 가지다.
+  - 임계 규칙의 `|v_last − v_meas| > window_reset_v`
+  - F1 모형 규칙의 `|v_meas − v̂| > θ`
+- 그 주기는 후보가 아닌 주기라서 K 연속 계수가 늘지 않고 0 으로 돌아간다.
+- `v_last_prev`·`has_v_last_prev` 는 ResearchState 에 있다. 직전 두 주기 명령을 모르면(시작·예외 뒤) 유예하지 않는다.
+- **hard:** G1 이 켜져 있으면 `|v_last − v_meas| > reset_hard_v` 는 K 와 무관하게 즉시 재설정이다 (이유 `hard`).
+  - K > 0 이면 원래와 같다. K = 0 이면 원래도 즉시 재설정이었으니 이름만 threshold → hard 로 바뀐다. F1 + K = 0 에서는 모형 후보가 없어도 hard 가 걸린다.
+- **ω:** 기존 규칙 그대로다. ω 차(임계 또는 F1 θ_w)가 넘으면 유예 조건이어도 재설정 후보다.
+  - ω 용 별도 스위치는 두지 않았다. 1 라운드 chain 기록에서 재설정 299 건 가운데 ω 쪽(turn)은 15 건뿐이고, 진단(prereg_r3 §0)의 대상은 선속도 가속 국면이다.
+  - "증가 중" 의 ω 대응(|ω| 증가인가, 부호 방향 증가인가)도 정의가 갈린다.
+- 계측
+  - `WindowCenterX::accel_held`: 유예가 없었다면 재설정 후보였던 주기
+  - chain_sim_x JSONL: `accel_hold`, `n_g1_held`
+  - 재설정 CSV 끝 열 `g1_held`: 실행 안 누적
+  - dwa/stats: [50] 이번 주기 유예, [51] setPlan 이후 누적
+- 시험 (`test_dwa_x_round3`, chain 사슬, F1 끔)
+  - 정지 출발 직선: K6 재설정 1 → 0, 0 → 0.9 m/s 1.56 → 1.31 s. K0 는 명령 증가 중 재설정이 2 → 0 이고, 상한 도달 뒤 1 회는 남는다.
+  - 막힘(측정 0): 명령이 0.65 m/s 가 된 주기에 hard 로 재설정한다 (K 0·6).
+  - 감속(명령 감소) 상태: 무작위 4 000 판정에서 G1 끔과 같다. 잡음 폐루프에서 감속 주기 유예는 0 이다.
+
 ### 주기 사이 상태가 사는 곳
 - `compute()` 는 const 다. 상태는 `DwaInputX::research` 로 들어가 `DwaResultX::next` 로 나온다.
   - 1 라운드: `persist_count`, `a_last`, `alpha_last`
   - 2 라운드: F1 사슬 모형 `model`, F3 쪽·기억 `detour_side`, `detour_mem`, `detour_shift`, `detour_end_x/y`
+  - 3 라운드: G1 `v_last_prev`, `has_v_last_prev`
 - 플러그인은 `research_state_` 멤버로, chain_sim_x 는 장면 루프의 지역 변수로 되먹인다.
 - `has_last` 가 false 면(시작·activate·유효 후보 없음 예외 뒤) 코어가 상태를 0 으로 본다.
 
@@ -135,7 +164,9 @@ R4(접근 지연)는 기존 파라미터 `approach_latency` 를 그대로 쓴다
   t,v_last,v_meas,w_last,w_meas,gap_v,gap_w,persist_count,reason,d_goal,phase,<식별 열>,v_hat,w_hat
   ```
 
-- 2 라운드부터 맨 끝에 `v_hat,w_hat`(F1 예상 측정, 모형이 꺼져 있으면 `nan`)이 붙는다. 앞 열은 1 라운드와 같다.
+- 2 라운드부터 맨 끝에 `v_hat,w_hat`(F1 예상 측정, 모형이 꺼져 있으면 `nan`)이 붙는다. 3 라운드부터 그 뒤에 `g1_held` 가 붙는다.
+  - `g1_held` 는 이 실행에서 이 줄까지 G1 이 유예한 주기 수다 (chain_sim_x 는 장면, 플러그인은 setPlan 이후).
+  - 앞 열은 1 라운드와 같다.
 
 - `gap_*` 는 부호 있는 차(직전 명령 − 측정)다. `persist_count` 는 이 주기까지 차가 임계를 넘은 연속 주기 수다. `reason` 은 `threshold`(K = 0) / `hard` / `persist` 중 하나다. `d_goal` 은 남은 경로 거리이고, 목표가 창 밖이면 -1 이다.
 - `phase`:
@@ -165,6 +196,7 @@ chain_sim_x /abl/paths/scenes_heldout_smooth.txt out.jsonl cfg=/abl/cfg/dwa_full
     - 설정: `reset_model`, `reset_model_theta`, `goal_extension_dist`, `blocked_detour_shift`
     - 계측: `n_detour`, `n_detour_blocked`, `n_goal_ext`
     - 첫 진입: `t_entry`, `yaw_err_entry` — 참값 자세가 목표 0.10 m 안에 처음 든 시각과 그때 |yaw 오차|, 100 Hz 플랜트 스텝 기준, 없으면 −1
+  - 3 라운드: `accel_hold`, `n_g1_held`
   - 원본 필드의 이름·순서·형식은 그대로다.
 
 ## Nav2 에서 플러그인 올리기 (ROS 시험대)
@@ -192,6 +224,8 @@ controller_server:
         goal_extension_dist: 0.0
         blocked_detour_shift: 0.0
         blocked_lookahead: 3.0
+        # 3 라운드 (Z 격자는 Y11 위에 덮는다)
+        accel_hold: false
 ```
 
 - 기록 파일은 플러그인 인스턴스마다 따로 둔다. 같은 파일을 두 인스턴스가 쓰면 줄이 섞인다.
@@ -202,6 +236,7 @@ controller_server:
   - [44] R1 이 미룸
   - [45] R3 후보 선택
   - [46] F3 우회 옆 이동 [m] (0 = 우회 안 함), [47] F3 앞 경로 막힘, [48] F2 목표 연장 사용, [49] F1 예상 측정 v̂ (모형 꺼짐이면 −1e9)
+  - [50] G1 이 이번 주기 선속도 후보를 유예함, [51] setPlan 이후 G1 유예 주기 수
 - stateful 판정은 goal checker 플러그인 파라미터(`general_goal_checker.stateful`)다. 이 패키지가 아니라 하네스가 바꾼다.
   - Nav2 1.1.20 은 `ControllerServer::setPlannerPath` 에서만 `reset()` 한다. 그래서 FollowPath 목표 하나(ros_bench)에서는 잠금이 끝까지 간다.
   - BT 재계획으로 경로가 바뀌면 그때마다 풀린다.
