@@ -4,7 +4,7 @@
 #   run_r3c.sh e2 <commit>      E2 X00 × held-out D C1 60 (레인 14–19)
 #   run_r3c.sh e5 <commit>      E5 P1·P3 사슬 탐침, P4 와인드업 gtest (ws_r3c 빌드)
 #   run_r3c.sh e13 <commit>     GO_E13 표지(변형 sha256 커밋 뒤 만든다)를 기다려 E4 동치 → E1+E3 ROS (c1·c3·o 한 줄) → E1 chain
-#   run_r3c.sh e4 <commit>      관문(R3 held-out 봉인·E1–E3 봉인·다른 레인 컨테이너 없음·1 분 부하 < 3)을 기다려 E4 측정
+#   run_r3c.sh e4 <commit>      관문(R3 held-out 봉인·E1–E3 봉인·GO_E4 표지·다른 레인 컨테이너 없음·1 분 부하 < 3)을 기다려 E4 측정
 set -u
 CMD=$1; C=$2
 H=$(cd "$(dirname "$0")" && pwd)
@@ -98,6 +98,7 @@ case "$CMD" in
       for s in c1 c2 c3 o; do [ -e "$RW/r3/$s/SEALED" ] || ok=0; done
       for s in c1 c3 o chain e4eq; do [ -e "$R/$s/SEALED" ] || ok=0; done
       [ -e "$R/E13_DONE" ] || ok=0
+      [ -e "$R/GO_E4" ] || ok=0          # E4 동치 결과를 커밋한 뒤에 만드는 표지 (prereg_r3c §7)
       [ -z "$(docker ps --format '{{.Names}}' | grep '^amr-ai-pr-ros-')" ] || ok=0
       l1=$($LOAD | awk '{print $1}')
       awk -v l="$l1" 'BEGIN{exit !(l < 3.0)}' || ok=0
@@ -108,7 +109,7 @@ case "$CMD" in
       fi
       sleep 60
     done
-    C=$(cat "$R/GO_E4" 2>/dev/null || echo "$C")
+    C=$(cat "$R/GO_E4")
     mkdir -p "$R/e4"
     ( while true; do echo "$(date '+%F %T') $($LOAD)"; sleep 60; done ) >> "$R/e4/load.log" 2>&1 &
     LP=$!
