@@ -262,6 +262,7 @@ def main():
         md.append(decomp_table(Z2, 'dwa_R2', 'dwa_full', '2 라운드 (held-out C)'))
         md.append(decomp_table(Z2, 'dwa_R2', 'dwa_R', '2 라운드 (held-out C)'))
         md.append(decomp_table(Z2, 'dwa_full', rpp2, '2 라운드 (held-out C)'))
+        md.append(decomp_table(Z2, 'dwa_R', rpp2, '2 라운드 (held-out C)'))
     md += ['### C2. 목표 첫 진입 yaw 오차와 판정 대기', '']
     md.append(entry_yaw(R, 'r1', 'c1', ('dwa_full', 'dwa_R', 'RPP_R00', 'pp')))
     if sel2:

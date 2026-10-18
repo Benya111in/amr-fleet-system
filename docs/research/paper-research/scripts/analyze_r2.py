@@ -196,7 +196,7 @@ def tables(args):
         txt, _ = ax.reset_analysis(chain, os.path.join(R, 'r2', 'chain'),
                                    os.path.join(R, 'r2', 'paths_c'),
                                    arms=('dwa_full', 'dwa_R', 'dwa_R2'))
-        md.append(txt)
+        md.append(txt.replace('held-out B', 'held-out C'))
         md.append(ax.reset_counts(chain, os.path.join(R, 'r2', 'chain'), ['dwa_full'] + arms_c))
         md.append(ax.table_failures(chain, '부록. 실패 목록 — chain_sim_x (held-out C)'))
     for name, recs, fam in (('C1', c1, None), ('C2', c2, None), ('C3', c3, None),
