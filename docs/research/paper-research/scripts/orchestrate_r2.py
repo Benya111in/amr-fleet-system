@@ -32,6 +32,7 @@ SETS = {
     'c': {'dir': '/runs/r2/paths_c', 'seed': 20261019, 'n': (32, 8, 20), 'o': 20},
 }
 NARROW_SUBSET = ['N1', 'N4', 'N6']   # prereg_r2 §3 C3 (1 라운드와 같은 규칙)
+PATHS_LOGS = 'r2/paths_logs'          # 3 라운드는 r3/paths_logs 로 바꿔 부른다
 
 
 def set_json(key):
@@ -53,7 +54,7 @@ def set_map(key):
 # 경로 생성
 
 def paths_stage(args):
-    os.makedirs(os.path.join(RUNS_HOST, 'r2', 'paths_logs'), exist_ok=True)
+    os.makedirs(os.path.join(RUNS_HOST, PATHS_LOGS), exist_ok=True)
     base = ['docker', 'run', '--rm', '--name', 'amr-ai-pr-paths', '--cpus', '4', '--memory', '8g',
             '--shm-size', '2g', '-e', f'ROS_DOMAIN_ID={ox.DOMAIN0}', '-e', 'ROS_LOCALHOST_ONLY=1',
             '-e', 'ROS_WS=/ros2_ws', '-v', f'{args.ws}:/ros2_ws:ro',
@@ -72,7 +73,7 @@ def paths_stage(args):
             ('plan_astar', ['-e', f'PR_MAP={d}/composite.yaml'],
              ['bash', f'{SCRIPTS_C}/ros_worker_x.sh', str(ox.DOMAIN0), f'amr_{ox.DOMAIN0}',
               '/ros2_ws/install/amr_navigation/share/amr_navigation/config/nav2_params.yaml',
-              f'/runs/r2/paths_logs/launch_plan_{key}.log', '--',
+              f'/runs/{PATHS_LOGS}/launch_plan_{key}.log', '--',
               'python3', f'{SCRIPTS_C}/plan_astar_x.py', '--pairs', f'{d}/astar_pairs.json',
               '--out', f'{d}/heldout_astar.json', '--n', str(na),
               '--ros-args', '-r', '__ns:=/@NS@']),
@@ -85,7 +86,7 @@ def paths_stage(args):
             ox.docker_rm_if_mine('amr-ai-pr-paths')
             t0 = time.time()
             l0 = os.getloadavg()
-            log = os.path.join(RUNS_HOST, 'r2', 'paths_logs', f'{key}_{name}.log')
+            log = os.path.join(RUNS_HOST, PATHS_LOGS, f'{key}_{name}.log')
             with open(log, 'w', encoding='utf-8') as lf:
                 cmd_full = base[:4] + base[4:] + extra + [ox.IMAGE] + cmd
                 rc = subprocess.run(cmd_full, stdout=lf, stderr=subprocess.STDOUT).returncode
