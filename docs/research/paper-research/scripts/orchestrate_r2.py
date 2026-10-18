@@ -148,7 +148,7 @@ def make_job(stage, jid, arms, ids, paths, est_s, set_key=None, seed=0, rep=0, l
 
 def ros_stage(args):
     st = args.stage
-    sdh = os.path.join(RUNS_HOST, 'r2', st)
+    sdh = os.path.join(RUNS_HOST, 'r2', 'tuning' if st.startswith('tuning') else st)
     if os.path.exists(os.path.join(sdh, 'SEALED')):
         print(f'{sdh} 는 봉인됐다', file=sys.stderr)
         return 2
@@ -163,32 +163,47 @@ def ros_stage(args):
         for rep in range(1, args.reps + 1):
             jobs.append(make_job(st, f'rep{rep}', arms, ids, [ox.TUNING_JSON],
                                  ox.est_seconds(tun, ids, arms), rep=rep))
-    elif st == 'tuning':
-        # prereg_r2 §2: 다섯 격자 × 12 × 튜닝-20 × {잡음 없음, seed 1–3} + 튜닝 O 6 × 1.
-        # 작업 = 같은 번호 k 의 DWB·MPPI·RPP·T·Y 다섯 팔 × 경로 절반 (10 경로)
+    elif st in ('tuning', 'tuning_nav', 'tuning_y'):
+        # prereg_r2 §2: 다섯 격자 × 12 × 튜닝-20 × {잡음 없음, seed 1–3} + 튜닝 O 6 × 1. 원자료는 모두 r2/tuning.
+        # tuning_nav = DWB·MPPI·RPP·교과서 T (amr_navigation 플러그인만 — 2 라운드 사본 빌드 전에 돌 수 있다),
+        # tuning_y = DWA-R2 Y 격자 (CORE R2 READY 빌드). tuning = 둘 다.
+        # 작업 = 같은 번호 k 의 격자 팔 × 경로 절반 (10 경로); O 는 장면 × k 묶음.
         ent = []
         for p in set_json('tune'):
             ent += load_c(p)
         ids = [e['id'] for e in ent]
         halves = (ids[0::2], ids[1::2])
+        nav = st in ('tuning', 'tuning_nav')
+        ygr = st in ('tuning', 'tuning_y')
         grids = list(zip(params.DWB_GRID, params.MPPI_GRID, params.RPP_GRID, params.TB_GRID,
                          params_r2.DWA_Y_GRID))
+
+        def arms_k(k):
+            d, m, r, t, y = grids[k]
+            out = []
+            if nav:
+                out += [f'DWB_{d}', f'MPPI_{m}', f'RPP_{r}', params.tb_arm(t)]
+            if ygr and not nav:
+                out += [params_r2.y_arm(y)]
+            elif ygr:
+                out += [params_r2.y_arm(y)]
+            return out
+        kgroups = [[k] for k in range(12)] if nav else [[0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11]]
+        tag = {'tuning': '', 'tuning_nav': 'n', 'tuning_y': 'y'}[st]
         for seed in (0, 1, 2, 3):
-            for k, (d, m, r, t, y) in enumerate(grids):
-                arms = [f'DWB_{d}', f'MPPI_{m}', f'RPP_{r}', params.tb_arm(t), params_r2.y_arm(y)]
+            for g, ks in enumerate(kgroups):
+                arms = [a for k in ks for a in arms_k(k)]
                 for h, sub in enumerate(halves):
-                    jobs.append(make_job(st, f's{seed}_k{k:02d}_h{h}', arms, sub, set_json('tune'),
-                                         ox.est_seconds(ent, sub, arms), set_key='tune',
-                                         seed=seed))
+                    jobs.append(make_job('tuning', f'{tag}s{seed}_g{g:02d}_h{h}', arms, sub,
+                                         set_json('tune'), ox.est_seconds(ent, sub, arms),
+                                         set_key='tune', seed=seed))
         scenes = load_c(f"{SETS['tune']['dir']}/scenes_obstacles.json")
+        ogroups = [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9, 10, 11]] if nav else [list(range(12))]
         for sc in scenes:
-            for g in range(4):
-                arms = []
-                for k in range(3 * g, 3 * g + 3):
-                    d, m, r, t, y = grids[k]
-                    arms += [f'DWB_{d}', f'MPPI_{m}', f'RPP_{r}', params.tb_arm(t), params_r2.y_arm(y)]
+            for g, ks in enumerate(ogroups):
+                arms = [a for k in ks for a in arms_k(k)]
                 jobs.append(make_job(
-                    st, f'O_{sc["id"]}_g{g}', arms, [sc['id']],
+                    'tuning', f'{tag}O_{sc["id"]}_g{g}', arms, [sc['id']],
                     [f"{SETS['tune']['dir']}/scenes_obstacles.json"],
                     ox.est_seconds(scenes, [sc['id']], arms), set_key='tune',
                     largs=[f'moving_obstacles:={sc["moving_obstacles"]}'],
