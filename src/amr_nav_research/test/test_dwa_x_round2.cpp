@@ -462,6 +462,12 @@ TEST(RoundTwoF2, GoalDistanceAndApproachCapAreUnchanged)
   // 목표에서 D 밖이면 쓰지 않는다
   in.pose = {1.5, 0.0, 0.0};
   EXPECT_FALSE(DwaPlannerX(deployed(), r).compute(in, fp, pc).goal_ext);
+  // 목표를 지나쳤으면 쓰지 않는다 (연장선 목표점이 목표 반대쪽 → 정렬만 하고 서는 교착)
+  in.pose = {3.13, -0.04, 0.0};
+  in.v_last = in.v_meas = 0.0;
+  const DwaResultX past = DwaPlannerX(deployed(), r).compute(in, fp, pc);
+  EXPECT_FALSE(past.goal_ext);
+  EXPECT_LT(past.d_goal, 1.0);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -548,4 +554,25 @@ TEST(RoundTwoF3, ClosedLoopPassesTheDiscWithoutContact)
       EXPECT_EQ(x->side_flips, 0);
     }
   }
+}
+
+TEST(RoundTwoF2, OvershootPastTheGoalDoesNotDeadlock)
+{
+  // 목표 0.135 m 너머에 목표 yaw 로 서 있다 (xy 0.10 판정 밖): 끄면 돌아서 되돌아오고,
+  // 켜도 연장선을 쓰지 않으니 같은 명령이어야 한다 (예전: 연장선 앞 목표점 → 정렬만 하고 정지)
+  const auto path = straight(3.0);
+  DwaInputX in;
+  in.pose = {3.135, 0.0, 0.0};
+  in.path = &path;
+  in.has_last = true;
+  auto fp = [](const Pose2D &) {return 0.0;};
+  auto pc = [](double, double) {return 0.0;};
+  ResearchConfig r;
+  r.goal_extension_dist = 0.6;
+  const DwaResultX on = DwaPlannerX(deployed(), r).compute(in, fp, pc);
+  const DwaResultX off = DwaPlannerX(deployed()).compute(in, fp, pc);
+  EXPECT_FALSE(on.goal_ext);
+  EXPECT_DOUBLE_EQ(on.v, off.v);
+  EXPECT_DOUBLE_EQ(on.w, off.w);
+  EXPECT_GT(std::abs(off.w), 0.0);   // 되돌아오려고 돈다
 }

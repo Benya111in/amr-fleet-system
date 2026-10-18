@@ -949,8 +949,13 @@ DwaResultX DwaPlannerX::compute(
   //     목표점 = 투영 + ℓ 그대로 → 경로 끝을 넘으면 연장선 위. d_goal·접근 상한·판정은 그대로.
   std::vector<Pose2D> path_ext;
   std::vector<double> cum_ext;
+  // 목표를 이미 지나쳤으면(목표 yaw 축 위치 ≥ 0) 쓰지 않는다: 연장선 목표점이
+  // 로봇 앞(목표 반대쪽)에 생겨, 헤딩 감속으로 v_des = 0 인 채 목표 yaw 로
+  // 정렬만 하고 서는 교착이 된다 (기능 확인 A04).
   const bool ext_on = research_.goal_extension_dist > 0.0 && !path.empty() &&
-    std::isfinite(d_goal) && d_goal < research_.goal_extension_dist;
+    std::isfinite(d_goal) && d_goal < research_.goal_extension_dist &&
+    (in.pose.x - path.back().x) * std::cos(goal_yaw) +
+    (in.pose.y - path.back().y) * std::sin(goal_yaw) < 0.0;
   if (ext_on) {
     goalExtension(path, goal_yaw, &path_ext, &cum_ext);
     res.goal_ext = true;
