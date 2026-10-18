@@ -1,0 +1,5 @@
+<library path="amr_nav_research_timed">
+  <class type="amr_nav_research::TimedController" base_class_type="nav2_core::Controller">
+    <description>계산 시간 측정 감싸개 (prereg_r3c E4): 안쪽 제어기(timed_inner_plugin)를 같은 이름으로 올리고 computeVelocityCommands 벽시계 시간을 주기마다 재어 끝에 CSV(timed_csv)로 쓴다. 다른 호출은 그대로 넘긴다</description>
+  </class>
+</library>

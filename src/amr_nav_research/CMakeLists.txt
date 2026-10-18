@@ -82,6 +82,28 @@ install(TARGETS chain_sim_x DESTINATION lib/${PROJECT_NAME})
 install(PROGRAMS scripts/compare_chain_jsonl.py scripts/run_equiv_chain.py scripts/run_equiv_x.py
   DESTINATION lib/${PROJECT_NAME})
 
+# --- R3-C (docs/research/paper-research/prereg_r3c.md) ---
+# E4 계산 시간 감싸개 amr_nav_research::TimedController: DWA 플러그인 라이브러리와 따로 둔다
+# (연구 플러그인 라이브러리·plugins.xml 은 그대로 — 그 빌드 산출물이 바뀌지 않게).
+add_library(amr_nav_research_timed SHARED src/timed_controller.cpp)
+target_include_directories(amr_nav_research_timed PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+ament_target_dependencies(amr_nav_research_timed
+  rclcpp rclcpp_lifecycle pluginlib nav2_core nav2_costmap_2d nav2_util nav_msgs geometry_msgs
+  tf2_ros)
+pluginlib_export_plugin_description_file(nav2_core timed_plugins.xml)
+install(TARGETS amr_nav_research_timed
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin
+)
+# E5 P1·P3 사슬 탐침 (개루프 명령 → 프로파일러·서보)
+add_executable(probe_chain_r3c tools/probe_chain_r3c.cpp)
+target_link_libraries(probe_chain_r3c amr_nav_research_core)
+install(TARGETS probe_chain_r3c DESTINATION lib/${PROJECT_NAME})
+
 # --- 테스트 ---
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -105,6 +127,9 @@ if(BUILD_TESTING)
   # 2c) 3 라운드 스위치 (G1 가속 국면 재설정 유예)
   ament_add_gtest(test_dwa_x_round3 test/test_dwa_x_round3.cpp TIMEOUT 300)
   target_link_libraries(test_dwa_x_round3 amr_nav_research_core)
+  # 2d) R3-C E5 P4 와인드업 상한 (prereg_r3c.md §3)
+  ament_add_gtest(test_r3c_windup test/test_r3c_windup.cpp TIMEOUT 120)
+  target_link_libraries(test_r3c_windup amr_nav_research_core)
   # 3) 플러그인: 원본 DWAController 와 DwaControllerX 를 **pluginlib 으로 한 프로세스에** 올려
   #    (시험대의 controller_server 와 같은 상황) 같은 입력에 같은 명령을 내는지 본다.
   #    플러그인 라이브러리는 링크하지 않는다 — 링크하면 class_loader 등록이 엉킨다.
