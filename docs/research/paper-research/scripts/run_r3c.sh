@@ -32,7 +32,7 @@ ros() {   # ros <단계(쉼표)> [추가 인자…]
   $PY "$H/orchestrate_r3c.py" ros "$st" --commit "$C" --dirty 0 "$@" >> "$R/orchestrate_${tag}.log" 2>&1
   local rc=$?
   local msg=""
-  for s in ${st//,/ }; do msg="$msg $s n=$(nrun "$R/$s") rate_min·<18=$(rate "$R/$s" | tr ' ' '·')"; done
+  for s in ${st//,/ }; do msg="$msg $s n=$(nrun "$R/$s") rate_min/<18Hz=$(rate "$R/$s" | sed 's# #/#')"; done
   $J pr-r3c "R3-C STAGE $tag END rc=$rc$msg"
   return $rc
 }
