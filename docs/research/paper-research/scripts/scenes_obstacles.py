@@ -92,13 +92,15 @@ def main():
     ap.add_argument('--paths', required=True, help='heldout_smooth.json·composite.yaml 디렉터리')
     ap.add_argument('--seed', type=int, default=20261018)
     ap.add_argument('--out', default='')
+    ap.add_argument('--n', type=int, default=N_SCENES,
+                    help='앞에서부터 쓸 매끈 경로 수 (1 라운드 20; 2 라운드 튜닝 O 는 6)')
     args = ap.parse_args()
     with open(os.path.join(args.paths, 'heldout_smooth.json'), encoding='utf-8') as f:
         smooth = json.load(f)
     grid = warehouse_map.load_map(os.path.join(args.paths, 'composite.yaml'))
     rng = np.random.default_rng(args.seed)
     out = []
-    for k, e in enumerate(smooth[:N_SCENES]):
+    for k, e in enumerate(smooth[:args.n]):
         tries = 0
         while True:
             tries += 1

@@ -15,8 +15,10 @@ export ROS_DOMAIN_ID=$DOM ROS_LOCALHOST_ONLY=1 ROS_WS=/ros2_ws
 # PR_LAUNCH (환경 변수) 가 있으면 사본 런치 (kinematic_sim_x.launch.py — 위치 잡음·장애물 시계, prereg §8)
 LAUNCH=(amr_navigation kinematic_sim.launch.py)
 if [ -n "${PR_LAUNCH:-}" ]; then LAUNCH=("$PR_LAUNCH"); fi
+# PR_MAP (환경 변수) 가 있으면 그 지도 (2 라운드: 경로 집합마다 통로 랙이 달라 지도도 다르다)
+MAP=${PR_MAP:-/runs/paths/composite.yaml}
 setsid ros2 launch "${LAUNCH[@]}" robot_name:=$NS \
-  map:=/runs/paths/composite.yaml params_file:=$PARAMS use_ttc_bt:=false log_level:=warn \
+  map:=$MAP params_file:=$PARAMS use_ttc_bt:=false log_level:=warn \
   "${LARGS[@]}" > "$LOG" 2>&1 &
 LPID=$!
 CMD=("${@//@NS@/$NS}")
