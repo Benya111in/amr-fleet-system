@@ -664,6 +664,8 @@ def main():
 
     with open(os.path.join(args.out, 'values_r3c.json'), 'w', encoding='utf-8') as f:
         json.dump(V, f, indent=1, ensure_ascii=False, default=float)
+    with open(os.path.join(args.out, 'tables_r3c.md'), 'w', encoding='utf-8') as f:
+        f.write(render(V))
     print(json.dumps({k: (v if k in ('selection', 'E3_repro') else '…') for k, v in V.items()}, ensure_ascii=False,
                      indent=1, default=float))
     return 0
@@ -751,6 +753,109 @@ def _chain_same(a, b, arm):
     keys = ('success', 't_end', 'cte_mean', 'cte_max', 'stop_along', 'stop_lat', 'n_resets')
     same = sum(1 for k in common if all(ka[k].get(x) == kb[k].get(x) for x in keys))
     return {'common': len(common), 'identical_metrics': same}
+
+
+# ---------------------------------------------------------------------------------------------
+# 표 (tables_r3c.md)
+
+def _f(x, nd=2, sign=False):
+    if x is None or (isinstance(x, float) and math.isnan(x)):
+        return '–'
+    return f'{x:+.{nd}f}' if sign else f'{x:.{nd}f}'
+
+
+def _d(d, nd=1):
+    if not d or not d.get('pct'):
+        return '–'
+    return f"{d['pct'][0]:+.{nd}f} [{d['pct'][1]:+.{nd}f}, {d['pct'][2]:+.{nd}f}] (n {d['n']})"
+
+
+def render(V):
+    R3 = V['R3']
+    sel = V['selection']
+    arms5 = ['dwa_R3', 'dwa_textbook_tuned', sel['DWB'], sel['MPPI'], sel['RPP']]
+    e4a = V.get('E4', {}).get('arms', {})
+    L = ['# R3-C 표 (analyze_r3c.py 생성 — 기술 통계)', '',
+         f"선택: CC-DWA = dwa_R3 = {sel['chosen_z']}, DWB {sel['DWB']}, MPPI {sel['MPPI']}, RPP {sel['RPP']}.", '']
+    L += ['## 표 1 재구성 — R3 원자료 (held-out D), Δ 는 제어기 − CC-DWA(dwa_R3) 짝 차', '',
+          '| 제어기 | 성공 C1 (매끈/통로/A*) | T/T_ref 중앙 | Δ시간 C1 % [95 %] | 곡선 CTE 중앙 [cm] | |정지 오차| 중앙 [cm] | '
+          'C3 Δ시간 % [95 %] | C2 Δ시간 % | O 성공 /60 (접촉) | O 최소 이격 최솟값 [cm] | 계산 평균 [ms] |',
+          '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |']
+    for a in arms5:
+        s = R3['table1'].get(a)
+        o = R3['o'].get(a)
+        if not s:
+            continue
+        sb = s['success_by_family']
+        L.append(f"| {a} | {s['success']} ({sb['smooth'][0]}/{sb['narrow'][0]}/{sb['astar'][0]}) | "
+                 f"{_f(s['t_tref_med'], 3)} | {_d(R3['c1_delta'].get(a))} | {_f(s['cte_curve_cm_med'])} | "
+                 f"{_f(s['stop_err_cm_med'], 1)} | {_d(R3['c3_delta'].get(a))} | {_d(R3['c2_delta'].get(a))} | "
+                 f"{o['success']} ({o['contact']}) | {_f(o['min_clear_cm_min'], 1)} | "
+                 f"{_f(e4a.get(a, {}).get('mean_ms'))} |")
+    L += ['', f"순위 (T/T_ref 경로 중앙, 빠른 순): C1 {R3['rank_c1'][0]}, C2 {R3['rank_c2'][0]}", '']
+    L += ['## 표 2 — E1 변형 + E3 CC-DWA (같은 배치, held-out D)', '',
+          '| 변형 | 팔 | 상태 | Δ시간 C1 % [95 %] | t0.9 중앙 [s] (n) | Δt0.9 [s] | 출발 2 s 가속 재설정 /실행 | '
+          '재설정 전체 /실행 | C3 느린 /60 (실패) | C3 Δ시간 % | O 성공 /60 (접촉) | 진입 yaw > 0.05 rad | 성공 C1 |',
+          '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |']
+    for vid, r in V['E1E3'].items():
+        c = r['c1']
+        L.append(f"| {vid} | {r['arm']} | {r['status']} | {_d(r['delta_c1'])} | {_f(c['t09_med'])} ({c['t09_n']}) | "
+                 f"{_f(r['delta_t09_med'], 2, True)} | {_f(c.get('accel2_per_run'))} | {_f(c.get('resets_per_run'))} | "
+                 f"{r['slow_c3']['slow']} ({r['slow_c3']['fail']}) | {_d(r['delta_c3'])} | "
+                 f"{r['o']['success']} ({r['o']['contact']}) | {c['entry_yaw_over_005']}/{c['entry_yaw_n']} | "
+                 f"{c['success']}/{c['runs']} |")
+    e3 = V['E3_repro']
+    L += ['', f"E3 재현 (E3 dwa_R3 C1 대 R3 dwa_R3 C1): 경로별 |시간 차| 평균 {_f(e3['mean_abs_pct'], 3)} % "
+          f"(평균 {_f(e3['mean_pct'], 3, True)} %, n {e3['n']}), 성공 {e3['success_e3']} 대 {e3['success_r3']} → "
+          f"{'통과' if e3['pass'] else '기준 밖'} (기준 ≤ 0.5 %, 성공 같음)", '']
+    L += ['## E1 chain (잡음 없음, stateful false)', '',
+          '| 변형 | 성공 | t0.9 중앙 [s] | v_m 0.3→0.6 기울기 중앙 [m/s²] | 가속 재설정 /실행 | Δ시간 % (짝, dwa_R3 기준) |',
+          '| --- | --- | --- | --- | --- | --- |']
+    for vid, r in V['E1_chain'].items():
+        L.append(f"| {vid} | {r['success']}/{r['runs']} | {_f(r['t09_med'])} | {_f(r['slope36_med'])} | "
+                 f"{_f(r['accel_resets_per_run'])} | {_d(r.get('delta_c1'))} |")
+    L += ['', f"E1 chain dwa_R3 대 R3 chain dwa_R3 (결정적): {V['E1_chain_vs_R3_chain']}", '']
+    e2 = V.get('E2') or {}
+    L += ['## E2 — X00 (배포 규칙 동치, K 0) × held-out D C1', '',
+          f"성공 {e2.get('success')}/{e2.get('runs')}, t0.9 중앙 {_f(e2.get('t09_med'))} s "
+          f"(E3 dwa_R3 대비 {_f(e2.get('t09_minus_E3_dwa_R3'), 2, True)} s), 출발 2 s 가속 재설정 "
+          f"{_f(e2.get('accel2_per_run'))}/실행, 재설정 전체 {_f(e2.get('resets_per_run'))}/실행, "
+          f"T/T_ref 중앙 {_f(e2.get('t_tref_med'), 3)}", '']
+    L += ['## R3 원자료에서 내는 2.2 절 수치', '',
+          f"- ② R3 C3 X00 느린 실행 {R3['x00_c3_decel_window']['slow']} 건 중 첫 진입 전 3 s 안 재설정 "
+          f"{R3['x00_c3_decel_window']['with_reset_in_window']} 건, 감속 재설정 "
+          f"{R3['x00_c3_decel_window']['with_decel_reset_in_window']} 건",
+          f"- ③ dwa_R2 (Y11) 가속 재설정 /실행: chain {_f(R3['chain']['dwa_R2']['accel_resets_per_run'])}, "
+          f"ROS C1 출발 2 s {_f(R3['dwa_R2_c1_resets'].get('accel2_per_run'))} "
+          f"(전체 {_f(R3['dwa_R2_c1_resets'].get('resets_per_run'))})",
+          f"- 시험대 간 차 (dwa_R3, ROS C1 − chain): {R3['testbed_gap']}", '']
+    if 'E4_equiv' in V:
+        L += ['## E4 동치', '', f"e4eq 통과 여부: { {a: v['pass'] for a, v in V['E4_equiv']['arms'].items()} }"]
+    if 'E4_equiv2' in V:
+        e2p = {sc: (round(d['time_diff_pct'], 3), round(d['cte_diff_cm'], 3))
+               for sc, d in V['E4_equiv2']['paths'].items()}
+        L += [f"e4eq2 (MPPI, 순서 엇갈림): 통과 {V['E4_equiv2']['pass']}, 경로별 (시간 %, CTE cm) {e2p}"]
+    if 'E4' in V:
+        L += ['', '## E4 계산 시간 (held-out D C1 60, 레인 2 개 cpuset, 단독)', '',
+              '| 팔 | 실행 | 경로 | 주기 | 평균 [ms] | p50 중앙 [ms] | p99 중앙 [ms] | 최대 [ms] | 후보 수 중앙 | 굴림 스텝 중앙 | 명령 주기 최소 |',
+              '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |']
+        for a in arms5:
+            x = e4a.get(a)
+            if x:
+                L.append(f"| {a} | {x['runs']} | {x['paths']} | {x['cycles']} | {_f(x['mean_ms'], 3)} | "
+                         f"{_f(x['p50_ms_med'], 3)} | {_f(x['p99_ms_med'], 3)} | {_f(x['max_ms'], 2)} | "
+                         f"{_f(x['n_samples_med'], 0)} | {_f(x['rollout_steps_med'], 0)} | {_f(x['cmd_rate_min'])} |")
+        for k, v in V['E4'].items():
+            if k.startswith('ratio_') and v:
+                L.append(f"- {k}: {v['ratio']:.3f} [{v['ci'][0]:.3f}, {v['ci'][1]:.3f}] (n {v['n']})")
+        L.append(f"- 성공: {V['E4'].get('success')}, 1 분 부하: {V['E4'].get('load1')}")
+    L += ['', '## E5', '', '```json', json.dumps(V['E5'], indent=1, ensure_ascii=False, default=float), '```', '']
+    e6 = json.dumps(V.get('E6'), indent=1, ensure_ascii=False, default=float)
+    L += ['## E6 그림 2 (held-out D)', '', '```json', e6, '```', '']
+    L += ['## 실시간 품질', '', '| 단계 | 실행 | 명령 주기 최소 [Hz] | 18 Hz 미만 | 참값 트랙 구독 ≠ 0 |', '| --- | --- | --- | --- | --- |']
+    for k, v in V['rates'].items():
+        L.append(f"| {k} | {v['runs']} | {v['cmd_rate_min']:.2f} | {v['below18']} | {v['tracks_subs_nonzero']} |")
+    return '\n'.join(L) + '\n'
 
 
 if __name__ == '__main__':
