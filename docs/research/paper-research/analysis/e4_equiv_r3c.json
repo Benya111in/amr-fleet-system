@@ -1,0 +1,766 @@
+{
+ "criterion": "경로마다 반복 평균: 성공 수 같음, 성공 실행의 |ΔT|/T ≤ 1 %·|Δ cte_mean| ≤ 0.2 cm (성공이 없으면 실패 실행의 t_end ±1 %), 명령 주기 ≥ 19.7 Hz",
+ "arms": {
+  "dwa_R3": {
+   "pass": true,
+   "pass_success_only": true,
+   "paths": {
+    "S01_pwc": {
+     "n": [
+      3,
+      3
+     ],
+     "success": [
+      3,
+      3
+     ],
+     "cmd_rate_min": 19.998439205742088,
+     "t_end": [
+      [
+       23.002,
+       23.002,
+       22.952
+      ],
+      [
+       22.951,
+       22.951,
+       23.002
+      ]
+     ],
+     "time_diff_pct": 0.07365615509196122,
+     "cte_diff_cm": 0.003452049608345612,
+     "fail_t_end_diff_pct": null,
+     "pass": true,
+     "all_success": true
+    },
+    "S02_pwl": {
+     "n": [
+      3,
+      3
+     ],
+     "success": [
+      3,
+      3
+     ],
+     "cmd_rate_min": 19.99799901596092,
+     "t_end": [
+      [
+       19.351,
+       19.352,
+       19.352
+      ],
+      [
+       19.351,
+       19.351,
+       19.302
+      ]
+     ],
+     "time_diff_pct": 0.0870001797828035,
+     "cte_diff_cm": 2.568460959638183e-05,
+     "fail_t_end_diff_pct": null,
+     "pass": true,
+     "all_success": true
+    },
+    "S03_pwc": {
+     "n": [
+      3,
+      3
+     ],
+     "success": [
+      3,
+      3
+     ],
+     "cmd_rate_min": 19.99758119420944,
+     "t_end": [
+      [
+       20.002,
+       20.001,
+       20.052
+      ],
+      [
+       20.051,
+       20.001,
+       20.052
+      ]
+     ],
+     "time_diff_pct": -0.08190023783949396,
+     "cte_diff_cm": 0.02446476976327907,
+     "fail_t_end_diff_pct": null,
+     "pass": true,
+     "all_success": true
+    },
+    "S04_pwl": {
+     "n": [
+      3,
+      3
+     ],
+     "success": [
+      3,
+      3
+     ],
+     "cmd_rate_min": 19.99853714867961,
+     "t_end": [
+      [
+       21.751,
+       21.752,
+       21.751
+      ],
+      [
+       21.751,
+       21.751,
+       21.751
+      ]
+     ],
+     "time_diff_pct": 0.00016003277061305,
+     "cte_diff_cm": -0.007417730337749319,
+     "fail_t_end_diff_pct": null,
+     "pass": true,
+     "all_success": true
+    }
+   }
+  },
+  "DWB_D31": {
+   "pass": true,
+   "pass_success_only": true,
+   "paths": {
+    "S01_pwc": {
+     "n": [
+      3,
+      3
+     ],
+     "success": [
+      3,
+      3
+     ],
+     "cmd_rate_min": 19.989726520599575,
+     "t_end": [
+      [
+       23.212,
+       23.061,
+       22.918
+      ],
+      [
+       22.959,
+       23.161,
+       22.921
+      ]
+     ],
+     "time_diff_pct": 0.2164325463678507,
+     "cte_diff_cm": 0.02865803037111897,
+     "fail_t_end_diff_pct": null,
+     "pass": true,
+     "all_success": true
+    },
+    "S02_pwl": {
+     "n": [
+      3,
+      3
+     ],
+     "success": [
+      3,
+      3
+     ],
+     "cmd_rate_min": 19.986725835785357,
+     "t_end": [
+      [
+       19.811,
+       19.661,
+       19.81
+      ],
+      [
+       19.81,
+       19.665,
+       19.613
+      ]
+     ],
+     "time_diff_pct": 0.3284389257645737,
+     "cte_diff_cm": -0.029929526057072275,
+     "fail_t_end_diff_pct": null,
+     "pass": true,
+     "all_success": true
+    },
+    "S03_pwc": {
+     "n": [
+      3,
+      3
+     ],
+     "success": [
+      3,
+      3
+     ],
+     "cmd_rate_min": 19.989230712737662,
+     "t_end": [
+      [
+       19.961,
+       20.011,
+       19.961
+      ],
+      [
+       20.01,
+       20.011,
+       20.211
+      ]
+     ],
+     "time_diff_pct": -0.4966708866736447,
+     "cte_diff_cm": 0.06913893794512765,
+     "fail_t_end_diff_pct": null,
+     "pass": true,
+     "all_success": true
+    },
+    "S04_pwl": {
+     "n": [
+      3,
+      3
+     ],
+     "success": [
+      3,
+      3
+     ],
+     "cmd_rate_min": 19.988843848751465,
+     "t_end": [
+      [
+       22.161,
+       21.962,
+       22.011
+      ],
+      [
+       22.11,
+       22.011,
+       22.061
+      ]
+     ],
+     "time_diff_pct": -0.07278817396376702,
+     "cte_diff_cm": -0.08414718897216261,
+     "fail_t_end_diff_pct": null,
+     "pass": true,
+     "all_success": true
+    }
+   }
+  },
+  "MPPI_P30": {
+   "pass": false,
+   "pass_success_only": false,
+   "paths": {
+    "S01_pwc": {
+     "n": [
+      3,
+      3
+     ],
+     "success": [
+      3,
+      3
+     ],
+     "cmd_rate_min": 19.996478797022213,
+     "t_end": [
+      [
+       34.805,
+       35.106,
+       39.156
+      ],
+      [
+       39.255,
+       39.157,
+       34.955
+      ]
+     ],
+     "time_diff_pct": -3.7928028609378606,
+     "cte_diff_cm": 0.2939526949724675,
+     "fail_t_end_diff_pct": null,
+     "pass": false,
+     "all_success": true
+    },
+    "S02_pwl": {
+     "n": [
+      3,
+      3
+     ],
+     "success": [
+      3,
+      3
+     ],
+     "cmd_rate_min": 20.028053138942823,
+     "t_end": [
+      [
+       26.256,
+       31.555,
+       31.706
+      ],
+      [
+       31.555,
+       26.206,
+       26.206
+      ]
+     ],
+     "time_diff_pct": 6.609211389631486,
+     "cte_diff_cm": 0.21527028125574843,
+     "fail_t_end_diff_pct": null,
+     "pass": false,
+     "all_success": true
+    },
+    "S03_pwc": {
+     "n": [
+      3,
+      3
+     ],
+     "success": [
+      3,
+      3
+     ],
+     "cmd_rate_min": 19.995727498296745,
+     "t_end": [
+      [
+       35.256,
+       35.255,
+       35.158
+      ],
+      [
+       30.056,
+       30.006,
+       30.056
+      ]
+     ],
+     "time_diff_pct": 17.255626061604378,
+     "cte_diff_cm": -0.982133095755574,
+     "fail_t_end_diff_pct": null,
+     "pass": false,
+     "all_success": true
+    },
+    "S04_pwl": {
+     "n": [
+      3,
+      3
+     ],
+     "success": [
+      3,
+      3
+     ],
+     "cmd_rate_min": 19.996221388238418,
+     "t_end": [
+      [
+       36.256,
+       36.255,
+       36.155
+      ],
+      [
+       29.555,
+       29.556,
+       29.557
+      ]
+     ],
+     "time_diff_pct": 22.553940884995427,
+     "cte_diff_cm": 0.9024250674969352,
+     "fail_t_end_diff_pct": null,
+     "pass": false,
+     "all_success": true
+    }
+   }
+  },
+  "RPP_R27": {
+   "pass": true,
+   "pass_success_only": true,
+   "paths": {
+    "S01_pwc": {
+     "n": [
+      3,
+      3
+     ],
+     "success": [
+      3,
+      3
+     ],
+     "cmd_rate_min": 19.999562355993795,
+     "t_end": [
+      [
+       23.001,
+       23.101,
+       23.05
+      ],
+      [
+       23.001,
+       23.101,
+       23.101
+      ]
+     ],
+     "time_diff_pct": -0.07174425882624513,
+     "cte_diff_cm": -0.027255250216595736,
+     "fail_t_end_diff_pct": null,
+     "pass": true,
+     "all_success": true
+    },
+    "S02_pwl": {
+     "n": [
+      3,
+      3
+     ],
+     "success": [
+      3,
+      3
+     ],
+     "cmd_rate_min": 19.999831036815905,
+     "t_end": [
+      [
+       19.451,
+       19.401,
+       19.45
+      ],
+      [
+       19.401,
+       19.401,
+       19.401
+      ]
+     ],
+     "time_diff_pct": 0.17104360077098146,
+     "cte_diff_cm": 0.009101690706065334,
+     "fail_t_end_diff_pct": null,
+     "pass": true,
+     "all_success": true
+    },
+    "S03_pwc": {
+     "n": [
+      3,
+      3
+     ],
+     "success": [
+      3,
+      3
+     ],
+     "cmd_rate_min": 20.048715585148823,
+     "t_end": [
+      [
+       20.101,
+       20.151,
+       20.151
+      ],
+      [
+       20.151,
+       20.151,
+       20.101
+      ]
+     ],
+     "time_diff_pct": 0.0002759074304359288,
+     "cte_diff_cm": 0.005697965742016277,
+     "fail_t_end_diff_pct": null,
+     "pass": true,
+     "all_success": true
+    },
+    "S04_pwl": {
+     "n": [
+      3,
+      3
+     ],
+     "success": [
+      3,
+      3
+     ],
+     "cmd_rate_min": 19.998263148177102,
+     "t_end": [
+      [
+       21.752,
+       21.701,
+       21.702
+      ],
+      [
+       21.801,
+       21.803,
+       21.702
+      ]
+     ],
+     "time_diff_pct": -0.23044019962511486,
+     "cte_diff_cm": -0.001867267680531054,
+     "fail_t_end_diff_pct": null,
+     "pass": true,
+     "all_success": true
+    }
+   }
+  },
+  "dwa_textbook_tuned": {
+   "pass": true,
+   "pass_success_only": true,
+   "paths": {
+    "S01_pwc": {
+     "n": [
+      3,
+      3
+     ],
+     "success": [
+      3,
+      3
+     ],
+     "cmd_rate_min": 19.998560194809492,
+     "t_end": [
+      [
+       23.901,
+       23.901,
+       23.901
+      ],
+      [
+       23.901,
+       23.901,
+       23.952
+      ]
+     ],
+     "time_diff_pct": -0.07148705657504806,
+     "cte_diff_cm": 0.0009330622827027901,
+     "fail_t_end_diff_pct": null,
+     "pass": true,
+     "all_success": true
+    },
+    "S02_pwl": {
+     "n": [
+      3,
+      3
+     ],
+     "success": [
+      0,
+      0
+     ],
+     "cmd_rate_min": 19.79911669675316,
+     "t_end": [
+      [
+       89.802,
+       89.802,
+       89.802
+      ],
+      [
+       89.802,
+       89.802,
+       89.802
+      ]
+     ],
+     "time_diff_pct": -3.4779747726254584e-05,
+     "cte_diff_cm": 0.0,
+     "fail_t_end_diff_pct": -3.4779747726254584e-05,
+     "pass": true,
+     "all_success": false
+    },
+    "S03_pwc": {
+     "n": [
+      3,
+      3
+     ],
+     "success": [
+      2,
+      2
+     ],
+     "cmd_rate_min": 19.804374013581985,
+     "t_end": [
+      [
+       92.351,
+       21.051,
+       21.001
+      ],
+      [
+       92.353,
+       20.901,
+       21.001
+      ]
+     ],
+     "time_diff_pct": 0.3589557575581992,
+     "cte_diff_cm": -0.01524431304039675,
+     "fail_t_end_diff_pct": -0.00258907803792896,
+     "pass": true,
+     "all_success": false
+    },
+    "S04_pwl": {
+     "n": [
+      3,
+      3
+     ],
+     "success": [
+      0,
+      0
+     ],
+     "cmd_rate_min": 19.813682770543608,
+     "t_end": [
+      [
+       96.852,
+       96.852,
+       96.852
+      ],
+      [
+       96.852,
+       96.851,
+       96.851
+      ]
+     ],
+     "time_diff_pct": 0.0008237659687271304,
+     "cte_diff_cm": 0.0,
+     "fail_t_end_diff_pct": 0.0008237659687271304,
+     "pass": true,
+     "all_success": false
+    }
+   }
+  }
+ },
+ "pass": false,
+ "mppi_order": [
+  {
+   "scene": "S01_pwc",
+   "rep": 1,
+   "order_and_t": [
+    [
+     "MPPI_P30",
+     39.25
+    ],
+    [
+     "tm_MPPI_P30",
+     34.81
+    ]
+   ]
+  },
+  {
+   "scene": "S01_pwc",
+   "rep": 2,
+   "order_and_t": [
+    [
+     "MPPI_P30",
+     39.16
+    ],
+    [
+     "tm_MPPI_P30",
+     35.11
+    ]
+   ]
+  },
+  {
+   "scene": "S01_pwc",
+   "rep": 3,
+   "order_and_t": [
+    [
+     "tm_MPPI_P30",
+     39.16
+    ],
+    [
+     "MPPI_P30",
+     34.96
+    ]
+   ]
+  },
+  {
+   "scene": "S02_pwl",
+   "rep": 1,
+   "order_and_t": [
+    [
+     "MPPI_P30",
+     31.55
+    ],
+    [
+     "tm_MPPI_P30",
+     26.26
+    ]
+   ]
+  },
+  {
+   "scene": "S02_pwl",
+   "rep": 2,
+   "order_and_t": [
+    [
+     "tm_MPPI_P30",
+     31.56
+    ],
+    [
+     "MPPI_P30",
+     26.21
+    ]
+   ]
+  },
+  {
+   "scene": "S02_pwl",
+   "rep": 3,
+   "order_and_t": [
+    [
+     "tm_MPPI_P30",
+     31.71
+    ],
+    [
+     "MPPI_P30",
+     26.21
+    ]
+   ]
+  },
+  {
+   "scene": "S03_pwc",
+   "rep": 1,
+   "order_and_t": [
+    [
+     "tm_MPPI_P30",
+     35.26
+    ],
+    [
+     "MPPI_P30",
+     30.06
+    ]
+   ]
+  },
+  {
+   "scene": "S03_pwc",
+   "rep": 2,
+   "order_and_t": [
+    [
+     "tm_MPPI_P30",
+     35.26
+    ],
+    [
+     "MPPI_P30",
+     30.01
+    ]
+   ]
+  },
+  {
+   "scene": "S03_pwc",
+   "rep": 3,
+   "order_and_t": [
+    [
+     "tm_MPPI_P30",
+     35.16
+    ],
+    [
+     "MPPI_P30",
+     30.06
+    ]
+   ]
+  },
+  {
+   "scene": "S04_pwl",
+   "rep": 1,
+   "order_and_t": [
+    [
+     "tm_MPPI_P30",
+     36.26
+    ],
+    [
+     "MPPI_P30",
+     29.56
+    ]
+   ]
+  },
+  {
+   "scene": "S04_pwl",
+   "rep": 2,
+   "order_and_t": [
+    [
+     "tm_MPPI_P30",
+     36.26
+    ],
+    [
+     "MPPI_P30",
+     29.56
+    ]
+   ]
+  },
+  {
+   "scene": "S04_pwl",
+   "rep": 3,
+   "order_and_t": [
+    [
+     "tm_MPPI_P30",
+     36.15
+    ],
+    [
+     "MPPI_P30",
+     29.56
+    ]
+   ]
+  }
+ ]
+}

@@ -10,6 +10,7 @@ docs/research/paper-research/runs_r3c.jsonl (pr-harness 의 runs.jsonl 에는 �
         c3      같은 팔 × C3 12 경로 × seed 1–5
         o       같은 팔 × O 20 장면 × 반복 3
         e4eq    E4 동치: 튜닝-20 매끈 앞 4 경로 × 5 팔 (감쌈·안 감쌈) × 반복 3 (빌드 ws_r3c)
+        e4eq2   E4 동치 보충: MPPI 선택 팔만, 감쌈·안 감쌈의 구성·실행 순서를 엇갈림 (A/B × 반복 3 × 매끈 4)
         e4      E4 측정: held-out D C1 60 × 감싼 5 팔 (레인 2 개, 레인마다 물리 코어 4 개 cpuset, 빌드 ws_r3c)
     python3 orchestrate_r3c.py chain --commit <sha> --dirty <n> [--procs 8]   # E1 chain (컨테이너 amr-ai-pr-chain-r3c)
 
@@ -157,6 +158,20 @@ def stage_jobs(st, args):
                                      ox.est_seconds(ent, sub, arms), 'tune', zsel=zsel, rep=rep,
                                      ws=WS_R3C, bench='ros_bench_r3c.py', timed=timed,
                                      extra_bench=['--stateful', '0', '--condition', 'E4EQ'], stateful=False))
+        return jobs
+    if st == 'e4eq2':
+        # E4 동치 보충 (편차 기록: results_r3c.md): MPPI 는 같은 경로에서 두 모드(빠름·느림)로 갈리고 어느 모드인지가
+        # 작업 안 순서에 달려 보인다. 감쌈 여부와 구성 순서(controller_plugins 순서)·실행 순서를 엇갈려 둔다:
+        # A = [MPPI, tm_MPPI], B = [tm_MPPI, MPPI], 반복 1–3, 매끈 앞 4 경로 (경로마다 팔 순서는 rep 로 회전).
+        mp = sel['MPPI']['chosen']
+        ent = o2.load_c(o2.set_json('tune')[0])
+        ids = [e['id'] for e in ent][:4]
+        for order, arms in (('A', [mp, f'tm_{mp}']), ('B', [f'tm_{mp}', mp])):
+            for rep in (1, 2, 3):
+                jobs.append(make_job(st, f'{order}_r{rep}', arms, ids, [o2.set_json('tune')[0]],
+                                     ox.est_seconds(ent, ids, arms), 'tune', zsel=zsel, rep=rep, ws=WS_R3C,
+                                     bench='ros_bench_r3c.py', timed={f'tm_{mp}': mp},
+                                     extra_bench=['--stateful', '0', '--condition', 'E4EQ2'], stateful=False))
         return jobs
     if st == 'e4':
         arms5 = e4_arms(sel)

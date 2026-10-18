@@ -378,37 +378,86 @@ def e4_summary(rows, arms5):
 
 
 def e4eq_report(recs, arms5):
-    rep = {'criterion': '경로마다 반복 평균: |ΔT|/T ≤ 1 %, |Δ cte_mean| ≤ 0.2 cm, 성공 동일, 명령 주기 ≥ 19.7 Hz',
-           'arms': {}}
+    """
+    prereg_r3c §3 E4 동치: 경로마다 반복 평균, 감쌈(tm_X) 대 안 감쌈(X) 시간 ±1 %, CTE ±0.2 cm, 명령 주기 ≥ 19.7 Hz.
+    시간·CTE 는 모든 실행의 t_end·cte_mean 반복 평균 (성공이면 t_end = t_reach, 시간 초과는 상한 시각) 이고, 성공 수가
+    같아야 한다. 'pass_success_only' 는 두 팔 모두 모든 반복이 성공한 경로만 보는 엄격판 (analyze_x.equiv_report 꼴).
+    """
+    rep = {'criterion': '경로마다 반복 평균: 성공 수 같음, 성공 실행의 |ΔT|/T ≤ 1 %·|Δ cte_mean| ≤ 0.2 cm '
+                        '(성공이 없으면 실패 실행의 t_end ±1 %), 명령 주기 ≥ 19.7 Hz', 'arms': {}}
     ok_all = True
     for arm in arms5:
         sub = [r for r in recs if r['arm'] in (arm, f'tm_{arm}')]
         res = {}
         ok = True
+        ok_s = True
         for sc in sorted({r['scene'] for r in sub}):
             a = [r for r in sub if r['scene'] == sc and r['arm'] == f'tm_{arm}']
             b = [r for r in sub if r['scene'] == sc and r['arm'] == arm]
-            ta = [r['t_reach'] for r in a if r['success']]
-            tb = [r['t_reach'] for r in b if r['success']]
-            ca = [r['cte_mean'] for r in a if r['success']]
-            cb = [r['cte_mean'] for r in b if r['success']]
             rate = min(r['cmd_rate_hz'] for r in a + b)
             d = {'n': [len(a), len(b)], 'success': [sum(r['success'] for r in a), sum(r['success'] for r in b)],
-                 'cmd_rate_min': rate}
-            if ta and tb:
-                d['time_diff_pct'] = 100 * (np.mean(ta) / np.mean(tb) - 1)
-                d['cte_diff_cm'] = 100 * (np.mean(ca) - np.mean(cb))
-                p = (d['success'][0] == d['success'][1] == len(a) == len(b) and abs(d['time_diff_pct']) <= 1.0
-                     and abs(d['cte_diff_cm']) <= 0.2 and rate >= 19.7)
+                 'cmd_rate_min': rate,
+                 't_end': [[round(r['t_end'], 3) for r in a], [round(r['t_end'], 3) for r in b]]}
+            sa = [r for r in a if r['success']]
+            sb = [r for r in b if r['success']]
+            if sa and sb:
+                ta, tb = np.mean([r['t_reach'] for r in sa]), np.mean([r['t_reach'] for r in sb])
+                d['time_diff_pct'] = 100 * (ta / tb - 1)
+                d['cte_diff_cm'] = 100 * (np.mean([r['cte_mean'] for r in sa]) - np.mean([r['cte_mean'] for r in sb]))
             else:
-                p = False
+                d['time_diff_pct'] = 100 * (np.mean([r['t_end'] for r in a]) / np.mean([r['t_end'] for r in b]) - 1)
+                d['cte_diff_cm'] = 0.0
+            fa = [r['t_end'] for r in a if not r['success']]
+            fb = [r['t_end'] for r in b if not r['success']]
+            d['fail_t_end_diff_pct'] = 100 * (np.mean(fa) / np.mean(fb) - 1) if fa and fb else None
+            p = (d['success'][0] == d['success'][1] and len(a) == len(b) and abs(d['time_diff_pct']) <= 1.0 and
+                 abs(d['cte_diff_cm']) <= 0.2 and rate >= 19.7 and
+                 (d['fail_t_end_diff_pct'] is None or abs(d['fail_t_end_diff_pct']) <= 1.0))
             d['pass'] = bool(p)
+            d['all_success'] = d['success'][0] == d['success'][1] == len(a) == len(b)
             ok = ok and p
+            ok_s = ok_s and (p if d['all_success'] else True)
             res[sc] = d
-        rep['arms'][arm] = {'pass': bool(ok), 'paths': res}
+        rep['arms'][arm] = {'pass': bool(ok), 'pass_success_only': bool(ok_s), 'paths': res}
         ok_all = ok_all and ok
     rep['pass'] = bool(ok_all)
     return rep
+
+
+def e4eq2_report(recs):
+    """E4 동치 보충 (MPPI): 구성 순서 A/B × 반복 3 를 합친 감쌈 대 안 감쌈, 그리고 경로마다 먼저 돈 쪽·나중 쪽."""
+    arms = sorted({r['arm'] for r in recs})
+    tm = [a for a in arms if a.startswith('tm_')][0]
+    base = tm[3:]
+    out = {'arm': base, 'paths': {}}
+    ok = True
+    for sc in sorted({r['scene'] for r in recs}):
+        rows = []
+        by_job = collections.defaultdict(list)
+        for r in recs:
+            if r['scene'] == sc:
+                by_job[r['_file']].append(r)
+        for job, rs in by_job.items():
+            rs = sorted(rs, key=lambda r: r['t_acc_abs'])
+            for i, r in enumerate(rs):
+                rows.append({'job': job[:-6], 'arm': r['arm'], 'run_order': i, 't_end': round(r['t_end'], 3),
+                             'success': r['success'], 'cte_cm': round(100 * r['cte_mean'], 3)})
+        a = [x for x in rows if x['arm'] == tm]
+        b = [x for x in rows if x['arm'] == base]
+        dt = 100 * (np.mean([x['t_end'] for x in a]) / np.mean([x['t_end'] for x in b]) - 1)
+        dc = np.mean([x['cte_cm'] for x in a]) - np.mean([x['cte_cm'] for x in b])
+        first = [x for x in rows if x['run_order'] == 0]
+        second = [x for x in rows if x['run_order'] == 1]
+        p = (sum(x['success'] for x in a) == sum(x['success'] for x in b) and abs(dt) <= 1.0 and abs(dc) <= 0.2)
+        ok = ok and p
+        out['paths'][sc] = {'time_diff_pct': float(dt), 'cte_diff_cm': float(dc), 'pass': bool(p),
+                            'first_run_t': {'tm': [x['t_end'] for x in first if x['arm'] == tm],
+                                            'base': [x['t_end'] for x in first if x['arm'] == base]},
+                            'second_run_t': {'tm': [x['t_end'] for x in second if x['arm'] == tm],
+                                             'base': [x['t_end'] for x in second if x['arm'] == base]},
+                            'rows': rows}
+    out['pass'] = bool(ok)
+    return out
 
 
 # ---------------------------------------------------------------------------------------------
@@ -566,6 +615,9 @@ def main():
     eq = stage(R, 'r3c/e4eq')
     if eq:
         V['E4_equiv'] = e4eq_report(eq, arms5)
+    eq2 = stage(R, 'r3c/e4eq2')
+    if eq2:
+        V['E4_equiv2'] = e4eq2_report(eq2)
     e4 = stage(R, 'r3c/e4')
     if e4:
         V['E4'] = e4_summary(e4_per_run(R, 'r3c/e4', e4), arms5)
