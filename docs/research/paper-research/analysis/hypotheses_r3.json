@@ -1,0 +1,70 @@
+{
+ "H7": {
+  "statistic": "mean log(T_dwa_R3 / T_RPP_R27), 두 팔 모두 성공한 경로",
+  "condition": "ROS C1: held-out D 60, 잡음 없음, stateful false",
+  "n_paths": 60,
+  "mean": -0.0031712122114496972,
+  "ci95": [
+   -0.008015763241428286,
+   0.0041839002057134644
+  ],
+  "time_ratio_pct": [
+   -0.3166189229055205,
+   -0.798372267826819,
+   0.4192664935501078
+  ],
+  "success_R3_RPP": [
+   60,
+   60,
+   60,
+   60
+  ],
+  "hypothesis": "H7",
+  "rule": "95 % 상한 < log(1.005)",
+  "decision": "confirmed"
+ },
+ "H8": {
+  "statistic": "mean log(T_dwa_R3 / T_RPP_R27), 두 팔 모두 성공한 경로",
+  "condition": "ROS C1: held-out D 60, 잡음 없음, stateful false",
+  "n_paths": 60,
+  "mean": -0.0031712122114496972,
+  "ci95": [
+   -0.008015763241428286,
+   0.0041839002057134644
+  ],
+  "time_ratio_pct": [
+   -0.3166189229055205,
+   -0.798372267826819,
+   0.4192664935501078
+  ],
+  "success_R3_RPP": [
+   60,
+   60,
+   60,
+   60
+  ],
+  "hypothesis": "H8",
+  "rule": "H7 확증 뒤, 95 % 상한 < 0",
+  "decision": "not confirmed"
+ },
+ "H9": {
+  "hypothesis": "H9",
+  "statistic": "장면별 반복 평균 성공률 차 (dwa_R3 − MPPI_P30) 의 평균",
+  "condition": "ROS O: held-out D 매끈 앞 20 + 원판, 반복 3, 참값 트랙 차단",
+  "n_scenes": 20,
+  "mean": 0.03333333333333334,
+  "ci95": [
+   0.0,
+   0.1
+  ],
+  "rule": "장면 묶음 95 % 하한 > 0, 그리고 dwa_R3 접촉 0",
+  "dwa_R3_contacts": 0,
+  "decision": "not confirmed",
+  "runs_success_R3_MPPI": [
+   60,
+   60,
+   58,
+   60
+  ]
+ }
+}
