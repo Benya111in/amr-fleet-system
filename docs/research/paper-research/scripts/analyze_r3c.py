@@ -556,7 +556,7 @@ def main():
     # 명령 주기 최소 (R3 전 단계)
     V['rates'] = {}
     for rel in ('r3/tuning', 'r3/c1', 'r3/c2', 'r3/c3', 'r3/o', 'r3c/e2', 'r3c/c1', 'r3c/c3', 'r3c/o', 'r3c/e4eq',
-                'r3c/e4'):
+                'r3c/e4eq2', 'r3c/smoke_timed'):
         rs = stage(R, rel)
         if rs:
             V['rates'][rel] = {'runs': len(rs), 'cmd_rate_min': min(r['cmd_rate_hz'] for r in rs),
@@ -626,6 +626,27 @@ def main():
         if os.path.exists(lf):
             ls = [float(line.split()[2]) for line in open(lf, encoding='utf-8') if len(line.split()) >= 5]
             V['E4']['load1'] = {'min': min(ls), 'max': max(ls), 'n': len(ls)} if ls else None
+
+    # --- 계산 시간 (E4 취소 — 사용자 마무리 지시. R3 C1 원자료 cpu_ms_per_cycle 로 대체, 편차 D1) ---
+    comp = {}
+    pm = {}
+    for a in arms5:
+        pp = ax.per_path(r3['c1'], a, 'cpu_ms_per_cycle', False)
+        if pp:
+            pm[a] = pp
+            comp[a] = {'paths': len(pp), 'mean_ms': float(np.mean(list(pp.values()))),
+                       'median_ms': float(np.median(list(pp.values())))}
+    V['compute'] = {'source': 'R3 r3/c1 cpu_ms_per_cycle (controller_server 누적 CPU 증가 − 정지 10 s 유휴 비율 × 시간, '
+                              '÷ 명령 수; ros_bench_x.py)', 'arms': comp}
+    for a in arms5[1:]:
+        if 'dwa_R3' in pm and a in pm:
+            V['compute'][f'ratio_dwa_R3_over_{a}'] = ratio_boot(pm['dwa_R3'], pm[a])
+    if eq:   # 후보 수·굴림 스텝: e4eq 의 dwa_R3·tm_dwa_R3 (ros_bench_r3c, 튜닝-20 매끈 4 × 반복 3)
+        xs = [r for r in eq if r['arm'] in ('dwa_R3', 'tm_dwa_R3') and r.get('n_samples_med', -1) >= 0]
+        V['compute']['dwa_R3_candidates'] = {'runs': len(xs), 'n_samples_med': med([r['n_samples_med'] for r in xs]),
+                                             'rollout_steps_med': med([r['rollout_steps_med'] for r in xs]),
+                                             'source': 'r3c/e4eq dwa/stats[1], ⌈T_sim(v)/0.1⌉'}
+        V['E4_equiv_timing_aux'] = e4_summary(e4_per_run(R, 'r3c/e4eq', eq), arms5)
 
     # --- E5 ---
     E5 = {}
@@ -774,12 +795,12 @@ def render(V):
     R3 = V['R3']
     sel = V['selection']
     arms5 = ['dwa_R3', 'dwa_textbook_tuned', sel['DWB'], sel['MPPI'], sel['RPP']]
-    e4a = V.get('E4', {}).get('arms', {})
+    e4a = V.get('compute', {}).get('arms', {})
     L = ['# R3-C 표 (analyze_r3c.py 생성 — 기술 통계)', '',
          f"선택: CC-DWA = dwa_R3 = {sel['chosen_z']}, DWB {sel['DWB']}, MPPI {sel['MPPI']}, RPP {sel['RPP']}.", '']
     L += ['## 표 1 재구성 — R3 원자료 (held-out D), Δ 는 제어기 − CC-DWA(dwa_R3) 짝 차', '',
           '| 제어기 | 성공 C1 (매끈/통로/A*) | T/T_ref 중앙 | Δ시간 C1 % [95 %] | 곡선 CTE 중앙 [cm] | |정지 오차| 중앙 [cm] | '
-          'C3 Δ시간 % [95 %] | C2 Δ시간 % | O 성공 /60 (접촉) | O 최소 이격 최솟값 [cm] | 계산 평균 [ms] |',
+          'C3 Δ시간 % [95 %] | C2 Δ시간 % | O 성공 /60 (접촉) | O 최소 이격 최솟값 [cm] | CPU [ms/주기] (R3) |',
           '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |']
     for a in arms5:
         s = R3['table1'].get(a)
@@ -835,6 +856,18 @@ def render(V):
         e2p = {sc: (round(d['time_diff_pct'], 3), round(d['cte_diff_cm'], 3))
                for sc, d in V['E4_equiv2']['paths'].items()}
         L += [f"e4eq2 (MPPI, 순서 엇갈림): 통과 {V['E4_equiv2']['pass']}, 경로별 (시간 %, CTE cm) {e2p}"]
+    cp = V.get('compute', {})
+    L += ['', '## 계산 시간 — R3 C1 cpu_ms_per_cycle (E4 취소, 편차 D1)', '',
+          '| 팔 | 경로 | 경로 평균의 평균 [ms] | 경로 중앙 [ms] |', '| --- | --- | --- | --- |']
+    for a in arms5:
+        x = cp.get('arms', {}).get(a)
+        if x:
+            L.append(f"| {a} | {x['paths']} | {_f(x['mean_ms'], 3)} | {_f(x['median_ms'], 3)} |")
+    for k, v in cp.items():
+        if k.startswith('ratio_') and v:
+            L.append(f"- {k}: {v['ratio']:.3f} [{v['ci'][0]:.3f}, {v['ci'][1]:.3f}] (n {v['n']})")
+    if cp.get('dwa_R3_candidates'):
+        L.append(f"- CC-DWA 후보·굴림: {cp['dwa_R3_candidates']}")
     if 'E4' in V:
         L += ['', '## E4 계산 시간 (held-out D C1 60, 레인 2 개 cpuset, 단독)', '',
               '| 팔 | 실행 | 경로 | 주기 | 평균 [ms] | p50 중앙 [ms] | p99 중앙 [ms] | 최대 [ms] | 후보 수 중앙 | 굴림 스텝 중앙 | 명령 주기 최소 |',
