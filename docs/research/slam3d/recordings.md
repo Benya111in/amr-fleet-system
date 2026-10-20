@@ -244,3 +244,34 @@ evaluation.md §10 의 "S6 블로커가 Gazebo 에서 실제로 gpu_lidar 에 �
 블로커는 두 센서 모두에 보인다 (통로 중앙에서 4.5 m 떨어진 대기 AMR 도 통로 북쪽 입구로 보인다). 사람 actor 와 블로커가 겹치는지는
 보지 않았다 (생성 시점 기하 검사 0.6 m 만 — evaluation.md §6.1). 스크립트 `runs/b24/b2-rec/blocker_view/blocker_view.py`
 (저장소 밖, 일회성).
+
+## 6. 재녹화 — 결함 bag 셋 교체 (b2-rerec, 2026-10-16) 〔추가〕
+
+`s1_seed3_a2`·`s1_seed2x_a1`·`s6_wall_a1` 은 녹화 때 `imu_filter_node` 가 기동 바이어스를 파라미터 값(0)으로 떨어뜨려 bag 의 EKF odom 이
+0.01 rad/s 로 yaw 표류한 결함 bag 이었다 (`bonus2_results.md` §0-2 — P 단계 결과 뒤 발견). 사전 등록
+[`notebook/entries/2026-10-16_0047_b2-rerec_rerecord-defect-bags-prereg.md`](notebook/entries/2026-10-16_0047_b2-rerec_rerecord-defect-bags-prereg.md)
+대로 같은 경로·같은 월드 변형으로 다시 녹화했다 (`s1_seed2x` 대신 원래 사전 등록 경로 `s1_seed2`). 원자료 `/home/CAPYI_AI/runs/b24/b2-rerec/rec/<태그>/`.
+
+**바뀐 프로토콜** (`3e33b46`·`14898ca`, 나머지는 §0-2 의 변경 이력 그대로 — RTF 목표 0.25, 시작 조건 loadavg < 8):
+1. 위치추정 스택을 뺀 채 월드·로봇을 띄우고, `settle_wait.py` 가 원시 IMU 로 로봇 정지를 확인한 뒤(sim ≥ 3 s, 2 s 창) `localization.launch.py` 를
+   bringup 과 같은 인자·DDS 프로파일로 따로 띄운다 (`record_bag.sh` `LOC_AFTER_SETTLE=1`, 로그 `launch_loc.log`·`settle.json`).
+2. 기록 전 `launch_loc.log` 에 "falling back to parameter bias" 가 있으면 녹화하지 않는다 (종료 코드 8).
+3. 공백 검사에 규칙 5 (imu_filter 기동 바이어스 성공 줄, 표본 ≥ 1 000) 와 규칙 6 (EKF odom 대 정답 yaw 표류율 < 0.002 rad/s) — `recgate.py`.
+   새 규칙을 원래 8 bag 에 돌리면 결함 셋만 실패한다 (`B2rerec-validate-gate`).
+
+**원인** [측정 `settle.json` `first20`]: 위치추정을 띄우기 전 받은 첫 IMU 표본 20 개(sim 0.1 s)는 평균 가속도 크기 2.9–3.1 m/s² 로, 스폰
+(z 0.02 m) 뒤 떨어져 바닥에 닿는 중이었다. 원래 프로토콜은 월드 재개 직후 위치추정을 띄워, RTF 0.25 에서 imu_filter 의 첫 판정이 이 구간에
+걸릴 수 있었다 (파라미터 바이어스로 떨어진 4 시도가 모두 RTF 0.25, RTF 0.5 시도 6 회는 0).
+
+| bag (태그) | 바꾼 슬롯 | 시도 | RTF 목표 / 실제 | sim 구간 s | 처음 / 끝 정지 s | 출발 sim s | 기동 바이어스 | EKF yaw 표류율 rad/s | 크기 MB |
+|---|---|---|---|---|---|---|---|---|---|
+| `rr_s6_wall_a1` | `s6_wall_a1` | 1 (통과) | 0.25 / 0.249 | 80.5 | 45.8 / 5.0 | 60.14 | 전체 60 s · 12 001 | 2.1e-6 | 1 404 |
+| `rr_s1_seed3_a1` | `s1_seed3_a2` | 1 (통과) | 0.25 / 0.249 | 224.3 | 10.8 / 4.0 | 25.18 | 움직임 전 4 859 | −7.3e-6 | 3 995 |
+| `rr_s1_seed2_a1` | `s1_seed2x_a1` | 1 (통과) | 0.25 / 0.249 | 260.8 | 11.0 / 4.0 | 25.18 | 움직임 전 4 859 | −4.7e-7 | 4 636 |
+
+- 모든 검사 토픽 간격 초과 0 (EKF `/tf` 최대 23–25 ms). 토픽별 수·간격 원본 `runs/b24/b2-rerec/table_rerec.md` (`rec_report.py table`).
+- `rr_s1_seed3_a1` 은 기록기가 `imu/data_raw`·`points_raw`·`scan` 을 0.245–0.26 s 늦게 구독해 녹화 직후 파생(`bag_madg`)이 멈췄다 — 파생 도구의
+  끝 짝 없음 허용을 공백 검사 덮음 규칙(0.5 s)에 맞춰(`fbc4ad0`, 결과 뒤 변경 — 재생 전) 다시 파생했다. 오라클 방위 토픽만 처음 0.245 s 가 빠진다.
+- 시운전 `dry_s6wall_a1` (P 집합 밖, `runs/b24/b2-rerec/dryrun/`)도 규칙 1–6 을 통과했다.
+- P 단계에서 쓰는 법은 §4 와 같다 (bag 안 `b2rec_spawn.yaml`, 배속 = 0.25 / RTF = 1.004). 분석은 슬롯 이름의 보기
+  (`runs/b24/b2-rerec/view/`, `rerec_plan.py view`)로 원래 사전 등록 스크립트를 그대로 돈다.
